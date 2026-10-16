@@ -322,7 +322,7 @@ def app_list(
     if not result["apps"]:
         typer.echo("No apps deployed.")
     for item in result["apps"]:
-        typer.echo(f"{item['name']}  {item['status']}  grouping={item['grouping']}  bindings={item['binding_count']}")
+        typer.echo(f"{item['name']}  operators={len(item['operators'])}  plan={item['active_plan']}")
         if item["error"]:
             typer.echo(f"  Error: {item['error']}")
 
@@ -340,35 +340,7 @@ def app_inspect(
     if as_json:
         typer.echo(json.dumps(result, indent=2))
         return
-    item = result["app"]
-    definition = item["definition"]
-    typer.echo(f"{item['name']}: {item['status']}")
-    typer.echo(f"Entrypoint: {item['entrypoint']}")
-    typer.echo(f"Grouping: {item['grouping']}")
-    typer.echo(f"Plan: graph revision {item['graph_revision']}, current={item['plan_current']}")
-    for key in ("every", "lookback", "lookahead", "batch_delay", "min_interval"):
-        value = definition[key]
-        rendered = f"{value / 1_000_000:g}s" if isinstance(value, int) else value or "disabled"
-        typer.echo(f"{key}: {rendered}")
-    typer.echo(f"backfill: {definition['backfill']}")
-    typer.echo(f"parameters: {json.dumps(definition['parameters'], sort_keys=True)}")
-    if item["error"]:
-        typer.echo(f"Error: {item['error']}")
-    typer.echo("Declared outputs:")
-    for port, spec in definition["outputs"].items():
-        typer.echo(f"  {port}: {spec['value_kind']}, unit={spec['unit'] or '(unspecified)'}")
-        schema = ", ".join(f"{column}: {field['type']} (non-null)"
-                           for column, field in item["output_schemas"][port].items())
-        typer.echo(f"    schema: {schema}")
-        typer.echo(f"    metadata: {json.dumps(spec, sort_keys=True)}")
-    typer.echo(f"Bindings: {item['binding_count']}")
-    for binding in item["bindings"]:
-        typer.echo(f"  {binding['binding_signature']}: {binding['status']}")
-        typer.echo(f"    inputs: {json.dumps(binding['inputs'], sort_keys=True)}")
-        typer.echo(f"    outputs: {json.dumps(binding['outputs'], sort_keys=True)}")
-        typer.echo(f"    revision: {binding['consumed_revision']} / {binding['current_revision']}; last success: {binding['last_success']}")
-        if binding["error"]:
-            typer.echo(f"    Error: {binding['error']}")
+    typer.echo(json.dumps(result["app"], indent=2))
 
 
 def _load_app_target(spec: str) -> tuple[object, str | None]:
@@ -401,136 +373,19 @@ def _load_app_target(spec: str) -> tuple[object, str | None]:
         raise ValueError(f"app {target_name!r} was not found in {module.__name__!r}") from None
 
 
-@app_app.command("check")
-def app_check(
-    spec: Annotated[str, typer.Argument(help="App class as module:ClassName or ./file.py:ClassName")],
-    params: Annotated[Optional[str], typer.Option("--params", help='Constructor parameters as JSON, e.g. \'{"threshold": 3}\'')] = None,
-    limit: Annotated[int, typer.Option("--limit", "-n", help="Show only the first N rows of each output; 0 shows every row")] = 5,
-    local: Annotated[bool, typer.Option("--local", help="Run the app in this process, so breakpoint() and tracebacks land in this terminal")] = False,
-    as_json: Annotated[bool, typer.Option("--json", help="Print the raw result document")] = False,
-    config: Annotated[Optional[Path], typer.Option("--config", "-c", help="Path to acquirium.toml (for server address)")] = None,
-    server_url: _ServerUrlOpt = None,
-    server_port: _ServerPortOpt = None,
-) -> None:
-    """Run an app against stored data and print what it computed, saving nothing.
-
-    The app is not deployed, its derived streams are not created, and no
-    progress is recorded. The server imports the class by module path, so it
-    must be importable there as it is here.
-
-    Each output prints its first 5 computed rows; pass ``-n 0`` for every row.
-
-    With ``--local`` the app runs here instead of on the server, reading its
-    inputs over the API. Use it to debug: ``breakpoint()`` opens a console in
-    this terminal, and a failing transform raises a traceback here rather
-    than being reported as a per-binding error.
-    """
-    import requests
-
-    if limit < 0:
-        typer.echo("--limit must not be negative", err=True)
-        raise typer.Exit(1)
+@app_app.command("deploy")
+def app_deploy(spec: str, config: Optional[Path] = None):
+    """Deploy an App declaration or a factory accepting (client, parameters)."""
+    from acquirium import Acquirium, App
     cfg = load_config(config).data
-    base = _server_base_url(cfg, server_url, server_port)
-    try:
-        target, source_dir = _load_app_target(spec)
-        parameters = json.loads(params) if params else {}
-    except (ValueError, json.JSONDecodeError) as exc:
-        typer.echo(f"{exc}", err=True)
-        raise typer.Exit(1)
+    host, port, ssl, _ = _driver_connect_cfg(cfg.get("driver", {}))
+    client = Acquirium(server_url=host, server_port=port, use_ssl=ssl)
+    target, _ = _load_app_target(spec)
+    declaration = target(client, {}) if callable(target) else target
+    if not isinstance(declaration, App):
+        raise ValueError("app target must be an App declaration or factory")
+    typer.echo(json.dumps(client.deploy_app(declaration), indent=2))
 
-    from acquirium.Materialization.planner import Deployment
-
-    if local:
-        # The app runs here, so the server never imports it and an exception
-        # from transform() is left to reach the terminal with its traceback.
-        from acquirium.Client.acquirium import Acquirium
-        from acquirium.Materialization import local as local_check
-
-        host, port, use_ssl, _ = _driver_connect_cfg(cfg.get("driver", {}))
-        client = Acquirium(server_url=server_url or host, server_port=server_port or port,
-                           use_ssl=use_ssl)
-        result = local_check.check_app(client, target, parameters=parameters,
-                                       limit=None if limit == 0 else limit)
-        _render_check(result, limit, as_json=as_json)
-        raise typer.Exit(1 if _check_failures(result) else 0)
-
-    try:
-        definition = json.loads(Deployment.from_class(target, parameters=parameters).to_json())
-    except Exception as exc:
-        typer.echo(f"{type(exc).__name__}: {exc}", err=True)
-        raise typer.Exit(1)
-    query: dict[str, Any] = {} if limit == 0 else {"limit": limit}
-    if source_dir:
-        # The server imports by module name; tell it where the file it was
-        # named by actually lives, in case it is not otherwise importable.
-        query["search_path"] = source_dir
-    try:
-        resp = requests.post(f"{base}/apps/check", json=definition, params=query, timeout=300)
-    except requests.RequestException as exc:
-        typer.echo(f"Could not reach server at {base}: {exc}", err=True)
-        raise typer.Exit(1)
-    if not resp.ok:
-        detail = resp.json().get("detail", resp.text) if resp.text else resp.reason
-        typer.echo(f"Check failed: {detail}", err=True)
-        if "could not import" in str(detail) and source_dir:
-            typer.echo(
-                f"\nThe server could not read {source_dir}. That happens when it runs on\n"
-                f"another machine or in a container: a check runs the app on the server, so\n"
-                f"the file has to exist there. Copy it somewhere the server imports from\n"
-                f"(its config directory), or run it here with --local.",
-                err=True,
-            )
-        raise typer.Exit(1)
-
-    _render_check(resp.json(), limit, as_json=as_json)
-    if _check_failures(resp.json()):
-        raise typer.Exit(1)
-
-
-def _render_check(result: dict, limit: int, *, as_json: bool = False) -> None:
-    """Print a check result; identical whether it ran here or on the server."""
-    if as_json:
-        typer.echo(json.dumps(result, indent=2))
-        return
-    typer.echo(f"{result['app']}: {len(result['bindings'])} input group(s) matched")
-    for index, entry in enumerate(result["bindings"], start=1):
-        typer.echo(f"\n[{index}] inputs")
-        for alias, streams in entry["inputs"].items():
-            rows = (entry.get("input_rows") or {}).get(alias)
-            count = f", {rows} rows read" if rows is not None else ""
-            typer.echo(f"      {alias}: {len(streams)} stream(s){count}")
-            shown = streams if limit == 0 else streams[:limit]
-            for item in shown:
-                typer.echo(f"        - {item.get('label') or item['ref_uri']}")
-            if len(shown) < len(streams):
-                typer.echo(f"        … {len(streams) - len(shown)} more stream(s)")
-        # Entity columns say what this call's row is about; the stream
-        # columns are already listed above.
-        row = entry.get("row") or {}
-        entities = {k: v for k, v in row.items()
-                    if v and "." not in k and not k.endswith("_ref") and f"{k}_ref" not in row}
-        if entities:
-            typer.echo("      " + "  ".join(f"[{k}] {v}" for k, v in entities.items()))
-        if entry.get("error"):
-            typer.echo(f"    error: {entry['error']}", err=True)
-            continue
-        for port, out in entry["outputs"].items():
-            typer.echo(f"    output {port!r} -> {out['ref_name']} ({out['value_kind']}, {out['rows']} rows)")
-            for row in out["values"]:
-                typer.echo(f"        {row['time']}  {row['value']}")
-            if out.get("truncated"):
-                omitted = out["rows"] - len(out["values"])
-                typer.echo(f"        … {omitted} more row(s); pass -n 0 for all of them")
-
-
-def _check_failures(result: dict) -> bool:
-    return any(entry.get("error") for entry in result.get("bindings", []))
-
-
-# ---------------------------------------------------------------------------
-# server subcommand
-# ---------------------------------------------------------------------------
 
 def _run_uvicorn(
     application: object,
@@ -661,7 +516,6 @@ def server_cmd(
         # Each worker process builds its own Manager, and every Manager opens the
         # embedded Oxigraph store at the same graph_path. RocksDB permits one
         # process per store, so N workers means N writers over the same files.
-        # This holds on the timescale backend too: it moves the timeseries store
         # out of process, but the graph store stays embedded.
         typer.echo(
             f"Refusing to start with workers={effective_workers}: the embedded Oxigraph "

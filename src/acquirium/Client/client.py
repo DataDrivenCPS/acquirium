@@ -1,6 +1,4 @@
 from typing import Optional, Iterator, Iterable, Any, Callable, TYPE_CHECKING
-from datetime import datetime, timezone
-import json
 import re
 import requests
 from requests import HTTPError
@@ -10,7 +8,6 @@ import polars as pl
 import pyarrow.ipc as ipc
 from acquirium.internals.models import (
     Order,
-    LogEntry,
     StreamInsert,
     RegisterDatasourceRequest,
     compute_ref_uri,
@@ -18,7 +15,6 @@ from acquirium.internals.models import (
 )
 from acquirium.internals.internals_namespaces import *
 from acquirium.Storage.values import normalize_value_kind
-from acquirium.Grafana.grafana_dashboard_creator import GrafanaDashboardCreator
 from rdflib import Graph, URIRef, Literal
 from rdflib.namespace import NamespaceManager, RDF, RDFS
 import logging
@@ -151,7 +147,7 @@ def _build_stream_triples(
                 Literal(normalize_value_kind(stream["value_kind"])),
             ))
         g.add((ref_uri, STORED_AT,           ACQUIRIUM_DB_URI))
-        g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
+        g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium Escapement")))
 
     if point_uri_raw is not None:
         subj = URIRef(str(point_uri_raw))
@@ -231,11 +227,7 @@ class AcquiriumClient:
         # Bare requests.get/post open a new connection per call, which paid the
         # connect cost (and the ::1 miss above) on every request.
         self._http = requests.Session()
-        self.grafana = GrafanaDashboardCreator(
-            title="Acquirium Grafana Dashboard",
-            tags=["acquirium"],
-        )
-        self._namespaces_cache: dict[str, str] | None = None
+        self._namespaces_cache = None
 
     @property
     def address(self) -> str:
@@ -312,6 +304,7 @@ class AcquiriumClient:
         timeout: float = 60.0,
         *,
         value_mode: str = "default",
+        epoch: int | None = None,
     ) -> pl.DataFrame:
         """
         Fetch the full timeseries payload and return a single Polars DataFrame.
@@ -325,6 +318,7 @@ class AcquiriumClient:
             "limit": limit,
             "order": order,
             "value_mode": value_mode,
+            "epoch": epoch,
         }
         headers = {"Accept": "application/vnd.apache.arrow.stream"}
 
@@ -346,8 +340,7 @@ class AcquiriumClient:
                 else:
                     return pl.DataFrame()
             except Exception as e:
-                logger.error(f"Error reading Arrow IPC stream: {e}")
-                return pl.DataFrame()
+                raise RuntimeError("could not read timeseries Arrow response") from e
             
 
     def timeseries_batches(
@@ -359,6 +352,7 @@ class AcquiriumClient:
         order: Order = "asc",
         *,
         value_mode: str = "default",
+        epoch: int | None = None,
         timeout: float = 60.0,
     ) -> Iterator[pl.DataFrame]:
         """
@@ -375,6 +369,7 @@ class AcquiriumClient:
             "limit": limit,
             "order": order,
             "value_mode": value_mode,
+            "epoch": epoch,
         }
         headers = {"Accept": "application/vnd.apache.arrow.stream"}
 
@@ -505,7 +500,7 @@ class AcquiriumClient:
         nm = self.namespace_manager()
         try:
             return str(nm.expand_curie(s))
-        except Exception as e:
+        except Exception:
             raise ValueError(f"Cannot expand '{s}': no matching namespace for CURIE and not a full URI")
 
     def _expand_curie(self, text: str) -> Optional[str]:
@@ -723,40 +718,6 @@ class AcquiriumClient:
             raise ValueError(f"conversion_factors failed: {detail}")
         return response.json()
 
-    def insert_log(
-        self,
-        point_uri: Optional[str] = None,
-        log_time: Optional[str] = None,
-        observation_start: Optional[str] = None,
-        observation_end: Optional[str] = None,
-        log_message: str = "",
-    ) -> dict:
-        """
-        Insert a log entry for a given point URI.
-
-        Args:
-            point_uri: The URI of the time series point. If None, defaults to the
-                generic plant URI on the server.
-            log_time: The timestamp of the log entry in ISO 8601 format.
-                If None, uses the current time.
-            log_message: The log message.
-        Returns:
-            A dictionary with the result of the insertion.
-        """
-        if log_time is None:
-            log_time = datetime.now(timezone.utc).isoformat()
-        url = f"{self.base_url}/insert_log"
-        data = {
-            "log_timestamp": log_time,
-            "observation_start": observation_start,
-            "observation_end": observation_end,
-            "message": log_message,
-        }
-        if point_uri is not None:
-            data["point_uri"] = point_uri
-        response = self._http.post(url, params=data)
-        response.raise_for_status()
-        return response.json()
 
     def list_apps(self) -> dict:
         """Read summaries of every deployed app from the server."""
@@ -785,31 +746,8 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
-    def reprocess_app(self, name: str, start: datetime, end: datetime) -> dict:
-        response = self._http.post(
-            f"{self.base_url}/apps/{name}/reprocess",
-            params={"start": start.isoformat(), "end": end.isoformat()},
-        )
-        _raise_for_status(response)
-        return response.json()
 
-    def check_app(self, definition: dict, limit: int | None = None,
-                  search_path: str | None = None) -> dict:
-        params = {}
-        if limit is not None:
-            params["limit"] = limit
-        if search_path is not None:
-            params["search_path"] = search_path
-        response = self._http.post(
-            f"{self.base_url}/apps/check", json=definition, params=params
-        )
-        _raise_for_status(response)
-        return response.json()
 
-    def materialization_dag(self) -> dict:
-        response = self._http.get(f"{self.base_url}/materialization/dag")
-        _raise_for_status(response)
-        return response.json()
 
     def resolve_storage_keys(self, uris: list[str]) -> dict[str, str]:
         """Map each point URI to its canonical ref URI used by timeseries APIs.
@@ -923,55 +861,57 @@ class AcquiriumClient:
                     source_id=source_id,
                 )
 
-    def insert_timeseries(
-        self,
-        *,
-        source_id: str,
-        ref_name: str,
-        rows: list[tuple[datetime, Any]],
-        point_uri: Optional[str] = None,
-        replace: bool = False,
-        publication_id: Optional[str] = None,
-    ) -> dict:
-        url = f"{self.base_url}/insert_timeseries"
-        body = StreamInsert(
-            source_id=source_id,
-            ref_name=ref_name,
-            point_uri=point_uri,
-            replace=replace,
-            values=rows,
-            publication_id=publication_id,
-        )
-        response = self._http.post(url, json=[body.model_dump(mode="json")])
+    def insert_timeseries(self, *, source_id, ref_name, rows, request_id=None):
+        return self.insert_timeseries_batch(source_id, {ref_name: rows}, request_id=request_id)
+
+    def insert_timeseries_batch(self, source_id, streams, *, request_id=None):
+        request_id = request_id or str(uuid.uuid4())
+        payload = [StreamInsert(source_id=source_id, ref_name=name, values=rows,
+                               request_id=request_id) for name, rows in streams.items()]
+        response = self._http.post(f"{self.base_url}/insert_timeseries",
+                                   json=[item.model_dump(mode="json") for item in payload])
         _raise_for_status(response)
         return response.json()
 
-    def insert_timeseries_batch(
-        self,
-        source_id: str,
-        streams: dict[str, list[tuple[datetime, Any]]],
-    ) -> dict:
-        """Insert timeseries data for multiple streams in one HTTP request.
+    def wait(self, receipt, *, timeout=30):
+        """Wait for a database-scoped sequence returned by an accepted request."""
+        import math
+        import time
+        if not math.isfinite(timeout) or timeout < 0:
+            raise ValueError("timeout must be finite and nonnegative")
+        sequence = receipt["sequence"]
+        deadline = time.monotonic() + timeout
+        while True:
+            status = self.engine_status()
+            if status["engine"]["applied"] >= sequence:
+                return self.engine_snapshot()
+            if status["error"]:
+                raise RuntimeError(f"accepted request {sequence} is blocked: {status['error']}")
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"accepted request {sequence} remains pending")
+            time.sleep(min(0.05, max(0, deadline - time.monotonic())))
 
-        Args:
-            source_id: The registered datasource identifier.
-            streams: Mapping of ref_name → list of (timestamp, value) tuples.
-        """
-        url = f"{self.base_url}/insert_timeseries"
-        payload = [
-            StreamInsert(
-                source_id=source_id,
-                ref_name=rn,
-                values=rows,
-            )
-            for rn, rows in streams.items()
-        ]
-        response = self._http.post(url, json=[s.model_dump(mode="json") for s in payload])
+    def engine_status(self):
+        response = self._http.get(f"{self.base_url}/engine/status")
+        _raise_for_status(response)
+        return response.json()
+
+    def engine_snapshot(self):
+        response = self._http.get(f"{self.base_url}/engine/snapshot")
+        _raise_for_status(response)
+        return response.json()
+
+    def delete_timeseries(self, source_id, ref_name, timestamps, *, request_id=None):
+        from acquirium.core import time_ns
+        response = self._http.post(f"{self.base_url}/delete_timeseries", json={
+            "source_id": source_id, "ref_name": ref_name,
+            "timestamps": [time_ns(value) for value in timestamps],
+            "request_id": request_id or str(uuid.uuid4())})
         _raise_for_status(response)
         return response.json()
 
     def insert_timeseries_arrow(
-        self, source_id: str, table: "pa.Table", *, publication_id: Optional[str] = None
+        self, source_id: str, table: "pa.Table", *, request_id: Optional[str] = None
     ) -> dict[str, Any]:
         import io
         import pyarrow as pa
@@ -981,8 +921,7 @@ class AcquiriumClient:
             writer.write_table(table_with_sid)
         buf.seek(0)
         headers = {"Content-Type": "application/vnd.apache.arrow.stream"}
-        if publication_id is not None:
-            headers["X-Acquirium-Publication-Id"] = publication_id
+        headers["X-Acquirium-Request-Id"] = request_id or str(uuid.uuid4())
         response = self._http.post(
             f"{self.base_url}/insert_timeseries_arrow",
             data=buf,
@@ -990,67 +929,3 @@ class AcquiriumClient:
         )
         response.raise_for_status()
         return response.json()
-
-    def query_logs(
-        self,
-        point_uri: Optional[str] = None,
-        log_time_start: Optional[str] = None,
-        log_time_end: Optional[str] = None,
-        observation_start: Optional[str] = None,
-        observation_end: Optional[str] = None,
-    ) -> list[LogEntry]:
-        """
-        Query log entries for a given point URI within optional time intervals.
-
-        Args:
-            point_uri: The URI of the time series point. If None, defaults to the
-                generic plant URI (retrieves plant-level logs).
-            log_time_start: Start of the log time interval in ISO 8601 format.
-            log_time_end: End of the log time interval in ISO 8601 format.
-            observation_start: Start of the observation time interval in ISO 8601 format.
-            observation_end: End of the observation time interval in ISO 8601 format.
-
-        Returns:
-            A list of log entries matching the query.
-        """
-        url = f"{self.base_url}/query_logs"
-        params = {
-            "point_uri": point_uri,
-            "log_time_start": log_time_start,
-            "log_time_end": log_time_end,
-            "observation_start": observation_start,
-            "observation_end": observation_end,
-        }
-        params = {k: v for k, v in params.items() if v is not None}
-        response = self._http.get(url, params=params)
-        response.raise_for_status()
-        data = response.json()
-        return [LogEntry.model_validate(x) for x in data]
-
-    def delete_logs(self, point_uri: Optional[str] = None) -> dict:
-        """
-        Delete all log entries for a given point URI.
-
-        Args:
-            point_uri: The URI of the time series point. If None, defaults to the
-                generic plant URI.
-        """
-        url = f"{self.base_url}/delete_logs"
-        params = {}
-        if point_uri is not None:
-            params["point_uri"] = point_uri
-        response = self._http.delete(url, params=params)
-        response.raise_for_status()
-        return response.json()
-
-
-    ### Grafana dashboard related methods
-    def add_gauge_panel(self, prop_dict: dict) -> None:
-        self.grafana.add_gauge(prop_dict)
-
-    def add_time_series_panel(self, title: str, prop_dicts: list[dict]) -> None:
-        self.grafana.add_time_series(title, prop_dicts)
-
-    def generate_grafana_dashboard(self, server: str, api_key: str) -> None:
-        self.grafana.generate_dashboard()
-        self.grafana.upload_dashboard(server, api_key)

@@ -10,18 +10,12 @@ port = 8000
 exact_only = true
 
 # Data directory: the Oxigraph graph store, embedding cache, and local DuckDB
-# file live under this path by default. TimescaleDB data remains in PostgreSQL.
+# file live under this path by default. Escapement data remains in PostgreSQL.
 data_dir = ".acquirium"
 
-# Use DuckDB for timeseries storage instead of TimescaleDB.
-# The DuckDB file is created automatically if it does not exist.
-# NOTE: the server runs as a single process (uvicorn --workers 1) on every
-#       backend: the embedded Oxigraph graph store is single-process, and
-#       "timescale" only moves the timeseries store out of process.
-timeseries_backend = "duckdb"
-duckdb_path = ".acquirium/timeseries.duckdb"
-
-# Set timeseries_backend = "timescale" and pg_dsn to use TimescaleDB.
+# Escapement is the required engine; it owns the embedded DuckDB store.
+# Use a fresh data directory when switching from the former storage schema.
+# engine_path = ".acquirium/escapement.duckdb"
 
 # RDF graph store path (Oxigraph).  Defaults to {data_dir}/.oxigraph.
 # graph_path = ".acquirium/.oxigraph"
@@ -35,12 +29,9 @@ recreate = false
 # Number of rows per Arrow RecordBatch in timeseries read responses.
 # read_batch_size = 50000
 
-# Bounded transformation concurrency through the server's in-process worker pool.
-materialization_workers = 2
+# Parallel native operator execution.
+engine_workers = 2
 
-# Durable recovery polling. Values must be positive seconds.
-# materialization_poll_seconds = 0.25
-# materialization_error_log_seconds = 30.0
 
 # ---------------------------------------------------------------------------
 # Additional or overriding ontology sources.

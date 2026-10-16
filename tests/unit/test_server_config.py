@@ -27,7 +27,6 @@ def test_local_config_has_explicit_safe_defaults(monkeypatch, tmp_path):
     assert loaded.data["server"] == {
         "enabled": True,
         "data_dir": ".acquirium",
-        "timeseries_backend": "duckdb",
         "host": "127.0.0.1",
         "port": 0,
         "workers": 1,
@@ -45,7 +44,6 @@ def test_local_config_overlays_explicit_server_values(tmp_path):
 
     assert loaded.data["server"]["port"] == 8123
     assert loaded.data["server"]["exact_only"] is False
-    assert loaded.data["server"]["timeseries_backend"] == "duckdb"
 
 
 def test_loaded_config_owns_path_directory_and_fingerprint(tmp_path):

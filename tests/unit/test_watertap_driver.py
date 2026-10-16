@@ -151,8 +151,8 @@ def test_loop_builds_model_and_ingests_batch(tmp_path):
     source_id, df = driver.aq.insert_timeseries_arrow.call_args.args
     assert source_id == "watertap"
     values = dict(zip(df["ref_name"].to_pylist(), df["value"].to_pylist()))
-    assert values["value_a"] == "2.5"
-    assert values["value_b"] == "5.0"
+    assert values["value_a"] == 2.5
+    assert values["value_b"] == 5.0
 
 
 def test_loop_can_extract_model_via_result_attr(tmp_path):
@@ -168,24 +168,18 @@ def test_loop_can_extract_model_via_result_attr(tmp_path):
 
     _, df = driver.aq.insert_timeseries_arrow.call_args.args
     values = dict(zip(df["ref_name"].to_pylist(), df["value"].to_pylist()))
-    assert values["value_a"] == "3.0"
-    assert values["value_b"] == "6.0"
+    assert values["value_a"] == 3.0
+    assert values["value_b"] == 6.0
 
 
-def test_loop_preserves_nonnumeric_component_values_for_numeric_streams(tmp_path):
+def test_loop_rejects_nonnumeric_component_values(tmp_path):
     module_path = _write_module(tmp_path)
-    driver = _make_driver(
-        tmp_path,
-        watertap_build_spec=f"{module_path}:build_status_model",
-    )
+    driver = _make_driver(tmp_path, watertap_build_spec=f"{module_path}:build_status_model")
     driver.setup()
+    with pytest.raises(ValueError, match="finite non-null"):
+        driver.tick()
+    driver.aq.insert_timeseries_arrow.assert_not_called()
 
-    driver.tick()
-
-    _, df = driver.aq.insert_timeseries_arrow.call_args.args
-    values = dict(zip(df["ref_name"].to_pylist(), df["value"].to_pylist()))
-    assert values["value_a"] == "Manual Control"
-    assert values["value_b"] == "6.0"
 
 
 def test_loop_applies_change_inputs_then_solves(tmp_path):
@@ -202,8 +196,8 @@ def test_loop_applies_change_inputs_then_solves(tmp_path):
     _, df = driver.aq.insert_timeseries_arrow.call_args.args
     values = dict(zip(df["ref_name"].to_pylist(), df["value"].to_pylist()))
     # change_inputs overrode the build defaults before the read
-    assert values["value_a"] == "4.0"
-    assert values["value_b"] == "8.0"
+    assert values["value_a"] == 4.0
+    assert values["value_b"] == 8.0
 
 
 def test_missing_mapping_path_raises(tmp_path):

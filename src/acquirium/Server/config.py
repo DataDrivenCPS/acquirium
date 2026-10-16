@@ -40,9 +40,10 @@ _logger = logging.getLogger("acquirium.config")
 
 _SERVER_ENV_MAP: dict[str, str] = {
     "data_dir": "ACQUIRIUM_DATA_DIR",
-    "pg_dsn": "PG_DSN",
-    "duckdb_path": "ACQUIRIUM_DUCKDB_PATH",
-    "timeseries_backend": "ACQUIRIUM_TIMESERIES_BACKEND",
+    "engine_path": "ACQUIRIUM_ENGINE_PATH",
+    "engine_workers": "ACQUIRIUM_ENGINE_WORKERS",
+    "epoch_requests": "ACQUIRIUM_EPOCH_REQUESTS",
+    "max_pending_requests": "ACQUIRIUM_MAX_PENDING_REQUESTS",
     "graph_path": "ACQUIRIUM_GRAPH_PATH",
     "embedding_model": "ACQUIRIUM_EMBEDDING_MODEL",
     "exact_only": "ACQUIRIUM_EXACT_ONLY",
@@ -58,7 +59,6 @@ DEFAULT_LOCAL_CONFIG: dict[str, Any] = {
     "server": {
         "enabled": True,
         "data_dir": ".acquirium",
-        "timeseries_backend": "duckdb",
         "host": "127.0.0.1",
         "port": 0,
         "workers": 1,
@@ -91,7 +91,7 @@ class LoadedConfig:
             if key not in server:
                 continue
             value = server[key]
-            if key in {"data_dir", "duckdb_path", "graph_path"}:
+            if key in {"data_dir", "engine_path", "graph_path"}:
                 path = Path(value)
                 value = (
                     str((self.directory / path).resolve())

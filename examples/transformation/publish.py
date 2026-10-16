@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from time import monotonic, sleep
 
 import acquirium as aq
+from temperature_conversion import fahrenheit_to_celsius
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -28,6 +29,7 @@ def main() -> None:
         "unit": "http://qudt.org/vocab/unit/DEG_F",
         "value_kind": "numeric",
     }])
+    client.deploy_app(fahrenheit_to_celsius(client, {}))
     deadline = monotonic() + args.timeout
     start = datetime(2026, 1, 1, tzinfo=timezone.utc)
     client.insert_timeseries(source_id, ref_name, [

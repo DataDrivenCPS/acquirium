@@ -12,12 +12,15 @@ class RecordingClient:
     def __init__(self) -> None:
         self.calls = []
 
+    def engine_snapshot(self):
+        return {"epoch": 7}
+
     def timeseries_df(self, ref_uri, **kwargs):
         self.calls.append((ref_uri, kwargs))
         return pl.DataFrame(
             {
                 "ts": [datetime(2026, 1, 1, tzinfo=timezone.utc)],
-                "value": ["Manual Control"],
+                "value": [21.5],
                 "uri": [ref_uri],
             }
         )
@@ -45,11 +48,11 @@ def test_data_object_passes_value_mode_to_timeseries_client():
             "limit": None,
             "order": "asc",
             "cast_value": None,
-            "value_mode": "coalesce",
+            "value_mode": "numeric",
         },
     )
 
     df = data.dataframe(shape="narrow")
 
-    assert df["value_text"].to_list() == ["Manual Control"]
-    assert client.calls[0][1]["value_mode"] == "coalesce"
+    assert df["value_numeric"].to_list() == [21.5]
+    assert client.calls[0][1]["value_mode"] == "numeric"

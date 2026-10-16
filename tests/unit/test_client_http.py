@@ -231,33 +231,7 @@ class TestResolveConversion:
 # ── insert_log ─────────────────────────────────────────────
 
 
-class TestInsertLog:
-    def test_insert_log_full(self, http, client):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"status": "ok"}
-        mock_resp.raise_for_status = MagicMock()
-        http.post.return_value = mock_resp
 
-        result = client.insert_log(
-            point_uri="urn:test:p1",
-            log_time=datetime(2025, 1, 1, tzinfo=timezone.utc),
-            observation_start=datetime(2025, 1, 1, tzinfo=timezone.utc),
-            observation_end=datetime(2025, 1, 2, tzinfo=timezone.utc),
-            log_message="test log",
-        )
-        assert result["status"] == "ok"
-
-    def test_insert_log_minimal(self, http, client):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"status": "ok"}
-        mock_resp.raise_for_status = MagicMock()
-        http.post.return_value = mock_resp
-
-        result = client.insert_log(
-            point_uri="urn:test:p1",
-            log_message="minimal log",
-        )
-        assert result["status"] == "ok"
 
 
 class TestConstructorHealthGate:

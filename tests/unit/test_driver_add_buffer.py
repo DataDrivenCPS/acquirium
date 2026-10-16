@@ -83,7 +83,7 @@ def test_add_buffers_until_flush(tmp_path):
     (source_id, cols), = inserted(driver)
     assert source_id == "sensors"
     assert cols["ref_name"] == ["temp"]
-    assert cols["value"] == ["21.5"]
+    assert cols["value"] == [21.5]
 
 
 def test_flush_sends_one_frame_for_all_buffered_rows(tmp_path):
@@ -97,7 +97,7 @@ def test_flush_sends_one_frame_for_all_buffered_rows(tmp_path):
     assert driver.aq.insert_timeseries_arrow.call_count == 1
     (_, cols), = inserted(driver)
     assert cols["ref_name"] == ["temp", "rh", "temp"]
-    assert cols["value"] == ["21.5", "55.0", "22.0"]
+    assert cols["value"] == [21.5, 55.0, 22.0]
 
 
 def test_flush_clears_the_buffer(tmp_path):
@@ -167,7 +167,7 @@ def test_collect_style_driver_still_works(tmp_path):
     (source_id, cols), = inserted(driver)
     assert source_id == "sensors"
     assert cols["ref_name"] == ["temp"]
-    assert cols["value"] == ["21.5"]
+    assert cols["value"] == [21.5]
 
 
 def test_event_driver_tick_flushes_buffered_callbacks(tmp_path):
@@ -212,7 +212,7 @@ def test_buffer_over_ceiling_rejects_new_row_without_flushing(tmp_path):
     driver.aq.insert_timeseries_arrow.assert_not_called()
     driver.flush()
     (_, cols), = inserted(driver)
-    assert cols["value"] == ["1.0", "2.0", "3.0"]
+    assert cols["value"] == [1.0, 2.0, 3.0]
 
 
 # ------------------------------------------------------------------ multi-source
@@ -229,7 +229,7 @@ def test_add_with_explicit_source_id_partitions_inserts(tmp_path):
     by_source = dict(
         (source_id, cols["value"]) for source_id, cols in inserted(driver)
     )
-    assert by_source == {"site-a": ["21.5"], "site-b": ["30.0"]}
+    assert by_source == {"site-a": [21.5], "site-b": [30.0]}
 
 
 def test_rows_without_source_id_fall_back_to_driver_default(tmp_path):
@@ -242,7 +242,7 @@ def test_rows_without_source_id_fall_back_to_driver_default(tmp_path):
     by_source = dict(
         (source_id, cols["value"]) for source_id, cols in inserted(driver)
     )
-    assert by_source == {"site-a": ["21.5"], "sensors": ["22.0"]}
+    assert by_source == {"site-a": [21.5], "sensors": [22.0]}
 
 
 # ------------------------------------------------------------------ failure retry
@@ -259,7 +259,7 @@ def test_failed_flush_keeps_rows_for_the_next_attempt(tmp_path):
     driver.aq.insert_timeseries_arrow.side_effect = None
     driver.flush()
     (_, cols), = inserted(driver)[1:]
-    assert cols["value"] == ["21.5"]
+    assert cols["value"] == [21.5]
 
 
 def test_false_insert_result_keeps_rows_for_retry(tmp_path):
@@ -272,7 +272,7 @@ def test_false_insert_result_keeps_rows_for_retry(tmp_path):
 
     driver.aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 1}
     driver.flush()
-    assert inserted(driver)[1][1]["value"] == ["21.5"]
+    assert inserted(driver)[1][1]["value"] == [21.5]
 
 
 def test_failed_flush_preserves_order_against_newer_rows(tmp_path):
@@ -287,7 +287,7 @@ def test_failed_flush_preserves_order_against_newer_rows(tmp_path):
     driver.flush()
 
     (_, cols), = inserted(driver)[1:]
-    assert cols["value"] == ["1.0", "2.0"]
+    assert cols["value"] == [1.0, 2.0]
 
 
 def test_retry_backlog_rejects_new_rows_at_the_limit(tmp_path):
@@ -305,7 +305,7 @@ def test_retry_backlog_rejects_new_rows_at_the_limit(tmp_path):
     driver.aq.insert_timeseries_arrow.side_effect = None
     driver.flush()
     (_, cols), = inserted(driver)[1:]
-    assert cols["value"] == ["1.0", "2.0"]
+    assert cols["value"] == [1.0, 2.0]
 
 
 def test_failing_inserts_are_retried_only_by_flush(tmp_path):
@@ -350,16 +350,13 @@ def test_successful_flush_releases_buffer_capacity(tmp_path):
 # ------------------------------------------------------------------ value kinds
 
 
-def test_add_accepts_non_numeric_values(tmp_path):
+@pytest.mark.parametrize("value", ["ON", None, True, float("nan"), float("inf")])
+def test_add_rejects_non_numeric_values(tmp_path, value):
     driver = make_driver(AddDriver, tmp_path)
-    driver.declare("state")
-    driver.declare("count")
-    driver.add("state", "ON")
-    driver.add("count", 3)
-    driver.flush()
+    with pytest.raises(ValueError, match="finite non-null"):
+        driver.add("temp", value)
+    assert len(driver._pending) == 0
 
-    (_, cols), = inserted(driver)
-    assert cols["value"] == ["ON", "3"]
 
 
 def test_add_is_available_on_the_shared_ingest_base(tmp_path):
@@ -400,21 +397,7 @@ def test_platform_registers_declared_datasource(tmp_path):
     driver.aq.register_datasource.assert_called_once_with("sensors")
 
 
-def test_null_only_batch_does_not_freeze_inferred_value_kind(tmp_path):
-    driver = make_driver(AddDriver, tmp_path)
-    driver.declare("optional")
-    driver.add("optional", None)
-    driver.flush()
-    driver.add("optional", 3.0)
-    driver.flush()
 
-    specs = [
-        spec
-        for call in driver.aq.register_streams.call_args_list
-        for spec in call.args[0]
-        if spec["ref_name"] == "optional"
-    ]
-    assert specs[-1]["value_kind"] == "numeric"
 
 
 def test_conflicting_redeclaration_after_registration_raises(tmp_path):
@@ -435,7 +418,7 @@ def test_graceful_shutdown_flushes_after_stopping_producer(tmp_path):
             self.stopped = True
 
     driver = make_driver(Events, tmp_path)
-    driver.add("state", "ON")
+    driver.add("state", 1.0)
     driver._shutdown()
     assert driver.stopped is True
-    assert inserted(driver)[0][1]["value"] == ["ON"]
+    assert inserted(driver)[0][1]["value"] == [1.0]

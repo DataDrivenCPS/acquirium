@@ -1,47 +1,23 @@
-"""Normalize each water-temperature stream to degrees Celsius.
-
-Check the app without contacting a server:
-
-    acquirium app check scripts/apps/temperature_normalization.py:TemperatureNormalization
-
-The query matches every registered temperature measurement. Each match gets a
-separate derived stream, so the app can normalize many tanks independently.
-"""
-
-from __future__ import annotations
-
+"""Normalize declared temperature measurements using frozen unit factors."""
+from pathlib import Path
 import polars as pl
-
 import acquirium as aq
 
+CELSIUS = "http://qudt.org/vocab/unit/DEG_C"
+NAME = "temperature-normalization"
 
-class TemperatureNormalization(aq.App):
-    """Publish a Celsius stream for each water-temperature input stream."""
 
-    name = "temperature-normalization"
-    # Run once for each matched tank or other water-temperature stream.
-    grouping = "per_match"
-    # Also process readings that were stored before this app was deployed.
-    backfill = True
-    # A stream output gets a stable derived identity for each input match.
-    outputs = {
-        "temperature": aq.output.stream(
-            value_kind="numeric",
-            unit="http://qudt.org/vocab/unit/DEG_C",
-            quantity_kind="http://qudt.org/vocab/quantitykind/Temperature",
-        ),
-    }
+def normalize(frame, context):
+    factor = lambda key: pl.col("context").str.json_path_match(f"$.{key}").cast(pl.Float64)
+    return {"temperature": frame.select("event_time_ns", "sample_key",
+        (((pl.col("value") + factor("from_offset")) * factor("from_multiplier")
+          / factor("to_multiplier")) - factor("to_offset")).alias("value"), "quality")}
 
-    def build_query(self, plant):
-        # Free-text metadata is resolved against the plant model at deployment.
-        return plant.query().measurement(
-            alias="temperature", quantity_kind="temperature"
-        )
 
-    def transform(self, inputs, output, context):
-        # Convert compatible units before copying the result to the output port.
-        temperature = inputs["temperature"].in_unit(
-            "http://qudt.org/vocab/unit/DEG_C"
-        ).df()
-        # The runtime publishes only the time/value columns assigned here.
-        output["temperature"] = temperature.select("time", "value")
+def temperature_normalization(client, parameters):
+    query = client.query().measurement(alias="temperature", quantity_kind="temperature")
+    return aq.App(name=NAME,
+        inputs=[aq.Selection.from_query(query, alias="temperature", target_unit=CELSIUS, exclude_app=NAME)],
+        outputs={"temperature": aq.Output(unit=CELSIUS,
+            quantity_kind="http://qudt.org/vocab/quantitykind/Temperature")},
+        function=aq.PythonFunction.from_file(Path(__file__), "normalize"))

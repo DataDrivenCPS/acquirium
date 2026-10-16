@@ -291,7 +291,7 @@ class IngestDriver(Driver):
         self._pending_lock = threading.Lock()
         self._flush_lock = threading.Lock()
         self._inflight_rows = 0
-        # (publication_id, rows) of the most recent flush that failed and was
+        # (request_id, rows) of the most recent flush that failed and was
         # put back unmodified. A retry of exactly that batch keeps the same
         # request identifier for correlation. The server's revision publisher
         # currently relies on row upserts, rather than an id receipt ledger,
@@ -444,6 +444,10 @@ class IngestDriver(Driver):
 
         Buffered rows are inserted by :meth:`flush` at the end of each tick.
         """
+        import math
+        from numbers import Real
+        if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(value):
+            raise ValueError("observations must be finite non-null numbers")
         source = source_id if source_id is not None else self.source_id
         key = (source, str(ref_name))
         with self._declaration_lock:
@@ -479,18 +483,18 @@ class IngestDriver(Driver):
                 self._inflight_rows = len(rows)
 
             if self._last_failed_batch is not None and self._last_failed_batch[1] == rows:
-                publication_id = self._last_failed_batch[0]
+                request_id = self._last_failed_batch[0]
             else:
-                publication_id = str(uuid.uuid4())
+                request_id = str(uuid.uuid4())
 
             frame = self._pending_frame(rows)
             try:
-                result = self.insert_observations(frame, publication_id=publication_id)
+                result = self.insert_observations(frame, request_id=request_id)
             except Exception:
                 with self._pending_lock:
                     self._pending[:0] = rows
                     self._inflight_rows = 0
-                self._last_failed_batch = (publication_id, rows)
+                self._last_failed_batch = (request_id, rows)
                 raise
 
             self._last_failed_batch = None
@@ -505,15 +509,15 @@ class IngestDriver(Driver):
             "source_id": pl.Series("source_id", [row[0] for row in rows], dtype=pl.Utf8),
             "ts": pl.Series("ts", [row[1] for row in rows]),
             "ref_name": pl.Series("ref_name", [row[2] for row in rows], dtype=pl.Utf8),
-            "value": pl.Series("value", [row[3] for row in rows], dtype=pl.Object),
+            "value": pl.Series("value", [row[3] for row in rows], dtype=pl.Float64, strict=True),
         })
 
     def insert_observations(
-        self, observations: "pl.DataFrame | None", *, publication_id: str | None = None
+        self, observations: "pl.DataFrame | None", *, request_id: str | None = None
     ) -> dict[str, Any]:
         """Normalize and publish buffered observations.
 
-        ``publication_id`` is a request-correlation identifier set by
+        ``request_id`` is a request-correlation identifier set by
         :meth:`flush`. A frame spanning multiple ``source_id`` values makes
         one publication per source, so the identifier is namespaced per
         source. The current revision publisher does not deduplicate by this
@@ -536,11 +540,11 @@ class IngestDriver(Driver):
             )
             with timed_debug(logger, "%s.aq.insert_timeseries_arrow source=%s rows=%d",
                              self.__class__.__name__, self.source_id, len(df)):
-                if publication_id is None:
+                if request_id is None:
                     result = self.aq.insert_timeseries_arrow(self.source_id, df.to_arrow())
                 else:
                     result = self.aq.insert_timeseries_arrow(
-                        self.source_id, df.to_arrow(), publication_id=publication_id
+                        self.source_id, df.to_arrow(), request_id=request_id
                     )
             return self._coerce_insert_result(result, len(df))
 
@@ -552,14 +556,14 @@ class IngestDriver(Driver):
                 "%s.insert_observations source=%s rows=%d (multi-source)",
                 self.__class__.__name__, source, len(payload),
             )
-            source_publication_id = f"{publication_id}:{source}" if publication_id else None
+            source_request_id = f"{request_id}:{source}" if request_id else None
             with timed_debug(logger, "%s.aq.insert_timeseries_arrow source=%s rows=%d",
                              self.__class__.__name__, source, len(payload)):
-                if source_publication_id is None:
+                if source_request_id is None:
                     result = self.aq.insert_timeseries_arrow(str(source), payload.to_arrow())
                 else:
                     result = self.aq.insert_timeseries_arrow(
-                        str(source), payload.to_arrow(), publication_id=source_publication_id
+                        str(source), payload.to_arrow(), request_id=source_request_id
                     )
             total += self._coerce_insert_result(result, len(payload))["rows_inserted"]
         return {"ok": True, "rows_inserted": total}
@@ -570,7 +574,7 @@ class IngestDriver(Driver):
         schema = {
             "ts": pl.Datetime("us", "UTC"),
             "ref_name": pl.Utf8,
-            "value": pl.Utf8,
+            "value": pl.Float64,
         }
         if observations is None:
             return pl.DataFrame(schema=schema)
@@ -591,10 +595,20 @@ class IngestDriver(Driver):
             columns.insert(0, "source_id")
         df = observations.select(columns).drop_nulls(subset=["ts", "ref_name"])
 
+        import math
+        values = df["value"].to_list()
+        try:
+            if any(value is None or isinstance(value, bool) for value in values):
+                raise ValueError
+            numbers = [float(value) for value in values]
+            if not all(math.isfinite(value) for value in numbers):
+                raise ValueError
+        except (ValueError, TypeError, OverflowError) as error:
+            raise ValueError("observations must be finite non-null numbers") from error
         exprs = [
             self.to_timestamp(df["ts"]).alias("ts"),
             pl.col("ref_name").cast(pl.Utf8),
-            _cast_value_to_utf8(df["value"]),
+            pl.Series("value", numbers, dtype=pl.Float64),
         ]
         if "source_id" in df.columns:
             exprs.insert(0, pl.col("source_id").cast(pl.Utf8))

@@ -1,130 +1,61 @@
 services:
-  timescaledb:
-    image: timescale/timescaledb:latest-pg17
-    container_name: acquirium_timescaledb
-    environment:
-      POSTGRES_USER: acquirium
-      POSTGRES_PASSWORD: acquirium
-      POSTGRES_DB: ${POSTGRES_DB:-acquirium}
-    ports:
-      - "${POSTGRES_HOST_PORT:-5432}:5432"
-
-    volumes:
-      - tsdb_data:/var/lib/postgresql/data
-      - ./src/acquirium/internals/init-timescaledb.sql:/docker-entrypoint-initdb.d/init-timescaledb.sql:ro
-
-    networks:
-      - acquirium_net
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U acquirium -d $${POSTGRES_DB:-acquirium}"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-
   mosquitto:
     image: eclipse-mosquitto:2
     container_name: acquirium_mosquitto
     ports:
-      - "${MQTT_HOST_PORT:-1883}:1883"   # MQTT
-      # - "9001:9001" # WebSockets (optional; enable in config if you want it)
+    - ${MQTT_HOST_PORT:-1883}:1883
     volumes:
-      - mosquitto_data:/mosquitto/data
-      - mosquitto_log:/mosquitto/log
-      - ./src/acquirium/internals/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    - mosquitto_data:/mosquitto/data
+    - mosquitto_log:/mosquitto/log
+    - ./src/acquirium/internals/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
     networks:
-      - acquirium_net
+    - acquirium_net
     healthcheck:
-      test: ["CMD-SHELL", "mosquitto_sub -h localhost -p 1883 -t '$$SYS/broker/version' -C 1 >/dev/null 2>&1"]
+      test:
+      - CMD-SHELL
+      - mosquitto_sub -h localhost -p 1883 -t '$$SYS/broker/version' -C 1 >/dev/null
+        2>&1
       interval: 5s
       timeout: 5s
       retries: 20
     profiles:
-      - server
-
+    - server
   acquirium:
-    build: 
+    build:
       context: .
       dockerfile: ./src/acquirium/Dockerfile
+      ssh:
+      - default
     container_name: acquirium_server
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - acquirium_data:/app/.acquirium
-      - ./${ACQUIRIUM_CONFIG_FILE:-acquirium.toml}:/app/acquirium.toml:ro
+    - acquirium_data:/app/.acquirium
+    - ./${ACQUIRIUM_CONFIG_FILE:-acquirium.toml}:/app/acquirium.toml:ro
     ports:
-      - "${ACQUIRIUM_HOST_PORT:-8000}:8000"
+    - ${ACQUIRIUM_HOST_PORT:-8000}:8000
     environment:
-      # Use service names as hostnames inside the docker network
       ACQUIRIUM_DATA_DIR: /app/.acquirium
-      PG_DSN: ${PG_DSN:-postgresql://acquirium:acquirium@timescaledb:5432/acquirium}
       FASTEMBED_CACHE_PATH: /app/.fastembed_cache
       ACQUIRIUM_RECREATE: ${ACQUIRIUM_RECREATE:-false}
       ACQUIRIUM_APP_NETWORK: ${ACQUIRIUM_APP_NETWORK:-acquirium_acquirium_net}
     depends_on:
       mosquitto:
         condition: service_healthy
-      timescaledb:
-        condition: service_healthy
     restart: unless-stopped
     networks:
-      - acquirium_net
+    - acquirium_net
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()\""]
+      test:
+      - CMD-SHELL
+      - python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"
       interval: 5s
       timeout: 2s
       retries: 60
       start_period: 20s
     profiles:
-      - server
-
-  testing_service:
-    build:
-      context: .
-      dockerfile: ./tests/Dockerfile
-    container_name: acquirium_testing_service
-    depends_on:
-      mosquitto:
-        condition: service_healthy
-      timescaledb:
-        condition: service_healthy
-      acquirium:
-        condition: service_healthy
-    networks:
-      - acquirium_net
-    profiles:
-      - test
-
-  grafana:
-    image: grafana/grafana:latest
-    container_name: acquirium_grafana
-    restart: unless-stopped
-    environment:
-      - TERM=linux
-      - GF_PLUGINS_PREINSTALL=grafana-clock-panel,grafana-polystat-panel
-      - POSTGRES_USER=acquirium
-      - POSTGRES_PASSWORD=acquirium
-      - POSTGRES_DB=${POSTGRES_DB:-acquirium}
-    ports:
-      - '3000:3000'
-    volumes:
-      - 'grafana_storage:/var/lib/grafana'
-      - './docker/grafana/provisioning:/etc/grafana/provisioning:ro'
-    depends_on:
-      timescaledb:
-        condition: service_healthy
-    networks:
-      - acquirium_net
-    profiles:
-      - grafana
-      - no-server
-      - watertap_gui
-
+    - server
 volumes:
-  tsdb_data:
-    name: ${TSDB_VOLUME:-acquirium_tsdb_data}
-  mosquitto_data:
-  mosquitto_log:
-  acquirium_data:
-  grafana_storage:
-
+  mosquitto_data: null
+  mosquitto_log: null
+  acquirium_data: null
 networks:
-  acquirium_net:
+  acquirium_net: null

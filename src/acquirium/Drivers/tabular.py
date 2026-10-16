@@ -136,18 +136,21 @@ def to_observations(
         observations = df.select(
             pl.col("__ts").alias("ts"),
             pl.col(id_col).cast(pl.Utf8).alias("ref_name"),
-            _as_text(df, value_col).alias("value"),
+            pl.col(value_col).cast(pl.Float64, strict=True).alias("value"),
         ).drop_nulls("ref_name")
     else:
         streams = [c for c in df.columns if c not in (*timestamp_columns, "__ts")]
         observations = (
             df.select(
                 pl.col("__ts").alias("ts"),
-                *[_as_text(df, name).alias(name) for name in streams],
+                *[pl.col(name).cast(pl.Float64, strict=True).alias(name) for name in streams],
             )
             .unpivot(index="ts", variable_name="ref_name", value_name="value")
         )
-    return observations.drop_nulls("value")
+    valid = observations.filter(pl.col("value").is_finite())
+    if len(valid) != len(observations):
+        logger.warning("tabular: ignored %d missing/nonfinite cells", len(observations) - len(valid))
+    return valid
 
 
 def _resolve_timestamp_columns(

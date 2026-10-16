@@ -1,25 +1,17 @@
-# Water-temperature app
+# Semantic selection with a native Python function
 
-This example supplies water-temperature readings from a treatment tank. The app
-selects all measurement streams with unit `DEG_F` and publishes a separate
-Celsius stream for each match. The example has three files:
+Start a server in a fresh directory with `exact_only=true`, then run:
 
-- `temperature_conversion.py` declares the app.
-- `acquirium.toml` deploys it when the server starts.
-- `publish.py` registers an input stream, publishes samples, and prints the
-  derived output.
-
-Start an isolated local server in one terminal:
-
-```bash
-uv run acquirium server --config examples/transformation/acquirium.toml
-```
-
-Then run the example in another terminal:
-
-```bash
+```sh
 uv run python examples/transformation/publish.py
 ```
 
-The server writes its local graph and DuckDB data to
-`examples/transformation/.data/`.
+The script registers a Fahrenheit stream, deploys the declaration returned by
+`fahrenheit_to_celsius`, inserts observations, and queries derived Celsius data.
+`temperature_conversion.py` contains both the semantic declaration factory and
+the pure Escapement function. Source corrections and deletions repair the same
+output timestamps through native epochs. No separate app process or scheduler
+is required.
+
+The function module must be accessible on the server. When configuring an app at
+startup, use `temperature_conversion.py:fahrenheit_to_celsius` as its factory spec.

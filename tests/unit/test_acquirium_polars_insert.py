@@ -11,10 +11,10 @@ def test_insert_timeseries_arrow_delegates_to_client():
     captured: dict = {}
 
     class _FakeClient:
-        def insert_timeseries_arrow(self, source_id, table, *, publication_id=None):
+        def insert_timeseries_arrow(self, source_id, table, *, request_id=None):
             captured["source_id"] = source_id
             captured["table"] = table
-            captured["publication_id"] = publication_id
+            captured["request_id"] = request_id
             return {"ok": True, "rows_inserted": len(table)}
 
     aq.client = _FakeClient()
@@ -28,10 +28,10 @@ def test_insert_timeseries_arrow_delegates_to_client():
     )
 
     result = aq.insert_timeseries_arrow(
-        "source/file.csv", table, publication_id="flush-1"
+        "source/file.csv", table, request_id="flush-1"
     )
 
     assert result == {"ok": True, "rows_inserted": 2}
     assert captured["source_id"] == "source/file.csv"
     assert captured["table"].equals(table)
-    assert captured["publication_id"] == "flush-1"
+    assert captured["request_id"] == "flush-1"

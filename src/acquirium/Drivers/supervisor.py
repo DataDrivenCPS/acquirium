@@ -75,7 +75,6 @@ class DriverSupervisor:
                 server_url=self.server_url,
                 server_port=self.server_port,
                 use_ssl=self.use_ssl,
-                insert_batch_rows=int(driver_section.get("insert_batch_rows", 50_000)),
             )
             runner_cls = DriverRunner
             if source_dir is not None:

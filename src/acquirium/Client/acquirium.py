@@ -1,15 +1,11 @@
 from __future__ import annotations
 
-import math
-import json
-import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, Sequence, Callable, Mapping, Optional, TYPE_CHECKING
+from typing import Any, Iterable, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    import polars as pl
     import pyarrow as pa
 
 from rdflib import URIRef
@@ -18,8 +14,7 @@ import warnings
 
 from acquirium.Client.explore.core import Query
 from acquirium.Client.query import Q
-from acquirium.Materialization.api import App
-from acquirium.Materialization.planner import Deployment
+from acquirium.apps import App
 
 
 def _dt_to_iso(v: "str | datetime | None") -> "str | None":
@@ -50,7 +45,6 @@ class Acquirium:
             server_port: int = 8000,
             use_ssl: bool = False,
             lexicon_path: Optional[Path] = None,
-            insert_batch_rows: int = 50_000,
             health_timeout: float | None = 60.0,
         ):
         """Connect to an Acquirium server.
@@ -72,9 +66,6 @@ class Acquirium:
             server_port=server_port,
             use_ssl=use_ssl,
         )
-        self.insert_batch_rows = int(insert_batch_rows)
-        if self.insert_batch_rows <= 0:
-            raise ValueError("insert_batch_rows must be greater than zero")
         if health_timeout:
             self._wait_for_server(health_timeout)
 
@@ -205,8 +196,7 @@ class Acquirium:
         ref_name: str,
         rows: list[tuple[datetime, Any]],
         *,
-        point_uri: Optional[str] = None,
-        replace: bool = False,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
         """Insert timeseries data for a single stream.
 
@@ -227,82 +217,26 @@ class Acquirium:
             source_id=source_id,
             ref_name=ref_name,
             rows=rows,
-            point_uri=point_uri,
-            replace=replace,
+            request_id=request_id,
         )
 
-    def insert_timeseries_batch(
-        self,
-        source_id: str,
-        streams: dict[str, list[tuple[datetime, Any]]],
-    ) -> dict[str, Any]:
-        """Insert timeseries data for multiple streams.
-
-        Large inputs are split into bounded requests according to
-        ``insert_batch_rows``. Drivers can call this method with their natural
-        batch size; the Acquirium facade hides transport/storage chunking.
-
-        Args:
-            source_id: The registered datasource identifier.
-            streams: Mapping of ref_name → list of (timestamp, value) tuples.
-
-        Returns:
-            dict with ``{"ok": True, "rows_inserted": N}``.
-        """
-        total = 0
-        chunk_count = 0
-        for chunk in self._iter_insert_batches(streams):
-            result = self.client.insert_timeseries_batch(
-                source_id,
-                chunk,
-            )
-            total += int(result.get("rows_inserted", 0))
-            chunk_count += 1
-        return {"ok": True, "rows_inserted": total, "batches": chunk_count}
+    def insert_timeseries_batch(self, source_id, streams, *, request_id=None):
+        """Submit one atomic bounded request. Chunk larger imports explicitly."""
+        return self.client.insert_timeseries_batch(source_id, streams, request_id=request_id)
 
     def insert_timeseries_arrow(
-        self, source_id: str, table: "pa.Table", *, publication_id: str | None = None
+        self, source_id: str, table: "pa.Table", *, request_id: str | None = None
     ) -> dict[str, Any]:
         """Insert a ``(ts, ref_name, value)`` Arrow table.
 
-        ``publication_id`` is forwarded for request correlation. The current
-        revision backend does not use it to deduplicate retries; repeated rows
-        remain idempotent by stream and timestamp.
+        Reuse ``request_id`` and the exact normalized payload on retry.
+        Deduplication follows Escapement's bounded native retry window.
         """
         return self.client.insert_timeseries_arrow(
-            source_id, table, publication_id=publication_id
+            source_id, table, request_id=request_id
         )
 
-    @staticmethod
-    def _json_safe_value(value: Any) -> Any:
-        if isinstance(value, float) and not math.isfinite(value):
-            return None
-        return value
 
-    def _iter_insert_batches(
-        self,
-        streams: dict[str, list[tuple[datetime, Any]]],
-    ) -> Iterable[dict[str, list[tuple[datetime, Any]]]]:
-        chunk: dict[str, list[tuple[datetime, Any]]] = {}
-        chunk_rows = 0
-
-        for stream, rows in streams.items():
-            start = 0
-            while start < len(rows):
-                capacity = self.insert_batch_rows - chunk_rows
-                end = min(start + capacity, len(rows))
-                if end > start:
-                    chunk[stream] = rows[start:end]
-                    chunk_rows += end - start
-                    start = end
-
-                if chunk_rows >= self.insert_batch_rows:
-                    yield chunk
-                    chunk = {}
-                    chunk_rows = 0
-
-        if chunk:
-            yield chunk
 
     def resolve_point_metadata(
         self, fields: dict[str, Any], min_score: float = 0.6
@@ -380,14 +314,21 @@ class Acquirium:
         """
         self.client.register_streams(streams)
 
-    def deploy_app(
-        self, target: object, *, parameters: Mapping[str, Any] | None = None
-    ) -> dict[str, Any]:
-        """Deploy a stateless app against the current graph."""
-        if not isinstance(target, type) or not issubclass(target, App):
-            raise ValueError("deploy_app expects an App class")
-        deployment = Deployment.from_class(target, parameters=parameters)
-        return self.client.deploy_app(json.loads(deployment.to_json()))
+    def deploy_app(self, declaration: App) -> dict[str, Any]:
+        """Compile semantic inputs and activate a complete native plan."""
+        return self.client.deploy_app(declaration.to_dict())
+
+    def wait(self, receipt, *, timeout=30):
+        return self.client.wait(receipt, timeout=timeout)
+
+    def engine_status(self):
+        return self.client.engine_status()
+
+    def engine_snapshot(self):
+        return self.client.engine_snapshot()
+
+    def delete_timeseries(self, source_id, ref_name, timestamps, *, request_id=None):
+        return self.client.delete_timeseries(source_id, ref_name, timestamps, request_id=request_id)
 
     def list_apps(self) -> dict[str, Any]:
         """List every deployment, including apps with no matches or errors."""
@@ -400,120 +341,16 @@ class Acquirium:
     def remove_app(self, name: str) -> dict[str, Any]:
         return self.client.remove_app(name)
 
-    def reprocess_app(self, name: str, start: datetime, end: datetime) -> dict[str, Any]:
-        """Recompute a retained output interval without resetting ingestion progress."""
-        return self.client.reprocess_app(name, start, end)
 
-    def check_app(
-        self, target: object, *, parameters: Mapping[str, Any] | None = None,
-        limit: int | None = None, search_path: str | None = None,
-    ) -> dict[str, Any]:
-        """Run an app against stored data and return what it computed.
 
-        Nothing is saved: the app is not deployed, its derived streams are not
-        created, and the computed rows come back instead of being stored. Use
-        it to confirm a query matches the streams you expect and a transform
-        produces the values you want, before deploying anything.
 
-        Every computed row comes back unless ``limit`` keeps only the first
-        few of each output.
-
-        The directory holding ``target``'s module is sent as a search path, so
-        an app the server cannot otherwise import is still checkable when the
-        two share a filesystem. Pass ``search_path=""`` to send none.
-        """
-        if not isinstance(target, type) or not issubclass(target, App):
-            raise ValueError("check_app expects an App class")
-        deployment = Deployment.from_class(target, parameters=parameters)
-        if search_path is None:
-            module_file = getattr(sys.modules.get(target.__module__), "__file__", None)
-            search_path = str(Path(module_file).resolve().parent) if module_file else None
-        return self.client.check_app(
-            json.loads(deployment.to_json()), limit=limit, search_path=search_path or None
-        )
-
-    def app_dag(self):
-        """Return the active materialization plan as a NetworkX DiGraph."""
-        import networkx as nx
-
-        payload = self.client.materialization_dag()
-        graph = nx.DiGraph()
-        for node in payload["nodes"]:
-            attributes = dict(node)
-            signature = attributes.pop("binding_signature")
-            graph.add_node(signature, **attributes)
-        for edge in payload["edges"]:
-            source, target = edge["source"], edge["target"]
-            if graph.has_edge(source, target):
-                graph.edges[source, target]["ref_uris"].append(edge["ref_uri"])
-            else:
-                graph.add_edge(source, target, ref_uris=[edge["ref_uri"]])
-        return graph
-
-    def generate_grafana_dashboard(self, grafana_server, api_key):
-        return self.client.generate_grafana_dashboard(grafana_server, api_key)
 
     # ------------------------------------------------------------------
     # LOGGING API (plant-level convenience methods)
     # ------------------------------------------------------------------
 
-    def insert_log(
-        self,
-        message: str,
-        log_time: str | datetime | None = None,
-        observation_start: str | datetime | None = None,
-        observation_end: str | datetime | None = None,
-    ) -> dict:
-        """Insert a plant-level log entry (no specific point URI needed).
 
-        Args:
-            message: The log message.
-            log_time: Timestamp of the log entry (ISO 8601 string or datetime).
-                Defaults to now.
-            observation_start: Optional observation period start.
-            observation_end: Optional observation period end.
-        """
-        return self.client.insert_log(
-            log_time=_dt_to_iso(log_time),
-            log_message=message,
-            observation_start=_dt_to_iso(observation_start),
-            observation_end=_dt_to_iso(observation_end),
-        )
 
-    def read_logs(
-        self,
-        log_time_start: str | datetime | None = None,
-        log_time_end: str | datetime | None = None,
-        observation_start: str | datetime | None = None,
-        observation_end: str | datetime | None = None,
-    ) -> "pl.DataFrame":
-        """Read plant-level log entries (no query/object needed).
-
-        Returns a list of LogEntry objects for the generic plant URI.
-        """
-        import polars as pl
-
-        logs = self.client.query_logs(
-            log_time_start=_dt_to_iso(log_time_start),
-            log_time_end=_dt_to_iso(log_time_end),
-            observation_start=_dt_to_iso(observation_start),
-            observation_end=_dt_to_iso(observation_end),
-        )
-        if not logs:
-            return pl.DataFrame({"point_uri": [], "message": [], "log_time": [], "observation_start": [], "observation_end": []})
-        frames = [log.to_dict() for log in logs]
-        schema = {
-            "point_uri": pl.Utf8,
-            "message": pl.Utf8,
-            "log_time": pl.Datetime(time_zone="UTC"),
-            "observation_start": pl.Datetime(time_zone="UTC"),
-            "observation_end": pl.Datetime(time_zone="UTC"),
-        }
-        return pl.concat([pl.DataFrame(f, schema=schema) for f in frames], how="vertical").sort("log_time")
-
-    def delete_logs(self) -> dict:
-        """Delete all plant-level log entries."""
-        return self.client.delete_logs()
 
     # ------------------------------------------------------------------
     # SPARQL / GRAPH UTILITIES

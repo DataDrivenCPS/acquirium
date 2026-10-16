@@ -12,12 +12,14 @@ from acquirium import (
     Driver,
     EventIngestDriver,
     IngestDriver,
-    OutputSpec,
+    Output,
+    Selection,
+    Pointwise,
+    FixedBucket,
+    PythonFunction,
     PollingIngestDriver,
     Query,
-    align,
     console,
-    output,
 )
 
 
@@ -29,12 +31,14 @@ def main() -> None:
         Driver,
         EventIngestDriver,
         IngestDriver,
-        OutputSpec,
+        Output,
+        Selection,
+        Pointwise,
+        FixedBucket,
+        PythonFunction,
         PollingIngestDriver,
         Query,
-            align,
         console,
-        output,
     )
     for obj in exports:
         assert obj is not None, f"{obj!r} import failed"

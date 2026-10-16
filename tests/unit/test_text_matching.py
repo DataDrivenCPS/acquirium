@@ -713,7 +713,6 @@ def test_initialism_never_shadows_an_existing_surface() -> None:
 def _make_manager(data_dir: Path, *, exact_only: bool) -> Manager:
     return Manager(
         data_dir=data_dir,
-        timeseries_backend="duckdb",
         exact_only=exact_only,
     )
 

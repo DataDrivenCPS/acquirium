@@ -1,6 +1,6 @@
 """Shared fixtures for integration tests.
 
-These fixtures require running services (TimescaleDB, Mosquitto, acquirium server).
+These fixtures require an Acquirium server; MQTT tests also need Mosquitto.
 Start services with `make testing-up` before running integration tests.
 """
 
@@ -10,24 +10,14 @@ import polars as pl
 import pytest
 
 from acquirium import Acquirium
-from acquirium.Storage.timescale_store import TimescaleStore
 from acquirium.Storage.values import assign_stream_value_kind
 
 
-PG_DSN = os.getenv(
-    "ACQUIRIUM_TEST_PG_DSN",
-    "postgresql://acquirium:acquirium@localhost:5432/acquirium_test",
-)
 ACQUIRIUM_TEST_SERVER_HOST = os.getenv("ACQUIRIUM_TEST_SERVER_HOST", "localhost")
 ACQUIRIUM_TEST_SERVER_PORT = int(os.getenv("ACQUIRIUM_TEST_SERVER_PORT", "8000"))
 TEST_POINT_URI = "urn:test:integration_point"
 TEST_REF_URI = "urn:test:integration_ref"
 SAMPLE_SOURCE_ID = "LAB"
-
-
-@pytest.fixture(scope="session")
-def pg_dsn():
-    return PG_DSN
 
 
 @pytest.fixture(scope="session")
@@ -75,28 +65,6 @@ def acquirium_client_csv(acquirium_client_kwargs):
     return acq
 
 
-@pytest.fixture(scope="module")
-def ts_store(pg_dsn):
-    """Direct TimescaleStore connection for storage-layer tests."""
-    store = TimescaleStore(dsn=pg_dsn, connect_timeout=10, recreate=False)
-    yield store
-    store.close()
-
-
-@pytest.fixture
-def clean_point(ts_store):
-    """Provides a test point URI and cleans up its data after each test."""
-    yield TEST_POINT_URI
-    with ts_store.conn.cursor() as cur:
-        cur.execute(
-            "DELETE FROM timeseries WHERE ref_id = (SELECT ref_id FROM ref_ids WHERE ref_uri = %s)",
-            [TEST_POINT_URI],
-        )
-        cur.execute("DELETE FROM ref_ids WHERE ref_uri = %s", [TEST_POINT_URI])
-        cur.execute("DELETE FROM streams WHERE point_uri = %s", [TEST_POINT_URI])
-        cur.execute("DELETE FROM logs WHERE point_uri = %s", [TEST_POINT_URI])
-
-
 def insert_sample_csv_streams(acq, *, source_id: str = SAMPLE_SOURCE_ID) -> None:
     """Insert the sample CSV rows through the public timeseries API."""
     import polars as pl
@@ -116,35 +84,3 @@ def insert_sample_csv_streams(acq, *, source_id: str = SAMPLE_SOURCE_ID) -> None
         stream_rows[ref_name] = rows
     acq.register_streams(stream_specs)
     acq.insert_timeseries_batch(source_id, stream_rows)
-
-
-@pytest.fixture(params=["duckdb", "timescale"])
-def materialization_store(request, tmp_path):
-    import uuid
-    import psycopg
-    from psycopg.conninfo import make_conninfo
-    from acquirium.Storage.duckdb_store import DuckDBStore
-
-    if request.param == "duckdb":
-        store = DuckDBStore(tmp_path / "contract.duckdb")
-    else:
-        dsn = os.getenv("ACQUIRIUM_TEST_PG_DSN")
-        if not dsn:
-            pytest.skip("ACQUIRIUM_TEST_PG_DSN is required for the Timescale contract target")
-        # The API integration suite shares its database with the server.  Use
-        # an isolated schema so ``recreate`` cannot drop the server's tables.
-        schema = f"materialization_contract_{uuid.uuid4().hex}"
-        with psycopg.connect(dsn, autocommit=True) as conn:
-            conn.execute(f'CREATE SCHEMA "{schema}"')
-        # Use only the private schema.  Including ``public`` would cause
-        # ``CREATE TABLE IF NOT EXISTS`` to reuse the live server's tables.
-        # TimescaleStore qualifies the extension function it needs from public.
-        isolated_dsn = make_conninfo(dsn, options=f"-c search_path={schema}")
-        store = TimescaleStore(dsn=isolated_dsn, recreate=True)
-    try:
-        yield store
-    finally:
-        store.close()
-        if request.param == "timescale":
-            with psycopg.connect(dsn, autocommit=True) as conn:
-                conn.execute(f'DROP SCHEMA "{schema}" CASCADE')

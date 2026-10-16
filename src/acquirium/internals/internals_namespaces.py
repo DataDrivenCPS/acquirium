@@ -22,8 +22,8 @@ OWL = Namespace("http://www.w3.org/2002/07/owl#")
 DEFAULT_MAIN_GRAPH = ACQUIRIUM_NS.MainGraph
 VIRTUAL_POINT = ACQUIRIUM_NS.VirtualPoint
 
-# Well-known URI representing the Acquirium TimescaleDB instance
-ACQUIRIUM_DB_URI = ACQUIRIUM_NS.TimescaleDB
+# Well-known URI representing the embedded Escapement engine
+ACQUIRIUM_DB_URI = ACQUIRIUM_NS.Escapement
 DATABASE = ACQUIRIUM_NS.Database
 
 

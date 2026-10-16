@@ -149,7 +149,7 @@ def test_null_and_nan_values_are_dropped():
         "time": ["2024-01-01T00:00:00Z", "2024-01-02T00:00:00Z"],
         "temp": [float("nan"), 23.0],
     })
-    assert to_observations(df, layout="wide")["value"].to_list() == ["23.0"]
+    assert to_observations(df, layout="wide")["value"].to_list() == [23.0]
 
 
 def test_rows_with_unparseable_timestamps_are_dropped():
@@ -202,4 +202,4 @@ def test_custom_column_names():
         df, time_col="timestamp", id_col="tag", value_col="reading", layout="narrow"
     )
     assert out["ref_name"].to_list() == ["a"]
-    assert out["value"].to_list() == ["1.5"]
+    assert out["value"].to_list() == [1.5]

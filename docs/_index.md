@@ -106,7 +106,7 @@ These contain explanation behind the motivation of key design choices we made wh
 - [Apps](explanation/apps.md) — how apps keep derived streams current as readings arrive and are corrected
 - [The data stream lifecycle](explanation/stream-lifecycle.md) — how streams are identified, stored and found again
 - [Text resolution](explanation/text-resolution.md) — how matching works
-- [Materialization internals](explanation/materialization-internals.md) — app scheduling, recovery, storage backends, and tests
+- [Escapement core](explanation/escapement-core.md) — native scheduling, history, snapshots, and recovery
 - [Server internals](explanation/server-internals.md) — storage backends, the graph store, the embedding indexes
 - [Graph backend architecture](explanation/graph-backend.md) — graph ownership, inference, query views
 

@@ -30,6 +30,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Set up Rust for Escapement
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Authenticate the pinned Escapement source
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.ESCAPEMENT_SSH_KEY }}
+
       - name: Install UV
         uses: astral-sh/setup-uv@v5
         with:
@@ -49,7 +57,7 @@ jobs:
             uv-${{ runner.os }}-py${{ matrix.python-version }}-
 
       - name: Install dependencies
-        run: uv sync --python ${{ matrix.python-version }} --locked --all-extras
+        run: uv sync --python ${{ matrix.python-version }} --locked --extra mqtt
 
       - name: Run unit tests with coverage
         run: |
@@ -87,6 +95,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Set up Rust for Escapement
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Authenticate the pinned Escapement source
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.ESCAPEMENT_SSH_KEY }}
+
       - name: Install UV
         uses: astral-sh/setup-uv@v5
         with:
@@ -106,39 +122,15 @@ jobs:
             uv-${{ runner.os }}-py${{ matrix.python-version }}-
 
       - name: Install dependencies
-        run: uv sync --python ${{ matrix.python-version }} --locked --all-extras
-
-      - name: Check Docker Compose
-        run: docker compose version
-
-      - name: Start services
-        run: make testing-up
-        env:
-          ACQUIRIUM_RECREATE: "true"
-          PYTHON_VERSION: ${{ matrix.python-version }}
-
-      - name: Wait for server health
-        run: make wait-health ACQUIRIUM_PORT=8010
+        run: uv sync --python ${{ matrix.python-version }} --locked --extra mqtt
 
       - name: Run integration tests
-        env:
-          ACQUIRIUM_TEST_SERVER_HOST: localhost
-          ACQUIRIUM_TEST_SERVER_PORT: "8010"
-          ACQUIRIUM_TEST_PG_DSN: postgresql://acquirium:acquirium@localhost:55432/acquirium_test
         run: |
-          uv run --no-sync pytest tests/ \
+          uv run --no-sync pytest tests/integration/test_native_runtime.py tests/integration/test_local_runtime.py tests/integration/test_graph_store.py \
             -v \
             --tb=short \
             --ignore=tests/unit \
             --junitxml=junit-integration.xml
-
-      - name: Collect service logs
-        if: failure()
-        run: COMPOSE_PROJECT_NAME=acquirium_test docker compose -f compose.testing.yaml --profile server --profile test logs --tail=200 > service-logs.txt 2>&1
-
-      - name: Show service status
-        if: failure()
-        run: COMPOSE_PROJECT_NAME=acquirium_test docker compose -f compose.testing.yaml --profile server --profile test ps
 
       - name: Upload results
         if: always()
@@ -147,8 +139,3 @@ jobs:
           name: integration-test-results-py${{ matrix.python-version }}
           path: |
             junit-integration.xml
-            service-logs.txt
-
-      - name: Tear down
-        if: always()
-        run: make testing-down

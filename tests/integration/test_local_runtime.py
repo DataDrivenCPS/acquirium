@@ -29,7 +29,7 @@ def test_concurrent_start_attach_exit_and_restart(tmp_path, monkeypatch, configu
     argument = str(root)
     if configured:
         config = tmp_path / "custom.toml"
-        config.write_text('[server]\ndata_dir = "data"\nport = 0\nexact_only = true\nduckdb_path = "data/custom.duckdb"\n')
+        config.write_text('[server]\ndata_dir = "data"\nport = 0\nexact_only = true\nengine_path = "data/custom.duckdb"\n')
         root = tmp_path / "data"
         options = {"config": config}
         argument = str(config)

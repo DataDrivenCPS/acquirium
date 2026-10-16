@@ -1,15 +1,12 @@
-# Example apps
+# Native semantic apps
 
-These examples use `acquirium.App` API and can be checked
-with the CLI before deployment:
+`temperature_normalization.py:temperature_normalization` is a factory accepting
+`(client, parameters)` and returning an `acquirium.App` declaration. It selects
+temperature streams, freezes unit conversion factors in their input context,
+and runs a versioned native Python function over pointwise groups. It explicitly
+excludes its own derived references from its broad semantic selection.
 
-```bash
-acquirium app check scripts/apps/temperature_normalization.py:TemperatureNormalization
-acquirium app check scripts/apps/fill_short_temperature_gaps.py:FillShortTemperatureGaps
-```
+Deploy with `acquirium app deploy scripts/apps/temperature_normalization.py:temperature_normalization`
+or call the factory and `client.deploy_app()` from Python.
 
-`TemperatureNormalization` converts each matched water-temperature stream to
-Celsius. `FillShortTemperatureGaps` copies the complete Celsius history to a
-derived stream and inserts linearly interpolated samples for gaps shorter than
-one hour. It infers the sampling interval from the smallest observed interval;
-gaps of one hour or more remain unchanged.
+Full-history gap filling has been retired until Escapement supports that workload.

@@ -49,7 +49,7 @@ def test_parse_parquet_wide(tmp_path):
     batch, cursor = parse(driver, _wide_parquet(tmp_path))
     assert cursor == 2
     assert set(batch) == {"temp", "rh"}
-    assert batch["temp"][0][1] == "22.5"
+    assert batch["temp"][0][1] == 22.5
 
 
 def test_parse_parquet_narrow(tmp_path):
@@ -79,7 +79,7 @@ def test_cursor_pages_new_rows_only(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     batch, cursor = parse(driver, _wide_parquet(tmp_path), cursor=1)
     assert cursor == 2
-    assert batch["temp"][0][1] == "23.0"
+    assert batch["temp"][0][1] == 23.0
 
 
 def test_custom_time_col(tmp_path):

@@ -492,6 +492,9 @@ class DataObject:
                 _factors_cache[key] = self._client.get_conversion_factors(from_u, to_u)
             return _factors_cache[key]
 
+        epoch = self._query_params.get("epoch")
+        if epoch is None:
+            epoch = self._client.engine_snapshot()["epoch"]
         frames: list[pl.DataFrame] = []
         for binding in self._bindings:
             df = self._client.timeseries_df(
@@ -501,6 +504,7 @@ class DataObject:
                 limit=limit,
                 order=order,
                 value_mode=value_mode,
+                epoch=epoch,
             )
             if df.is_empty():
                 continue

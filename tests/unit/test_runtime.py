@@ -115,7 +115,6 @@ def test_dead_child_reports_log_and_can_retry(
         popen.call_args.kwargs["env"]["ACQUIRIUM_EXACT_ONLY"]
         == expected_exact_only
     )
-    assert popen.call_args.kwargs["env"]["ACQUIRIUM_TIMESERIES_BACKEND"] == "duckdb"
     assert not (tmp_path / ".runtime" / "server.toml").exists()
     assert runtime._session is None
     assert not runtime._running(tmp_path / ".runtime")
@@ -159,7 +158,6 @@ def test_configuration_discovery_and_relative_paths(monkeypatch, tmp_path):
     loaded, root = runtime._configuration(None, tmp_path / "other")
     assert loaded.path is None
     assert loaded.data["server"]["exact_only"] is True
-    assert loaded.data["server"]["timeseries_backend"] == "duckdb"
     assert root == tmp_path / "other"
     monkeypatch.chdir(tmp_path.parent)
     assert runtime._configuration(config, None)[1] == tmp_path / "stored"

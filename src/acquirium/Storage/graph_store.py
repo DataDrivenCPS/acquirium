@@ -330,6 +330,11 @@ class OxigraphGraphStore:
         )
 
     # -------------------- ontoenv named-graph access --------------------
+    def data_graph(self, source_id: str) -> Graph:
+        """Copy one source-owned deployment graph, including an empty graph."""
+        with self._lock:
+            return Graph() + self.source_dataset.graph(self.source_graph_uri(source_id))
+
     def named_graph(self, iri: str) -> Graph:
         """One ontology's own graph, materialized in memory (owl:imports NOT
         followed). Cached per IRI until an ontology graph changes.

@@ -1,7 +1,24 @@
 # Make Escapement the core of Acquirium
 
-Status: proposed replacement architecture; runtime behavior is unchanged.
+Status: initial mandatory replacement implemented on this branch; operating-scale validation remains.
 Updated on 2026-10-16 on branch `plan/escapement-core`.
+
+## Implementation progress
+
+The initial numeric replacement is implemented: required pinned dependency,
+one native owner, raw mutation/history/snapshot transport, semantic app
+compilation and durable activation intent, and removal of the old stores,
+publication layer, scheduler, and Timescale/Grafana services. Public APIs,
+drivers, examples, and configuration now follow the native contract.
+
+Tests exercise native paging/precision/retries, semantic query discovery,
+metadata repair, app chains, invalid-plan rollback, paused artifact recovery,
+and restart. A real `aq.init()` server test covers a native Python function,
+DataObject reads, corrections, deletion, and restart. The current Escapement
+revision suffices for this slice; future native API changes are explicitly in
+scope, including stream statistics, bulk Arrow exchange, richer windows/values,
+and controlled failed-prefix recovery. Step 4's representative operating-scale
+measurements and release/CI native packaging remain subsequent work.
 
 ## Mandatory direction
 
@@ -62,7 +79,7 @@ which uses `Materialization/*` and `App.transform(inputs, output, context)`.
 
 Useful code to extract rather than preserve wholesale:
 
-- [`BindingPlanner`](../../src/acquirium/Materialization/planner.py): semantic query
+- [`BindingPlanner`](https://github.com/DataDrivenCPS/acquirium/blob/ef083dc23e667c1ab65381f2b547ce97136c1815/src/acquirium/Materialization/planner.py): semantic query
   resolution, grouping, and stream descriptors. Keep the query-to-input logic;
   replace the legacy Binding/Deployment execution model.
 - [`Manager`](../../src/acquirium/Server/manager.py): registration, reference
@@ -291,5 +308,4 @@ The first implementation deliverable combines steps 1–3 for numeric pointwise 
 fixed-bucket workloads: Escapement is required, raw and derived observations live
 only in its DuckDB store, semantic apps compile into native plans, and the old
 stores/scheduler are deleted. Step 4 validates operating bounds before broader
-use. This plan revision changes documentation only and does not delete code,
-existing databases, or user files.
+use. Existing databases and pre-existing untracked user files are preserved.

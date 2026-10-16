@@ -22,22 +22,10 @@ export ACQUIRIUM_RECREATE
 ACQUIRIUM_CONFIG_FILE ?= acquirium.toml
 export ACQUIRIUM_CONFIG_FILE
 
-POSTGRES_DB ?= acquirium
-POSTGRES_HOST_PORT ?= 5432
-PG_DSN ?= postgresql://acquirium:acquirium@timescaledb:5432/$(POSTGRES_DB)
-TSDB_VOLUME ?= acquirium_tsdb_data
 MQTT_HOST_PORT ?= 1883
-ACQUIRIUM_APP_NETWORK ?= acquirium_acquirium_net
-
-export POSTGRES_DB
-export POSTGRES_HOST_PORT
-export PG_DSN
-export TSDB_VOLUME
 export MQTT_HOST_PORT
 export ACQUIRIUM_HOST_PORT
-export ACQUIRIUM_APP_NETWORK
-
-TEST_PYTEST_ENV := ACQUIRIUM_TEST_SERVER_HOST=localhost ACQUIRIUM_TEST_SERVER_PORT=8010 ACQUIRIUM_TEST_PG_DSN=postgresql://acquirium:acquirium@localhost:55432/acquirium_test
+TEST_PYTEST_ENV := ACQUIRIUM_TEST_SERVER_HOST=localhost ACQUIRIUM_TEST_SERVER_PORT=8010
 # Number of slow test cases reported by `make test-timing`. Override with
 # `make test-timing PYTEST_DURATIONS=0` to list every test duration.
 PYTEST_DURATIONS ?= 20
@@ -72,37 +60,17 @@ rebuild:
 down:
 	$(COMPOSE) down --remove-orphans
 
-# Infrastructure-only mode for running Acquirium externally on the host.
-# Starts TimescaleDB and Grafana, but not the Acquirium server container.
-no-server-up:
-	$(COMPOSE) --profile no-server up -d timescaledb grafana
-
-no-server-down:
-	$(COMPOSE) --profile no-server rm -sf grafana timescaledb
-
-# Always tear down even on failure
+# Core tests need no external database or container services.
 test:
-	uv sync --locked --all-extras
-	status=0; \
-	$(TEST_COMPOSE) --profile server --profile test rm -sf timescaledb acquirium mosquitto testing_service >/dev/null 2>&1 || true; \
-	$(TEST_COMPOSE) --profile server --profile test up -d --build || status=$$?; \
-	if [ $$status -eq 0 ]; then $(TEST_PYTEST_ENV) uv run pytest tests || status=$$?; fi; \
-	$(MAKE) testing-down; \
-	exit $$status
+	uv sync --locked --extra mqtt
+	uv run pytest tests/unit tests/integration/test_native_runtime.py
 
-# Run the full compose-backed suite, then report the slowest test cases for
-# performance investigation. Override with PYTEST_DURATIONS=0 to list all.
 test-timing:
-	uv sync --locked --all-extras
-	status=0; \
-	$(TEST_COMPOSE) --profile server --profile test rm -sf timescaledb acquirium mosquitto testing_service >/dev/null 2>&1 || true; \
-	$(TEST_COMPOSE) --profile server --profile test up -d --build || status=$$?; \
-	if [ $$status -eq 0 ]; then $(TEST_PYTEST_ENV) uv run pytest tests --durations=$(PYTEST_DURATIONS) || status=$$?; fi; \
-	$(MAKE) testing-down; \
-	exit $$status
+	uv sync --locked --extra mqtt
+	uv run pytest tests/unit tests/integration/test_native_runtime.py --durations=$(PYTEST_DURATIONS)
 
 testing-up:
-	$(TEST_COMPOSE) --profile server --profile test rm -sf timescaledb acquirium mosquitto testing_service >/dev/null 2>&1 || true
+	$(TEST_COMPOSE) --profile server --profile test rm -sf acquirium mosquitto >/dev/null 2>&1 || true
 	$(TEST_COMPOSE) --profile server --profile test up -d --build
 
 

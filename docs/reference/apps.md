@@ -1,297 +1,77 @@
-# App reference
+---
+title: Native app declarations
+---
 
-Apps maintain derived streams from the latest available inputs. When a reading
-is corrected, the app recalculates the affected results, which may change or
-be removed. A calculation must produce the same final results whether its
-inputs arrive in one batch or several.
+App names use letters, digits, underscores, dots, and hyphens.
 
-## App
-
-Subclass `acquirium.App` and implement:
+An app declares semantic input selections and one versioned Escapement function.
+The engine executes that function over pointwise timestamps or fixed UTC buckets.
 
 ```python
-def build_query(self, plant):
-    ...  # return an Acquirium Query
+from pathlib import Path
+import acquirium as aq
 
-def transform(self, inputs, output, context):
-    ...  # assign declared output ports
+query = client.query().measurement(alias="temperature", unit="http://qudt.org/vocab/unit/DEG_F")
+app = aq.App(
+    name="fahrenheit-to-celsius",
+    inputs=[aq.Selection.from_query(query, alias="temperature")],
+    outputs={"celsius": aq.Output(unit="http://qudt.org/vocab/unit/DEG_C")},
+    function=aq.PythonFunction.from_file(Path("temperature_conversion.py"), "convert"),
+    window=aq.Pointwise(),
+)
+client.deploy_app(app)
 ```
 
-Constructors accept the `parameters` supplied at deployment. Keep instances
-stateless because bindings may execute concurrently, and keep external side
-effects out of `transform` because the runtime may retry a calculation.
+`Selection.from_query` freezes the query as SPARQL, not its current matches.
+Acquirium reruns it when the graph changes. `alias` names a measurement and becomes
+its function role. An optional `group` names an entity alias: all matching streams
+for that entity feed one operator. Without `group`, each input reference has its
+own operator. Multiple selections can give inputs different roles.
 
-| Attribute | Default | Meaning |
-|---|---|---|
-| `name` | class name | Deployment and derived source identity |
-| `grouping` | required | `"per_match"` for one call per match, or `"all_matches"` for one aggregate |
-| `outputs` | required | Mapping of port names to stream declarations |
-| `every` | none | Complete fixed UTC buckets, e.g. `"1m"` |
-| `lookback` | `"0s"` | Preceding input dependency, or `"all"` |
-| `lookahead` | `"0s"` | Following input dependency |
-| `backfill` | `False` | Process retained history on first activation |
-| `batch_delay` | `"0s"` | Advanced: wait after the first pending revision to batch rapid changes into one invocation |
-| `min_interval` | none | Advanced: wait this long after a successful invocation before running that binding again |
+`Selection(query=..., stream="stream", group="group", role="temperature")` also
+accepts explicit SPARQL returning the named stream/group columns. `group=None`
+combines selected inputs into one app-wide group. `target_unit` freezes conversion
+factors in each input's context; functions apply these factors explicitly.
+`exclude_app` excludes an app's output references from a broad selection, useful
+when an app's outputs share the input quantity kind.
 
-Durations accept nonnegative `timedelta` values or strings ending in `ms`,
-`s`, `m`, `h`, or `d`. `every` must be positive.
+`Output` declares optional unit, quantity kind, and label. Output references are
+stable functions of app name, semantic group, and port; changing membership does
+not rename the group's result. Source IDs for derived references are reserved as
+`derived:<app-name>`.
 
-Most apps should keep `batch_delay` and `min_interval` at their defaults. They
-control wall-clock execution behavior and do not change the event-time window
-defined by `every`, `lookback`, and `lookahead`. Their timing state resets on
-server restart, and failed transforms can retry at the materialization polling
-cadence rather than waiting for `min_interval`.
+A Python function has the native signature:
 
-## Example apps
-
-The repository includes two complete examples in [`scripts/apps/`](../../scripts/apps/):
-
-- [`temperature_normalization.py`](../../scripts/apps/temperature_normalization.py)
-  converts each matched temperature stream to degrees Celsius.
-- [`fill_short_temperature_gaps.py`](../../scripts/apps/fill_short_temperature_gaps.py)
-  copies Celsius history and interpolates gaps shorter than one hour.
-
-Check either app before deploying it:
-
-```bash
-acquirium app check scripts/apps/temperature_normalization.py:TemperatureNormalization
-acquirium app check scripts/apps/fill_short_temperature_gaps.py:FillShortTemperatureGaps
+```python
+def convert(frame, context):
+    import polars as pl
+    return {"celsius": frame.select(
+        "event_time_ns", "sample_key",
+        ((pl.col("value") - 32) * 5 / 9).alias("value"), "quality",
+    )}
 ```
 
-The examples and their assumptions are described in
-[`scripts/apps/README.md`](../../scripts/apps/README.md).
+Input columns include `role`, `stream`, `event_time_ns`, `sample_key`, `value`,
+`quality`, and JSON `context`. Each returned port frame must have ordered columns
+`event_time_ns: Int64`, `sample_key: Int64`, `value: Float64`, `quality: UInt32`.
+Use sample key zero. Every port must be returned; an empty frame retracts its
+previous group output. Pointwise results use the input timestamp; fixed-bucket
+results use the bucket start. Choose `aq.FixedBucket(width_ns, origin_ns=0)` for
+buckets. Functions cannot read live graph/network state or undeclared history.
 
-### Query matches
+The module digest pins the function bytes. Deployment paths refer to files
+available on the server; initial local development assumes a shared filesystem.
+Imported dependencies are not yet a hermetic artifact bundle.
 
-A per-match invocation receives the streams resolved by one distinct query
-match. Repeated identical results are deduplicated. A query that associates
-the same stream references with different entity bindings is rejected; make
-the entity selection unambiguous.
+Use `client.list_apps()`, `client.inspect_app(name)`, or `acquirium app list/inspect`
+to inspect declarations and active operators. `client.remove_app(name)` removes
+operators and retracts their current outputs; historical versions remain in the
+core. Output ownership remains reserved by Escapement. Code changes rebuild the
+operator's retained history. Rolling windows, custom output timestamps, full
+history, the old class-based transform API, dry-run/reprocess commands, and
+wall-clock scheduling options are not supported in this initial replacement.
 
-An all-matches invocation receives the union of selected streams under each
-alias. It also receives the result table. A one-row result retains
-`context.row`; multi-row aggregation has no single row.
-
-Query dependencies must exclude unintended derived streams. Use
-`measurement(app="upstream-name")` to select a producer explicitly.
-
-## Output declarations
-
-`aq.output.stream(value_kind=..., **metadata)` derives a stable stream name
-from the app, port, and bound input references.
-
-`aq.output.named(stream_name, value_kind=..., **metadata)` uses the exact
-reference name under source `derived:<app>`.
-
-Set `App.grouping` explicitly to control which query matches each call receives.
-The output declaration only controls naming. A named stream must have a single
-owning binding, so multiple per-match bindings cannot publish to it.
-
-| Metadata | Meaning |
-|---|---|
-| `value_kind` | Required: `"numeric"` or `"text"` |
-| `point_uri` | Existing point to attach to; otherwise a point is generated |
-| `label` | Human-readable label |
-| `unit` | Unit URI |
-| `quantity_kind` | Quantity-kind URI |
-| `medium` | Medium URI |
-| `substance` | Substance URI |
-| `data_source` | Queryable source tag |
-| `properties` | Predicate URI to tuple of object URIs |
-
-Without an explicit label, a generated stream is named from its input label
-and app/port, or its named stream identity. Code edits do not change stream IDs.
-Changing the bound inputs changes a generated identity; named outputs remain
-stable across input membership changes.
-
-### Output tables
-
-Assign each port at most once per invocation. Acceptable values are Arrow
-tables/record batches, Polars dataframes, and pandas dataframes.
-
-Tables must have exactly `time` and `value` columns. Timestamps must be unique,
-timezone-aware, and non-null. They are normalized to UTC microseconds.
-Values must be non-null and match the declared kind. Numeric values are stored
-as float64; text as strings. Empty tables must still have these typed columns.
-
-Assigning a table replaces the port's stored results within
-`context.output_window`; rows returned outside that interval are discarded.
-An empty table therefore removes the previous results in the window. Leaving
-a port unassigned preserves its data. The runtime commits these output changes
-and the corresponding progress updates in one transaction.
-
-## StreamSet
-
-`inputs[alias]` is a StreamSet with:
-
-- `stream`: the sole descriptor, raising if there is not exactly one.
-- `streams`: all descriptors (reference URI, point URI, label, unit).
-- `window`: the complete input read interval.
-- `every`: the app's declared bucket duration, if any.
-- `collect()`: loaded Arrow table with `ref_uri`, `time`, `value`.
-- `df("polars")` or `df("pandas")`: loaded data as a dataframe.
-- `batches()`: chunks of the loaded table, not streaming database reads.
-- `changes`: live rows with revisions in the invocation's revision range.
-- `in_unit(unit_uri)`: a converted StreamSet; missing/incompatible units raise.
-
-Deleted readings are absent from the loaded data, but their tombstones record
-the revision of the deletion so that the runtime can schedule affected apps.
-Because `changes` contains only live rows, it can be empty when a deletion
-causes the invocation.
-
-## InputBatch
-
-The `context` argument exposes:
-
-| Field | Meaning |
-|---|---|
-| `row` | Individual match mapping, when one exists |
-| `result` | Full deduplicated query result as a Polars dataframe |
-| `changed_window` | Changed timestamp extent, or current durable work interval |
-| `output_window` | Output interval owned by this invocation |
-| `read_window` | Input interval including context |
-| `binding_signature` | Compiled binding diagnostic identity |
-| `graph_revision` | Graph version used in planning |
-| `from_revision`, `to_revision` | Input revision range |
-
-Match columns use query aliases. A stream alias holds its point URI, with
-`<alias>_ref`, `<alias>.label`, and `<alias>.unit` alongside it. Non-stream
-entities appear under their own aliases. Internal work cursor fields are
-reserved for runtime bookkeeping.
-
-When a replan changes what a binding depends on, the runtime schedules a
-repair of its retained output. A per-match binding depends on its own match
-row: its entity, streams, labels and units. An all-matches binding depends
-on the whole match table, so adding or removing a sensor repairs the
-aggregate. A change to other rows of the fleet does not re-run a per-match
-binding, so `result` in a per-match call describes the fleet as of that
-call. The runtime persists a fingerprint of each binding's context so it can
-detect changes across restarts. Changing the app's code alone still requires
-explicit reprocessing.
-
-## TimeWindow
-
-`TimeWindow(start, end)` normalizes datetimes to UTC; naive values mean UTC.
-Bounds are inclusive at microsecond precision. Reversed windows are rejected.
-
-For a changed extent `[a,b]`, trailing dependency `L`, and leading dependency
-`A`, affected outputs span `[a-A,b+L]`. Their input context extends another
-`L` before and `A` after. When `every` is declared, the output interval
-expands to whole UTC buckets before the read interval is constructed.
-
-`lookback="all"` reads the retained extent, including prior output timestamps
-needed to remove obsolete results. Its memory use grows with retained history.
-
-### Custom output timestamps
-
-Override `output_window(self, changed)` to return a TimeWindow when output
-timestamps map differently from ordinary pointwise, rolling, or bucketed data.
-The default returns None and uses the declarations above.
-
-The override must be deterministic and include every output timestamp affected
-by the change. Input context still follows `lookback` and `lookahead`.
-The runtime enforces replacement inside the returned interval.
-Use the default for ordinary resampling and rolling calculations.
-
-## aq.align
-
-`aq.align(inputs, every=None, aggregate="mean")` returns a wide Polars frame
-with `time` and one column per stream. With one stream per alias, columns use
-the alias. Multiple streams use `alias[label-or-reference]`.
-
-Omitting `every` uses `App.every`. An explicit value must agree with that
-declaration. Declare buckets on scheduled apps so the runtime can read complete
-buckets. Direct use outside apps can supply `every` explicitly.
-
-Aggregates: mean, min, max, sum, first, last, median, count.
-Streams missing a bucket contribute nulls. Combine available values or drop
-incomplete rows according to the calculation's requirements.
-
-## Check and deploy
-
-- `client.check_app(AppClass, parameters=None, limit=None, search_path=None)`
-  runs on the server and returns per-binding inputs, windows, outputs, and errors.
-- `acquirium app check module:Class --local` executes in the caller's process.
-  Local failures raise with their traceback; server failures appear in results.
-- `aq.console(banner=None, depth=1)` opens an interactive console containing
-  the caller's globals and locals. Ctrl-D or `exit()` resumes execution.
-  Rebinding a name changes only the console snapshot, while mutating a shared
-  object is visible to the app. Without an interactive stdin it logs a warning
-  and returns; run checks with `--local` to use it. `depth` selects an outer
-  caller frame for wrapper helpers.
-- `client.deploy_app(AppClass, parameters=None)` validates before activating.
-- `client.list_apps()` returns `{"ok": true, "apps": [...]}` with every
-  deployment's name, entrypoint, grouping, status, binding count and status
-  counts, graph revision, plan freshness, and planning error.
-- `client.inspect_app(name)` returns `{"ok": true, "app": {...}}` with the
-  same summary plus `definition`, `output_schemas`, and `bindings`.
-  Schemas describe the normalized `time` and `value` columns, both non-null:
-  UTC microsecond timestamps and either float64 or string values. Units and
-  semantic metadata are in `definition.outputs`. Bindings contain resolved
-  stream IDs, consumed/current revisions, last-success timestamps, and errors.
-- `client.remove_app(name)` forgets deployment, progress, and pending work;
-  retained output history is not deleted.
-- `client.reprocess_app(name, start, end)` schedules retained output repair.
-  Bucketed apps expand the interval to complete buckets. Pending work survives
-  restart, and a conflicting reprocessing request is rejected.
-
-Check outputs include `assigned`, `rows`, `truncated`, `value_kind`,
-`stream`, `ref_name`, and `values`. Use `assigned` to distinguish an empty
-replacement from an output the transform left unchanged. Checks load retained
-input history; the result limit only bounds the output included in the response.
-
-### Configuration deployment
-
-The server can deploy apps after its configured drivers start:
-
-```toml
-[[apps]]
-spec = "./plant_apps.py:Celsius"
-threshold = 40.0
-```
-
-`spec` is `module:Class` or `path/to/file.py:Class`; relative file paths are
-resolved against the configuration file. Other keys except the optional
-display `name` are passed to the app constructor as `parameters`. The class
-must remain importable from the same module whenever the server recompiles or
-restarts, and its source must match the deployment digest. A deployment error
-is logged without stopping the server or other configured apps.
-
-For programmatic registration, `spec` may instead name a callable with the
-signature `registrar(client, parameters)`. It may deploy apps itself and return
-`None`, or return one `App` class or an iterable of them. Configuration keys
-are passed to the registrar; classes it returns are deployed without separate
-constructor parameters.
-
-## HTTP API
-
-| Method | Endpoint | Purpose |
-|---|---|---|
-| GET | `/apps` | List every deployment |
-| GET | `/apps/{name}` | Inspect definition, schemas, and binding progress; 404 if absent |
-| PUT | `/apps/{name}` | Deploy a definition |
-| POST | `/apps/check` | Dry run |
-| DELETE | `/apps/{name}` | Remove an app |
-| POST | `/apps/{name}/reprocess?start=...&end=...` | Schedule output repair |
-| GET | `/materialization/dag` | Bindings, edges, progress, and errors |
-
-Deployment JSON carries name, entrypoint, executable_digest, outputs,
-parameters, grouping, and window/scheduling attributes. Durations are integer
-microseconds; lookback may be `"all"`. Grouping must be explicitly set to
-`"per_match"` or `"all_matches"`, including for named outputs. Missing, null,
-and invalid grouping values are rejected when the deployment is constructed.
-Unknown deployment fields are also rejected.
-
-DAG statuses are idle, pending, running, waiting, failed, or reprocessing.
-Deployment summaries prioritize failed, running, reprocessing, waiting,
-pending, then idle binding states. Planning errors report failed. Without a
-planning error, a stale plan reports planning; a current plan with no bindings
-reports no_matches. `plan_current` indicates whether the compiled plan matches
-the published graph revision. Binding details describe the latest compiled plan,
-which can differ from the stored definition while a replan is pending or failing.
-The listing and inspection endpoints do not import app code, replan, or write.
-Errors and last-success timestamps are process diagnostics; consumed progress
-and pending work are durable. Global revision lag can include unrelated writes.
-
-For the scheduling and recovery algorithm, see
-[Materialization internals](../explanation/materialization-internals.md#scheduling-and-recovery).
+A failed function pauses the entire native epoch queue. Inspect
+`client.engine_status()`, repair the artifact/environment, and explicitly call
+`POST /engine/retry`. Accepted work remains durable. Replacing a plan does not
+bypass failed work.

@@ -201,32 +201,3 @@ def test_register_streams_matching_unit_lands_on_reference():
     assert (ref_uri, HAS_UNIT, URIRef(_MG_L)) in g
     assert (point, HAS_UNIT, URIRef(_MG_L)) not in g
     assert (point, HAS_MEDIUM, URIRef(_WATER)) in g
-
-
-def test_insert_timeseries_batch_chunks_at_acquirium_facade():
-    aq = Acquirium.__new__(Acquirium)
-    aq.client = MagicMock()
-    aq.insert_batch_rows = 3
-    aq.client.insert_timeseries_batch.side_effect = lambda source_id, streams: {
-        "ok": True,
-        "rows_inserted": sum(len(rows) for rows in streams.values()),
-    }
-
-    ts = datetime(2026, 4, 28, tzinfo=timezone.utc)
-    result = aq.insert_timeseries_batch(
-        "source-a",
-        {
-            "temp": [(ts, 1.0), (ts, 2.0)],
-            "rh": [(ts, 3.0), (ts, 4.0)],
-        },
-    )
-
-    assert result == {"ok": True, "rows_inserted": 4, "batches": 2}
-    assert aq.client.insert_timeseries_batch.call_count == 2
-    first_source, first_chunk = aq.client.insert_timeseries_batch.call_args_list[0].args
-    second_source, second_chunk = aq.client.insert_timeseries_batch.call_args_list[1].args
-    assert first_source == second_source == "source-a"
-    assert sum(len(rows) for rows in first_chunk.values()) == 3
-    assert sum(len(rows) for rows in second_chunk.values()) == 1
-    assert set(first_chunk) == {"temp", "rh"}
-    assert set(second_chunk) == {"rh"}
