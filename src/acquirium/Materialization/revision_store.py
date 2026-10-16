@@ -602,13 +602,26 @@ class RevisionStore:
                 mask = pc.and_(pc.greater_equal(table["time"], pa.scalar(window.start)),
                                pc.less_equal(table["time"], pa.scalar(window.end)))
                 items.append((binding, batch, name, binding.outputs[name], table.filter(mask)))
+        ts = self._timestamp_type
+        # A window that starts after a stream's last row holds nothing to
+        # replace: no probe, no tombstone, just the new rows. One read of each
+        # output's last timestamp (deleted rows included, so the answer is
+        # conservative) tells the fresh windows from the corrections.
+        refs = sorted({port.ref_uri for _, batch, _, port, _ in items if not batch.context.full_reset})
+        last: dict[str, Any] = {}
+        for chunk in (refs[i:i + 500] for i in range(0, len(refs), 500)):
+            values, params = self._values([(ref,) for ref in chunk], ("VARCHAR",))
+            last.update(self._numbered(conn, f"""SELECT v.ref_uri, (SELECT max(t.ts) FROM timeseries t WHERE t.ref_id=r.ref_id)
+                FROM (VALUES {values}) v(ref_uri) LEFT JOIN ref_ids r ON r.ref_uri=v.ref_uri""", params).fetchall())
+        appending = {index for index, (_, batch, _, port, _) in enumerate(items)
+                     if not batch.context.full_reset
+                     and (last.get(port.ref_uri) is None or self._time(batch.context.output_window.start) > last[port.ref_uri])}
         # An empty result over a window that holds nothing changes nothing;
         # one probe over every such window says which do hold rows.
         probes = [(index, port.ref_uri, self._time(batch.context.output_window.start), self._time(batch.context.output_window.end))
                   for index, (binding, batch, name, port, table) in enumerate(items)
-                  if not batch.context.full_reset and not table.num_rows]
+                  if not batch.context.full_reset and not table.num_rows and index not in appending]
         occupied: set[int] = set()
-        ts = self._timestamp_type
         for chunk in (probes[i:i + 500] for i in range(0, len(probes), 500)):
             values, params = self._values(chunk, ("INTEGER", "VARCHAR", ts, ts))
             occupied.update(row[0] for row in self._numbered(conn, f"""SELECT v.i FROM (VALUES {values}) v(i, ref_uri, s, e)
@@ -636,7 +649,7 @@ class RevisionStore:
                     self._execute(conn, f"DELETE FROM timeseries WHERE {ref_filter}", [port.ref_uri])
                 self._execute(conn, "INSERT INTO stream_resets (ref_uri, last_revision) VALUES (?, ?) ON CONFLICT (ref_uri) DO UPDATE SET last_revision=EXCLUDED.last_revision",
                               [port.ref_uri, revision])
-            else:
+            elif index not in appending:
                 # Incremental writes replace an owned interval using tombstones.
                 tombstones.append((port.ref_uri, self._time(window.start), self._time(window.end)))
             registrations.append((port.ref_uri, port.point_uri, f"derived:{binding.application_name}", port.ref_name, port.spec.value_kind))

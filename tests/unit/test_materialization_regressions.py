@@ -358,3 +358,37 @@ def test_a_wave_rejects_two_writers_of_one_timestamp_and_accepts_disjoint_ones(t
         assert values == [1.0, 2.0]
     finally:
         store.close()
+
+
+def test_a_fresh_window_past_the_streams_last_row_is_appended_without_a_tombstone(tmp_path, monkeypatch):
+    statements = []
+    original = RevisionStore._numbered
+
+    def recording(self, conn, query, params):
+        statements.append(' '.join(query.split()))
+        return original(self, conn, query, params)
+    monkeypatch.setattr(RevisionStore, '_numbered', recording)
+
+    def tombstones():
+        return [s for s in statements if s.startswith('UPDATE timeseries SET deleted=TRUE')]
+    store = DuckDBStore(tmp_path / 'append.duckdb')
+    try:
+        store.upsert_rows('urn:input', [(NOW, 1.0)], value_kind='numeric')
+        revisions = RevisionStore(store)
+        binding = copy_binding('copy')
+        revisions.initialise(binding, True)
+        # First rows of a new stream, then rows after its last one: appended.
+        for value, at in ((1.0, NOW), (2.0, NOW + timedelta(hours=1))):
+            store.upsert_rows('urn:input', [(at, value)], value_kind='numeric')
+            batch = revisions.next_batch(binding)
+            assert revisions.commit(binding, batch, {'out': _rows([(at, value)])})
+        assert tombstones() == []
+        # A correction inside the written range replaces the interval.
+        store.upsert_rows('urn:input', [(NOW, 5.0)], value_kind='numeric')
+        batch = revisions.next_batch(binding)
+        assert revisions.commit(binding, batch, {'out': _rows([(NOW, 5.0)])})
+        assert len(tombstones()) == 1
+        values = [row['value'] for batch in store.timeseries('urn:copy', value_mode='numeric') for row in batch.to_pylist()]
+        assert values == [5.0, 2.0]
+    finally:
+        store.close()
