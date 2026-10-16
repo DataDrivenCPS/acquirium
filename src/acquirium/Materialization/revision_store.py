@@ -651,10 +651,10 @@ class RevisionStore:
                 if not self._postgres:
                     frame = frame.with_columns(pl.col("ts").dt.replace_time_zone(None))
                 numeric = port.spec.value_kind == "numeric"
-                frames.append(frame.select(
+                frames.append((port.ref_uri, frame.select(
                     pl.lit(port.ref_uri).alias("ref_uri"), "ts",
                     (pl.col("value").cast(pl.Float64) if numeric else pl.lit(None, dtype=pl.Float64)).alias("numeric_value"),
-                    (pl.lit(None, dtype=pl.String) if numeric else pl.col("value").cast(pl.String)).alias("text_value")))
+                    (pl.lit(None, dtype=pl.String) if numeric else pl.col("value").cast(pl.String)).alias("text_value"))))
         for chunk in (tombstones[i:i + 500] for i in range(0, len(tombstones), 500)):
             values, params = self._values(chunk, ("VARCHAR", ts, ts), offset=1)
             # A semi-join: a row matched by two windows is still updated once
@@ -669,11 +669,20 @@ class RevisionStore:
             values, params = self._values(chunk, ("VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR"))
             self._numbered(conn, f"INSERT INTO streams (ref_uri, point_uri, source_id, ref_name, value_kind) VALUES {values} ON CONFLICT (ref_uri) DO NOTHING", params)
         if frames:
-            frame = pl.concat(frames)
-            clash = frame.filter(frame.select("ref_uri", "ts").is_duplicated())
-            if clash.height:
-                raise ValueError(f"two bindings wrote {clash['ref_uri'][0]} at {clash['ts'][0]} in one wave; their intervals overlap")
-            self.store._insert_frame(conn, frame, revision)
+            # Two outputs collide only when they write the same stream. Almost
+            # every stream in a wave has one writer; only a shared stream (a
+            # bounded binding next to the owner of another interval) has its
+            # timestamps checked.
+            by_ref: dict[str, list] = {}
+            for ref, frame in frames:
+                by_ref.setdefault(ref, []).append(frame)
+            for ref, shared in by_ref.items():
+                if len(shared) > 1:
+                    stamps = pl.concat([frame.get_column("ts") for frame in shared])
+                    clash = stamps.filter(stamps.is_duplicated())
+                    if clash.len():
+                        raise ValueError(f"two bindings wrote {ref} at {clash[0]} in one wave; their intervals overlap")
+            self.store._insert_frame(conn, pl.concat([frame for _, frame in frames]), revision)
         # Cursor movement is atomic with this chunk's output. Keep the input
         # frontier fixed until the final chunk, otherwise restart would skip
         # unfinished portions of the captured revision range.

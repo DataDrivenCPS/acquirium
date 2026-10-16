@@ -327,3 +327,34 @@ def test_invalid_deployment_does_not_replace_active_definition(tmp_path):
         assert runtime._deployments() == (original,)
     finally:
         store.close()
+
+
+def _shared_output(name):
+    return Binding(name, 'digest', {'source': (StreamDescriptor('urn:input'),)}, {'out': _port(ref='urn:shared')})
+
+
+def _rows(points):
+    import pyarrow as pa
+    return pa.table({'time': pa.array([t for t, _ in points], pa.timestamp('us', tz='UTC')),
+                     'value': pa.array([v for _, v in points], pa.float64())})
+
+
+def test_a_wave_rejects_two_writers_of_one_timestamp_and_accepts_disjoint_ones(tmp_path):
+    store = DuckDBStore(tmp_path / 'shared.duckdb')
+    try:
+        store.upsert_rows('urn:input', [(NOW, 1.0), (NOW + timedelta(hours=1), 2.0)], value_kind='numeric')
+        revisions = RevisionStore(store)
+        first, second = _shared_output('first'), _shared_output('second')
+        for binding in (first, second):
+            revisions.initialise(binding, True)
+        batches = {binding.application_name: revisions.next_batch(binding) for binding in (first, second)}
+        with pytest.raises(ValueError, match='urn:shared'):
+            revisions.commit_wave([(first, batches['first'], {'out': _rows([(NOW, 1.0)])}),
+                                   (second, batches['second'], {'out': _rows([(NOW, 2.0)])})])
+        accepted = revisions.commit_wave([(first, batches['first'], {'out': _rows([(NOW, 1.0)])}),
+                                          (second, batches['second'], {'out': _rows([(NOW + timedelta(hours=1), 2.0)])})])
+        assert set(accepted) == {first.signature, second.signature}
+        values = [row['value'] for batch in store.timeseries('urn:shared', value_mode='numeric') for row in batch.to_pylist()]
+        assert values == [1.0, 2.0]
+    finally:
+        store.close()
