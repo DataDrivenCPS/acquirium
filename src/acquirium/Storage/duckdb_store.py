@@ -353,11 +353,29 @@ class DuckDBStore:
     def _insert_frame(conn, df: pl.DataFrame, revision: int) -> None:
         """Upsert a prepared frame on *conn*: delete colliding (ref, ts) rows, insert.
 
-        The frame carries ref_uri strings; ids are assigned for unseen uris and
-        the rows keyed by ref_id, all inside the caller's transaction.
+        A frame carrying ``ref_id`` is keyed as is. One carrying ``ref_uri``
+        strings has ids assigned for unseen uris and the rows keyed by ref_id,
+        all inside the caller's transaction.
         """
         conn.register("_acquirium_incoming_timeseries", df)
         try:
+            if "ref_id" in df.columns:
+                conn.execute(
+                    f"""
+                    DELETE FROM {TIMESERIES_TABLE}
+                    USING _acquirium_incoming_timeseries AS incoming
+                    WHERE {TIMESERIES_TABLE}.ref_id = incoming.ref_id
+                      AND {TIMESERIES_TABLE}.ts = incoming.ts
+                    """
+                )
+                conn.execute(
+                    f"""
+                    INSERT INTO {TIMESERIES_TABLE} (ref_id, ts, numeric_value, text_value, last_revision)
+                    SELECT ref_id, ts, numeric_value, text_value, ?
+                    FROM _acquirium_incoming_timeseries
+                    """, [revision]
+                )
+                return
             conn.execute(
                 f"""
                 INSERT INTO {REF_IDS_TABLE} (ref_uri)

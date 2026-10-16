@@ -79,8 +79,9 @@ def test_a_derived_write_failure_rolls_the_whole_step_back(chain, monkeypatch):
     calls = []
 
     def fail_on_derived(conn, frame, revision):
-        calls.append(frame["ref_uri"][0])
-        if frame["ref_uri"][0] != "urn:input":
+        # Ingested rows arrive by uri; a wave's derived rows carry stream ids.
+        calls.append(frame["ref_uri"][0] if "ref_uri" in frame.columns else "derived")
+        if calls[-1] == "derived":
             raise RuntimeError("disk full")
         return real(conn, frame, revision)
     monkeypatch.setattr(store, "_insert_frame", fail_on_derived)
@@ -88,7 +89,7 @@ def test_a_derived_write_failure_rolls_the_whole_step_back(chain, monkeypatch):
     with pytest.raises(RuntimeError, match="disk full"):
         engine.step()
 
-    assert calls == ["urn:input", "urn:copy"]
+    assert calls == ["urn:input", "derived"]
     assert stored(store, "urn:input") == [] and engine.pending() == 1 and engine.last_step() == 0
     monkeypatch.undo()
     assert engine.step().published and stored(store, "urn:child") == [1.0]

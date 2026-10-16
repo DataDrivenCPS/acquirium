@@ -372,8 +372,13 @@ class TimescaleStore(TimeseriesStore):
         return df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
 
     def _insert_frame(self, conn, df: pl.DataFrame, revision: int) -> None:
-        """COPY and merge a prepared frame at one materialization revision."""
+        """COPY and merge a prepared frame at one materialization revision.
+
+        A frame carrying ``ref_id`` is merged as is; one carrying ``ref_uri``
+        has ids assigned for unseen uris and is joined to the registry.
+        """
         staging = self.STAGING_TABLE
+        key, key_type = ("ref_id", "INTEGER") if "ref_id" in df.columns else ("ref_uri", "TEXT")
         with conn.cursor() as cur:
             # ON COMMIT DROP fires at the outer commit, so a second write in
             # one materialization transaction needs the previous table removed.
@@ -381,19 +386,36 @@ class TimescaleStore(TimeseriesStore):
             cur.execute(
                 f"""
                 CREATE TEMP TABLE {staging} (
-                    ref_uri TEXT NOT NULL,
+                    {key} {key_type} NOT NULL,
                     ts TIMESTAMPTZ NOT NULL,
                     numeric_value DOUBLE PRECISION,
                     text_value TEXT
                 ) ON COMMIT DROP
                 """
             )
-            payload = df.select(["ref_uri", "ts", "numeric_value", "text_value"]).write_csv(include_header=False)
+            payload = df.select([key, "ts", "numeric_value", "text_value"]).write_csv(include_header=False)
             with timed_debug(logger, "COPY rows=%d bytes=%d", len(df), len(payload)):
                 with cur.copy(
-                    f"COPY {staging} (ref_uri, ts, numeric_value, text_value) FROM STDIN WITH (FORMAT csv)"
+                    f"COPY {staging} ({key}, ts, numeric_value, text_value) FROM STDIN WITH (FORMAT csv)"
                 ) as copy:
                     copy.write(payload)
+            if key == "ref_id":
+                with timed_debug(logger, "merge into %s rows=%d", TIMESERIES_TABLE, len(df)):
+                    cur.execute(
+                        f"""
+                        INSERT INTO {TIMESERIES_TABLE} (ref_id, ts, numeric_value, text_value, deleted, last_revision)
+                        SELECT ref_id, ts, numeric_value, text_value, FALSE, %s
+                        FROM {staging}
+                        ORDER BY ref_id, ts
+                        ON CONFLICT (ref_id, ts) DO UPDATE SET
+                            numeric_value = EXCLUDED.numeric_value,
+                            text_value = EXCLUDED.text_value,
+                            deleted = FALSE,
+                            last_revision = EXCLUDED.last_revision
+                        """,
+                        (revision,),
+                    )
+                return
             cur.execute(
                 f"""
                 INSERT INTO {REF_IDS_TABLE} (ref_uri)

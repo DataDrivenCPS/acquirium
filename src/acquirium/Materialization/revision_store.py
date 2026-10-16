@@ -603,16 +603,29 @@ class RevisionStore:
                                pc.less_equal(table["time"], pa.scalar(window.end)))
                 items.append((binding, batch, name, binding.outputs[name], table.filter(mask)))
         ts = self._timestamp_type
-        # A window that starts after a stream's last row holds nothing to
-        # replace: no probe, no tombstone, just the new rows. One read of each
-        # output's last timestamp (deleted rows included, so the answer is
-        # conservative) tells the fresh windows from the corrections.
-        refs = sorted({port.ref_uri for _, batch, _, port, _ in items if not batch.context.full_reset})
+        # One read per output stream gives its integer id and its last
+        # timestamp. Rows are written by id, so the insert joins no registry;
+        # an output never written before gets its id here, under the write
+        # lock, inside the wave's transaction.
+        refs = sorted({port.ref_uri for _, _, _, port, _ in items})
+        ids: dict[str, int] = {}
         last: dict[str, Any] = {}
         for chunk in (refs[i:i + 500] for i in range(0, len(refs), 500)):
             values, params = self._values([(ref,) for ref in chunk], ("VARCHAR",))
-            last.update(self._numbered(conn, f"""SELECT v.ref_uri, (SELECT max(t.ts) FROM timeseries t WHERE t.ref_id=r.ref_id)
-                FROM (VALUES {values}) v(ref_uri) LEFT JOIN ref_ids r ON r.ref_uri=v.ref_uri""", params).fetchall())
+            for ref, ref_id, last_ts in self._numbered(conn, f"""SELECT v.ref_uri, r.ref_id, (SELECT max(t.ts) FROM timeseries t WHERE t.ref_id=r.ref_id)
+                FROM (VALUES {values}) v(ref_uri) LEFT JOIN ref_ids r ON r.ref_uri=v.ref_uri""", params).fetchall():
+                if ref_id is not None:
+                    ids[ref] = int(ref_id)
+                last[ref] = last_ts
+        unregistered = [ref for ref in refs if ref not in ids]
+        for chunk in (unregistered[i:i + 500] for i in range(0, len(unregistered), 500)):
+            values, params = self._values([(ref,) for ref in chunk], ("VARCHAR",))
+            ids.update((ref, int(ref_id)) for ref, ref_id in
+                       self._numbered(conn, f"INSERT INTO ref_ids (ref_uri) VALUES {values} RETURNING ref_uri, ref_id", params).fetchall())
+        # A window that starts after a stream's last row holds nothing to
+        # replace: no probe, no tombstone, just the new rows. The last
+        # timestamp counts deleted rows too, so the answer errs towards
+        # replacing.
         appending = {index for index, (_, batch, _, port, _) in enumerate(items)
                      if not batch.context.full_reset
                      and (last.get(port.ref_uri) is None or self._time(batch.context.output_window.start) > last[port.ref_uri])}
@@ -665,7 +678,7 @@ class RevisionStore:
                     frame = frame.with_columns(pl.col("ts").dt.replace_time_zone(None))
                 numeric = port.spec.value_kind == "numeric"
                 frames.append((port.ref_uri, frame.select(
-                    pl.lit(port.ref_uri).alias("ref_uri"), "ts",
+                    pl.lit(ids[port.ref_uri], dtype=pl.Int32).alias("ref_id"), "ts",
                     (pl.col("value").cast(pl.Float64) if numeric else pl.lit(None, dtype=pl.Float64)).alias("numeric_value"),
                     (pl.lit(None, dtype=pl.String) if numeric else pl.col("value").cast(pl.String)).alias("text_value"))))
         for chunk in (tombstones[i:i + 500] for i in range(0, len(tombstones), 500)):
