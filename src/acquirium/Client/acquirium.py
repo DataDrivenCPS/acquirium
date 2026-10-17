@@ -327,6 +327,10 @@ class Acquirium:
     def engine_snapshot(self):
         return self.client.engine_snapshot()
 
+    def retry_engine(self):
+        """Resume the paused native processor after repairing its failure."""
+        return self.client.retry_engine()
+
     def delete_timeseries(self, source_id, ref_name, timestamps, *, request_id=None):
         return self.client.delete_timeseries(source_id, ref_name, timestamps, request_id=request_id)
 

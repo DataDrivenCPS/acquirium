@@ -63,7 +63,10 @@ and frozen context; Escapement schedules affected groups and commits raw and
 derived changes together.
 
 The [temperature example](examples/transformation/README.md) demonstrates the
-complete path. The [app reference](docs/reference/apps.md) describes authoring.
+basic path. The [soft-sensor chain](examples/soft_sensors/README.md) demonstrates
+tank means, semantic discovery of derived inputs, and an alarm in native Python
+subprocesses. The [authoring guide](docs/how-to/write-soft-sensors.md) and
+[app reference](docs/reference/apps.md) describe deployment and function contracts.
 The [core architecture](docs/explanation/escapement-core.md) explains ownership,
 receipts, snapshots, restart, and failure behavior.
 

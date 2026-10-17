@@ -20,4 +20,7 @@ accepted/publication receipts; corrected or deleted input timestamps repair the
 derived history through the native engine.
 
 Inspect with `acquirium app list` or `acquirium app inspect fahrenheit-to-celsius`.
-For authoring details, see [the native app reference](../reference/apps.md).
+Continue with the [tank-temperature chain](../../examples/soft_sensors/README.md)
+for fixed buckets, semantic grouping, and a downstream alarm. For authoring and
+deployment details, see [write soft sensors](../how-to/write-soft-sensors.md) and
+[the native app reference](../reference/apps.md).

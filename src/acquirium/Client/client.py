@@ -338,7 +338,8 @@ class AcquiriumClient:
                 if tables:
                     return pl.concat(tables)
                 else:
-                    return pl.DataFrame()
+                    import pyarrow as pa
+                    return pl.from_arrow(pa.Table.from_batches([], schema=reader.schema))
             except Exception as e:
                 raise RuntimeError("could not read timeseries Arrow response") from e
             
@@ -898,6 +899,12 @@ class AcquiriumClient:
 
     def engine_snapshot(self):
         response = self._http.get(f"{self.base_url}/engine/snapshot")
+        _raise_for_status(response)
+        return response.json()
+
+    def retry_engine(self):
+        """Resume accepted work after repairing a failed function/environment."""
+        response = self._http.post(f"{self.base_url}/engine/retry")
         _raise_for_status(response)
         return response.json()
 

@@ -29,7 +29,7 @@ from escapement import (
 from rdflib import Graph, Literal, RDF, RDFS, URIRef
 from rdflib.namespace import XSD
 
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import compute_ref_uri, looks_like_uri
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_SOURCE_ID,
     ACQUIRIUM_REF_NAME,
@@ -39,6 +39,7 @@ from acquirium.internals.internals_namespaces import (
     HAS_QUANTITY_KIND,
     VIRTUAL_POINT,
     PRODUCED_BY,
+    S223,
 )
 
 
@@ -97,6 +98,7 @@ class Output:
     unit: str | None = None
     quantity_kind: str | None = None
     label: str | None = None
+    on_group: bool = False
 
 
 @dataclass(frozen=True)
@@ -120,6 +122,8 @@ class App:
             raise ValueError("only pointwise and fixed-bucket windows are supported")
         if any(not key for key in self.outputs):
             raise ValueError("output port names must be nonempty")
+        if any(type(spec.on_group) is not bool for spec in self.outputs.values()):
+            raise ValueError("output on_group must be a boolean")
         return dict(
             name=self.name,
             inputs=[asdict(item) for item in self.inputs],
@@ -294,6 +298,10 @@ class Apps:
                     rdf.add((point, RDF.type, VIRTUAL_POINT))
                     rdf.add((point, HAS_EXTERNAL_REFERENCE, ref))
                     rdf.add((point, PRODUCED_BY, Literal(name)))
+                    if spec.on_group:
+                        if not looks_like_uri(group):
+                            raise ValueError("output on_group requires a group URI")
+                        rdf.add((URIRef(group), S223.hasProperty, point))
                     rdf.add(
                         (point, RDFS.label, Literal(spec.label or f"{name} {port}"))
                     )

@@ -17,8 +17,59 @@ and restart. A real `aq.init()` server test covers a native Python function,
 DataObject reads, corrections, deletion, and restart. The current Escapement
 revision suffices for this slice; future native API changes are explicitly in
 scope, including stream statistics, bulk Arrow exchange, richer windows/values,
-and controlled failed-prefix recovery. Step 4's representative operating-scale
-measurements and release/CI native packaging remain subsequent work.
+and controlled failed-prefix recovery. The soft-sensor authoring and execution
+slice below is implemented, including a runnable chain and integration coverage.
+Step 4's representative operating-scale measurements and release/CI native
+packaging remain subsequent work.
+
+## Native soft sensors
+
+Implemented in [the tank-temperature chain](../../examples/soft_sensors/README.md)
+and [authoring guide](../how-to/write-soft-sensors.md). Output declarations now
+support app-owned semantic group attachments; the client exposes native retry;
+empty range reads preserve their Arrow schema. Real-server integration tests
+compare the complete Python DAG with independent recomputation through late data,
+corrections, deletion, metadata moves, parameter/code versions, and restart. A
+second test verifies worker subprocesses, atomic failure, and dependency repair
+followed by retry. Hermetic bundles, per-app environments, and worker pooling
+remain native Escapement extensions rather than promises of this slice.
+
+Use Escapement's [live example](../../escapement/examples/live/README.md) as the
+reference: semantic room membership feeds fixed-bucket means, which feed a
+pointwise hottest-room function and an alarm. Its
+[DAG declaration](../../escapement/examples/live/dag.py) and
+[Python calculations](../../escapement/examples/live/transforms.py) already
+demonstrate the intended separation. The bridge documentation contains older
+dual-store/cutover suggestions; those do not apply to this mandatory replacement.
+
+The implemented slice follows these requirements. Packaging extensions and more
+complex domain algorithms remain driven by concrete workloads:
+
+1. Bring the live chain into Acquirium using semantic `Selection` declarations,
+   grouping, output metadata, and ordinary client ingestion/reads. Exercise the
+   derived metadata needed for downstream discovery, including entity membership;
+   extend the declaration if attaching outputs to their semantic group requires it.
+2. Make the authoring contract explicit: pure `(frame, context) -> {port: frame}`
+   functions, declared roles, frozen units/parameters, pointwise/fixed-bucket
+   windows, and complete group results. Empty results retract prior values.
+   External notifications consume published changes outside the calculation.
+3. Keep Python execution in Escapement. Its current executor launches one child
+   process per affected operator per epoch, imports the function once, and
+   evaluates the epoch's affected groups through Arrow files. Independent
+   operators can run in parallel. Acquirium must not recreate an app runner.
+4. Define reproducible deployment of calculation code, helper modules,
+   dependencies, and model artifacts. The current single-file digest and shared
+   interpreter are a starting point; extend Escapement's artifact/environment API
+   where needed. Add worker pooling only after measuring startup overhead, keeping
+   results independent of process lifetime and prior invocations.
+5. Validate the whole chain through late data, corrections, deletion, metadata
+   moves, restart, worker failure and retry against independent recomputation.
+   Then port a representative domain soft sensor. Identify required rolling or
+   stateful computations explicitly and implement their semantics in Escapement.
+
+**Acceptance:** a runnable Acquirium soft-sensor chain and authoring guide, with
+native subprocess execution and repeatable results through historical repair and
+restart. No old transform API, polling app loop, or separate execution store.
 
 ## Mandatory direction
 

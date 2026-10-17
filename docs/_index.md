@@ -71,6 +71,7 @@ The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acq
 ## How-to guides
 
 - [Calculate derived streams](how-to/calculate-derived-streams.md) — water-temperature conversion, averages, and alarms
+- [Write soft sensors](how-to/write-soft-sensors.md) — semantic DAGs, Python subprocesses, and immutable calculation releases
 - [Check, deploy, and repair an app](how-to/check-deploy-apps.md) — dry runs, deployment, reprocessing, and execution controls
 - [Run the server](how-to/run-the-server.md) — the server command, startup, Docker
 - [Start from a script](how-to/local-runtime.md) — `aq.init()`, config discovery, and local server ownership

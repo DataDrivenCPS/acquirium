@@ -35,7 +35,11 @@ factors in each input's context; functions apply these factors explicitly.
 `exclude_app` excludes an app's output references from a broad selection, useful
 when an app's outputs share the input quantity kind.
 
-`Output` declares optional unit, quantity kind, and label. Output references are
+`Output` declares optional unit, quantity kind, and label. Set `on_group=True`
+to attach its point to the semantic group using `s223:hasProperty`; the group must
+be a URI. Downstream selections and the query DSL can then find measurements
+through the entity they describe. These links live in the app-owned graph.
+Output references are
 stable functions of app name, semantic group, and port; changing membership does
 not rename the group's result. Source IDs for derived references are reserved as
 `derived:<app-name>`.
@@ -61,7 +65,11 @@ buckets. Functions cannot read live graph/network state or undeclared history.
 
 The module digest pins the function bytes. Deployment paths refer to files
 available on the server; initial local development assumes a shared filesystem.
-Imported dependencies are not yet a hermetic artifact bundle.
+Keep versions at immutable paths, preserving files needed by accepted work.
+Imported dependencies are not yet a hermetic artifact bundle. See
+[write soft sensors](../how-to/write-soft-sensors.md) for the environment, model
+artifact, subprocess, and deployment contract, and the
+[complete chain](../../examples/soft_sensors/README.md) for a runnable example.
 
 Use `client.list_apps()`, `client.inspect_app(name)`, or `acquirium app list/inspect`
 to inspect declarations and active operators. `client.remove_app(name)` removes
@@ -73,5 +81,5 @@ wall-clock scheduling options are not supported in this initial replacement.
 
 A failed function pauses the entire native epoch queue. Inspect
 `client.engine_status()`, repair the artifact/environment, and explicitly call
-`POST /engine/retry`. Accepted work remains durable. Replacing a plan does not
+`client.retry_engine()` (`POST /engine/retry`). Accepted work remains durable. Replacing a plan does not
 bypass failed work.

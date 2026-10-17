@@ -400,3 +400,81 @@ def test_http_range_strings_preserve_nanosecond_boundaries(system):
     result = ipc.open_stream(response.content).read_all()
     assert result["ts"].cast(pa.int64()).to_pylist() == [1002]
     assert result["value"].to_pylist() == [2.0]
+
+
+def test_group_output_links_are_owned_and_removed_with_membership(system):
+    from acquirium.internals.internals_namespaces import S223
+    from rdflib import URIRef
+
+    manager, http, client = system
+    ref = register(system, "attached")
+    manager.insert_graph(
+        f"<{ref}> <urn:group> <urn:attached:tank> .", source_id="attached-layout"
+    )
+    declaration = App(
+        "attached-mean",
+        [
+            Selection(
+                f"SELECT ?stream ?group WHERE {{ VALUES ?stream {{ <{ref}> }} "
+                "?stream <urn:group> ?group }"
+            )
+        ],
+        {"mean": Output(on_group=True)},
+        {"kind": "mean", "port": "mean", "per_stream": False},
+    )
+    client.deploy_app(declaration)
+    output = output_reference(declaration.name, "urn:attached:tank", "mean")
+    graph = manager.graph_store.data_graph("derived:attached-mean")
+    assert (
+        URIRef("urn:attached:tank"),
+        S223.hasProperty,
+        URIRef(f"{output}__point"),
+    ) in graph
+    manager.core.wait(
+        manager.insert_timeseries(
+            source_id="attached",
+            ref_name="temperature",
+            rows=[(1234, 32)],
+            request_id="one",
+        )
+    )
+    client.insert_graph("", source_id="attached-layout", replace=True)
+    assert not list(manager.graph_store.data_graph("derived:attached-mean"))
+    assert client.inspect_app(declaration.name)["app"]["operators"] == []
+    assert manager.core.engine.snapshot().value(output, 1234) is None
+    # The app owns only its derived links, not the stream registration graph.
+    assert ref in str(
+        client.query().measurement(unit="http://qudt.org/vocab/unit/DEG_F").execute()
+    )
+    client.remove_app(declaration.name)
+
+
+def test_output_attachment_rejects_literal_groups_without_changing_active_plan(system):
+    manager, http, client = system
+    ref = register(system, "literal-group")
+    declaration = App(
+        "invalid-attachment",
+        [
+            Selection(
+                f'SELECT ?stream ?group WHERE {{ BIND(<{ref}> AS ?stream) BIND("tank" AS ?group) }}'
+            )
+        ],
+        {"mean": Output(on_group=True)},
+        {"kind": "mean", "port": "mean", "per_stream": False},
+    )
+    previous = manager.core.engine.snapshot().plan
+    response = http.put(f"/apps/{declaration.name}", json=declaration.to_dict())
+    assert response.status_code == 400
+    assert "group URI" in response.text
+    assert manager.core.engine.snapshot().plan == previous
+    assert not list(manager.graph_store.data_graph(f"derived:{declaration.name}"))
+
+
+def test_output_attachment_requires_a_boolean():
+    with pytest.raises(ValueError, match="on_group must be a boolean"):
+        App(
+            "invalid-output",
+            [],
+            {"value": Output(on_group="yes")},
+            {"kind": "mean", "port": "value", "per_stream": False},
+        ).to_dict()

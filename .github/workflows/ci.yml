@@ -126,7 +126,7 @@ jobs:
 
       - name: Run integration tests
         run: |
-          uv run --no-sync pytest tests/integration/test_native_runtime.py tests/integration/test_local_runtime.py tests/integration/test_graph_store.py \
+          uv run --no-sync pytest tests/integration/test_native_runtime.py tests/integration/test_soft_sensors.py tests/integration/test_local_runtime.py tests/integration/test_graph_store.py \
             -v \
             --tb=short \
             --ignore=tests/unit \

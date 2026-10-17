@@ -32,7 +32,7 @@ It also runs at normal interpreter exit. See
 from acquirium import Acquirium
 
 acq = Acquirium(server_url="127.0.0.1", server_port=8000, use_ssl=False,
-                insert_batch_rows=50000, health_timeout=60.0)
+                health_timeout=60.0)
 ```
 
 The constructor waits for `GET /health` for up to `health_timeout` seconds.
@@ -71,31 +71,26 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 | `register_streams(streams: Iterable[dict]) -> None` | Declare one or more streams' identity and semantic metadata in one graph insert; see the [lifecycle guide](../explanation/stream-lifecycle.md). |
 | `reference_uri(source_id: str, ref_name: str) -> URIRef` | The canonical stream URI for a `(source_id, ref_name)` pair. |
 | `resolve_point_metadata(fields: dict, min_score=0.6) -> dict[str, str \| None]` | Resolve `unit`, `quantity_kind`, `medium`, `substance` text to URIs jointly. |
-| `insert_timeseries(source_id, ref_name, rows: list[tuple[datetime, Any]], *, point_uri=None, replace=False) -> dict` | Insert or correct rows for one stream. Register point metadata separately; `replace=True` makes the stream contain exactly the supplied rows; an empty list clears it. Downstream apps fully rebuild after replacement. |
-| `insert_timeseries_batch(source_id, streams: dict[str, list[tuple[datetime, Any]]]) -> dict` | Insert rows for several streams; chunked by `insert_batch_rows`. |
-| `insert_timeseries_arrow(source_id, table: pa.Table, *, publication_id=None) -> dict` | Insert a `(ts, ref_name, value)` Arrow table; the path drivers use. The optional ID is for request correlation and does not currently deduplicate retries. |
-
-### Logbook
-
-| method | description |
-|---|---|
-| `insert_log(message, log_time=None, observation_start=None, observation_end=None) -> dict` | Insert a plant-level log entry. |
-| `read_logs(log_time_start=None, log_time_end=None, observation_start=None, observation_end=None) -> pl.DataFrame` | Read plant-level log entries. |
-| `delete_logs() -> dict` | Delete all plant-level log entries. |
+| `insert_timeseries(source_id, ref_name, rows, *, request_id=None) -> dict` | Upsert finite numeric observations; timestamps are UTC nanoseconds or timezone-aware datetimes. Returns native acceptance/publication receipts. |
+| `insert_timeseries_batch(source_id, streams, *, request_id=None) -> dict` | One atomic bounded request across streams, at most 10,000 input rows. Chunk larger imports explicitly. |
+| `insert_timeseries_arrow(source_id, table: pa.Table, *, request_id=None) -> dict` | Insert `(ts, ref_name, value)` Arrow data with timezone-aware timestamps. Reuse request ID and payload on retry. |
+| `delete_timeseries(source_id, ref_name, timestamps, *, request_id=None) -> dict` | Explicitly delete observations; returns one receipt directly. |
+| `wait(receipt, *, timeout=30) -> dict` | Wait for an accepted receipt sequence to publish, then return a snapshot token. Raises for paused or timed-out pending work. |
+| `engine_status() -> dict` | Native frontiers, backlog, processor state, and paused error. |
+| `engine_snapshot() -> dict` | Capture the committed epoch, applied frontier, and active complete plan. |
+| `retry_engine() -> dict` | Resume the accepted prefix after repairing its failed artifact/environment. |
 
 ### Apps
 
 | method | description |
 |---|---|
-| `check_app(target: type[App], *, parameters=None, limit=None, search_path=None) -> dict` | Run an app against stored data without saving results. Returns all computed rows unless `limit` restricts each output. `search_path` defaults to the class module's directory, allowing a local server to import it. |
-| `deploy_app(target: type[App], *, parameters=None) -> dict` | Persist and deploy an importable app class; `parameters` are passed to its constructor. |
-| `list_apps() -> dict` | List every deployment with status and binding counts, including unmatched apps and planning failures. |
-| `inspect_app(name: str) -> dict` | Return a deployment's stored definition, normalized output schemas, and latest compiled binding state. |
-| `remove_app(name: str) -> dict` | Remove a durable app deployment by name. |
-| `reprocess_app(name: str, start: datetime, end: datetime) -> dict` | Schedule a retained output interval for recomputation without resetting input progress. |
-| `app_dag() -> nx.DiGraph` | Return the compiled binding DAG; nodes describe concrete inputs, outputs, policies, and revision progress. |
+| `deploy_app(declaration: App) -> dict` | Compile semantic selections, persist deployment intent, and activate the complete native plan. Check the returned `app` status/error. |
+| `list_apps() -> dict` | List declarations with active/pending state and native operators. |
+| `inspect_app(name: str) -> dict` | Return the declaration, operators, desired/active plan IDs, graph revision, and error. |
+| `remove_app(name: str) -> dict` | Remove operators and their semantic output metadata; retract current values while retaining native history. |
 
-See the [app reference](apps.md) for the transformation class contract.
+See the [app reference](apps.md) and [soft-sensor guide](../how-to/write-soft-sensors.md)
+for native declarations and the Python subprocess function contract.
 
 ### Deprecated
 
@@ -103,7 +98,6 @@ See the [app reference](apps.md) for the transformation class contract.
 |---|---|
 | `find_entity(*, _class=None, alias=None, uri=None) -> Q` | The previous query builder; see [Coming from the old interface](#coming-from-the-old-interface). |
 | `find_all_data(*, _class=None, uri=None) -> Q` | The previous query builder |
-| `generate_grafana_dashboard(grafana_server, api_key)` | Build a Grafana dashboard from the plant model. |
 
 ## Query
 
@@ -190,7 +184,7 @@ See the [data tutorial](../tutorials/data.md).
 | `compact` | `True` renders URIs as CURIEs and identifies points by `point_id`; `False` returns raw `point_uri` and `ref_uri` columns |
 | `include_ref` | add the reference URI column in the compact layout |
 | `cast_value` | client-side cast: `"float"`, `"int"`, anything else leaves values as sent (`Query` only) |
-| `value_mode` | `"default"`, `"numeric"`, `"text"` or `"coalesce"` (`Query` only) |
+| `value_mode` | `"default"` or `"numeric"`; the engine stores numeric observations |
 | `include_dependencies` | query the ontology and shape triples alongside the plant data (`Query` only) |
 
 ## AcquiriumClient
@@ -240,37 +234,21 @@ and are listed once above.
 | method | description |
 |---|---|
 | `register_datasource(source_id) -> str`, `register_streams(streams) -> None` | As on `Acquirium`. |
-| `insert_timeseries(*, source_id, ref_name, rows, point_uri=None, replace=False, publication_id=None) -> dict` | Keyword-only form of the `Acquirium` method; `publication_id` is forwarded but does not currently deduplicate retries. |
-| `insert_timeseries_batch(source_id, streams) -> dict` | One HTTP request for several streams (unchunked). |
-| `insert_timeseries_arrow(source_id, table, *, publication_id=None) -> dict` | As on `Acquirium`; the optional ID is forwarded but does not currently deduplicate retries. |
+| `insert_timeseries(*, source_id, ref_name, rows, request_id=None) -> dict` | Keyword-only form of the `Acquirium` method; the same bounded native retry identity applies. |
+| `insert_timeseries_batch(source_id, streams, *, request_id=None) -> dict` | One atomic bounded request for several streams. |
+| `insert_timeseries_arrow(source_id, table, *, request_id=None) -> dict` | As on `Acquirium`. |
 | `resolve_storage_keys(uris: list[str]) -> dict[str, str]` | Map point URIs to the canonical ref URIs used by timeseries APIs; canonical ref URIs pass through. |
-| `timeseries_df(uri, start=None, end=None, limit=None, order="asc", timeout=60.0, *, value_mode="default") -> pl.DataFrame` | All rows of one stream by `ref_uri`. |
-| `timeseries_batches(uri, start=None, end=None, limit=None, order="asc", *, value_mode="default", timeout=60.0) -> Iterator[pl.DataFrame]` | The same, one frame per Arrow record batch. |
+| `timeseries_df(uri, start=None, end=None, limit=None, order="asc", timeout=60.0, *, value_mode="default", epoch=None) -> pl.DataFrame` | All rows of one stream by `ref_uri`; empty results preserve their schema. Pass one captured epoch for related reads. |
+| `timeseries_batches(uri, start=None, end=None, limit=None, order="asc", *, value_mode="default", epoch=None, timeout=60.0) -> Iterator[pl.DataFrame]` | The same, one frame per Arrow record batch. |
 | `timeseries_info_batch(uris: list[str]) -> dict` | `row_count`, `earliest`, `latest` for several streams in one request. |
-
-### Logbook
-
-| method | description |
-|---|---|
-| `insert_log(point_uri=None, log_time=None, observation_start=None, observation_end=None, log_message="") -> dict` | Insert a log entry for a point (default: the plant). |
-| `query_logs(point_uri=None, log_time_start=None, log_time_end=None, observation_start=None, observation_end=None) -> list[LogEntry]` | Log entries for a point within optional intervals. |
-| `delete_logs(point_uri=None) -> dict` | Delete the log entries of a point. |
 
 ### Apps
 
 | method | description |
 |---|---|
-| `check_app(definition: dict, limit=None, search_path=None) -> dict` | Raw HTTP form behind `Acquirium.check_app`. |
-| `deploy_app(definition: dict) -> dict` | Raw HTTP form behind `Acquirium.deploy_app`; the high-level client builds the definition from a class. |
+| `deploy_app(definition: dict) -> dict` | Raw HTTP form behind `Acquirium.deploy_app`; the high-level client serializes a native `App` declaration. |
 | `list_apps() -> dict`, `inspect_app(name: str) -> dict` | Raw inspection documents behind the high-level methods. |
 | `remove_app(name: str) -> dict` | Remove a deployment. |
-| `reprocess_app(name: str, start: datetime, end: datetime) -> dict` | Schedule retained output repair. |
-| `materialization_dag() -> dict` | Return the server's raw binding-DAG payload. |
-
-### Grafana
-
-`generate_grafana_dashboard(server, api_key)`, `add_gauge_panel(prop_dict)`,
-`add_time_series_panel(title, prop_dicts)`.
 
 ## Coming from the old interface
 
