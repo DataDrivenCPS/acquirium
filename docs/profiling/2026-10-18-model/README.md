@@ -4,7 +4,7 @@ Measured on 2026-10-18 with release Escapement
 `612eb340974d27ad7245a1c1e4a72e93089bbcc0`, Python 3.12.12, macOS arm64,
 eight logical CPUs. These are single sequential runs on a shared developer
 machine, not repeated estimates of production capacity. No integration tests ran
-during the measurements; other applications were not isolated. Environment files
+during the original five measurements; other applications were not isolated. Environment files
 retain each run's native source identity, model hash, and initial load average.
 
 The [benchmark](../../../examples/model_workload/README.md) runs four independent
@@ -80,10 +80,24 @@ phases at 2/300/2 requests/second. It launched only **one** worker, reached an
 inbox backlog of 128, and had zero pool waiters. It published about 158 source
 requests/second during the burst, then drained and verified all 617 requests and
 3,001 current rows. Its mean job contained 7.26 serial groups. A higher resident
-cap cannot expose group concurrency under the present API. This makes bounded
-parallel group execution a concrete next experiment before an autoscaler that
-merely changes process count. Batched Arrow/function APIs remain a separate
-optimization to profile rather than infer from these totals.
+cap cannot expose group concurrency under the present API.
+
+Correction: that initial narrow run also set native scheduler workers to one,
+because the harness tied `workers` to `units`. It did not isolate DAG width from
+the scheduler limit. The harness now provides a separate `--workers` option.
+The [corrected diagnostic](narrow-workers4/result.json) explicitly sets one
+operator, four scheduler slots, and a four-process pool cap. It still launches
+only one process, has zero pool waiters, and accumulates pending source requests.
+It verifies all 106 accepted requests after draining. This additional run
+overlapped integration tests on a busy machine; its latency/rate numbers are
+retained as evidence, not a comparable capacity measurement. `summary.json` and
+the comparison figure retain only the original five cases.
+
+Many independent device pipelines can already expose operator concurrency.
+Group splitting is therefore conditional on a representative narrow-operator
+bottleneck, as explained in the [scheduling investigation](../../plans/parallel-group-execution.md).
+Batched Arrow/function APIs remain a separate optimization to profile rather
+than infer from these totals.
 
 These short runs establish measured behavior for this synthetic workload. They
 do not establish leak freedom, long-duration memory bounds, trained-model
@@ -104,6 +118,9 @@ uv run --locked python -m examples.model_workload.run \
   --max-jobs 25 --restart
 uv run --locked python -m examples.model_workload.run \
   --output /tmp/model-narrow --pool-size 4 --units 1 --duration 3 --rates 2 300 2
+uv run --locked python -m examples.model_workload.run \
+  --output /tmp/model-narrow-workers4 --pool-size 4 --units 1 --workers 4 \
+  --duration 3 --rates 2 300 2
 uv run --locked python -m examples.model_workload.plot \
   /tmp/model-pool1 /tmp/model-pool2 /tmp/model-pool4 --output /tmp/model-comparison
 ```

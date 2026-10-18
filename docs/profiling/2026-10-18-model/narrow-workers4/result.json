@@ -1,0 +1,394 @@
+{
+  "admitted": 106,
+  "capacity_retries": 0,
+  "checks": [
+    {
+      "applied": 2,
+      "epoch": 2,
+      "rows": 5
+    },
+    {
+      "applied": 105,
+      "epoch": 21,
+      "rows": 508
+    },
+    {
+      "applied": 106,
+      "epoch": 22,
+      "rows": 508
+    },
+    {
+      "applied": 107,
+      "epoch": 23,
+      "rows": 506
+    }
+  ],
+  "config": {
+    "copies": 2048,
+    "duration": 3.0,
+    "epoch_requests": 8,
+    "max_jobs": 10000,
+    "max_pending": 128,
+    "pool_size": 4,
+    "rates": [
+      2.0,
+      300.0,
+      2.0
+    ],
+    "restart": false,
+    "units": 1,
+    "workers": 4
+  },
+  "max_pending": 84,
+  "max_queue_age_ms": 0.0,
+  "missed_offer_slots": 812,
+  "phases": [
+    {
+      "admitted": 6,
+      "capacity_retries": 0,
+      "offered_rate": 2.0,
+      "pending_at_end": 0,
+      "phase": "low",
+      "seconds": 3.0007414579740725
+    },
+    {
+      "admitted": 91,
+      "capacity_retries": 0,
+      "offered_rate": 300.0,
+      "pending_at_end": 82,
+      "phase": "burst",
+      "seconds": 3.011297542019747
+    },
+    {
+      "admitted": 6,
+      "capacity_retries": 0,
+      "offered_rate": 2.0,
+      "pending_at_end": 72,
+      "phase": "recovery",
+      "seconds": 3.001513291033916
+    }
+  ],
+  "publication_observed_ms": {
+    "count": 106,
+    "max": 16502.476082998328,
+    "mean": 8412.569875762478,
+    "p95": 15439.106542035006
+  },
+  "sampled_worker_pids": [
+    55496
+  ],
+  "sessions": [
+    {
+      "processor": {
+        "engine": {
+          "accepted": 107,
+          "applied": 107,
+          "epoch": 23,
+          "pending_requests": 0
+        },
+        "error": null,
+        "last_report": {
+          "applied": 107,
+          "changes": 2,
+          "epoch": 23,
+          "executions": [
+            {
+              "changed_rows": 1,
+              "groups": 1,
+              "operator": "model-0",
+              "version": "1"
+            }
+          ],
+          "operator_ms": {
+            "model-0": 107.751125
+          },
+          "peak_workers": 1,
+          "requests": 1,
+          "source_mutations": 1,
+          "timings": {
+            "compute_ms": 125.581958,
+            "prepare_ms": 78.290625,
+            "publish_ms": 18.146958,
+            "total_ms": 222.021458
+          }
+        },
+        "report_capacity": 2048,
+        "reports_buffered": 0,
+        "running": false,
+        "stats": {
+          "changes": 534,
+          "completed_epochs": 22,
+          "compute_ms": 25770.58987499999,
+          "evaluated_groups": 111,
+          "failed_attempts": 0,
+          "peak_workers": 1,
+          "prepare_ms": 235.91024900000002,
+          "publish_ms": 325.74412299999995,
+          "reports_dropped": 0,
+          "requests": 106,
+          "source_mutations": 431,
+          "total_ms": 26332.296333000006
+        },
+        "uptime_ns": 29322564542
+      },
+      "python_workers": {
+        "active": 0,
+        "discarded": 0,
+        "failures": 0,
+        "idle": 1,
+        "oldest_queue_age_ms": 0.0,
+        "peak_active": 1,
+        "peak_queued": 0,
+        "queue_timeouts": 0,
+        "queued": 0,
+        "resets": 0,
+        "resident": 1,
+        "reused": 21,
+        "spawned": 1,
+        "telemetry": {
+          "cold_service": {
+            "buckets": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              1,
+              0,
+              0,
+              0,
+              0
+            ],
+            "count": 1,
+            "max_ms": 712.4020409999999,
+            "mean_ms": 712.4020409999999,
+            "p50_upper_ms": 1000.0,
+            "p95_upper_ms": 1000.0,
+            "total_ms": 712.4020409999999
+          },
+          "cold_start": {
+            "buckets": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              1,
+              0,
+              0,
+              0
+            ],
+            "count": 1,
+            "max_ms": 4234.3795,
+            "mean_ms": 4234.3795,
+            "p50_upper_ms": 5000.0,
+            "p95_upper_ms": 5000.0,
+            "total_ms": 4234.3795
+          },
+          "execution": {
+            "buckets": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              1,
+              5,
+              3,
+              1,
+              12,
+              0,
+              0,
+              0
+            ],
+            "count": 22,
+            "max_ms": 2112.543916,
+            "mean_ms": 960.8135132272728,
+            "p50_upper_ms": 5000.0,
+            "p95_upper_ms": 5000.0,
+            "total_ms": 21137.897291
+          },
+          "failed_jobs": 0,
+          "histogram_bounds_ms": [
+            0.1,
+            0.25,
+            0.5,
+            1.0,
+            2.0,
+            5.0,
+            10.0,
+            20.0,
+            50.0,
+            100.0,
+            250.0,
+            500.0,
+            1000.0,
+            5000.0,
+            30000.0,
+            600000.0
+          ],
+          "lease_requests": 22,
+          "prepare": {
+            "buckets": [
+              0,
+              0,
+              0,
+              0,
+              3,
+              7,
+              5,
+              6,
+              0,
+              1,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "count": 22,
+            "max_ms": 59.965125,
+            "mean_ms": 9.73175368181818,
+            "p50_upper_ms": 10.0,
+            "p95_upper_ms": 20.0,
+            "total_ms": 214.09858099999997
+          },
+          "queue_wait": {
+            "buckets": [
+              22,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "count": 22,
+            "max_ms": 0.011583000000000001,
+            "mean_ms": 0.003956363636363638,
+            "p50_upper_ms": 0.1,
+            "p95_upper_ms": 0.1,
+            "total_ms": 0.08704000000000003
+          },
+          "returned_jobs": 22,
+          "rss_bytes": 125812736,
+          "rss_complete": true,
+          "rss_peak_observed_bytes": 125812736,
+          "rss_sampled_bytes": 125812736,
+          "rss_sampled_workers": 1,
+          "startup_failures": 0,
+          "total": {
+            "buckets": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              1,
+              5,
+              3,
+              0,
+              13,
+              0,
+              0,
+              0
+            ],
+            "count": 22,
+            "max_ms": 4946.783458,
+            "mean_ms": 1163.021018727273,
+            "p50_upper_ms": 5000.0,
+            "p95_upper_ms": 5000.0,
+            "total_ms": 25586.462412000004
+          },
+          "warm_service": {
+            "buckets": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              1,
+              5,
+              3,
+              0,
+              12,
+              0,
+              0,
+              0
+            ],
+            "count": 21,
+            "max_ms": 2172.5090410000003,
+            "mean_ms": 982.8378014761905,
+            "p50_upper_ms": 5000.0,
+            "p95_upper_ms": 5000.0,
+            "total_ms": 20639.593831000002
+          },
+          "workers": [
+            {
+              "age_ms": 29295.601125,
+              "artifact": "cb71e5c79e0a500b7fe9313f95ecd89fa6774f94de3fb0162fb0f666d83fe96b",
+              "cold_start_ms": 4234.3795,
+              "jobs": 22,
+              "last_job": {
+                "cold_start_ms": 0.0,
+                "cold_worker": false,
+                "epoch": 23,
+                "execution_ms": 104.465916,
+                "groups": 1,
+                "operator": "model-0",
+                "prepare_ms": 1.9267500000000002,
+                "queue_wait_ms": 0.005917,
+                "returned": true,
+                "service_ms": 106.392666,
+                "total_ms": 106.398583
+              },
+              "pid": 55496,
+              "rss_bytes": 125812736,
+              "state": "idle"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "verified": true
+}

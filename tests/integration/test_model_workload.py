@@ -15,6 +15,7 @@ def test_model_load_is_verified_across_recycling_and_restart(tmp_path, restart):
         directory,
         pool_size=1,
         units=2,
+        workers=4,
         copies=4,
         duration=0.2,
         rates=(5, 100, 5),
@@ -24,6 +25,8 @@ def test_model_load_is_verified_across_recycling_and_restart(tmp_path, restart):
         restart=restart,
     )
     assert result["verified"]
+    assert result["config"]["workers"] == 4
+    assert result["config"]["units"] == 2
     assert len(result["sessions"]) == (2 if restart else 1)
     assert result["admitted"] == result["publication_observed_ms"]["count"]
     assert result["checks"][-1]["rows"] < result["checks"][-2]["rows"]

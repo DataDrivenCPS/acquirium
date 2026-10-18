@@ -122,6 +122,7 @@ def run_case(
     *,
     pool_size=2,
     units=4,
+    workers=None,
     copies=2048,
     duration=10.0,
     rates=(2.0, 40.0, 2.0),
@@ -138,7 +139,11 @@ def run_case(
     """
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=False)
-    if min(pool_size, units, copies, max_jobs, max_pending, epoch_requests) < 1:
+    workers = units if workers is None else workers
+    if (
+        min(pool_size, units, workers, copies, max_jobs, max_pending, epoch_requests)
+        < 1
+    ):
         raise ValueError("worker, model, and inbox limits must be positive")
     if duration <= 0 or len(rates) != 3 or any(rate <= 0 for rate in rates):
         raise ValueError("specify a positive phase duration and three positive rates")
@@ -164,7 +169,7 @@ def run_case(
         ],
     )
     options = {
-        "workers": units,
+        "workers": workers,
         "python_pool_size": pool_size,
         "python_max_worker_jobs": max_jobs,
         "epoch_requests": epoch_requests,
@@ -173,6 +178,7 @@ def run_case(
     config = {
         "pool_size": pool_size,
         "units": units,
+        "workers": workers,
         "copies": copies,
         "duration": duration,
         "rates": rates,
@@ -462,6 +468,9 @@ def main():
     )
     parser.add_argument("--pool-size", type=int, default=2)
     parser.add_argument("--units", type=int, default=4)
+    parser.add_argument(
+        "--workers", type=int, help="Native scheduler limit; defaults to --units"
+    )
     parser.add_argument("--copies", type=int, default=2048)
     parser.add_argument("--duration", type=float, default=10, help="Seconds per phase")
     parser.add_argument("--rates", type=float, nargs=3, default=(2, 40, 2))

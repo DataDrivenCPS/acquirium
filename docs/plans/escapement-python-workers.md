@@ -136,7 +136,11 @@ has demonstrated a specific limitation.
    recycling, and graceful restart, with independent result verification.
    [Measured results](../profiling/2026-10-18-model/README.md) compare fixed pools
    and show that a narrow operator's serial groups leave replicas unused.
-4. Next, add group chunking if wide operators are a measured bottleneck, then bounded
-   adaptive scaling if variable load warrants it.
+4. First measure many independent sensor/equipment pipelines; semantic entity
+   grouping already exposes concurrency between their operators. The
+   [group-execution investigation](parallel-group-execution.md) distinguishes
+   entity grouping from temporal groups and keeps chunking conditional on spare
+   workers alongside a measured narrow-operator bottleneck. Adaptive scaling
+   remains a subsequent step if variable load warrants it.
 5. Add explicit stateful operators only with native checkpoint, atomic commit,
    and correction replay support.

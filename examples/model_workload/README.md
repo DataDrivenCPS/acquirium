@@ -23,6 +23,9 @@ concurrency stays at `--units` (default four), so this measures the resident poo
 limit without changing DAG width. A job still processes its affected timestamp
 groups serially. `--epoch-requests` defaults to eight. It changes job size when
 the inbox builds up; compare group counts as well as job service time.
+Use `--workers` to set scheduler concurrency independently of `--units`, for
+example `--units 1 --workers 4 --pool-size 4` to test a narrow DAG with spare
+execution capacity. The default remains one scheduler slot per unit.
 
 The generator uses a monotonic schedule, skips missed slots, and retries one
 blocked request with the same identity when the bounded inbox rejects admission.
