@@ -42,9 +42,10 @@ updated; the example does not wait for wall-clock bucket completion.
 `--data-dir /path/to/demo-data` retains data for restart. Each run has new request
 IDs, resets the demo layout, and upserts the same demonstration timestamps.
 
-Escapement owns subprocess execution and scheduling. Each affected operator gets
-one Python child process per epoch; its affected timestamp/bucket groups run in
-that child. Independent tank operators can execute concurrently. Code is pinned
+Escapement owns subprocess execution and scheduling. Each affected operator leases
+a warm Python child process for its timestamp/bucket groups. Processes retain a
+digest-identified module across entrypoints and epochs; independent tank operators
+can use separate replicas within the pool bound. Code is pinned
 by digest, and the default interpreter is the server's interpreter. The example
 uses the repository's locked environment and no adjacent helper modules or model
 files. See the [authoring guide](../../docs/how-to/write-soft-sensors.md) for

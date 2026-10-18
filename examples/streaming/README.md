@@ -87,6 +87,11 @@ peak concurrent workers, and `prepare_ms`, `compute_ms`, `publish_ms`, and
 they exclude time requests spent waiting in the inbox. The explicit epoch number
 identifies the report when it repeats across log lines. `last_epoch` is null
 before this processor has completed an epoch, including immediately after restart.
+`python_workers` reports native pool launches/reuse, failures/recycling, and
+resident/idle/active counts. The pool grows on demand and stays within the
+configured resident bound; each process serves one job at a time.
+The saved report includes those counters for the final native owner; they reset
+on server restart rather than accumulating across the workload's restarts.
 
 At the end it compares **all current raw and derived values** in
 both the consumer view and a pinned server snapshot with an independent Python
@@ -101,7 +106,7 @@ They include source queueing, outages/restarts, HTTP/polling delay, and native
 execution. They are not exact commit timestamps or throughput guarantees.
 Historical request latencies are retained when the workload resumes; elapsed time
 and peak backlog/RSS describe the current run. Memory is process high-water RSS,
-not current RSS or the summed memory of transient Python worker processes.
+not current RSS or the summed memory of Python worker processes.
 
 This is an integration/soak workload, not a production broker adapter or an
 isolated engine benchmark. It does not run Ray or an MQTT broker. The source

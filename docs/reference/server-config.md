@@ -22,6 +22,9 @@ max_pending_requests = 10000
 | `data_dir` | `.acquirium` | Graph, indexes, deployment manifest, and default engine database |
 | `engine_path` | `data_dir/escapement.duckdb` | Native DuckDB persistence |
 | `engine_workers` | 2 | Maximum concurrent native operator executions |
+| `python_pool_size` | `engine_workers` | Maximum resident Python workers across function artifacts; zero uses fresh processes for profiling |
+| `python_max_worker_jobs` | 10000 | Recycle a process after this many jobs |
+| `python_max_worker_age` | 1800 | Recycle expired processes between jobs, in seconds |
 | `epoch_requests` | 128 | Maximum accepted requests processed per epoch |
 | `max_pending_requests` | 10000 | Native admission/backpressure bound |
 | `graph_path` | `data_dir/.oxigraph` | Embedded RDF storage |
@@ -37,7 +40,8 @@ Changing the stored app/function definitions uses native plan activation rather
 than an Acquirium materialization polling interval.
 
 Environment overrides include `ACQUIRIUM_DATA_DIR`, `ACQUIRIUM_ENGINE_PATH`,
-`ACQUIRIUM_ENGINE_WORKERS`, `ACQUIRIUM_EPOCH_REQUESTS`,
+`ACQUIRIUM_ENGINE_WORKERS`, `ACQUIRIUM_PYTHON_POOL_SIZE`,
+`ACQUIRIUM_PYTHON_MAX_WORKER_JOBS`, `ACQUIRIUM_PYTHON_MAX_WORKER_AGE`, `ACQUIRIUM_EPOCH_REQUESTS`,
 `ACQUIRIUM_MAX_PENDING_REQUESTS`, `ACQUIRIUM_GRAPH_PATH`,
 `ACQUIRIUM_EXACT_ONLY`, `ACQUIRIUM_EMBEDDING_MODEL`, `ACQUIRIUM_RECREATE`, and
 `ACQUIRIUM_WORKERS`. Backend selection and PostgreSQL DSNs have been removed.

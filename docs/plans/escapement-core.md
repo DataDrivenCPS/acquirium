@@ -50,10 +50,11 @@ existing Ray supervisor or claim durable buffering for other drivers.
 
 The [execution profile](../profiling/2026-10-18/README.md) now measures five
 workload shapes with paired controls at one, two, and four workers. Repeated
-imports dominate these calculations. The next native extension is the proposed
-[persistent Python worker pool](escapement-python-workers.md): explicit pure
-semantics, immutable release identity, bounded warm reuse and replication, then
-measured adaptive scaling. Stateful operators require a separate native
+imports dominate these calculations. A fixed native
+[persistent Python worker pool](escapement-python-workers.md) now provides pure
+module reuse and bounded replication, age/job recycling, failure cleanup, and
+diagnostic counters. Full bundle/environment identity and measured adaptive
+scaling remain subsequent work. Stateful operators require a separate native
 checkpoint/replay contract.
 
 Implemented in [the tank-temperature chain](../../examples/soft_sensors/README.md)
@@ -63,7 +64,7 @@ empty range reads preserve their Arrow schema. Real-server integration tests
 compare the complete Python DAG with independent recomputation through late data,
 corrections, deletion, metadata moves, parameter/code versions, and restart. A
 second test verifies worker subprocesses, atomic failure, and dependency repair
-followed by retry. Hermetic bundles, per-app environments, and worker pooling
+followed by retry. Hermetic bundles and per-app environments
 remain native Escapement extensions rather than promises of this slice.
 
 Use Escapement's [live example](../../escapement/examples/live/README.md) as the
@@ -85,15 +86,16 @@ complex domain algorithms remain driven by concrete workloads:
    functions, declared roles, frozen units/parameters, pointwise/fixed-bucket
    windows, and complete group results. Empty results retract prior values.
    External notifications consume published changes outside the calculation.
-3. Keep Python execution in Escapement. Its current executor launches one child
-   process per affected operator per epoch, imports the function once, and
-   evaluates the epoch's affected groups through Arrow files. Independent
-   operators can run in parallel. Acquirium must not recreate an app runner.
+3. Keep Python execution in Escapement. Its executor leases a persistent child
+   process per affected operator invocation, reuses the module across epochs,
+   and evaluates the epoch's affected groups through Arrow files. Independent
+   operators can run in parallel within a bounded pool. Acquirium must not
+   recreate an app runner.
 4. Define reproducible deployment of calculation code, helper modules,
    dependencies, and model artifacts. The current single-file digest and shared
    interpreter are a starting point; extend Escapement's artifact/environment API
-   where needed. Add worker pooling only after measuring startup overhead, keeping
-   results independent of process lifetime and prior invocations.
+   where needed. Worker pooling follows measured startup overhead, keeping results
+   independent of process lifetime and prior invocations.
 5. Validate the whole chain through late data, corrections, deletion, metadata
    moves, restart, worker failure and retry against independent recomputation.
    Then port a representative domain soft sensor. Identify required rolling or

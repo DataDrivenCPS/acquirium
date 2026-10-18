@@ -53,7 +53,13 @@ The change-feed endpoint accepts `epoch=0`, `ordinal=0`, and `limit=1000`
 see [consume streaming changes](../how-to/consume-streaming-changes.md) before
 checkpointing or publishing a consumer view. Status `process.peak_rss_bytes`
 reports the server's process high-water RSS where supported, otherwise null;
-transient Python child processes are excluded.
+Python worker processes are excluded. Status `python_workers` exposes native
+process-local pool counters: `spawned` (successful handshakes), `reused`,
+`discarded`, `failures`, `resets`, `resident`, `idle`, `active`, and `peak_active`.
+Resident capacity includes starting/leased workers; active leases are not CPU
+utilization. Counters reset with the native owner and are not durable progress.
+`failures` counts pool startup/lease failures; `resets` also covers native
+validation or publication failures after a worker has returned.
 
 Timeseries parameters include `uri`, optional `start`/`end` datetime strings or
 `start_ns`/`end_ns` integers, optional `limit`, `order=asc|desc`, and optional

@@ -251,6 +251,7 @@ def run(
                                         "complete_through"
                                     ],
                                     "last_epoch": last_epoch,
+                                    "python_workers": status["python_workers"],
                                 }
                             ),
                             flush=True,
@@ -308,6 +309,7 @@ def run(
                 "server_restarts": restarts,
                 "peak_pending_requests": peak_backlog,
                 "server_peak_rss_bytes": peak_rss,
+                "python_workers": status["python_workers"],
                 "publication_latency_upper_bound": latency(records, "published_ns"),
                 "consumption_latency_upper_bound": latency(records, "consumed_ns"),
                 "snapshot_epoch": status["engine"]["epoch"],

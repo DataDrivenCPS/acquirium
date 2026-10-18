@@ -71,8 +71,10 @@ The [streaming workload](examples/streaming/README.md) runs a durable source dri
 and resumable committed-change consumer continuously, with bursts, historical
 repair, restart checks, and measured latency/backlog.
 The [execution profiler](examples/profiling/README.md) measures native epochs and
-Python worker stages; [initial results](docs/profiling/2026-10-18/README.md) motivate
-a bounded persistent worker pool in Escapement.
+Python worker stages; [initial results](docs/profiling/2026-10-18/README.md) led to
+the bounded persistent worker pool in Escapement.
+The [pool comparison](docs/profiling/2026-10-18-pool/README.md) records warm
+execution and streaming workload results.
 The [core architecture](docs/explanation/escapement-core.md) explains ownership,
 receipts, snapshots, restart, and failure behavior.
 

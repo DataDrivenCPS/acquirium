@@ -87,11 +87,59 @@ def plot(summary, directory):
     plt.close(figure)
 
 
+def compare(fresh, pooled, directory):
+    """Compare uninstrumented medians at two active operator workers."""
+    cases = {
+        mode: {
+            case["scenario"]: case
+            for case in summary["cases"]
+            if case["workers"] == 2 and not case["instrumented"]
+        }
+        for mode, summary in (("fresh", fresh), ("pooled", pooled))
+    }
+    names = sorted(cases["fresh"].keys() & cases["pooled"].keys())
+    if not names:
+        raise ValueError("comparison needs two-worker control cases in both summaries")
+    figure, axis = plt.subplots(figsize=(9, 4.5), layout="constrained")
+    for mode, offset, color in (
+        ("fresh", -0.19, "#4477aa"),
+        ("pooled", 0.19, "#228833"),
+    ):
+        values = [cases[mode][name]["compute_ms"] for name in names]
+        positions = [index + offset for index in range(len(names))]
+        bars = axis.bar(positions, values, width=0.36, label=mode, color=color)
+        axis.bar_label(bars, fmt="%.2f", padding=3, fontsize=8)
+    axis.set(
+        xticks=range(len(names)),
+        xticklabels=names,
+        ylabel="Median native computation (ms, logarithmic scale)",
+        title="Fresh Python processes versus warm pool · two operator workers",
+        yscale="log",
+    )
+    axis.set_ylim(1, max(case["compute_ms"] for case in cases["fresh"].values()) * 2)
+    axis.grid(axis="y", alpha=0.2)
+    axis.legend()
+    directory = Path(directory)
+    svg = directory / "pool-comparison.svg"
+    figure.savefig(svg)
+    svg.write_text(
+        "\n".join(line.rstrip() for line in svg.read_text().splitlines()) + "\n"
+    )
+    figure.savefig(directory / "pool-comparison.png", dpi=160)
+    plt.close(figure)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("summary", type=Path)
+    parser.add_argument("--fresh-summary", type=Path)
     args = parser.parse_args()
-    plot(json.loads(args.summary.read_text()), args.summary.parent)
+    summary = json.loads(args.summary.read_text())
+    plot(summary, args.summary.parent)
+    if args.fresh_summary:
+        compare(
+            json.loads(args.fresh_summary.read_text()), summary, args.summary.parent
+        )
 
 
 if __name__ == "__main__":

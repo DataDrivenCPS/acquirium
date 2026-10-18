@@ -1,8 +1,19 @@
 # Persistent Python workers in Escapement
 
-Proposed on 2026-10-18; worker pooling and the APIs below are not implemented.
+Initial fixed pool implemented on 2026-10-18. Bundle/environment identities,
+group chunking, adaptive scaling, and stateful operators below remain proposals.
 The [execution profile](../profiling/2026-10-18/README.md) justifies this as the
-next native engine change: repeated imports dominate the example calculations.
+native engine change: repeated imports dominate the example calculations.
+
+The first implementation grows on demand, keys processes by module digest and
+interpreter path, reuses them across entrypoints/epochs, and bounds residents,
+job count, and age. `workers` controls active operator jobs; `python_pool_size`
+defaults to that count and can bound residents separately. Zero provides a fresh
+process control for profiling. `python_worker_stats()` reports reuse, recycling,
+and occupancy. Failure discards uncertain workers and resets the pool before retry.
+Full bundle/environment identity is still a subsequent extension.
+The [pool comparison](../profiling/2026-10-18-pool/README.md) records correctness,
+warm execution, and steady/restart workload results.
 
 ## Operator semantics
 
@@ -70,7 +81,8 @@ unpublished prefix with fresh workers. Never reuse a worker with uncertain
 protocol state or publish partial derived results.
 
 Initially reuse workers across operators and epochs with the existing native
-operator scheduler and a fixed warm target of two for this example. A subsequent
+operator scheduler and a fixed resident limit of two for this example. Workers
+initialize on first demand rather than prelaunch. A subsequent
 native extension can split independent affected groups of a pure operator into
 bounded chunks and lease several replicas. Preserve group identity and stable
 result assembly, then publish only when every required chunk succeeds. Parallel
@@ -110,16 +122,17 @@ measured warm performance, and then tune a small controller through burst and
 recovery experiments. A PID controller is unnecessary until simpler feedback
 has demonstrated a specific limitation.
 
-## Implementation and acceptance order
+## Implementation status and follow-ups
 
-1. Add the native framed protocol and fixed bounded pool, preserving current
+1. Implemented the native framed protocol and fixed bounded pool, preserving current
    pure function signatures and Arrow schemas.
-2. Verify repeated invocation, release separation, crashes, timeout/reaping,
-   malformed output, retry, shutdown, and memory recycling. Compare outputs
-   across fresh processes, warm reuse, replica counts, and invocation order.
-3. Rerun this profile and the end-to-end workload, including historical repair
-   and restart. Report warm/cold service, queue age, latency, and RSS together.
-4. Add group chunking if wide operators are a measured bottleneck, then bounded
+2. Verified repeated invocation, release separation, crashes, timeout/reaping,
+   malformed output, retry, shutdown, and job/age recycling. Chain results match
+   independent recomputation across fresh processes, warm reuse, and replicas.
+3. Reran native profiles and the end-to-end workload, including historical repair
+   and restart. Warm/cold timings, latency, backlog, and server RSS are recorded;
+   runnable-job queue age and per-worker RSS remain instrumentation work.
+4. Next, add group chunking if wide operators are a measured bottleneck, then bounded
    adaptive scaling if variable load warrants it.
 5. Add explicit stateful operators only with native checkpoint, atomic commit,
    and correction replay support.

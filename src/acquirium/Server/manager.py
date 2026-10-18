@@ -85,6 +85,9 @@ class Manager:
         *,
         engine_path: str | Path | None = None,
         engine_workers: int = 2,
+        python_pool_size: int | None = None,
+        python_max_worker_jobs: int = 10_000,
+        python_max_worker_age: float = 1800,
         epoch_requests: int = 128,
         max_pending_requests: int = 10_000,
         graph_path: str | Path | None = None,
@@ -130,8 +133,15 @@ class Manager:
         self._stream_refs = {}
         self._point_refs = {}
         try:
-            self.core = Core(engine_path or base / "escapement.duckdb", workers=engine_workers,
-                             epoch_requests=epoch_requests, max_pending_requests=max_pending_requests)
+            self.core = Core(
+                engine_path or base / "escapement.duckdb",
+                workers=engine_workers,
+                epoch_requests=epoch_requests,
+                max_pending_requests=max_pending_requests,
+                python_pool_size=python_pool_size,
+                python_max_worker_jobs=python_max_worker_jobs,
+                python_max_worker_age=python_max_worker_age,
+            )
             self.apps = Apps(self.core, graph, base, converter=self._ensure_qudt_converter)
         except BaseException:
             if hasattr(self, "core"):
@@ -216,6 +226,16 @@ class Manager:
             data_dir=_data_dir,
             engine_path=os.getenv("ACQUIRIUM_ENGINE_PATH"),
             engine_workers=int(os.getenv("ACQUIRIUM_ENGINE_WORKERS", "2")),
+            python_pool_size=(
+                int(os.environ["ACQUIRIUM_PYTHON_POOL_SIZE"])
+                if "ACQUIRIUM_PYTHON_POOL_SIZE" in os.environ else None
+            ),
+            python_max_worker_jobs=int(
+                os.getenv("ACQUIRIUM_PYTHON_MAX_WORKER_JOBS", "10000")
+            ),
+            python_max_worker_age=float(
+                os.getenv("ACQUIRIUM_PYTHON_MAX_WORKER_AGE", "1800")
+            ),
             epoch_requests=int(os.getenv("ACQUIRIUM_EPOCH_REQUESTS", "128")),
             max_pending_requests=int(os.getenv("ACQUIRIUM_MAX_PENDING_REQUESTS", "10000")),
             graph_path=os.getenv("ACQUIRIUM_GRAPH_PATH"),

@@ -11,12 +11,16 @@ _entry_ns = time.perf_counter_ns()
 import ast
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 
 # Escapement fe7e50f483a07088a682935e83b6d7095760e1cb. Changing the native
 # worker requires reviewing these boundaries before updating this digest.
 WORKER_SHA256 = "b26f608086f40e74f6763f4ade6f0e34662601a835ca135e45467bf5a1028d34"
+POOLED_WORKER_SHA256 = (
+    "7927f935a0a2a94e8ad360f68aa4b111d5d2a688bcaef844c74e196467152760"
+)
 
 
 def timed(nodes, field):
@@ -84,12 +88,11 @@ def main():
     worker = Path(sys.argv[1])
     source = worker.read_bytes()
     digest = hashlib.sha256(source).hexdigest()
-    if digest != WORKER_SHA256:
+    if digest not in (WORKER_SHA256, POOLED_WORKER_SHA256):
         raise RuntimeError(
             f"native worker changed ({digest}); review profiling boundaries"
         )
-    directory = Path(sys.argv[2])
-    groups = int(sys.argv[4])
+    pooled = sys.argv[2] == "--pool"
     metrics = dict.fromkeys(
         (
             "stdlib_import_ns",
@@ -107,30 +110,62 @@ def main():
     code = instrument(source)
     prepared_ns = time.perf_counter_ns()
     sys.argv = sys.argv[1:]
+    namespace = {
+        "__name__": "escapement_profiled_worker",
+        "__file__": str(worker),
+        "_acq_clock": time.perf_counter_ns,
+        "_acq_metrics": metrics,
+    }
     exec(  # noqa: S102 -- execute only the hash-checked, timing-instrumented native worker.
         code,
-        {
-            "__name__": "__main__",
-            "__file__": str(worker),
-            "_acq_clock": time.perf_counter_ns,
-            "_acq_metrics": metrics,
-        },
-    )
-    finished_ns = time.perf_counter_ns()
-    context = json.loads((directory / "context-0.json").read_text())
-    metrics.update(
-        epoch=context["epoch"],
-        operator=context["operator"]["id"],
-        groups=groups,
-        wrapper_prepare_ns=prepared_ns - _entry_ns,
-        worker_body_ns=finished_ns - prepared_ns,
+        namespace,
     )
     output = Path(__file__).parent / "workers"
     output.mkdir(exist_ok=True)
-    tag = hashlib.sha256(metrics["operator"].encode()).hexdigest()[:12]
-    (output / f"{context['epoch']}-{tag}-{_entry_ns}.json").write_text(
-        json.dumps(metrics)
-    )
+    original = namespace["main"]
+    first = True
+
+    def measured(*args):
+        nonlocal first
+        cold = first
+        first = False
+        if not cold:
+            for key in metrics:
+                metrics[key] = 0
+        started_ns = prepared_ns if cold else time.perf_counter_ns()
+        original(*args)
+        finished_ns = time.perf_counter_ns()
+        directory = Path(sys.argv[1])
+        context = json.loads((directory / "context-0.json").read_text())
+        record = dict(
+            metrics,
+            epoch=context["epoch"],
+            operator=context["operator"]["id"],
+            groups=int(sys.argv[3]),
+            wrapper_prepare_ns=prepared_ns - _entry_ns if cold else 0,
+            worker_body_ns=finished_ns - started_ns,
+            cold_worker=cold,
+            pid=os.getpid(),
+        )
+        tag = hashlib.sha256(record["operator"].encode()).hexdigest()[:12]
+        (output / f"{context['epoch']}-{tag}-{started_ns}.json").write_text(
+            json.dumps(record)
+        )
+
+    namespace["main"] = measured
+    if pooled:
+        load = namespace["load_module"]
+
+        def measured_load(directory):
+            started = time.perf_counter_ns()
+            result = load(directory)
+            metrics["function_setup_ns"] += time.perf_counter_ns() - started
+            return result
+
+        namespace["load_module"] = measured_load
+        namespace["serve"]()
+    else:
+        measured()
 
 
 if __name__ == "__main__":

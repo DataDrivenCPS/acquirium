@@ -1,0 +1,36 @@
+{
+  "consumer_complete_through": 39,
+  "consumption_latency_upper_bound": {
+    "count": 60,
+    "max_ms": 8680.465,
+    "p50_ms": 226.809,
+    "p95_ms": 8602.476
+  },
+  "delivery_retries": 0,
+  "elapsed_seconds": 26.12597349996213,
+  "new_requests": 60,
+  "peak_pending_requests": 8,
+  "publication_latency_upper_bound": {
+    "count": 60,
+    "max_ms": 8602.475,
+    "p50_ms": 97.229,
+    "p95_ms": 6641.955
+  },
+  "python_workers": {
+    "active": 0,
+    "discarded": 0,
+    "failures": 0,
+    "idle": 0,
+    "peak_active": 0,
+    "resets": 0,
+    "resident": 0,
+    "reused": 0,
+    "spawned": 0
+  },
+  "requests": 60,
+  "rows": 138,
+  "server_peak_rss_bytes": 774848512,
+  "server_restarts": 3,
+  "snapshot_epoch": 39,
+  "verified": true
+}

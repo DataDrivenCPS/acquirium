@@ -145,6 +145,9 @@ def run_case(config):
     directory = Path(config["directory"])
     scenario = SCENARIOS[config["scenario"]]
     options = {"workers": config["workers"], "epoch_requests": 128}
+    options["python_pool_size"] = (
+        0 if config.get("execution", "pooled") == "fresh" else config["workers"]
+    )
     if config["instrumented"]:
         launcher = directory / "python-worker"
         launcher.write_text(
@@ -201,6 +204,7 @@ def run_case(config):
                 raise AssertionError("incorrect measured request prefix")
             reports.append(report)
             verify(engine, raw, scenario["tanks"])
+        pool_stats = engine.python_worker_stats()
     workers = []
     by_epoch = {report["epoch"]: report for report in reports}
     for path in sorted((directory / "workers").glob("*.json")):
@@ -222,6 +226,7 @@ def run_case(config):
         "epochs": reports,
         "workers": workers,
         "verified": True,
+        "python_worker_stats": pool_stats,
         "load_average": list(os.getloadavg()) if hasattr(os, "getloadavg") else None,
     }
     write(directory / "result.json", result)
@@ -266,11 +271,13 @@ def summarize(results, baselines):
         reports = result["epochs"]
         case = {
             "scenario": result["config"]["scenario"],
+            "execution": result["config"].get("execution", "pooled"),
             "workers": result["config"]["workers"],
             "instrumented": result["config"]["instrumented"],
             "samples": len(reports),
             "requests_per_epoch": result["scenario"]["requests"],
             "peak_workers": max(report["peak_workers"] for report in reports),
+            "python_worker_stats": result["python_worker_stats"],
         }
         for stage in ("prepare_ms", "compute_ms", "publish_ms", "total_ms"):
             values = [report["timings"][stage] for report in reports]
@@ -323,10 +330,11 @@ def summarize(results, baselines):
 
 
 def markdown(summary):
+    execution = summary["cases"][0].get("execution", "fresh")
     lines = [
         "# Execution profile",
         "",
-        "Paired fresh-process controls; median milliseconds per measured epoch.",
+        f"Execution: {execution}; paired fresh-owner controls; median milliseconds per measured epoch.",
         "",
         "| Scenario | Workers | Peak | Requests/epoch | Unprofiled compute | Profiled compute | Delta | Total/request |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
@@ -390,6 +398,8 @@ def export_workers(output, results):
         "operator",
         "groups",
         "input_rows",
+        "cold_worker",
+        "pid",
         *[f"{stage}_ms" for stage in STAGES],
         "native_operator_ms",
         "external_and_unattributed_ms",
@@ -410,6 +420,8 @@ def export_workers(output, results):
                                 "operator",
                                 "groups",
                                 "input_rows",
+                                "cold_worker",
+                                "pid",
                                 "native_operator_ms",
                                 "external_and_unattributed_ms",
                             )
@@ -422,7 +434,7 @@ def export_workers(output, results):
                 )
 
 
-def run(output, workers, scenarios, samples):
+def run(output, workers, scenarios, samples, execution="pooled"):
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=False)
     distribution = importlib.metadata.distribution("escapement-db")
@@ -441,6 +453,7 @@ def run(output, workers, scenarios, samples):
             (DIRECTORY / "worker.py").read_bytes()
         ).hexdigest(),
         "samples": samples,
+        "execution": execution,
         "workers": workers,
         "scenarios": scenarios,
         "load_average": list(os.getloadavg()) if hasattr(os, "getloadavg") else None,
@@ -462,6 +475,7 @@ def run(output, workers, scenarios, samples):
                         "workers": count,
                         "instrumented": instrumented,
                         "samples": samples,
+                        "execution": execution,
                         "directory": str(directory),
                     }
                 )
@@ -527,6 +541,7 @@ def main():
     parser.add_argument("--workers", default="1,2,4")
     parser.add_argument("--scenarios", default=",".join(SCENARIOS))
     parser.add_argument("--samples", type=int, default=5)
+    parser.add_argument("--execution", choices=("fresh", "pooled"), default="pooled")
     parser.add_argument("--case", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.case:
@@ -543,7 +558,7 @@ def main():
         parser.error(
             "provide a fresh output directory, positive sample/worker counts, and known scenarios"
         )
-    run(args.output, workers, scenarios, args.samples)
+    run(args.output, workers, scenarios, args.samples, args.execution)
 
 
 if __name__ == "__main__":

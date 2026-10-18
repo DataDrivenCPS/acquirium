@@ -494,6 +494,7 @@ def remove_app(name: str):
 @app.get("/engine/status")
 def engine_status():
     status = app.state.manager.core.processor.status()
+    status["python_workers"] = app.state.manager.core.engine.python_worker_stats()
     try:
         import resource
         peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss

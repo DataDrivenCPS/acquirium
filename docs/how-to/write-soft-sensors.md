@@ -139,21 +139,33 @@ self-contained calculation file plus the server's installed Python environment:
 
 This is a release discipline, not a hermetic bundle or per-app environment API.
 Separate environments and content-addressed code/model bundles belong in
-Escapement when required. Avoid mutable model state in module globals: one worker
-may handle several groups, and retries must be independent of invocation order.
+Escapement when required. Immutable models and transparent caches can stay loaded
+in a worker. Results must remain independent of invocation order, replica choice,
+and process lifetime. Stateful algorithms require a future explicit checkpoint
+and replay contract; arbitrary mutable Python globals do not supply one.
+Complete any work spawned by an invocation before returning; only immutable
+models and transparent caches persist between calls.
 
 ## Execution, failure, and publication
 
-The native executor starts one Python subprocess per affected operator per epoch.
-It imports the function once and evaluates that epoch's affected groups in that
-process. Independent operators can run concurrently up to the native worker
-limit. Rows travel over Arrow files; finite context travels over JSON. There is
-no Acquirium app polling loop or Ray soft-sensor worker. The executor enforces
-its native timeout and output-file limits; Acquirium does not yet configure those
-limits or offer persistent worker pools.
+The native executor leases a persistent Python process for each affected
+operator's groups. It imports a digest-identified module once and reuses it across
+entrypoints and epochs. Independent operators can use separate replicas, up to
+the native concurrency and resident-process bounds. Each process serves one job
+at a time; its job's groups run serially. Rows travel over Arrow files and finite
+context over JSON. Escapement owns execution and scheduling.
+
+By default, Acquirium allows two concurrent operators and two resident Python
+processes. Configure `python_pool_size`, `python_max_worker_jobs`, and
+`python_max_worker_age` in [server configuration](../reference/server-config.md).
+Workers grow on demand and recycle between jobs. Native timeouts/output bounds
+still apply. The current pool does not scale adaptively or split one operator's
+groups among replicas. Inspect `client.engine_status()["python_workers"]` for
+launch/reuse, recycling/failure, and resident/idle/active counters.
 
 A worker failure publishes none of its epoch, including source changes, and
-pauses the queue. The mutation remains accepted. Inspect the failure, restore the
+pauses the queue. Failed epochs discard cached processes, so retry starts fresh.
+The mutation remains accepted. Inspect the failure, restore the
 pinned artifact or repair the installed dependency, then resume:
 
 ```python

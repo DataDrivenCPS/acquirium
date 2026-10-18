@@ -1,5 +1,8 @@
 # Python soft-sensor execution profile — 2026-10-18
 
+Follow-up: the [persistent pool is implemented and measured](../2026-10-18-pool/README.md).
+The findings below describe the original fresh-process executor.
+
 Repeated Python initialization is the dominant cost in the temperature chain.
 Proceed with a persistent, bounded Python worker pool **inside Escapement**;
 retain the pure function contract and native atomic publication. The proposed

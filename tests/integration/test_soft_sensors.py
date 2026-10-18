@@ -184,19 +184,22 @@ def test_semantic_python_chain_matches_full_recomputation_and_restart(tmp_path):
 
 
 @pytest.mark.integration
-def test_native_worker_dependency_failure_is_atomic_and_retryable(
-    tmp_path, monkeypatch
-):
-    # Instrument a test dependency to prove functions run in server-owned child
-    # processes. Breaking/restoring it simulates repairing an installed library.
+def test_native_warm_worker_failure_is_atomic_and_retryable(tmp_path, monkeypatch):
+    # Test-only dependency instrumentation records module initialization and
+    # injects a runtime failure into an already-warm worker. Production functions
+    # keep dependencies immutable and do not read external failure flags.
     environment = tmp_path / "environment"
     environment.mkdir()
     helper = environment / "soft_sensor_test_dependency.py"
     pid_log = tmp_path / "workers.jsonl"
+    failure = tmp_path / "fail-worker"
     dependency = (
-        "import json, os\n"
+        "import json, os\nfrom pathlib import Path\n"
         f"with open({str(pid_log)!r}, 'a') as handle:\n"
         "    handle.write(json.dumps([os.getpid(), os.getppid()]) + '\\n')\n"
+        "def check():\n"
+        f"    if Path({str(failure)!r}).exists():\n"
+        "        raise RuntimeError('test dependency unavailable')\n"
     )
     helper.write_text(dependency)
     monkeypatch.setenv(
@@ -205,9 +208,19 @@ def test_native_worker_dependency_failure_is_atomic_and_retryable(
     module = tmp_path / "calculations.py"
     module.write_text(
         "import soft_sensor_test_dependency\n"
-        + (DIRECTORY / "transforms.py").read_text()
+        + (DIRECTORY / "transforms.py")
+        .read_text()
+        .replace(
+            "def tank_mean(frame, context):",
+            "def tank_mean(frame, context):\n    soft_sensor_test_dependency.check()",
+        )
     )
-    client = aq.init(data_dir=tmp_path / "data", exact_only=True, timeout=180)
+    config = tmp_path / "acquirium.toml"
+    config.write_text(
+        '[server]\ndata_dir = "data"\nengine_workers = 2\npython_pool_size = 1\n'
+        "python_max_worker_jobs = 100\npython_max_worker_age = 300.0\n"
+    )
+    client = aq.init(config, exact_only=True, timeout=180)
     try:
         register(client)
         deploy(client, module=module)
@@ -221,13 +234,18 @@ def test_native_worker_dependency_failure_is_atomic_and_retryable(
         membership = {"a1": TANK_A, "a2": TANK_A, "b1": TANK_B}
         assert_outputs(client, recompute(original, membership))
         workers = [json.loads(line) for line in pid_log.read_text().splitlines()]
-        assert len({pid for pid, parent in workers}) >= 4
+        original_pids = {pid for pid, parent in workers}
+        assert len(original_pids) == 1
+        stats = client.engine_status()["python_workers"]
+        assert stats["spawned"] == len(original_pids)
+        assert stats["resident"] == stats["peak_active"] == 1
+        assert stats["reused"] >= 3
         assert all(
             pid != os.getpid() and parent != os.getpid() and pid != parent
             for pid, parent in workers
         )
 
-        helper.write_text("raise RuntimeError('test dependency unavailable')\n")
+        failure.touch()
         response = client.insert_timeseries(
             SOURCE, "a2", [(2 * SECOND, 20)], request_id="blocked"
         )
@@ -235,6 +253,7 @@ def test_native_worker_dependency_failure_is_atomic_and_retryable(
         assert receipt["accepted"] and not receipt["published"]
         status = client.engine_status()
         assert "test dependency unavailable" in status["error"]
+        assert status["python_workers"]["resident"] == 0
         assert status["engine"]["accepted"] > status["engine"]["applied"]
         assert client.engine_snapshot()["epoch"] == snapshot["epoch"]
         assert_outputs(client, recompute(original, membership))
@@ -248,16 +267,16 @@ def test_native_worker_dependency_failure_is_atomic_and_retryable(
         )
         assert again["receipts"][0]["sequence"] == receipt["sequence"]
 
-        helper.write_text(dependency)
+        failure.unlink()
         client.retry_engine()
         client.wait(receipt)
         original["a2"][2 * SECOND] = 20
         assert_outputs(client, recompute(original, membership))
         assert client.client.timeseries_df(raw_reference)["value"].to_list() == [20]
         assert client.engine_status()["error"] is None
+        final_pids = {json.loads(line)[0] for line in pid_log.read_text().splitlines()}
+        assert final_pids - original_pids
         assert client.query().measurement(app=ALARM).dataframe().is_empty()
     finally:
-        # Leave the installed dependency repaired even if an assertion fails,
-        # allowing the server's ordinary drain to finish pending requests.
-        helper.write_text(dependency)
+        failure.unlink(missing_ok=True)
         aq.shutdown()

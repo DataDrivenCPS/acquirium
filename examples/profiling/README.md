@@ -1,7 +1,9 @@
 # Profile soft-sensor execution
 
-See the [initial results](../../docs/profiling/2026-10-18/README.md) and proposed
+See the [initial results](../../docs/profiling/2026-10-18/README.md) and
 [native worker pool](../../docs/plans/escapement-python-workers.md).
+The [implemented pool comparison](../../docs/profiling/2026-10-18-pool/README.md)
+includes native profiles and end-to-end workload measurements.
 
 Run from the repository root, using a **new** output directory:
 
@@ -9,6 +11,11 @@ Run from the repository root, using a **new** output directory:
 uv run --locked python -m examples.profiling.run \
   --output /tmp/acquirium-profile --workers 1,2,4 --samples 5
 ```
+
+Execution defaults to the native warm pool. Pass `--execution fresh` with a
+different output directory for a fresh-process comparison. Both modes have
+paired instrumented/control cases. Pool limits match the configured worker
+count; native pool counters are saved in each case's result and summary.
 
 For a short check:
 
@@ -26,7 +33,7 @@ application. Production engine code and production workers are unchanged.
 ## What is measured
 
 Each worker-count/scenario pair has an uninstrumented control and an instrumented
-run. Each case runs in a fresh Python process and a temporary native database.
+run. Each case's engine owner runs in a fresh Python process and a temporary native database.
 Activation and a history-seeding warmup epoch are excluded; measured epochs apply
 corrections to existing observations. Case order is reproducibly shuffled.
 Every measured epoch is checked against independent full-history recomputation of
@@ -67,6 +74,12 @@ injects lightweight timing calls around these boundaries:
 - validation, output conversion, and Arrow writing;
 - final port metadata writing.
 
+For pooled execution, imports and profiler preparation are attributed to the
+first job of a process. Subsequent jobs get separate profiles with zero import
+time and `cold_worker=false`. Warmup initializes the same artifact used by all
+operators, so the measured epochs exercise warm reuse. Worker CSVs include PID
+and cold/warm classification. Initial cold setup remains in retained seed files.
+
 The calculation artifact, its native digest validation, input/output files,
 schema checks, output ownership, scheduling, and publication remain the native
 implementation. This is trusted-code instrumentation of the reviewed worker, not
@@ -103,9 +116,13 @@ Generate standalone PNG and SVG figures after the run:
 uv run --locked python -m examples.profiling.plot /tmp/acquirium-profile/summary.json
 ```
 
+To compare pooled and fresh runs at two workers, render the pooled summary with
+`--fresh-summary /tmp/acquirium-fresh/summary.json`; this also exports
+`pool-comparison.png` and `pool-comparison.svg`.
+
 Start by comparing uninstrumented `compute_ms` across worker limits. Then inspect
 the actual worker stages to distinguish repeated imports, input/output handling,
 and calculation cost. `total_ms_per_request` measures amortized epoch service
 cost under controlled batching; it is **not** a request's observed end-to-end
 latency. This harness does not measure queueing, sustainable arrival rates,
-unbounded history, native-only operators, pooled workers, or security isolation.
+unbounded history, native-only operators, adaptive scaling, or security isolation.
