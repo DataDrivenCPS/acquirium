@@ -228,6 +228,19 @@ def run(
                         last_progress = time.monotonic()
                     status = observe()
                     if time.monotonic() >= next_report:
+                        report = status["last_report"]
+                        last_epoch = None
+                        if report is not None:
+                            last_epoch = {
+                                field: report[field]
+                                for field in ("epoch", "requests", "peak_workers")
+                            }
+                            last_epoch.update(
+                                {
+                                    field: round(value, 2)
+                                    for field, value in report["timings"].items()
+                                }
+                            )
                         print(
                             json.dumps(
                                 {
@@ -237,6 +250,7 @@ def run(
                                     "consumed_through": loop.consumer.state[
                                         "complete_through"
                                     ],
+                                    "last_epoch": last_epoch,
                                 }
                             ),
                             flush=True,

@@ -81,7 +81,14 @@ consumption, verifies the final result, then shuts down the owned server.
 ## Measurements and limits
 
 The run prints admitted requests, backlog, publication epoch, and consumer frontier
-while it runs. At the end it compares **all current raw and derived values** in
+while it runs. `last_epoch` reports the last completed epoch's request count,
+peak concurrent workers, and `prepare_ms`, `compute_ms`, `publish_ms`, and
+`total_ms` (rounded to two decimal places). These timings measure engine work;
+they exclude time requests spent waiting in the inbox. The explicit epoch number
+identifies the report when it repeats across log lines. `last_epoch` is null
+before this processor has completed an epoch, including immediately after restart.
+
+At the end it compares **all current raw and derived values** in
 both the consumer view and a pinned server snapshot with an independent Python
 recomputation of the source journal. Verification must pass before `metrics.json`
 is written. Alarm clear/retraction is part of that comparison.
