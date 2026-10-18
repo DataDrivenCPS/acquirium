@@ -34,6 +34,14 @@ change in any release.
 - A change feed of committed steps, `GET /materialization/changes`, and
   trigger outputs, `aq.output.trigger(url)` and `aq.output.named(...,
   trigger=url)`, POSTed after every step that changes them.
+- Lazy transforms: `inputs[alias].lazy()` (or `lazyframe()`) and
+  `aq.align(..., lazy=True)` build Polars plans, and a transform may assign
+  a LazyFrame to an output. The runtime collects every lazy output of a
+  dependency layer in one call, so views that resample the same stream the
+  same way compute it once. Eager transforms are unchanged.
+- `[server] materialization_event_log` (or `ACQUIRIUM_EVENT_LOG`): a
+  JSON-lines log of ingestions, steps, invocations, publications, failures
+  and replans, for measuring the runtime. Off by default.
 - Text resolution has a `role` kind: the s223 role enumeration, the NAWI roles
   that extend it, and whatever a loaded model uses with `s223:hasRole`. A role
   is found by its bare name, so `resolve_text("backwash", kind="role")` returns
@@ -44,7 +52,15 @@ change in any release.
   instead of 1.45 s, with the same inferred triples.
 - A write that arrives during a step lands above every frontier the step
   advanced and is applied by the next step; a dependent layer reads its
-  producers' outputs from the step's own transaction.
+  producers' outputs from the step's own transaction. On PostgreSQL the
+  inbox append no longer waits for a running step.
+- A layer publishes with one statement per kind instead of a round of
+  statements per binding; rows of one layer that cover the same streams and
+  window are read once. A window past a stream's last row is appended
+  without a probe or tombstone. Two bindings writing one `(stream,
+  timestamp)` in a step is an error rather than two stored rows.
+- On PostgreSQL a wave's tombstones are one `UPDATE` driven by the windows,
+  which walks the `(ref_id, ts)` index instead of scanning the table.
 - Roles are no longer part of `kind="class"`. `resolve_text("condenser",
   kind="class")` returns the equipment class only; the role needs
   `kind="role"`.

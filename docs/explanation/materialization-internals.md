@@ -32,10 +32,44 @@ embedder that constructs the engine without marking it deferred gets a step
 on every submission.
 
 The step holds the backend's write lock for its whole transaction. A write
-that arrives meanwhile waits in the inbox or on the lock and lands above
-every frontier the step advanced, so the next step sees it. Transforms run
-in a bounded pool on data already loaded; reads and writes stay on the
-step's single connection.
+that arrives meanwhile is appended to the inbox and lands above every
+frontier the step advanced, so the next step sees it. On PostgreSQL the
+append runs on a connection of its own, so the publisher is acknowledged
+while a step is in progress; on DuckDB it waits for the store's lock. The
+inbox row keeps the time it was received, which travels with the entry
+into the step's ingest event. Transforms run in a bounded pool on data
+already loaded; reads and writes stay on the step's single connection.
+
+### A layer
+
+A step evaluates the plan one dependency layer at a time, and a layer is one
+unit of work. Rows read for the same streams over the same window are read
+once for the layer and shared by the bindings that need them, as one Polars
+frame. Transforms run in the pool. An eager transform returns tables; a lazy
+one returns plans, built from `inputs[alias].lazy()` or
+`aq.align(..., lazy=True)`. When every transform of the layer has run, its
+lazy outputs are collected in one call with common-subplan elimination, so
+a resample two views share is computed once. Polars shares a plan only
+between dependents that hold the same plan object, so the layer keeps a
+memo that hands two views the same object for the same loaded frame,
+stream, bucket and aggregate. A plan that fails at collection fails only
+its binding.
+
+The layer then publishes in one wave with one statement per kind. Progress,
+work rows and resets are read once. One read gives each output's stream id
+and last timestamp, deleted rows included; outputs never written before get
+their ids in one `INSERT ... RETURNING`. A window that starts after its
+stream's last row is a fresh step's window: it is appended, with no probe
+and no tombstone. The remaining windows are corrections: they are probed in
+one `VALUES` query and tombstoned in one `UPDATE`, a semi-join on DuckDB,
+where a row matched by two windows must be updated once, and a join driven
+by the windows on PostgreSQL, where the `EXISTS` form scanned the table once
+a wave had about thirty windows. All rows are then inserted as one frame
+keyed by stream id, and progress advances in one `UPDATE`. Two bindings
+writing one `(stream, timestamp)` in a wave is an error; the check runs
+only on streams with two writers. Full rebuilds, which replace a stream
+physically, stay per output. The step's timings split into read, transform,
+collect and publish.
 
 ## Change feed and triggers
 
@@ -220,6 +254,8 @@ stream keys for each backend.
 | Stream key in `timeseries` | integer `ref_id`, joined to `ref_ids` | integer `ref_id`, joined to `ref_ids` |
 | Timestamp storage | UTC-normalized `TIMESTAMP` (naive in SQL) | `TIMESTAMPTZ` |
 | Revisioned write | registered Polars frame, delete+insert keyed by `(ref_id, ts)` | Polars CSV into a temporary `COPY` staging table, then ordered `INSERT ... SELECT ... ON CONFLICT` keyed by `(ref_id, ts)` |
+| Stream key in a written frame | `ref_id` from a wave; `ref_uri` from ingestion, joined to `ref_ids` | the same |
+| Tombstones of a wave | one `UPDATE` with a semi-join over the windows | one `UPDATE ... FROM (VALUES ...) JOIN ref_ids`, an index walk per window |
 | Read connection | a new connection to the shared embedded database | a new psycopg connection |
 | Snapshot boundary | `conn.begin()` | `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY` |
 | Write transaction | in-process store lock around the store's write connection | in-process store lock around a transaction on the store's persistent write connection |
@@ -244,7 +280,11 @@ The `[server]` settings control execution and diagnostics.
 waits before the next step. `materialization_workers` (default `2`) limits concurrent
 execution, and `materialization_error_log_seconds` (default `30`) limits how
 frequently repeated failures are logged. A failing deployment does not prevent
-ingestion or independent apps from progressing.
+ingestion or independent apps from progressing. `materialization_event_log`
+(or `ACQUIRIUM_EVENT_LOG`) names a JSON-lines file that records every
+ingestion, step, invocation, publication, failure and replan with
+timestamps, revisions, rows and timings; ingest and step lines join on the
+revision. Without it every hook is one attribute lookup.
 
 Apps must produce the same result for a given batch. The runtime can repeat
 uncommitted work, but it cannot undo external side effects performed by a
@@ -273,6 +313,9 @@ schema so it cannot disturb the API integration server's database. It needs
 `tests/unit/test_incremental_materialization.py` is the unit-level contract:
 output identities and grouping, window construction, progress-key continuity,
 unit conversion, alignment, and DAG validation.
+`tests/unit/test_materialization_lazy.py` checks that a lazy transform
+publishes what the eager one would, that two views share one resample plan
+per stream, and that a failing plan fails only its binding.
 
 The processing contract is checked across ingestion order, corrections, and
 recovery:

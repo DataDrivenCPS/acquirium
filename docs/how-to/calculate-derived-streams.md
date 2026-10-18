@@ -103,6 +103,51 @@ reads all available readings in that minute and calculates it again. The result
 reflects the data currently stored; later arrivals can revise it. The runtime
 does not wait for every sensor to report or for the minute to become final.
 
+## Let the runtime collect the result
+
+The transform above computes its frame itself. It can instead describe the
+computation and leave the running to the runtime, by assigning a Polars
+LazyFrame:
+
+```python
+class MinuteTemperature(Celsius):
+    name = "minute-temperature"
+    grouping = "per_match"
+    every = "1m"
+
+    def transform(self, inputs, output, context):
+        converted = {
+            "temperature": inputs["temperature"].in_unit(
+                "http://qudt.org/vocab/unit/DEG_C"
+            )
+        }
+        output["temperature"] = aq.align(converted, lazy=True).rename(
+            {"temperature": "value"}
+        )
+```
+
+Nothing runs inside `transform`. Once every app in the same dependency layer
+has run, the runtime collects all their lazy outputs in one call. Two apps
+that bucket the same stream the same way, a minute mean here and a minute
+maximum elsewhere, then share the resample instead of each computing it. The
+collected frame is checked like any other output, under the port name, and
+an error in the plan fails only that app's binding for the step.
+
+`aq.align(lazy=True)` covers resampling. For anything else, start from
+`inputs[alias].lazy()` and build the plan with Polars:
+
+```python
+    def transform(self, inputs, output, context):
+        frame = inputs["temperature"].in_unit("http://qudt.org/vocab/unit/DEG_C").lazy()
+        output["temperature"] = frame.sort("time").select(
+            "time", pl.col("value").rolling_mean_by("time", window_size="10m")
+        )
+```
+
+Both forms publish the same rows as their eager counterparts; choose lazy
+when several apps read the same streams, or when the result is large enough
+that one optimised plan beats a chain of intermediate frames.
+
 ## Calculate a rolling result
 
 Declare how much preceding input each output depends on:

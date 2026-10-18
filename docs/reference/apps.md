@@ -44,18 +44,22 @@ cadence rather than waiting for `min_interval`.
 
 ## Example apps
 
-The repository includes two complete examples in [`scripts/apps/`](../../scripts/apps/):
+The repository includes three complete examples in [`scripts/apps/`](../../scripts/apps/):
 
 - [`temperature_normalization.py`](../../scripts/apps/temperature_normalization.py)
   converts each matched temperature stream to degrees Celsius.
 - [`fill_short_temperature_gaps.py`](../../scripts/apps/fill_short_temperature_gaps.py)
   copies Celsius history and interpolates gaps shorter than one hour.
+- [`minute_temperature.py`](../../scripts/apps/minute_temperature.py)
+  averages each temperature stream into complete minutes and assigns the
+  result as a LazyFrame, which the runtime collects with the rest of its layer.
 
-Check either app before deploying it:
+Check an app before deploying it:
 
 ```bash
 acquirium app check scripts/apps/temperature_normalization.py:TemperatureNormalization
 acquirium app check scripts/apps/fill_short_temperature_gaps.py:FillShortTemperatureGaps
+acquirium app check scripts/apps/minute_temperature.py:MinuteTemperature
 ```
 
 The examples and their assumptions are described in
@@ -114,7 +118,16 @@ stable across input membership changes.
 ### Output tables
 
 Assign each port at most once per invocation. Acceptable values are Arrow
-tables/record batches, Polars dataframes, and pandas dataframes.
+tables/record batches, Polars dataframes, pandas dataframes, and Polars
+LazyFrames.
+
+A LazyFrame is a plan, not a result. The runtime runs every transform of a
+dependency layer, then collects all their lazy outputs in one call, so plans
+that share a prefix are computed once: two apps that `aq.align(...,
+lazy=True)` the same stream with the same bucket and aggregate share the
+resample. The collected frame is validated like any other table, under the
+port's name, and a plan that fails at collection fails only its own binding.
+Eager assignments are unchanged.
 
 Tables must have exactly `time` and `value` columns. Timestamps must be unique,
 timezone-aware, and non-null. They are normalized to UTC microseconds.
@@ -137,6 +150,8 @@ and the corresponding progress updates in one transaction.
 - `every`: the app's declared bucket duration, if any.
 - `collect()`: loaded Arrow table with `ref_uri`, `time`, `value`.
 - `df("polars")` or `df("pandas")`: loaded data as a dataframe.
+- `lazy()`, or `lazyframe()`: the loaded data as a Polars LazyFrame, for a
+  transform that builds its result lazily and assigns the plan to an output.
 - `batches()`: chunks of the loaded table, not streaming database reads.
 - `changes`: live rows with revisions in the invocation's revision range.
 - `in_unit(unit_uri)`: a converted StreamSet; missing/incompatible units raise.
@@ -202,9 +217,16 @@ Use the default for ordinary resampling and rolling calculations.
 
 ## aq.align
 
-`aq.align(inputs, every=None, aggregate="mean")` returns a wide Polars frame
-with `time` and one column per stream. With one stream per alias, columns use
-the alias. Multiple streams use `alias[label-or-reference]`.
+`aq.align(inputs, every=None, aggregate="mean", lazy=False)` returns a wide
+Polars frame with `time` and one column per stream. With one stream per
+alias, columns use the alias. Multiple streams use `alias[label-or-reference]`.
+
+With `lazy=True` the result is a LazyFrame and nothing is computed in the
+call. Each stream's resample is registered with the layer, so apps in the
+same layer that align the same stream with the same `every` and `aggregate`
+share one computation when their outputs are collected. A stream with no
+rows in the window still gets its column, all null, so the schema does not
+depend on the data.
 
 Omitting `every` uses `App.every`. An explicit value must agree with that
 declaration. Declare buckets on scheduled apps so the runtime can read complete
