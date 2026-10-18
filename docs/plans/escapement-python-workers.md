@@ -130,8 +130,12 @@ has demonstrated a specific limitation.
    malformed output, retry, shutdown, and job/age recycling. Chain results match
    independent recomputation across fresh processes, warm reuse, and replicas.
 3. Reran native profiles and the end-to-end workload, including historical repair
-   and restart. Warm/cold timings, latency, backlog, and server RSS are recorded;
-   runnable-job queue age and per-worker RSS remain instrumentation work.
+   and restart. Added bounded native timing histograms, runnable-job queue age,
+   and per-worker RSS. The [model workload](../../examples/model_workload/README.md)
+   measures immutable model reuse under sustained low/burst/recovery traffic,
+   recycling, and graceful restart, with independent result verification.
+   [Measured results](../profiling/2026-10-18-model/README.md) compare fixed pools
+   and show that a narrow operator's serial groups leave replicas unused.
 4. Next, add group chunking if wide operators are a measured bottleneck, then bounded
    adaptive scaling if variable load warrants it.
 5. Add explicit stateful operators only with native checkpoint, atomic commit,

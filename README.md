@@ -75,6 +75,9 @@ Python worker stages; [initial results](docs/profiling/2026-10-18/README.md) led
 the bounded persistent worker pool in Escapement.
 The [pool comparison](docs/profiling/2026-10-18-pool/README.md) records warm
 execution and streaming workload results.
+The [sustained model benchmark](examples/model_workload/README.md) measures pool
+queueing, warm service, and worker RSS under bursts, recycling, and restart;
+[recorded results](docs/profiling/2026-10-18-model/README.md) compare fixed pools.
 The [core architecture](docs/explanation/escapement-core.md) explains ownership,
 receipts, snapshots, restart, and failure behavior.
 

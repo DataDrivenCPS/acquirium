@@ -22,7 +22,7 @@ The server exposes semantic graph operations and one Escapement timeseries engin
 | `POST /delete_timeseries` | `{source_id, ref_name, timestamps: [UTC-ns], request_id}` |
 | `GET /timeseries` | Arrow `ts: timestamp[ns, UTC], value: float64, uri: utf8` |
 | `POST /timeseries_info` | `{uris: [...]}` to counts and UTC bounds |
-| `GET /engine/status` | Accepted/applied frontiers, backlog, paused error, diagnostic timings, server PID and peak RSS |
+| `GET /engine/status` | Accepted/applied frontiers, backlog, paused error, timings, worker queue/RSS, server PID and peak RSS |
 | `GET /engine/snapshot` | Published epoch, applied sequence, complete active plan |
 | `GET /engine/changes` | Bounded signed native feed pages with exclusive epoch/ordinal cursor and complete-epoch frontier |
 | `POST /engine/retry` | Explicitly retry a paused epoch |
@@ -60,6 +60,34 @@ Resident capacity includes starting/leased workers; active leases are not CPU
 utilization. Counters reset with the native owner and are not durable progress.
 `failures` counts pool startup/lease failures; `resets` also covers native
 validation or publication failures after a worker has returned.
+
+Pool status also reports `queued`, `peak_queued`, `oldest_queue_age_ms`, and
+`queue_timeouts`. This queue counts ready operator jobs waiting for a process,
+separately from pending source requests and DAG dependencies. Nested `telemetry`
+provides bounded timing histograms and live worker PIDs/artifacts with one last
+job's operator, epoch, affected group count, and timing. One job can process many
+groups serially. All measurements are process-local diagnostics.
+
+`prepare` covers native artifact validation and Arrow/context writing; `queue_wait`
+covers lease acquisition; `cold_start` covers spawn/import/model initialization;
+`execution` covers the leased job through native Arrow decoding and port checks.
+`warm_service` and `cold_service` sum preparation and execution, excluding pool
+waiting and cold initialization. `total` adds those two excluded phases. These
+job timings exclude scheduler input construction, final native semantic
+validation, publication, worker retirement, and scratch cleanup. Failed leased
+jobs contribute timing samples too. `returned_jobs` means decoded worker results,
+and does not imply publication; startup failures and queue timeouts are separate.
+`p50_upper_ms` and `p95_upper_ms` are fixed histogram bucket upper bounds; null
+means no samples or overflow (inspect count/buckets).
+
+Worker RSS uses kernel sampling on macOS/Linux. `telemetry.workers[].rss_bytes`
+is current root-process RSS; descendants and the server are excluded, and shared
+pages count in each worker. Aggregate `rss_bytes` is null unless every resident
+slot has a registered, readable PID. `rss_sampled_bytes` sums known values and
+`rss_complete` exposes coverage. `rss_peak_observed_bytes` is the highest sampled
+sum, not an OS lifetime peak or memory cap. Registry and occupancy transitions
+are adjacent rather than one atomic snapshot. Unsupported platforms return null
+RSS. Sampling occurs on stats reads and worker removal, not each completed job.
 
 Timeseries parameters include `uri`, optional `start`/`end` datetime strings or
 `start_ns`/`end_ns` integers, optional `limit`, `order=asc|desc`, and optional

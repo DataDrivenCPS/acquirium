@@ -36,6 +36,29 @@ from .producer import WorkloadDriver
 from .state import save
 
 
+def pool_summary(stats):
+    """Keep live logs compact; complete histograms remain in saved metrics."""
+    result = {
+        name: stats[name]
+        for name in (
+            "spawned",
+            "reused",
+            "resident",
+            "active",
+            "queued",
+            "oldest_queue_age_ms",
+        )
+    }
+    telemetry = stats["telemetry"]
+    result.update(
+        warm_service_mean_ms=round(telemetry["warm_service"]["mean_ms"], 2),
+        cold_start_mean_ms=round(telemetry["cold_start"]["mean_ms"], 2),
+        rss_sampled_mib=round(telemetry["rss_sampled_bytes"] / 2**20, 2),
+        rss_complete=telemetry["rss_complete"],
+    )
+    return result
+
+
 def connect(address):
     url = urlsplit(address)
     return aq.Acquirium(
@@ -251,7 +274,9 @@ def run(
                                         "complete_through"
                                     ],
                                     "last_epoch": last_epoch,
-                                    "python_workers": status["python_workers"],
+                                    "python_workers": pool_summary(
+                                        status["python_workers"]
+                                    ),
                                 }
                             ),
                             flush=True,

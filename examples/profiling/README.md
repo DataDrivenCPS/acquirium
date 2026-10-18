@@ -4,6 +4,8 @@ See the [initial results](../../docs/profiling/2026-10-18/README.md) and
 [native worker pool](../../docs/plans/escapement-python-workers.md).
 The [implemented pool comparison](../../docs/profiling/2026-10-18-pool/README.md)
 includes native profiles and end-to-end workload measurements.
+The [model workload](../model_workload/README.md) adds sustained traffic with
+immutable model arrays, native pool timing/queue/RSS telemetry, and recycling.
 
 Run from the repository root, using a **new** output directory:
 

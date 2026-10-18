@@ -137,6 +137,13 @@ def test_sink_write_failure_replays_without_losing_or_double_applying_changes(
         driver.setup()
         accepted = driver.tick()
         client.wait(accepted["receipt"])
+        pool = client.engine_status()["python_workers"]
+        telemetry = pool["telemetry"]
+        assert pool["queued"] == 0
+        assert telemetry["returned_jobs"] >= 4
+        assert telemetry["warm_service"]["count"] >= 2
+        assert telemetry["total"]["count"] == sum(telemetry["total"]["buckets"])
+        assert "rss_complete" in telemetry
         consumer = ChangeConsumer(client, tmp_path / "sink.json")
         with monkeypatch.context() as patch:
 

@@ -90,6 +90,9 @@ before this processor has completed an epoch, including immediately after restar
 `python_workers` reports native pool launches/reuse, failures/recycling, and
 resident/idle/active counts. The pool grows on demand and stays within the
 configured resident bound; each process serves one job at a time.
+Live logs include pool queue age, mean warm service and cold start times, and
+sampled worker RSS with coverage. Saved metrics retain the full native histograms
+and live worker details; see [HTTP status definitions](../../docs/reference/http-api.md).
 The saved report includes those counters for the final native owner; they reset
 on server restart rather than accumulating across the workload's restarts.
 
@@ -114,7 +117,8 @@ journal is retained for verification; the JSON sink rewrites its current view an
 buffers a whole epoch. Both are deliberately small examples. Native current
 state still fits in RAM and its history/feed are unpruned. Use finite runs to
 establish operating bounds before claiming unattended capacity. The native
-benchmark harness can isolate engine costs from these source/sink costs later.
+[model benchmark](../model_workload/README.md) isolates engine costs from these
+source/sink costs and exercises resident model arrays.
 
 Initial local smoke measurements on 2026-10-18 (macOS arm64, Python 3.12):
 
