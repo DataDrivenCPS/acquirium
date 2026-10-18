@@ -73,6 +73,7 @@ The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acq
 - [Calculate derived streams](how-to/calculate-derived-streams.md) — water-temperature conversion, averages, and alarms
 - [Write soft sensors](how-to/write-soft-sensors.md) — semantic DAGs, Python subprocesses, and immutable calculation releases
 - [Consume streaming changes](how-to/consume-streaming-changes.md) — resumable signed changes, epoch completion, and a sustained workload
+- [Profile soft-sensor execution](../examples/profiling/README.md) — native epoch and Python stage measurements, with [initial results](profiling/2026-10-18/README.md)
 - [Check, deploy, and repair an app](how-to/check-deploy-apps.md) — dry runs, deployment, reprocessing, and execution controls
 - [Run the server](how-to/run-the-server.md) — the server command, startup, Docker
 - [Start from a script](how-to/local-runtime.md) — `aq.init()`, config discovery, and local server ownership

@@ -48,6 +48,14 @@ existing Ray supervisor or claim durable buffering for other drivers.
 
 ## Native soft sensors
 
+The [execution profile](../profiling/2026-10-18/README.md) now measures five
+workload shapes with paired controls at one, two, and four workers. Repeated
+imports dominate these calculations. The next native extension is the proposed
+[persistent Python worker pool](escapement-python-workers.md): explicit pure
+semantics, immutable release identity, bounded warm reuse and replication, then
+measured adaptive scaling. Stateful operators require a separate native
+checkpoint/replay contract.
+
 Implemented in [the tank-temperature chain](../../examples/soft_sensors/README.md)
 and [authoring guide](../how-to/write-soft-sensors.md). Output declarations now
 support app-owned semantic group attachments; the client exposes native retry;
