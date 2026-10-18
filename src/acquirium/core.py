@@ -122,6 +122,37 @@ class Core:
     def wait(self, receipt: Receipt, timeout: float = 30) -> Snapshot:
         return self.processor.read_after(receipt, timeout=timeout)
 
+    def changes(self, *, epoch=0, ordinal=0, limit=1000):
+        """Page the signed native feed at a captured publication frontier.
+
+        Cursors are exclusive and database-scoped. A page may split an epoch;
+        complete_through tells consumers which epochs can become visible.
+        """
+        for name, value in (("epoch", epoch), ("ordinal", ordinal)):
+            if type(value) is not int or not 0 <= value < 2**64:
+                raise ValueError(f"{name} must be an unsigned 64-bit integer")
+        if type(limit) is not int or not 1 <= limit <= 10_000:
+            raise ValueError("limit must be between 1 and 10,000")
+        with self._gate:
+            frontier = self.engine.snapshot().epoch
+            if epoch > frontier or (epoch == 0 and ordinal != 0):
+                raise ValueError("cursor must refer to published history")
+            rows = self.engine.changes(epoch=epoch, ordinal=ordinal, limit=limit + 1)
+        rows = [row for row in rows if row["epoch"] <= frontier]
+        more = len(rows) > limit
+        complete = rows[limit]["epoch"] - 1 if more else frontier
+        page = rows[:limit]
+        cursor = {"epoch": epoch, "ordinal": ordinal}
+        if page:
+            cursor = {key: page[-1][key] for key in ("epoch", "ordinal")}
+        return dict(
+            changes=page,
+            cursor=cursor,
+            published_epoch=frontier,
+            complete_through=complete,
+            has_more=more,
+        )
+
     def batches(
         self,
         stream: str,

@@ -63,11 +63,11 @@ down:
 # Core tests need no external database or container services.
 test:
 	uv sync --locked --extra mqtt
-	uv run pytest tests/unit tests/integration/test_native_runtime.py tests/integration/test_soft_sensors.py
+	uv run pytest tests/unit tests/integration/test_native_runtime.py tests/integration/test_soft_sensors.py tests/integration/test_streaming_workload.py
 
 test-timing:
 	uv sync --locked --extra mqtt
-	uv run pytest tests/unit tests/integration/test_native_runtime.py tests/integration/test_soft_sensors.py --durations=$(PYTEST_DURATIONS)
+	uv run pytest tests/unit tests/integration/test_native_runtime.py tests/integration/test_soft_sensors.py tests/integration/test_streaming_workload.py --durations=$(PYTEST_DURATIONS)
 
 testing-up:
 	$(TEST_COMPOSE) --profile server --profile test rm -sf acquirium mosquitto >/dev/null 2>&1 || true

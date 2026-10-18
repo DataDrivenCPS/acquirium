@@ -30,7 +30,7 @@ from datetime import datetime
 from acquirium.Server.config import load_active_config
 from acquirium.Server.manager import Manager
 from acquirium.apps import App
-from escapement import PendingError, ExecutionError
+from escapement import PendingError, ExecutionError, CapacityError
 
 from acquirium.internals.models import (
     StreamInsert,
@@ -493,7 +493,15 @@ def remove_app(name: str):
 
 @app.get("/engine/status")
 def engine_status():
-    return app.state.manager.core.processor.status()
+    status = app.state.manager.core.processor.status()
+    try:
+        import resource
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        peak_bytes = int(peak if sys.platform == "darwin" else peak * 1024)
+    except ImportError:
+        peak_bytes = None
+    status["process"] = {"pid": os.getpid(), "peak_rss_bytes": peak_bytes}
+    return status
 
 
 @app.get("/engine/snapshot")
@@ -506,6 +514,18 @@ def engine_snapshot():
 def engine_retry():
     app.state.manager.core.processor.retry()
     return engine_status()
+
+
+@app.get("/engine/changes")
+def engine_changes(
+    epoch: int = Query(0, ge=0, lt=2**64),
+    ordinal: int = Query(0, ge=0, lt=2**64),
+    limit: int = Query(1000, ge=1, le=10_000),
+):
+    try:
+        return app.state.manager.core.changes(epoch=epoch, ordinal=ordinal, limit=limit)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 #### DRIVERS API ENDPOINTS ####
@@ -624,6 +644,8 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()], wait: floa
                                                                request_id=request_id)
             receipts.append(_receipt(receipt, source_id, request_id, wait))
         return {"ok": True, "rows_inserted": total, "receipts": receipts}
+    except CapacityError as error:
+        raise HTTPException(status_code=503, detail=str(error), headers={"Retry-After": "1"}) from error
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
 
@@ -644,6 +666,8 @@ async def insert_timeseries_arrow(request: Request, wait: float = Query(30, ge=0
                 source_id, source_frame.drop("source_id").to_arrow(), request_id=request_id)
             receipts.append(await asyncio.to_thread(_receipt, receipt, source_id, request_id, wait))
         return {"ok": True, "rows_inserted": len(frame), "receipts": receipts}
+    except CapacityError as error:
+        raise HTTPException(status_code=503, detail=str(error), headers={"Retry-After": "1"}) from error
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
 
@@ -661,6 +685,8 @@ def delete_timeseries(request: DeleteObservations, wait: float = Query(30, ge=0)
         receipt = app.state.manager.delete_timeseries(request.source_id, request.ref_name,
             request.timestamps, request_id=request.request_id)
         return _receipt(receipt, request.source_id, request.request_id, wait)
+    except CapacityError as error:
+        raise HTTPException(status_code=503, detail=str(error), headers={"Retry-After": "1"}) from error
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
 

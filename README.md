@@ -67,6 +67,9 @@ basic path. The [soft-sensor chain](examples/soft_sensors/README.md) demonstrate
 tank means, semantic discovery of derived inputs, and an alarm in native Python
 subprocesses. The [authoring guide](docs/how-to/write-soft-sensors.md) and
 [app reference](docs/reference/apps.md) describe deployment and function contracts.
+The [streaming workload](examples/streaming/README.md) runs a durable source driver
+and resumable committed-change consumer continuously, with bursts, historical
+repair, restart checks, and measured latency/backlog.
 The [core architecture](docs/explanation/escapement-core.md) explains ownership,
 receipts, snapshots, restart, and failure behavior.
 

@@ -1,7 +1,7 @@
 # Make Escapement the core of Acquirium
 
 Status: initial mandatory replacement implemented on this branch; operating-scale validation remains.
-Updated on 2026-10-16 on branch `plan/escapement-core`.
+Updated on 2026-10-18 on branch `plan/escapement-core`.
 
 ## Implementation progress
 
@@ -21,6 +21,30 @@ and controlled failed-prefix recovery. The soft-sensor authoring and execution
 slice below is implemented, including a runnable chain and integration coverage.
 Step 4's representative operating-scale measurements and release/CI native
 packaging remain subsequent work.
+
+## Continuous workload slice
+
+The [streaming workload](../../examples/streaming/README.md) now drives the native
+soft-sensor chain continuously through HTTP. Its source-owned journal preserves
+requests before delivery, and its consumer-owned projection atomically saves
+complete epochs with their cursor. Acquirium exposes the native signed feed with
+bounded pages, a captured publication frontier, and explicit epoch completion;
+no second feed ledger or server timeseries store is introduced.
+
+Client ingestion supports immediate durable admission (`wait=0`) and an HTTP
+timeout; admission pressure returns retryable 503 responses. Status exposes
+server process peak RSS alongside native frontiers/backlog. The harness reports
+observed publication/consumption latency bounds, runs bursts and graceful
+restarts, and compares all current source/derived results with an independent
+source-journal recomputation and a pinned server snapshot. Tests also cover lost
+responses, offline delivery, partial-epoch consumer restart, sink write failure,
+and abrupt server termination after acceptance.
+
+Initial 60-request/restart and 120-request/steady runs pass full verification.
+These are smoke measurements, not a sustained capacity guarantee. Broker-specific
+acknowledgments, storage/retention bounds, and longer operating-scale experiments
+remain subsequent work. The standalone source driver does not replace the
+existing Ray supervisor or claim durable buffering for other drivers.
 
 ## Native soft sensors
 

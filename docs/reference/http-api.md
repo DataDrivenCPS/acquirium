@@ -22,8 +22,9 @@ The server exposes semantic graph operations and one Escapement timeseries engin
 | `POST /delete_timeseries` | `{source_id, ref_name, timestamps: [UTC-ns], request_id}` |
 | `GET /timeseries` | Arrow `ts: timestamp[ns, UTC], value: float64, uri: utf8` |
 | `POST /timeseries_info` | `{uris: [...]}` to counts and UTC bounds |
-| `GET /engine/status` | Accepted/applied frontiers, backlog, paused error, diagnostic timings |
+| `GET /engine/status` | Accepted/applied frontiers, backlog, paused error, diagnostic timings, server PID and peak RSS |
 | `GET /engine/snapshot` | Published epoch, applied sequence, complete active plan |
+| `GET /engine/changes` | Bounded signed native feed pages with exclusive epoch/ordinal cursor and complete-epoch frontier |
 | `POST /engine/retry` | Explicitly retry a paused epoch |
 | `GET /apps` | Desired declarations and active operators |
 | `GET/PUT/DELETE /apps/{name}` | Inspect, deploy a native semantic declaration, or remove |
@@ -44,6 +45,15 @@ publication timeout in seconds (default 30, zero for immediate durable admission
 Responses include database-scoped receipt sequences and `accepted`/`published`
 state. Failed or timed-out computation after admission remains accepted/pending;
 inspect the receipt and native status before retrying with the same identity.
+Admission capacity rejection returns HTTP 503 with `Retry-After: 1`.
+
+The change-feed endpoint accepts `epoch=0`, `ordinal=0`, and `limit=1000`
+(maximum 10,000). It returns `changes`, `cursor`, `published_epoch`,
+`complete_through`, and `has_more`. Pages can split epochs and correction pairs;
+see [consume streaming changes](../how-to/consume-streaming-changes.md) before
+checkpointing or publishing a consumer view. Status `process.peak_rss_bytes`
+reports the server's process high-water RSS where supported, otherwise null;
+transient Python child processes are excluded.
 
 Timeseries parameters include `uri`, optional `start`/`end` datetime strings or
 `start_ns`/`end_ns` integers, optional `limit`, `order=asc|desc`, and optional

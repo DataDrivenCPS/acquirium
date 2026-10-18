@@ -1,5 +1,6 @@
 # default data location
 .acquirium
+.streaming-workload/
 examples/transformation/.data/
 
 scripts/dev_examples

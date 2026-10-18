@@ -862,15 +862,17 @@ class AcquiriumClient:
                     source_id=source_id,
                 )
 
-    def insert_timeseries(self, *, source_id, ref_name, rows, request_id=None):
-        return self.insert_timeseries_batch(source_id, {ref_name: rows}, request_id=request_id)
+    def insert_timeseries(self, *, source_id, ref_name, rows, request_id=None, wait=30, timeout=60):
+        return self.insert_timeseries_batch(source_id, {ref_name: rows}, request_id=request_id,
+                                            wait=wait, timeout=timeout)
 
-    def insert_timeseries_batch(self, source_id, streams, *, request_id=None):
+    def insert_timeseries_batch(self, source_id, streams, *, request_id=None, wait=30, timeout=60):
         request_id = request_id or str(uuid.uuid4())
         payload = [StreamInsert(source_id=source_id, ref_name=name, values=rows,
                                request_id=request_id) for name, rows in streams.items()]
         response = self._http.post(f"{self.base_url}/insert_timeseries",
-                                   json=[item.model_dump(mode="json") for item in payload])
+                                   json=[item.model_dump(mode="json") for item in payload],
+                                   params={"wait": wait}, timeout=timeout)
         _raise_for_status(response)
         return response.json()
 
@@ -908,17 +910,26 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
-    def delete_timeseries(self, source_id, ref_name, timestamps, *, request_id=None):
+    def changes(self, *, epoch=0, ordinal=0, limit=1000, timeout=30):
+        """Read a bounded page of committed changes after an exclusive cursor."""
+        response = self._http.get(f"{self.base_url}/engine/changes",
+                                 params={"epoch": epoch, "ordinal": ordinal, "limit": limit},
+                                 timeout=timeout)
+        _raise_for_status(response)
+        return response.json()
+
+    def delete_timeseries(self, source_id, ref_name, timestamps, *, request_id=None, wait=30, timeout=60):
         from acquirium.core import time_ns
         response = self._http.post(f"{self.base_url}/delete_timeseries", json={
             "source_id": source_id, "ref_name": ref_name,
             "timestamps": [time_ns(value) for value in timestamps],
-            "request_id": request_id or str(uuid.uuid4())})
+            "request_id": request_id or str(uuid.uuid4())}, params={"wait": wait}, timeout=timeout)
         _raise_for_status(response)
         return response.json()
 
     def insert_timeseries_arrow(
-        self, source_id: str, table: "pa.Table", *, request_id: Optional[str] = None
+        self, source_id: str, table: "pa.Table", *, request_id: Optional[str] = None,
+        wait=30, timeout=60,
     ) -> dict[str, Any]:
         import io
         import pyarrow as pa
@@ -933,6 +944,7 @@ class AcquiriumClient:
             f"{self.base_url}/insert_timeseries_arrow",
             data=buf,
             headers=headers,
+            params={"wait": wait}, timeout=timeout,
         )
         response.raise_for_status()
         return response.json()

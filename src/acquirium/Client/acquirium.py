@@ -197,35 +197,30 @@ class Acquirium:
         rows: list[tuple[datetime, Any]],
         *,
         request_id: str | None = None,
+        wait: float = 30,
+        timeout: float = 60,
     ) -> dict[str, Any]:
-        """Insert timeseries data for a single stream.
+        """Upsert numeric observations; wait=0 returns after durable acceptance.
 
-        Args:
-            source_id: The registered datasource identifier.
-            ref_name: The source-local stream identifier. Combined with
-                ``source_id`` to derive the canonical reference URI.
-            rows: List of (timestamp, value) tuples.
-            point_uri: Compatibility field. Register the point relationship
-                with ``register_streams`` before inserting rows.
-            replace: Keep exactly the supplied rows, removing omitted timestamps.
-                An empty replacement clears the stream.
-
-        Returns:
-            dict with ``{"ok": True, "rows_inserted": N}``.
+        timeout bounds the HTTP call. A transport failure leaves acceptance
+        unknown; retry the same request ID and payload.
         """
         return self.client.insert_timeseries(
             source_id=source_id,
             ref_name=ref_name,
             rows=rows,
             request_id=request_id,
+            wait=wait, timeout=timeout,
         )
 
-    def insert_timeseries_batch(self, source_id, streams, *, request_id=None):
+    def insert_timeseries_batch(self, source_id, streams, *, request_id=None, wait=30, timeout=60):
         """Submit one atomic bounded request. Chunk larger imports explicitly."""
-        return self.client.insert_timeseries_batch(source_id, streams, request_id=request_id)
+        return self.client.insert_timeseries_batch(source_id, streams, request_id=request_id,
+                                                  wait=wait, timeout=timeout)
 
     def insert_timeseries_arrow(
-        self, source_id: str, table: "pa.Table", *, request_id: str | None = None
+        self, source_id: str, table: "pa.Table", *, request_id: str | None = None,
+        wait: float = 30, timeout: float = 60,
     ) -> dict[str, Any]:
         """Insert a ``(ts, ref_name, value)`` Arrow table.
 
@@ -233,7 +228,7 @@ class Acquirium:
         Deduplication follows Escapement's bounded native retry window.
         """
         return self.client.insert_timeseries_arrow(
-            source_id, table, request_id=request_id
+            source_id, table, request_id=request_id, wait=wait, timeout=timeout
         )
 
 
@@ -331,8 +326,13 @@ class Acquirium:
         """Resume the paused native processor after repairing its failure."""
         return self.client.retry_engine()
 
-    def delete_timeseries(self, source_id, ref_name, timestamps, *, request_id=None):
-        return self.client.delete_timeseries(source_id, ref_name, timestamps, request_id=request_id)
+    def changes(self, *, epoch=0, ordinal=0, limit=1000, timeout=30):
+        """Page committed native changes; persist the cursor with sink updates."""
+        return self.client.changes(epoch=epoch, ordinal=ordinal, limit=limit, timeout=timeout)
+
+    def delete_timeseries(self, source_id, ref_name, timestamps, *, request_id=None, wait=30, timeout=60):
+        return self.client.delete_timeseries(source_id, ref_name, timestamps, request_id=request_id,
+                                             wait=wait, timeout=timeout)
 
     def list_apps(self) -> dict[str, Any]:
         """List every deployment, including apps with no matches or errors."""

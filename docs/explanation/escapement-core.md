@@ -35,6 +35,13 @@ acceptance leaves work pending. A failed function publishes none of its epoch an
 pauses the processor, including unrelated branches. Repair and retry are explicit;
 there is no second Acquirium scheduler attempting to bypass the failed prefix.
 
+`GET /engine/changes` exposes the native signed feed with an exclusive cursor,
+captured publication cut, and complete-epoch frontier. It uses native history;
+there is no second server-side feed ledger. Consumer-owned sink updates and
+checkpoints must commit together, buffering any epoch split across pages. The
+[streaming workload](../../examples/streaming/README.md) exercises durable source
+delivery, asynchronous publication, complete-epoch consumption, and restart.
+
 The initial contract supports finite numeric observations, explicit deletes,
 pointwise/fixed-bucket functions, UTC nanoseconds, and half-open ranges. Each
 request is bounded by native admission limits (including at most 10,000 input
