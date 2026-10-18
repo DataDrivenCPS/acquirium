@@ -49,38 +49,75 @@ rereads the committed streams.
 
 ## Model changes and effective times
 
-A graph write (`insert_graph`, `sparql_update`) records the time the author
-says the change took effect, `effective_at`, default now, in
-`materialization_graph_changes`. The next plan refresh consumes those rows
-and applies the earliest time to the bindings the change created or
-retired. `materialization_bindings` keeps one row per interval in which the
-model said a binding existed: a binding that appears for an app that
-already had bindings opens a row at the effective time and carries that
-time as its validity, so it reads and writes nothing before it, even for
-later corrections to earlier data; a binding of a newly deployed app opens
-an unbounded row and covers retained history as backfill allows. A binding
-that disappears closes its row at the effective time and its derived
-streams are tombstoned from that time on at a new revision, so a consumer
-retracts its own results while rows before the time stay as the record of
-what the model said then. A closed binding stays in the plan over its own
-interval: a late reading or correction before the change still reaches the
-result as the model was then, for instance a fleet total over the members
-it had. A named output can therefore have several owners, one per interval,
-and the intervals never overlap. A bucketed view switches at the start of
-the bucket containing the effective time. A change without an effective
-time takes effect when it is written. Only a recorded model change does
-this: bindings that appear because the dataflow changed (a view deployed,
-an upstream view removed) cover retained history, and bindings that
-disappear for that reason are dropped. A binding whose match context changed
-is closed and reopened, and its repair starts at the effective time.
-Removing an app deletes its rows, so a later deployment under the same name
-starts without history. The lineage table remains the projection of the
-current plan.
+Every write to a data graph (`insert_graph`, `sparql_update`, a stream
+registration) is computed as a delta against the live graph and logged in
+`graph_history` and `graph_history_triples`, in the timeseries database,
+with the time the author says the change took effect: `effective_at`,
+default now. The log row is committed before the graph is written. The two
+stores share no transaction, so a crash between them leaves a recorded
+change the graph does not have, and the materializer applies those on
+startup; the reverse, a graph write without a record, cannot happen. A write
+dated earlier than a recorded change to one of the same triples is rejected
+(HTTP 409): the live graph applies writes in arrival order, and undoing
+changes in effective-time order has to give back the same graph.
 
-The effective time is recorded under the plan lock together with the graph
-write, so no refresh can plan the bindings a write creates before their
-time is known, and a change is consumed only by a plan whose graph revision
-includes it.
+Two kinds of write are logged but make no version of the model. A write
+that removes nothing from an empty graph is that graph's initial load: the
+model before it is not empty but unknown, so the load holds for all time
+however it is dated. `insert_graph(versioned=False)` marks a write as
+bookkeeping about the model rather than a change to it; `register_streams`
+uses it, because where a stream's data lives is not a change to the plant.
+Neither is ever undone, and neither conflicts with a dated write.
+
+The model is one version between two consecutive change points, the
+effective times of the versioned changes. `GraphHistory.as_of(t)` rebuilds
+the inferred model as of `t` by undoing the later-dated changes over the
+live data graphs, in an in-memory store that answers SPARQL like the live
+one; up to eight versions are cached. Live queries do not go through it.
+`POST /sparql_json` with `as_of`, `GET /graph_change_points`, the client's
+time-range reads and the planner are its readers.
+
+A versioned change is also recorded in `materialization_graph_changes`,
+under the plan lock and together with the graph write, so no refresh can
+plan the bindings a write creates before their time is known, and a change
+is consumed only by a plan whose graph revision includes it. The next
+refresh consumes those rows and applies the earliest time to the bindings
+the change created or retired. `materialization_bindings` keeps one row per
+interval in which the model said a binding existed. A binding that appears
+for an app that already had bindings opens a row at the effective time and
+carries that time as its validity, so it reads and writes nothing before
+it, even for later corrections to earlier data. A binding that disappears
+closes its row at the effective time and its derived streams are tombstoned
+from that time on at a new revision, so a consumer retracts its own results
+while rows before the time stay as the record of what the model said then.
+A closed binding stays in the plan over its own interval: a late reading or
+correction before the change still reaches the result as the model was
+then, for instance a fleet total over the members it had. Each closed
+interval of a binding is its own instance with its own frontier. A named
+output can therefore have several owners, one per interval, and the
+intervals never overlap. A bucketed view switches at the start of the
+bucket containing the effective time. A change without an effective time
+takes effect when it is written.
+
+A view deployed after the model changed is planned against each version of
+the model: once for the version before the first change point, then once
+per change point. A binding's interval is the run of versions that produce
+it, floored to the view's bucket, so a sensor removed before the view
+existed is in the fleet total for the time it was in the fleet and absent
+after. With no change points the live plan covers all retained history. A
+consumer of a derived stream is bound only while its producer holds, in the
+live plan and in each past version alike, so its intervals follow the
+producer's.
+
+Only a recorded model change gives bindings an interval. Bindings that
+appear because the dataflow changed (a view deployed, an upstream view
+removed) cover retained history, and bindings that disappear for that
+reason are dropped, along with any closed interval below the removed view.
+A binding whose match context changed is closed and reopened, and its
+repair starts at the effective time. Removing an app deletes its rows, so a
+later deployment under the same name starts without history. The lineage
+table lists the derived streams of open and closed bindings; the dependency
+graph is built from it.
 
 ## Scheduling and recovery
 
@@ -150,7 +187,10 @@ and `binding_progress` (`progress_key` → `consumed_revision`), plus
 `materialization_inbox` (pending write requests) and `materialization_steps`
 (one row per applied step: revision, sequence range, entries, rows). The
 materializer owns `materialization_bindings` (binding validity intervals)
-and `materialization_graph_changes` (effective times awaiting a refresh). Opening a store creates
+and `materialization_graph_changes` (effective times awaiting a refresh).
+The graph history owns `graph_history` (one row per data-graph write: graph,
+effective and recorded time, whether applied, whether timeless) and
+`graph_history_triples` (the triples each write added and removed). Opening a store creates
 the reset table if it is absent; no existing timeseries columns change. The materializer
 owns `materialization_deployments`, `materialization_lineage`, and
 `materialization_work`. Lineage records output ownership, input references,
@@ -254,6 +294,7 @@ recovery:
 | `Materialization/planner.py` | Deployment serialization and query compilation into bindings |
 | `Materialization/engine.py` | The inbox and the step that applies it at one revision |
 | `Materialization/changes.py` | The change feed and trigger posts of committed steps |
+| `Materialization/graph_history.py` | The log of data-graph writes with their effective times, the model as of a time, and recovery of recorded writes the graph lacks |
 | `Materialization/revision_store.py` | Snapshot reads, durable work cursors, and atomic replacement/progress writes |
 | `Materialization/scheduler.py` | Layer-by-layer evaluation of a plan on a step's connection, bounded transform execution, per-binding failure tracking |
 | `Materialization/runtime.py` | Deployment activation, graph refresh, readiness cadence, and status; the engine's evaluator |

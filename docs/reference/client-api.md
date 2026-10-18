@@ -56,7 +56,7 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 
 | method | description |
 |---|---|
-| `insert_graph(rdf_graph: str, format="turtle", replace=True, *, source_id: str, effective_at=None) -> None` | Insert RDF into the graph owned by `source_id`; `replace=True` clears that graph first. `effective_at` is when the change took effect in the plant (default: now); derived streams the change creates or retires are recomputed, or retired, from that time. |
+| `insert_graph(rdf_graph: str, format="turtle", replace=True, *, source_id: str, effective_at=None, versioned=True) -> None` | Insert RDF into the graph owned by `source_id`; `replace=True` clears that graph first. `effective_at` is when the change took effect in the plant (default: now); derived streams the change creates or retires are recomputed, or retired, from that time, and data queries over a window spanning it see each version of the model. A write dated before an already recorded change to the same triples raises (HTTP 409). `versioned=False` marks bookkeeping about the model (where a stream's data lives) that holds for all time and makes no version. |
 | `insert_graph_file(path, format=None, replace=True, *, source_id: str) -> None` | Read RDF from a file and insert it into the graph owned by `source_id`; the format is taken from the extension when omitted. |
 | `sparql_update(update: str, *, source_id: str, effective_at=None) -> dict` | Execute a SPARQL UPDATE against one owned data graph; `effective_at` as for `insert_graph`. |
 | `validate_graph() -> dict` | Validate all deployment data against the ontology shapes. |
@@ -142,7 +142,7 @@ keywords: `type`, `process`, `cp_type`, `medium`, `substance`,
 | `options(attr_name, *, of=None, include_dependencies=True) -> pl.DataFrame` | Distinct values of one attribute across the matches, with counts. |
 | `facets(*, of=None, include_dependencies=True) -> FacetSummary` | Value counts for every attribute that applies to a node; prints compactly, indexes like a dict, `attrs()` lists the attributes. |
 | `resolved_nodes(*, alias=None, only_data_nodes=False, include_dependencies=True) -> list[str]` | The URIs the pattern currently matches. |
-| `execute(include_dependencies=True) -> dict` | Run the compiled SPARQL and return raw `{"columns", "rows"}`. |
+| `execute(include_dependencies=True, *, as_of=None) -> dict` | Run the compiled SPARQL and return raw `{"columns", "rows"}`. `as_of` runs it against the model as it was at that time; traversal (`via="any"`, `direction=`) still reads the live model. |
 | `to_sparql() -> str` | The SPARQL the query compiles to, without running it. |
 | `to_dict() -> dict` | A JSON-serializable form of the query graph. |
 
@@ -162,6 +162,10 @@ from acquirium.Client.explore import (
 `DataObject` is returned by `Query.data()`.
 It is lazy: row counts and time ranges come from stream statistics, and values
 are fetched on the first call that needs them.
+A window (`start`, `end`) that spans a dated model change is resolved once
+per version of the model inside it, and a stream's rows are returned for the
+versions whose result contains it; see
+[data across model changes](../tutorials/data.md#data-across-model-changes).
 See the [data tutorial](../tutorials/data.md).
 
 | method | description |
@@ -218,8 +222,9 @@ and are listed once above.
 
 | method | description |
 |---|---|
-| `sparql_query(sparql, include_dependencies=True, *, wait_for_fresh=False) -> dict` | Run a SPARQL query; `{"columns", "rows"}`. |
-| `sparql_update(update, *, source_id) -> dict` | Run a SPARQL UPDATE against one owned graph. |
+| `sparql_query(sparql, include_dependencies=True, *, wait_for_fresh=False, as_of=None) -> dict` | Run a SPARQL query; `{"columns", "rows"}`. `as_of` queries the model as it was at that time instead of the live model. |
+| `sparql_update(update, *, source_id, effective_at=None) -> dict` | Run a SPARQL UPDATE against one owned graph; `effective_at` as for `insert_graph`. |
+| `graph_change_points(start=None, end=None) -> list[datetime]` | The effective times at which the model changed, strictly inside `(start, end)`, ascending. The model is one version between two consecutive points. |
 | `insert_graph(...)`, `insert_graph_file(...)` | As on `Acquirium`. |
 | `namespace_manager() -> NamespaceManager` | The prefix table bound on the server, cached. |
 | `compact_uri(item) -> str` | URI to `prefix:local`. |

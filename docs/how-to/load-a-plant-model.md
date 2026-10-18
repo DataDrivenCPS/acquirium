@@ -200,6 +200,40 @@ acq.sparql_update(
 Note that a point's `rdfs:label` is what result columns display in place of
 its CURIE, so labels are worth adding even when nothing else changes.
 
+### Date the change
+
+A model change usually describes something that happened in the plant at a
+known time: a sensor was swapped on the 3rd, a basin went offline last week.
+Pass that time as `effective_at`; it defaults to the time of the write.
+
+```python
+from datetime import datetime, timezone
+
+acq.insert_graph_file(
+    "deployments/WATERTAP/models/seawater-ro/model-2026-10.ttl",
+    source_id="plant",
+    effective_at=datetime(2026, 10, 3, 14, 0, tzinfo=timezone.utc),
+)
+```
+
+The server logs what the write added and removed, with that time, before it
+touches the graph. Two things follow from the date. Apps whose bindings the
+change creates compute from that time on, and bindings it retires stop
+there, keep maintaining the interval they owned, and have their output after
+it retracted; see [apps](../explanation/apps.md#queries-bind-apps-to-the-plant).
+Data queries with a time window that spans the change resolve against each
+version of the model and return each stream for the time its version held;
+see [data across model changes](../tutorials/data.md#data-across-model-changes).
+
+Changes to the same triples have to arrive in effective-time order. A write
+dated before a change already recorded for one of its triples is refused
+with HTTP 409 instead of rewriting history; date it later, or leave it
+undated so it takes effect now. A graph's first load is never a change
+point, however it is dated: the model before it is unknown, not empty.
+Stream registrations are bookkeeping rather than model changes and make no
+version either; `insert_graph(versioned=False)` does the same for your own
+bookkeeping triples.
+
 Existing timeseries are untouched by any of this. The graph joins a point to
 its canonical `ref_uri`; both storage backends map that URI to an internal
 integer `ref_id` used by timeseries rows. A reload that keeps the point and

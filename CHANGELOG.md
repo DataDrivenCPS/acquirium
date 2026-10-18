@@ -11,12 +11,40 @@ change in any release.
 ## [Unreleased]
 
 ### Added
+- Ingestion lands in a durable inbox, and a *step* applies every pending
+  write and every binding it affects in one transaction at one revision, so
+  derived rows commit together with the raw rows that caused them and a
+  crash mid-step leaves the inbox for the next attempt. `POST
+  /materialization/step` forces a step; `materialization_poll_seconds` is now
+  the idle delay between steps.
+- `effective_at` on `insert_graph`, `sparql_update` and their endpoints: when
+  a model change took effect in the plant (default: now). Derived streams the
+  change creates compute from that time, streams it retires are retracted
+  from it, and a retired binding keeps maintaining the interval it owned. An
+  app deployed later is planned against each past version of the model.
+- Every data-graph write is logged with its effective time (`graph_history`)
+  before it reaches the graph; recorded writes the graph lacks are applied on
+  startup. A write dated before a recorded change to one of the same triples
+  is refused with HTTP 409. `insert_graph(versioned=False)` marks bookkeeping
+  writes, which stream registration uses, that make no version of the model.
+- Data queries over a time window resolve against each version of the model
+  inside it and return each stream for the time its version held.
+  `sparql_query(as_of=)`, `Query.execute(as_of=)`, `graph_change_points()`,
+  `POST /sparql_json` with `as_of` and `GET /graph_change_points`.
+- A change feed of committed steps, `GET /materialization/changes`, and
+  trigger outputs, `aq.output.trigger(url)` and `aq.output.named(...,
+  trigger=url)`, POSTed after every step that changes them.
 - Text resolution has a `role` kind: the s223 role enumeration, the NAWI roles
   that extend it, and whatever a loaded model uses with `s223:hasRole`. A role
   is found by its bare name, so `resolve_text("backwash", kind="role")` returns
   `nawi:Role-Backwash`.
 
 ### Changed
+- pyshifty 0.5.1: SHACL-AF inference over the WATERTAP model takes 0.76 s
+  instead of 1.45 s, with the same inferred triples.
+- A write that arrives during a step lands above every frontier the step
+  advanced and is applied by the next step; a dependent layer reads its
+  producers' outputs from the step's own transaction.
 - Roles are no longer part of `kind="class"`. `resolve_text("condenser",
   kind="class")` returns the equipment class only; the role needs
   `kind="role"`.

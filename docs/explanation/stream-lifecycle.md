@@ -212,6 +212,14 @@ waits for a fresh inferred view, so every `insert_graph` request pays for one
 inference pass.
 Register many streams in one call rather than looping over single ones.
 
+A registration is logged like every graph write, but as a timeless one
+(`insert_graph(versioned=False)`).
+Where a stream's data lives is bookkeeping about the model, not a change to
+the plant, so it makes no version of the model: an app planned against the
+model as it was last year still finds the stream.
+Dated model changes are described in
+[materialization internals](materialization-internals.md#model-changes-and-effective-times).
+
 ## App outputs are streams too
 
 When the planner compiles an app's query, it creates references for the output

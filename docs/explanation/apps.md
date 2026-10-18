@@ -63,6 +63,16 @@ when any of its rows did. For example, adding a sensor to an aggregate may
 require recalculating that aggregate's earlier results, while the other
 sensors' per-match outputs are left as they are.
 
+A model change can carry the time it took effect in the plant,
+`effective_at` on `insert_graph` and `sparql_update`. Bindings the change
+creates compute from that time on. Bindings it retires stop there: their
+output after the time is retracted, and they keep maintaining the interval
+they owned, so a late correction to a September reading still reaches
+September's fleet total over September's fleet. An app deployed after the
+change is planned against each past version of the model and gets the same
+intervals. Without a date a change takes effect when it is written. See
+[model changes and effective times](materialization-internals.md#model-changes-and-effective-times).
+
 ## Two output identities
 
 After deciding which inputs a calculation should receive, you also need to

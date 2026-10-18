@@ -239,6 +239,49 @@ ValueError: convert_to: no convertible unit pair for
 '.../KiloGM-PER-SEC' -> 'celsius'
 ```
 
+## Data across model changes
+
+A model edit can carry the time it took effect in the plant:
+`insert_graph(..., effective_at=...)`, as described in
+[dating a change](../how-to/load-a-plant-model.md#date-the-change). A query
+with a time window honours those dates. The streams it matches are resolved
+once per version of the model inside the window, and each stream's rows
+come back for the time its version held.
+
+Say pump P3 was added to the model on 1 October, and the change was dated so:
+
+```python
+from datetime import datetime, timezone
+
+acq.query().entity("pump").measurement(alias="power", quantity_kind="power").data(
+    start=datetime(2026, 9, 1, tzinfo=timezone.utc),
+    end=datetime(2026, 11, 1, tzinfo=timezone.utc),
+).dataframe()
+```
+
+P1 and P2 come back for September and October; P3 for October only, even if
+its stream holds earlier readings, because no version of the model before
+1 October had the pump. A window with no change point inside it is one
+resolution, of the live model when nothing changed after the window starts,
+so a query over recent data behaves as it always did. A read by stream URI,
+`timeseries_df()`, never goes through this.
+
+`graph_change_points()` lists the dates at which the model changed, and
+`execute(as_of=...)` runs a query against the model as it was at one time:
+
+```python
+acq.client.graph_change_points()
+# [datetime.datetime(2026, 10, 1, 0, 0, tzinfo=datetime.timezone.utc)]
+
+acq.query().entity("pump").execute(
+    as_of=datetime(2026, 9, 15, tzinfo=timezone.utc)
+)["rows"]
+# [['urn:swro/P1'], ['urn:swro/P2']]
+```
+
+Traversal (`via="any"`, `direction=`) and placement resolution read the live
+model even with `as_of`.
+
 ## Taking the result apart
 
 **TODO:** This is quite ugly, think of a better way:

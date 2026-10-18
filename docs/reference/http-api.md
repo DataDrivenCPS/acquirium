@@ -78,7 +78,10 @@ Insert or replace an RDF graph.
 ```
 
 `format` accepts `turtle`, `n3`, `xml`, `trig`, `nquads`. `source_id` is required: use the reserved `plant` source for the shared plant model, otherwise use the owning driver or app source ID. `replace: true` replaces only that owner's graph.
-- `effective_at` (optional ISO 8601 timestamp): when the change took effect in the plant; defaults to now. Derived streams whose bindings appear or disappear because of this write are recomputed, or retired, from that time.
+- `effective_at` (optional ISO 8601 timestamp): when the change took effect in the plant; defaults to now. Derived streams whose bindings appear or disappear because of this write are recomputed, or retired, from that time, and queries over a time window spanning it resolve against each version of the model.
+- `versioned` (optional, default `true`): `false` marks a write that is bookkeeping about the model rather than a change to it, such as a stream registration. It is logged and applied but makes no version of the model and holds for all time.
+
+Every write is logged with its effective time before it reaches the graph. A write dated earlier than an already recorded change to one of the same triples is refused with **409**; other failures return 400.
 
 **Response** `{"ok": true, "embedding_ready": true}`
 
@@ -169,8 +172,19 @@ Legacy endpoint. Executes a SPARQL SELECT query and returns results in an intern
 | `query` | required | SPARQL query string |
 | `include_dependencies` | `true` | Include ontology/shape triples in the query graph |
 | `wait_for_fresh` | `false` | If true, wait for pending inference after graph writes. Otherwise return the last complete published graph while rebuilding. |
+| `as_of` | unset | POST only. ISO 8601 timestamp: answer from the model as it was at that time, rebuilt from the graph history, instead of the live model. |
 
 Also accepts POST with the same fields as a JSON body. The Python client always POSTs, because a resolved traversal query exceeds URL length limits.
+
+### `GET /graph_change_points`
+
+The effective times at which the model changed, ascending. `start` and `end`
+(optional ISO 8601 query parameters) keep only points strictly inside the
+interval. The model is one version between two consecutive points, so a
+query over a time range needs one resolution per version it overlaps; the
+Python client's `data()` does this itself.
+
+**Response** `{"change_points": ["2026-10-01T00:00:00+00:00", ...]}`
 
 ### `POST /sparql_update`
 
@@ -191,7 +205,7 @@ Execute a SPARQL UPDATE against one owned data graph. `/sparql` is read-only; th
 | `source_id` | yes | Owner of the data graph to update; use the reserved `plant` for the shared plant model |
 | `effective_at` | ISO 8601 timestamp, optional | When the change took effect in the plant; defaults to now. Derived streams whose bindings appear or disappear because of this write are recomputed, or retired, from that time. |
 
-The update is scoped to that owner's graph, so it cannot touch the plant model or another source's triples unless `source_id` names it. Drivers and apps use their own `sparql_update()` helper, which supplies the owner for them.
+The update is scoped to that owner's graph, so it cannot touch the plant model or another source's triples unless `source_id` names it. Drivers and apps use their own `sparql_update()` helper, which supplies the owner for them. As for `/insert_graph`, an update dated earlier than a recorded change to one of the same triples is refused with **409**.
 
 **Response** `{"ok": true, ...}`
 
@@ -587,6 +601,15 @@ stream it wrote, the output window it replaced and the rows now in it.
 feed is in memory and bounded: `gap: true` means steps after `after` are no
 longer held, or were committed before the server started, so reread the
 streams. Use `last_step` as the next `after`.
+
+### `POST /materialization/step`
+
+Apply everything in the inbox now, as one step, instead of waiting for the
+materialization loop's next tick. Every pending write and every binding it
+affects commit in one transaction at one revision.
+
+**Response** `{"ok": true, "stepped": true, "step_no": 12, "revision": 40, "entries": 3, "rows": 1200, "published": 2, "seconds": 0.41}`,
+or `{"ok": true, "stepped": false, "step_no": 12}` when the inbox was empty.
 
 ### `GET /materialization/dag`
 

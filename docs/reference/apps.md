@@ -281,6 +281,8 @@ constructor parameters.
 | DELETE | `/apps/{name}` | Remove an app |
 | POST | `/apps/{name}/reprocess?start=...&end=...` | Schedule output repair |
 | GET | `/materialization/dag` | Bindings, edges, progress, and errors |
+| GET | `/materialization/changes?after=...&wait=...` | Derived-stream changes of committed steps |
+| POST | `/materialization/step` | Apply the inbox now, as one step |
 
 Deployment JSON carries name, entrypoint, executable_digest, outputs,
 parameters, grouping, and window/scheduling attributes. Durations are integer
