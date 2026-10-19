@@ -1,11 +1,35 @@
+"""Run one driver's tick loop, in its own process.
+
+``DriverSupervisor`` starts each driver as ``python -m acquirium.Drivers.runner``.
+The child talks to the server over HTTP like any other client, so a driver
+that crashes, leaks, or blocks cannot take the server down with it.
+
+Protocol between supervisor and child:
+
+- **stdin** carries one pickled start payload (see :func:`main`) and then
+  stays open. EOF on stdin means "stop": the supervisor closes it to stop
+  the driver, and the OS closes it if the supervisor dies, so a driver never
+  outlives its server.
+- **stdout** carries one JSON status line once setup finishes —
+  ``{"ok": true}`` or ``{"ok": false, "error": "..."}`` — so setup failures
+  reach whoever started the driver. Everything else the driver writes to
+  stdout is redirected to stderr.
+- **stderr** is inherited, so driver logs land in the server's log.
+"""
+
 from __future__ import annotations
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, BinaryIO
 
-import asyncio
+import json
 import logging
+import os
+import pickle
+import signal
+import sys
+import threading
 import time
-
-import ray
+import traceback
+from pathlib import Path
 
 from acquirium.internals._log import configure_logging, timed_debug as _timed_debug
 
@@ -22,19 +46,14 @@ logger = logging.getLogger("acquirium.driver.runner")
 DEFAULT_GRAPH_POLL_INTERVAL = 10.0
 
 
-@ray.remote
 class DriverRunner:
-    """Run one driver's tick loop in its own Ray actor.
+    """Own one driver instance and drive its tick loop.
 
-    The driver is constructed inside the actor so its state (DriverState,
-    client connections) never crosses the process boundary. Lifecycle:
+    Lifecycle::
 
-        runner = DriverRunner.remote(driver_cls, cfg, aq, interval)
-        ray.get(runner.setup.remote())   # serially across actors
-        run_ref = runner.run.remote()
-        ...
-        runner.stop.remote()             # loop exits, driver.stop() runs
-        ray.get(run_ref)                 # join
+        runner = DriverRunner(driver_cls, cfg, aq, interval)
+        runner.setup()
+        runner.run()      # blocks until stop() is called from another thread
     """
 
     def __init__(
@@ -44,8 +63,6 @@ class DriverRunner:
         acquirium_cli: Acquirium,
         interval: float,
     ):
-        # Ray workers don't inherit the server process's logging config.
-        configure_logging()
         self.driver: Driver = driver_cls(acquirium_cli, driver_cfg)
         self.acquirium_cli = acquirium_cli
         self.interval = float(interval)
@@ -64,17 +81,13 @@ class DriverRunner:
         self.logger = logging.getLogger(
             f"acquirium.driver.{type(self.driver).__name__}"
         )
-        self._stop_event = asyncio.Event()
-        # Captured when run() starts so the sync stop() can flip the event on
-        # the loop thread via call_soon_threadsafe.
-        self._loop: asyncio.AbstractEventLoop | None = None
+        self._stop_event = threading.Event()
 
     def setup(self) -> None:
         """One-time driver setup.
 
-        The caller must ray.get() these one actor at a time so setup-time
-        graph writes cannot race each other (DriverSupervisor holds its lock
-        across setup for exactly this reason).
+        The supervisor starts drivers one at a time and waits for each setup,
+        so setup-time graph writes cannot race each other.
         """
         self.driver.setup()
         self.driver._after_setup()
@@ -86,21 +99,16 @@ class DriverRunner:
         except Exception:
             pass
 
-    async def run(self) -> None:
-        self._loop = asyncio.get_running_loop()
+    def run(self) -> None:
         name = type(self.driver).__name__
         self.logger.info("Starting driver runner for %s", name)
         self._tick()
         next_tick = time.monotonic() + self.interval
         next_graph_poll = self._last_graph_poll + self.graph_poll_interval
         while not self._stop_event.is_set():
-            now = time.monotonic()
-            timeout = max(0.0, min(next_tick, next_graph_poll) - now)
-            try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=timeout)
+            timeout = max(0.0, min(next_tick, next_graph_poll) - time.monotonic())
+            if self._stop_event.wait(timeout):
                 break
-            except asyncio.TimeoutError:
-                pass
             now = time.monotonic()
             if now >= next_graph_poll:
                 self._poll_graph_version()
@@ -116,17 +124,8 @@ class DriverRunner:
             raise
 
     def stop(self) -> None:
-        """Signal run() to exit; driver.stop() cleanup happens there.
-
-        Sync methods run off the actor's event-loop thread, so the
-        asyncio.Event must be set via the loop rather than touched directly.
-        """
-        loop = self._loop
-        if loop is not None:
-            loop.call_soon_threadsafe(self._stop_event.set)
-        else:
-            # run() hasn't captured the loop yet; no coroutine is waiting.
-            self._stop_event.set()
+        """Ask run() to exit after the current tick; cleanup happens there."""
+        self._stop_event.set()
 
     def _poll_graph_version(self) -> None:
         """Fire on_graph_change() when the server's source generation advances.
@@ -158,3 +157,58 @@ class DriverRunner:
                 self.driver.tick()
         except Exception:
             self.logger.exception("tick error")
+
+
+def _report(status: BinaryIO, **message: Any) -> None:
+    status.write(json.dumps(message).encode() + b"\n")
+    status.flush()
+
+
+def main() -> int:
+    """Child-process entry point; see the module docstring for the protocol.
+
+    The start payload is a dict with ``spec``, ``config``, ``interval``,
+    ``server_url``, ``server_port``, and ``use_ssl``.
+    """
+    # Keep the real stdout for the status line and point fd 1 at stderr, so
+    # stray prints from driver code (or C extensions) cannot corrupt it.
+    status = os.fdopen(os.dup(sys.stdout.fileno()), "wb")
+    os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+    configure_logging()
+
+    payload = pickle.load(sys.stdin.buffer)
+    try:
+        from acquirium.cli import _import_driver_class
+        from acquirium.Client.acquirium import Acquirium
+
+        config = payload["config"]
+        base_dir = config.get("__config_dir", os.getcwd())
+        driver_cls = _import_driver_class(payload["spec"], base_dir=Path(base_dir))
+        aq = Acquirium(
+            server_url=payload["server_url"],
+            server_port=payload["server_port"],
+            use_ssl=payload["use_ssl"],
+        )
+        runner = DriverRunner(driver_cls, config, aq, payload["interval"])
+        runner.setup()
+    except BaseException as exc:
+        logger.error("driver %s failed to start:\n%s", payload["spec"], traceback.format_exc())
+        _report(status, ok=False, error=f"{type(exc).__name__}: {exc}")
+        return 1
+    _report(status, ok=True)
+
+    def _stop_on_eof() -> None:
+        sys.stdin.buffer.read()
+        runner.stop()
+
+    threading.Thread(target=_stop_on_eof, name="driver-stdin", daemon=True).start()
+    signal.signal(signal.SIGTERM, lambda *_: runner.stop())
+    try:
+        runner.run()
+    except Exception:
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -13,12 +13,6 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Iterator, Optional
 
-# When the server is launched via `uv run`, Ray's uv hook would give every
-# worker a fresh env resolved from pyproject.toml — dropping optional extras
-# like watertap/pyomo. Disable it so actors inherit this process's environment.
-# Ray reads this flag once at import time, so it must be set before `import ray`.
-os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
-import ray
 import pyoxigraph as ox
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request
@@ -108,7 +102,7 @@ def _accepted_sparql_formats(accept: str) -> tuple[ox.QueryResultsFormat, ox.Rdf
 
 
 def _self_connect_cfg(cfg: dict) -> tuple[str, int, bool]:
-    """Return (host, port, use_ssl) that driver actors use to reach this server."""
+    """Return (host, port, use_ssl) that driver processes use to reach this server."""
     if local_host := os.environ.get("ACQUIRIUM_SELF_HOST"):
         port = int(
             os.environ.get("ACQUIRIUM_SELF_PORT")
@@ -132,7 +126,7 @@ def _self_connect_cfg(cfg: dict) -> tuple[str, int, bool]:
 
 async def _wait_until_healthy(base_url: str) -> bool:
     """Poll /health until the server answers. The lifespan startup hook runs
-    before uvicorn begins serving, so startup work whose actors connect back
+    before uvicorn begins serving, so startup work whose drivers connect back
     over HTTP must wait for this first."""
     import requests
 
@@ -149,10 +143,10 @@ async def _wait_until_healthy(base_url: str) -> bool:
 
 
 async def _start_config_drivers(supervisor: DriverSupervisor, cfg: dict) -> None:
-    """Start every [[drivers]] entry from the config as a Ray actor.
+    """Start every [[drivers]] entry from the config as a driver process.
 
     The caller must wait for /health first (_wait_until_healthy) — driver
-    actors talk to this server over HTTP. Setup ordering stays serial because
+    processes talk to this server over HTTP. Setup ordering stays serial because
     DriverSupervisor.start_driver holds its lock across setup.
     """
     entries = cfg.get("drivers", [])
@@ -309,7 +303,7 @@ async def lifespan(app: FastAPI):
     summary_stop = threading.Event()
     start_insert_summary_thread(summary_stop, interval=10.0)
 
-    # Drivers run as Ray actors that connect back over HTTP.
+    # Drivers run as child processes that connect back over HTTP.
     _host, _port, _use_ssl = _self_connect_cfg(_cfg)
     supervisor = DriverSupervisor(server_url=_host, server_port=_port, use_ssl=_use_ssl)
     app.state.drivers = supervisor
@@ -317,14 +311,14 @@ async def lifespan(app: FastAPI):
     # Once the server answers /health, start configured drivers, then deploy
     # configured transformations. Drivers load their plant models during setup,
     # so application queries resolve against the intended graph.
-    async def _startup_actors() -> None:
+    async def _startup_drivers() -> None:
         if not await _wait_until_healthy(supervisor.base_url):
             log.error("Server never became healthy at %s; skipping configured drivers", supervisor.base_url)
             return
         await _start_config_drivers(supervisor, _cfg)
         await asyncio.to_thread(_deploy_config_apps, _cfg)
 
-    startup_task = asyncio.create_task(_startup_actors())
+    startup_task = asyncio.create_task(_startup_drivers())
 
     try:
         yield
@@ -545,7 +539,7 @@ class DriverStopRequest(BaseModel):
 
 @app.post("/drivers/start")
 def start_driver(req: DriverStartRequest) -> dict[str, Any]:
-    """Start a driver as a Ray actor on this server.
+    """Start a driver as a child process of this server.
 
     The driver spec must be importable/resolvable on the server host; file
     paths are resolved against the config's __config_dir. Setup runs before

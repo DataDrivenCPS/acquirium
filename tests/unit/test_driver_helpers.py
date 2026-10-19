@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -54,19 +55,15 @@ def test_config_relative_driver_spec_import(tmp_path: Path):
         "    def tick(self):\n"
         "        return None\n"
     )
-    cls, source_dir = _import_driver_class("./custom_driver.py:TempDriver", base_dir=tmp_path)
+    cls = _import_driver_class("./custom_driver.py:TempDriver", base_dir=tmp_path)
     assert cls.__name__ == "TempDriver"
-    # The driver's directory goes to the caller so it can reach a Ray worker's
-    # PYTHONPATH; without it the file's sibling imports die on deserialization.
-    assert source_dir == str(tmp_path.resolve())
+    # The file's directory goes on sys.path so its sibling imports resolve.
+    assert str(tmp_path.resolve()) in sys.path
 
 
-def test_module_driver_spec_reports_no_source_dir():
-    cls, source_dir = _import_driver_class(
-        "acquirium.Drivers.BuiltInDrivers.csv_ingest:CSVIngestDriver"
-    )
+def test_module_driver_spec_resolves():
+    cls = _import_driver_class("acquirium.Drivers.BuiltInDrivers.csv_ingest:CSVIngestDriver")
     assert cls is CSVIngestDriver
-    assert source_dir is None
 
 
 def test_csv_watch_dir_resolves_relative_to_config_dir(tmp_path: Path):

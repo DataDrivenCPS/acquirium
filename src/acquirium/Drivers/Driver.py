@@ -21,6 +21,9 @@ from acquirium.internals._log import timed_debug
 
 logger = logging.getLogger("acquirium.driver")
 
+# Server-side cap on rows per insert request (see Core.ingest).
+MAX_INSERT_ROWS = 10_000
+
 
 class UndeclaredStreamError(ValueError):
     """Raised when observations refer to streams the driver did not declare."""
@@ -534,38 +537,37 @@ class IngestDriver(Driver):
         self.register_declared(df)
 
         if "source_id" not in df.columns:
-            logger.debug(
-                "%s.insert_observations source=%s rows=%d",
-                self.__class__.__name__, self.source_id, len(df),
-            )
-            with timed_debug(logger, "%s.aq.insert_timeseries_arrow source=%s rows=%d",
-                             self.__class__.__name__, self.source_id, len(df)):
-                if request_id is None:
-                    result = self.aq.insert_timeseries_arrow(self.source_id, df.to_arrow())
-                else:
-                    result = self.aq.insert_timeseries_arrow(
-                        self.source_id, df.to_arrow(), request_id=request_id
-                    )
-            return self._coerce_insert_result(result, len(df))
+            batches = [(self.source_id, df, request_id)]
+        else:
+            batches = [
+                (
+                    str(source),
+                    source_df.drop("source_id"),
+                    f"{request_id}:{source}" if request_id else None,
+                )
+                for (source,), source_df in df.partition_by("source_id", as_dict=True).items()
+            ]
 
         total = 0
-        for source_id, source_df in df.partition_by("source_id", as_dict=True).items():
-            source = source_id[0] if isinstance(source_id, tuple) else source_id
-            payload = source_df.drop("source_id")
-            logger.debug(
-                "%s.insert_observations source=%s rows=%d (multi-source)",
-                self.__class__.__name__, source, len(payload),
-            )
-            source_request_id = f"{request_id}:{source}" if request_id else None
-            with timed_debug(logger, "%s.aq.insert_timeseries_arrow source=%s rows=%d",
-                             self.__class__.__name__, source, len(payload)):
-                if source_request_id is None:
-                    result = self.aq.insert_timeseries_arrow(str(source), payload.to_arrow())
-                else:
-                    result = self.aq.insert_timeseries_arrow(
-                        str(source), payload.to_arrow(), request_id=source_request_id
-                    )
-            total += self._coerce_insert_result(result, len(payload))["rows_inserted"]
+        for source, payload, source_request_id in batches:
+            # The server rejects requests over MAX_INSERT_ROWS, so a large
+            # frame (e.g. a whole file) goes up as several requests.
+            for offset in range(0, len(payload), MAX_INSERT_ROWS):
+                chunk = payload.slice(offset, MAX_INSERT_ROWS)
+                chunk_request_id = (
+                    f"{source_request_id}:{offset}"
+                    if source_request_id and len(payload) > MAX_INSERT_ROWS
+                    else source_request_id
+                )
+                with timed_debug(logger, "%s.aq.insert_timeseries_arrow source=%s rows=%d",
+                                 self.__class__.__name__, source, len(chunk)):
+                    if chunk_request_id is None:
+                        result = self.aq.insert_timeseries_arrow(source, chunk.to_arrow())
+                    else:
+                        result = self.aq.insert_timeseries_arrow(
+                            source, chunk.to_arrow(), request_id=chunk_request_id
+                        )
+                total += self._coerce_insert_result(result, len(chunk))["rows_inserted"]
         return {"ok": True, "rows_inserted": total}
 
     def normalize_observations(self, observations: "pl.DataFrame | None") -> "pl.DataFrame":

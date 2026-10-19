@@ -13,9 +13,11 @@ for why drivers exist see [drivers](../explanation/drivers.md).
 ## Runtime
 
 Drivers do not run in your process.
-The server imports the class and spawns one Ray actor per driver, on the
-server host.
-The actor talks back to the server with an `Acquirium` client.
+The server spawns one child process per driver, on the server host.
+The process imports the class and talks back to the server with an
+`Acquirium` client.
+A driver process stops when the server stops, and a driver that crashes
+cannot take the server down with it.
 
 **TODO:** We'll develop drivers that can run on an edge device and connect to a remote acquirium server to push data.
 

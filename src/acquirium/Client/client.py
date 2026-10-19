@@ -1,5 +1,6 @@
 from typing import Optional, Iterator, Iterable, Any, Callable, TYPE_CHECKING
 import re
+import uuid
 import requests
 from requests import HTTPError
 from pathlib import Path
@@ -323,7 +324,7 @@ class AcquiriumClient:
         headers = {"Accept": "application/vnd.apache.arrow.stream"}
 
         with self._http.get(url, params=params, headers=headers, stream=True, timeout=timeout) as r:
-            r.raise_for_status()
+            _raise_for_status(r)
 
             try:
                 # r.raw is a file-like object
@@ -376,7 +377,7 @@ class AcquiriumClient:
 
         # stream=True means requests won't buffer the full body into memory
         with self._http.get(url, params=params, headers=headers, stream=True, timeout=timeout) as r:
-            r.raise_for_status()
+            _raise_for_status(r)
 
             # r.raw is a file-like object
             reader = ipc.RecordBatchStreamReader(r.raw)
@@ -669,7 +670,7 @@ class AcquiriumClient:
         """
         url = f"{self.base_url}/embedding_status"
         response = self._http.get(url)
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json()
 
     def graph_version(self) -> int:
@@ -684,7 +685,7 @@ class AcquiriumClient:
         """Return source and derived-query cache generations from the server."""
         url = f"{self.base_url}/graph_version"
         response = self._http.get(url)
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json()
 
     # -------------------- Unit conversion --------------------
@@ -767,7 +768,7 @@ class AcquiriumClient:
         """Register a named datasource. Returns source_id."""
         url = f"{self.base_url}/register_datasource"
         response = self._http.post(url, json=RegisterDatasourceRequest(source_id=source_id).model_dump())
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json()["source_id"]
 
     def _units_compatible(self, from_unit: Any, to_unit: Any) -> bool:
@@ -946,5 +947,5 @@ class AcquiriumClient:
             headers=headers,
             params={"wait": wait}, timeout=timeout,
         )
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json()

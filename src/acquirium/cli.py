@@ -6,7 +6,7 @@ Subcommands:
 
   acquirium server [--config FILE] [--host HOST] [--port PORT] [--reload]
       Start the Acquirium FastAPI server. [[drivers]] listed in the config
-      are started as Ray actors that connect back over the API, followed by
+      are started as child processes that connect back over the API, followed by
       deployments from [[apps]].
 
       Set ``[server] enabled = false`` in the config to submit the
@@ -30,7 +30,7 @@ import signal
 import sys
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Annotated, Any, Iterator, Optional
+from typing import TYPE_CHECKING, Annotated, Any, Iterator, Optional
 
 import typer
 
@@ -39,6 +39,9 @@ from acquirium.Server.config import (
     load_config,
     load_local_config,
 )
+
+if TYPE_CHECKING:
+    from acquirium.Drivers.Driver import Driver
 
 app = typer.Typer(
     name="acquirium",
@@ -58,15 +61,11 @@ def _root() -> None:
 
 def _import_driver_class(
     driver_spec: str, *, base_dir: Path | None = None
-) -> tuple[type, str | None]:
+) -> type[Driver]:
     """Resolve a ``path/to/file.py:ClassName`` or ``my.module:ClassName`` spec to a Driver subclass.
 
-    Returns the class and, for a file spec, the directory added to ``sys.path``
-    so the file's sibling modules resolve. Callers that ship the class to
-    another process must put that directory on the target's ``PYTHONPATH``:
-    siblings imported by name pickle by reference, so the receiving process has
-    to be able to import them itself. Module specs return ``None`` — already
-    importable anywhere.
+    A file spec's directory is added to ``sys.path`` so the file's sibling
+    modules resolve.
 
     Raises ``ValueError`` on any resolution failure so callers in background
     threads see a real exception rather than a silent ``SystemExit``.
@@ -80,7 +79,6 @@ def _import_driver_class(
 
     path_part, class_name = driver_spec.rsplit(":", 1)
 
-    source_dir: str | None = None
     is_file = "/" in path_part or path_part.endswith(".py") or Path(path_part).exists()
     if is_file:
         file_path = Path(path_part)
@@ -107,7 +105,7 @@ def _import_driver_class(
         raise ValueError(f"'{class_name}' not found in {path_part}")
     if not (inspect.isclass(cls) and issubclass(cls, _Driver) and cls is not _Driver):
         raise ValueError(f"'{class_name}' is not a Driver subclass")
-    return cls, source_dir
+    return cls
 
 
 def _driver_connect_cfg(
@@ -133,7 +131,7 @@ def _sigterm_as_keyboard_interrupt(*_) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Remote driver management (drivers run as Ray actors on the server)
+# Remote driver management (drivers run as processes on the server)
 # ---------------------------------------------------------------------------
 
 def _server_base_url(
@@ -155,8 +153,8 @@ def _push_drivers_to_server(
 ) -> None:
     """Submit every [[drivers]] entry in cfg to the server's /drivers/start.
 
-    The server imports the driver spec and runs it as a Ray actor, so file
-    based specs must resolve on the server host.
+    The server runs each driver spec in its own process, so file based
+    specs must resolve on the server host.
     """
     import requests
 
@@ -399,15 +397,29 @@ def _run_uvicorn(
     """Run uvicorn for both the public CLI and aq.init()'s private mode."""
     import uvicorn
 
+    import asyncio
+
+    class _DriversFirstServer(uvicorn.Server):
+        async def shutdown(self, sockets=None) -> None:
+            # Drivers flush buffered rows over HTTP as they stop, so stop them
+            # while the server still accepts connections; uvicorn closes its
+            # listeners before the app's lifespan shutdown runs.
+            from acquirium.Server.app import app as server_app
+
+            supervisor = getattr(server_app.state, "drivers", None)
+            if supervisor is not None:
+                await asyncio.to_thread(supervisor.stop_all)
+            await super().shutdown(sockets)
+
     signal.signal(signal.SIGTERM, _sigterm_as_keyboard_interrupt)
     typer.echo(f"Starting Acquirium server on {host}:{port}")
-    if sockets is None:
+    if reload or workers > 1:
+        # uvicorn's own process managers run these; the graph store forbids
+        # workers > 1, so this is development-only --reload.
         uvicorn.run(application, host=host, port=port, reload=reload, workers=workers)
         return
 
-    server = uvicorn.Server(
-        uvicorn.Config(application, host=host, port=port, reload=reload, workers=workers)
-    )
+    server = _DriversFirstServer(uvicorn.Config(application, host=host, port=port))
     server.run(sockets=sockets)
 
 

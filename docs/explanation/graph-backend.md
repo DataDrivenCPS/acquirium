@@ -9,8 +9,7 @@ query views, the update rules, and the interfaces application and driver
 authors use.
 The graph backend is owned by the acquirium server.
 Drivers access it through the client and HTTP API; the materializer uses the
-same server-owned interface. Neither opens Oxigraph directly, and the graph
-store is not a Ray actor.
+same server-owned interface. Neither opens Oxigraph directly.
 
 ## Design goals
 
@@ -35,8 +34,8 @@ store uses a file-backed Oxigraph/RocksDB source dataset, a separate file-backed
 query dataset, and an in-process reentrant lock to coordinate writes and cache
 rebuilds. Oxigraph's files must be opened by this server process only.
 
-Ray actors are used for `DriverRunner`, not for the graph store; the actors
-talk to the server over the normal client API. Materialization execution uses
+Each driver runs in its own child process (`DriverRunner`) and talks to the
+server over the normal client API. Materialization execution uses
 the server's bounded in-process worker pool. This way there is a single
 authoritative graph writer, and a file-backed database handle is never shared
 with actor processes.
@@ -347,8 +346,7 @@ where the desired policy or mechanism has not been settled yet.
   promising throughput targets.
 - **Remote graph service.** A separate service may be appropriate for
   multi-host scaling, but it would need an explicit deployment, persistence,
-  failure-recovery, authentication, and API design. A Ray actor by itself does
-  not solve those concerns.
+  failure-recovery, authentication, and API design.
 - **Authorization by source.** `source_id` establishes ownership in the data
   model, not access control. If multiple tenants or untrusted drivers can call
   the API, authentication and authorization rules for source-scoped writes are

@@ -12,6 +12,7 @@ from acquirium.Drivers.Driver import (
     DriverBufferFull,
     EventIngestDriver,
     IngestDriver,
+    MAX_INSERT_ROWS,
     PollingIngestDriver,
     UndeclaredStreamError,
 )
@@ -422,3 +423,22 @@ def test_graceful_shutdown_flushes_after_stopping_producer(tmp_path):
     driver._shutdown()
     assert driver.stopped is True
     assert inserted(driver)[0][1]["value"] == [1.0]
+
+
+def test_insert_observations_chunks_to_server_request_limit(tmp_path):
+    driver = make_driver(CollectDriver, tmp_path)
+    start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    rows = 2 * MAX_INSERT_ROWS + 5
+    observations = pl.DataFrame({
+        "ts": [start + timedelta(seconds=i) for i in range(rows)],
+        "ref_name": ["temp"] * rows,
+        "value": [float(i) for i in range(rows)],
+    })
+
+    driver.insert_observations(observations, request_id="req")
+
+    calls = driver.aq.insert_timeseries_arrow.call_args_list
+    assert [call.args[1].num_rows for call in calls] == [MAX_INSERT_ROWS, MAX_INSERT_ROWS, 5]
+    assert [call.kwargs["request_id"] for call in calls] == [
+        "req:0", f"req:{MAX_INSERT_ROWS}", f"req:{2 * MAX_INSERT_ROWS}",
+    ]

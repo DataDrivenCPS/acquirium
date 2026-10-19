@@ -10,6 +10,10 @@ change in any release.
 
 ## [Unreleased]
 
+### Fixed
+- `AcquiriumClient` inserts without a `request_id` failed with
+  `NameError: name 'uuid' is not defined`, which broke every driver insert.
+
 ### Added
 - Text resolution has a `role` kind: the s223 role enumeration, the NAWI roles
   that extend it, and whatever a loaded model uses with `s223:hasRole`. A role
@@ -17,6 +21,19 @@ change in any release.
   `nawi:Role-Backwash`.
 
 ### Changed
+- **Drivers run as plain child processes; Ray is no longer a dependency.**
+  Each `[[drivers]]` entry runs as `python -m acquirium.Drivers.runner`, which
+  imports the driver itself and reports setup success or failure back to the
+  server. A driver stops when its server stops, including when the server is
+  killed. `/drivers/list` now includes each driver's `pid`. The `[ray]`
+  config section is gone.
+- `IngestDriver.insert_observations` splits frames into requests of at most
+  `MAX_INSERT_ROWS` (10,000) rows, the server's per-request cap, so file
+  drivers can ingest large files.
+- Client HTTP errors include the server's error message for every endpoint
+  (previously some, including `insert_timeseries_arrow`, reported only the
+  status code).
+- `_import_driver_class` returns only the class.
 - Roles are no longer part of `kind="class"`. `resolve_text("condenser",
   kind="class")` returns the equipment class only; the role needs
   `kind="role"`.

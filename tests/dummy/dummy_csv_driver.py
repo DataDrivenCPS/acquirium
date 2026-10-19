@@ -1,4 +1,4 @@
-"""CSV driver for the fictional dummy plant, used by the Ray integration test.
+"""CSV driver for the fictional dummy plant, for the fictional dummy plant.
 
 Mirrors the file shape of the DPR trailer exports: row 1 is a metadata banner,
 row 2 is the header, ``Date`` (MM/DD/YYYY) and ``Time`` (HH:MM:SS AM/PM) are

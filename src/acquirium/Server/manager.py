@@ -877,7 +877,7 @@ class Manager:
         """Release every owned resource; one component failing must not leak the rest.
 
         Each step is isolated so a component that raises during shutdown (for
-        example a Ray executor killed after its runtime is gone) cannot skip
+        example a worker pool killed after its runtime is gone) cannot skip
         the stores that still need closing.
         """
         logger.debug("Manager.close: shutting down")

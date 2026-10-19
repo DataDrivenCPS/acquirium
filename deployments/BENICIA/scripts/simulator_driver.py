@@ -3,8 +3,8 @@
 The migrated form of the old ``stream_simulator.py`` MQTT publisher: instead of
 publishing to a broker, this is a :class:`PollingIngestDriver` that generates a
 fresh value for every model property each tick and pushes them straight to
-Acquirium. No broker, no external process — ``acquirium server`` runs it as a
-Ray actor.
+Acquirium. No broker, no external process — ``acquirium server`` runs it in its
+own process.
 
 Each generated stream is registered with its ontology point URI
 (``<namespace><property-local-name>``, e.g. ``urn:ex/Effluent_Pump-out-ph``), so

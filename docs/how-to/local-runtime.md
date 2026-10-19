@@ -85,7 +85,7 @@ its first startup may take several minutes. Later startups reuse the stored
 indexes. Scripts sharing a runtime must resolve to the same mode; an explicitly
 conflicting mode raises an error.
 
-Local startup uses the standard server lifecycle, including Ray for drivers
+Local startup uses the standard server lifecycle, including driver processes
 and apps. Configured drivers start in the background after the server becomes
 healthy. Inherited `ACQUIRIUM_*` environment settings do not override the chosen
 config or redirect its storage. The Timescale backend still requires an

@@ -15,8 +15,8 @@ acquirium server --config acquirium.toml
 ```
 
 The server hosts the graph store, the timeseries store, the HTTP API, the
-bounded in-process worker pool that runs apps, and the Ray actors that run
-drivers.
+bounded in-process worker pool that runs apps, and the child processes that
+run drivers.
 Without `--config` it looks for `acquirium.toml` in the working directory,
 and starts with defaults when there is none.
 

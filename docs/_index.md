@@ -44,7 +44,7 @@ Applications in Water Treatment Systems](https://dl.acm.org/doi/abs/10.1145/3744
                                   │                    │ write                   │
                                   │             ┌──────┴──────┐                  │
                                   │             │   drivers   │                  │
-                                  │             │ (Ray actor) │                  │
+                                  │             │ (processes) │                  │
                                   │             └──────▲──────┘                  │
                                   └────────────────────┼─────────────────────────┘
                                                        │ poll on a schedule
