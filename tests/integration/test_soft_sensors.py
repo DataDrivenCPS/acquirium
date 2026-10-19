@@ -183,6 +183,91 @@ def test_semantic_python_chain_matches_full_recomputation_and_restart(tmp_path):
         aq.shutdown()
 
 
+ROLLING = "tank-temperature-rolling-mean"
+LOOKBACK_NS = 10 * SECOND
+STEP_NS = 5 * SECOND
+
+
+def recompute_rolling(observations, membership):
+    """Brute-force trailing means: each grid point reads [t - lookback, t]."""
+    rows = [(membership[p], t, v) for p, readings in observations.items() for t, v in readings.items()]
+    expected = {output_reference(ROLLING, tank, "mean"): {} for tank in (TANK_A, TANK_B)}
+    if not rows:
+        return expected
+    first = min(t for _, t, _ in rows) // STEP_NS * STEP_NS
+    last = max(t for _, t, _ in rows) + LOOKBACK_NS
+    for grid in range(first, last + 1, STEP_NS):
+        for tank in (TANK_A, TANK_B):
+            values = [v for g, t, v in rows if g == tank and grid - LOOKBACK_NS <= t <= grid]
+            if values:
+                expected[output_reference(ROLLING, tank, "mean")][grid] = mean(values)
+    return expected
+
+
+@pytest.mark.integration
+def test_rolling_app_repairs_overlapping_windows_through_restart(tmp_path):
+    rolling = declarations()[0]
+    rolling = aq.App(
+        name=ROLLING,
+        inputs=rolling.inputs,
+        outputs=rolling.outputs,
+        function=rolling.function,
+        window=aq.Rolling(lookback_ns=LOOKBACK_NS, step_ns=STEP_NS),
+    )
+    assert aq.App.from_dict(rolling.to_dict()).to_dict() == rolling.to_dict()
+    observations = {probe: {} for probe in ("a1", "a2", "b1")}
+    membership = {"a1": TANK_A, "a2": TANK_A, "b1": TANK_B}
+
+    def submit(client, request_id, readings):
+        for probe, rows in readings.items():
+            observations[probe].update(rows)
+        response = client.insert_timeseries_batch(SOURCE, readings, request_id=request_id)
+        client.wait(response["receipts"][0])
+        assert_outputs(client, recompute_rolling(observations, membership))
+
+    client = aq.init(data_dir=tmp_path / "data", exact_only=True, timeout=180)
+    try:
+        register(client)
+        state = client.deploy_app(rolling)["app"]
+        assert state["status"] == "active" and not state["error"], state
+        submit(client, "initial", {
+            "a1": [(SECOND, 20), (11 * SECOND, 22)],
+            "a2": [(2 * SECOND, 40), (12 * SECOND, 36)],
+            "b1": [(3 * SECOND, 24), (13 * SECOND, 25)],
+        })
+        # One correction repairs every overlapping window that read it: the
+        # reading at 2 s is read by the groups at 5 s and 10 s.
+        submit(client, "correction", {"a2": [(2 * SECOND, 20)]})
+        # Late data on a span edge, then a deletion that empties windows.
+        submit(client, "late", {"b1": [(-5 * SECOND, 30), (20 * SECOND, 26)]})
+        client.wait(client.delete_timeseries(SOURCE, "b1", [3 * SECOND, 13 * SECOND], request_id="delete"))
+        for t in (3 * SECOND, 13 * SECOND):
+            del observations["b1"][t]
+        assert_outputs(client, recompute_rolling(observations, membership))
+
+        client.sparql_update(
+            f"DELETE DATA {{ <{TANK_A}> <http://data.ashrae.org/standard223#hasProperty> "
+            "<urn:soft-sensors:probe-a2> }; "
+            f"INSERT DATA {{ <{TANK_B}> <http://data.ashrae.org/standard223#hasProperty> "
+            "<urn:soft-sensors:probe-a2> }",
+            source_id="soft-sensor-layout",
+        )
+        membership["a2"] = TANK_B
+        assert_outputs(client, recompute_rolling(observations, membership))
+        plan = client.engine_snapshot()["plan"]
+    finally:
+        aq.shutdown()
+
+    client = aq.init(data_dir=tmp_path / "data", exact_only=True, timeout=180)
+    try:
+        assert client.engine_snapshot()["plan"] == plan
+        window, = {op["window"]["kind"] for op in plan["operators"]}
+        assert window == "rolling"
+        submit(client, "after-restart", {"a1": [(15 * SECOND, 30)]})
+    finally:
+        aq.shutdown()
+
+
 @pytest.mark.integration
 def test_native_warm_worker_failure_is_atomic_and_retryable(tmp_path, monkeypatch):
     # Test-only dependency instrumentation records module initialization and

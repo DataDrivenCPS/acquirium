@@ -5,7 +5,8 @@ title: Native app declarations
 App names use letters, digits, underscores, dots, and hyphens.
 
 An app declares semantic input selections and one versioned Escapement function.
-The engine executes that function over pointwise timestamps or fixed UTC buckets.
+The engine executes that function over pointwise timestamps, fixed UTC buckets, or
+rolling windows.
 
 ```python
 from pathlib import Path
@@ -60,8 +61,12 @@ Input columns include `role`, `stream`, `event_time_ns`, `sample_key`, `value`,
 `event_time_ns: Int64`, `sample_key: Int64`, `value: Float64`, `quality: UInt32`.
 Use sample key zero. Every port must be returned; an empty frame retracts its
 previous group output. Pointwise results use the input timestamp; fixed-bucket
-results use the bucket start. Choose `aq.FixedBucket(width_ns, origin_ns=0)` for
-buckets. Functions cannot read live graph/network state or undeclared history.
+results use the bucket start; rolling results use their grid point. Choose
+`aq.FixedBucket(width_ns, origin_ns=0)` for buckets, or
+`aq.Rolling(lookback_ns, step_ns, lookahead_ns=0, origin_ns=0)` for overlapping
+windows: the group at grid point `t = origin + k·step` reads the inclusive span
+`[t - lookback, t + lookahead]`, and a late or corrected reading repairs every
+window that reads it. Functions cannot read live graph/network state or undeclared history.
 
 The module digest pins the function bytes. Deployment paths refer to files
 available on the server; initial local development assumes a shared filesystem.
@@ -75,7 +80,7 @@ Use `client.list_apps()`, `client.inspect_app(name)`, or `acquirium app list/ins
 to inspect declarations and active operators. `client.remove_app(name)` removes
 operators and retracts their current outputs; historical versions remain in the
 core. Output ownership remains reserved by Escapement. Code changes rebuild the
-operator's retained history. Rolling windows, custom output timestamps, full
+operator's retained history. Custom output timestamps, full
 history, the old class-based transform API, dry-run/reprocess commands, and
 wall-clock scheduling options are not supported in this initial replacement.
 

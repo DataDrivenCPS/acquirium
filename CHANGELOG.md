@@ -15,6 +15,10 @@ change in any release.
   `NameError: name 'uuid' is not defined`, which broke every driver insert.
 
 ### Added
+- Apps accept `aq.Rolling(lookback_ns, step_ns, lookahead_ns=0, origin_ns=0)`
+  windows: overlapping windows on a fixed grid, where each output at `t` reads
+  `[t - lookback, t + lookahead]` and a correction repairs every window that
+  read it. Requires the Escapement rolling-window release.
 - Text resolution has a `role` kind: the s223 role enumeration, the NAWI roles
   that extend it, and whatever a loaded model uses with `s223:hasRole`. A role
   is found by its bare name, so `resolve_text("backwash", kind="role")` returns

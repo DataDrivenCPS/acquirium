@@ -77,8 +77,8 @@ def bucket_mean(frame, context):
 ```
 
 Inputs have `role`, `stream`, `event_time_ns`, `sample_key`, `value`, `quality`,
-and JSON `context` columns. `context["group"]` is the event timestamp or bucket
-start in UTC nanoseconds, distinct from the semantic entity grouping streams into
+and JSON `context` columns. `context["group"]` is the event timestamp, bucket
+start, or rolling grid point in UTC nanoseconds, distinct from the semantic entity grouping streams into
 an operator. Context also identifies the operator and declared inputs, including
 inputs with no readings in this window.
 
@@ -91,8 +91,16 @@ window. Return the complete window result, including unchanged output rows.
 as-of join across asynchronous probes. `FixedBucket(width_ns, origin_ns=0)` sees a
 half-open UTC bucket and emits at its start. Late readings revise that bucket and
 dependent outputs immediately. Decide whether aggregates weight observations or
-streams equally; this example weights observations. Rolling windows, recurrent
-model state, and clock-driven missing-data detection need native core extensions.
+streams equally; this example weights observations.
+
+`Rolling(lookback_ns, step_ns, lookahead_ns=0, origin_ns=0)` emits on the grid
+`origin + k·step`; the group at `t` sees every reading in `[t - lookback,
+t + lookahead]`, both ends inclusive, so windows overlap. A ten-minute trailing
+mean every minute is `Rolling(lookback_ns=600 * SECOND, step_ns=60 * SECOND)`; a
+correction at noon repairs the windows from 12:00 through 12:10. Grid points with
+no readings in their span produce nothing. Recompute cost grows with
+`lookback / step`, since every repaired window rereads its whole span. Recurrent
+model state and clock-driven missing-data detection need native core extensions.
 
 ## Deploy reproducible calculation versions
 

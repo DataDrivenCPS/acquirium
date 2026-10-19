@@ -23,6 +23,7 @@ from escapement import (
     Pointwise,
     PythonFunction,
     PendingError,
+    Rolling,
     ExecutionError,
     ValidationError,
 )
@@ -107,7 +108,7 @@ class App:
     inputs: tuple[Selection, ...] | list[Selection]
     outputs: Mapping[str, Output]
     function: PythonFunction | Mapping[str, Any]
-    window: Pointwise | FixedBucket = field(default_factory=Pointwise)
+    window: Pointwise | FixedBucket | Rolling = field(default_factory=Pointwise)
 
     def to_dict(self):
         if (
@@ -118,8 +119,8 @@ class App:
             raise ValueError(
                 "apps require a simple name (letters, digits, _, ., -) and declared outputs"
             )
-        if not isinstance(self.window, (Pointwise, FixedBucket)):
-            raise ValueError("only pointwise and fixed-bucket windows are supported")
+        if not isinstance(self.window, (Pointwise, FixedBucket, Rolling)):
+            raise ValueError("only pointwise, fixed-bucket and rolling windows are supported")
         if any(not key for key in self.outputs):
             raise ValueError("output port names must be nonempty")
         if any(type(spec.on_group) is not bool for spec in self.outputs.values()):
@@ -144,8 +145,15 @@ class App:
             value = Pointwise()
         elif window["kind"] == "fixed":
             value = FixedBucket(window["width_ns"], window.get("origin_ns", 0))
+        elif window["kind"] == "rolling":
+            value = Rolling(
+                window["lookback_ns"],
+                window["step_ns"],
+                window.get("lookahead_ns", 0),
+                window.get("origin_ns", 0),
+            )
         else:
-            raise ValueError("only pointwise and fixed-bucket windows are supported")
+            raise ValueError("only pointwise, fixed-bucket and rolling windows are supported")
         app = cls(
             data["name"],
             tuple(Selection(**item) for item in data["inputs"]),
