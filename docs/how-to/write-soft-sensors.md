@@ -71,7 +71,8 @@ freeze conversion factors, then apply them explicitly in the function, as the
 example does. `Selection(parameters={group: {name: value}})` gives each group's
 operator typed values, which the function reads as `context["parameters"]`.
 New parameters or membership activate a new complete plan and repair retained
-history. Functions do not query the live graph, obtain
+history; a stream that moves groups takes its whole history with it (see
+[group membership](../reference/apps.md)). Functions do not query the live graph, obtain
 undeclared history, or use wall-clock time.
 
 ## Return the complete result for one window
