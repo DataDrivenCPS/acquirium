@@ -94,19 +94,18 @@ def _closure_triples(graph: Graph) -> frozenset:
 def prune_orphan_metadata(dataset: Dataset, metadata_graph_uri: URIRef) -> None:
     """Drop metadata about nodes no other graph mentions any more.
 
-    A metadata triple stays while its subject, and its object when that is
-    a URI, appear (as subject or object) in some graph other than the
-    metadata graph. Ontology graphs count, so unit and class URIs used as
-    values never trigger a prune. Run after a write that removed triples
-    from a source graph, so metadata never outlives the node it describes.
+    A metadata triple stays while its subject appears (as subject or
+    object) in some graph other than the metadata graph. Only the subject
+    is checked: a URI value is a value, and may point anywhere, inside the
+    graph or not. Run after a write that removed triples from a source
+    graph, so metadata never outlives the node it describes.
     """
     m = f"<{metadata_graph_uri}>"
     dataset.update(
         f"DELETE {{ GRAPH {m} {{ ?s ?p ?o }} }}\n"
-        f"WHERE {{\n  GRAPH {m} {{ ?s ?p ?o }}\n  FILTER(\n"
-        f"    NOT EXISTS {{ GRAPH ?g1 {{ {{ ?s ?a ?b }} UNION {{ ?c ?d ?s }} }} FILTER(?g1 != {m}) }}\n"
-        f"    || (isIRI(?o) && NOT EXISTS {{ GRAPH ?g2 {{ {{ ?o ?e ?f }} UNION {{ ?h ?i ?o }} }} FILTER(?g2 != {m}) }})\n"
-        f"  )\n}}"
+        f"WHERE {{\n  GRAPH {m} {{ ?s ?p ?o }}\n"
+        f"  FILTER NOT EXISTS {{ GRAPH ?g {{ {{ ?s ?a ?b }} UNION {{ ?c ?d ?s }} }} FILTER(?g != {m}) }}\n"
+        f"}}"
     )
 
 
