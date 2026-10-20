@@ -5,7 +5,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from acquirium.Client.explore.attributes import ATTR_NS, DISCOVERY_SPARQL, clear_registry_cache
+from acquirium.Client.explore.attributes import Not
 from acquirium.Client.explore.core import Query, _lists, _place
+from acquirium.Client.explore.expr import BoolOp, Compare
 from acquirium.Client.explore.typed import CastError, XSD
 
 CLS_A = "urn:test#TypeA"
@@ -144,3 +146,42 @@ class TestMetadataObjects:
         assert q.metadata()["m.unit"].to_list() == ["unit:PSI"]                   # table: CURIE
         assert q.metadata_objects() == [{"m": {"id": "urn:p#m", "unit": "http://qudt.org/vocab/unit/PSI",
                                                "unit.raw": "PSI"}}]              # objects: URI
+
+
+class TestIdAttribute:
+    """``id``: the saved id, else the node's URI (CURIE in the table)."""
+
+    def test_objects_always_ask_for_id_and_take_the_saved_one(self):
+        res = {"columns": ["v0", "attr0_id"], "rows": [["urn:p#a", "urn:p#a"], ["urn:p#b", "pump-7"]],
+               "datatypes": [["iri", "iri"], ["iri", None]]}
+        client = make_client(res, [])
+        q = Query(client=client).entity(CLS_A, alias="point")
+        assert q.metadata_objects() == [{"point": {"id": "urn:p#a"}}, {"point": {"id": "pump-7"}}]
+        sparql = client.sparql_query.call_args[0][0]
+        assert f"OPTIONAL {{ ?v0 <{ATTR_NS}id> ?attr0_id_s . }} BIND(COALESCE(?attr0_id_s, ?v0) AS ?attr0_id)" in sparql
+        assert q.query_graph.selects == ()                     # the caller's query is untouched
+
+    def test_table_shows_curie_or_saved_value(self):
+        res = {"columns": ["v0", "attr0_id"], "rows": [["urn:p#a", "urn:p#a"], ["urn:p#b", "pump-7"]],
+               "datatypes": [["iri", "iri"], ["iri", None]]}
+        q = Query(client=make_client(res, [])).entity(CLS_A, alias="point").include("id")
+        assert q.metadata()["point.id"].to_list() == ["p:a", "pump-7"]
+
+    def test_include_all_leaves_id_out(self):
+        q = Query(client=make_client({"columns": ["v0"], "rows": []}, [])).entity(CLS_A, alias="point")
+        assert "id" not in {n for _, n, _ in q.include("all").query_graph.selects}
+
+    def test_where_matches_saved_id_uri_or_curie(self):
+        client = make_client({"columns": ["v0"], "rows": []}, [])
+        client.expand_uri.side_effect = lambda s: s.replace("p:", "urn:p#")
+        q = Query(client=client).entity(CLS_A, alias="point")
+        sparql = q.where(id="pump-7").to_sparql()
+        assert f'OPTIONAL {{ ?v0 <{ATTR_NS}id> ?v0_id . }} FILTER(COALESCE(?v0_id, ?v0) IN ("pump-7"))' in sparql
+        sparql = q.where(id="p:a").to_sparql()            # a CURIE also stands for its URI
+        assert 'IN ("p:a", <urn:p#a>, "urn:p#a")' in sparql
+        sparql = q.where(id=Not("urn:p#a")).to_sparql()
+        assert 'NOT IN (<urn:p#a>, "urn:p#a")' in sparql
+        # a bare aq.attr.id == "p:a" folds into the kwarg form; inside | it stays an expression
+        sparql = q.where(BoolOp("or", (Compare("id", "==", "p:a"), Compare("id", "==", "pump-7")))).to_sparql()
+        assert ('(EXISTS { OPTIONAL { ?v0 <urn:acquirium:attr#id> ?_x . } FILTER(COALESCE(?_x, ?v0) IN ("p:a", <urn:p#a>, "urn:p#a")) }'
+                ' || EXISTS { OPTIONAL { ?v0 <urn:acquirium:attr#id> ?_x . } FILTER(COALESCE(?_x, ?v0) IN ("pump-7")) })') in sparql

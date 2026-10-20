@@ -19,7 +19,7 @@ class TestEntityAttrs:
     def test_include_all_on_entity_is_every_attribute(self):
         q = Query(client=make_client()).entity(uri="urn:p#point", alias="p").include("all")
         names = {n for _, n, _ in q.query_graph.selects}
-        assert names == set(REGISTRY) - {"type", "cp_type"}
+        assert names == set(REGISTRY) - {"type", "cp_type", "id"}
 
     def test_explicit_measurement_attributes_on_any_entity(self):
         q = (Query(client=make_client()).entity("urn:x#Class", alias="e")

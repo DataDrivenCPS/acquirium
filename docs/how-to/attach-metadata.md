@@ -68,7 +68,7 @@ dir(acq.attr)
 dir(acq.attr.product_info)
 ```
 ```text
-['app', 'cp_type', 'data_source', 'enumeration_kind', 'label', 'last_cleaned', 'medium', 'process', 'product_info', 'quantity_kind', 'substance', 'tags', 'type', 'unit']
+['app', 'cp_type', 'data_source', 'enumeration_kind', 'id', 'label', 'last_cleaned', 'medium', 'process', 'product_info', 'quantity_kind', 'substance', 'tags', 'type', 'unit']
 ['manufacturer', 'year']
 ```
 
@@ -188,8 +188,24 @@ fields, with nulls; the objects leave out the fields a pump never had. The
 table also makes a list column of a key that is a list on any node, so a
 pump that saved `"tags": "lab"` shows `["lab"]` there; the object keeps
 `"lab"`. A list of dicts or a nested list comes back as saved, element
-positions intact. `id` is the node's URI, unless the node saved an `id` of
-its own, and a URI value stays a URI; only the table compacts to CURIEs.
+positions intact. A URI value stays a URI; only the table compacts to CURIEs.
+
+`id` is an attribute like the others, with a fallback: it is the id saved on
+the node, else the node itself. The objects always carry it, as the URI.
+`include("id")` adds it to the table, as the CURIE; `include("all")` leaves
+it out, since the node column is already there. A saved `id` is a literal
+kept as written, so `"pump-7"` and `"urn:other:c-1"` both come back as
+given. `where(id=...)` takes a saved id, a URI or a CURIE, and matches the
+saved id where there is one, the node otherwise:
+
+```python
+acq.insert_metadata("urn:example:b", {"id": "pump-7"})
+pts = acq.query().entity("urn:example:Point", alias="point")
+pts.include("id").metadata()["point.id"].to_list()   # ['ex:a', 'pump-7']
+pts.metadata_objects()                               # [{'point': {'id': 'urn:example:a'}}, {'point': {'id': 'pump-7'}}]
+pts.where(id="ex:a").metadata()                      # the node ex:a
+pts.where(id="pump-7").metadata()                    # the node ex:b
+```
 
 ## Know the schema before you run
 

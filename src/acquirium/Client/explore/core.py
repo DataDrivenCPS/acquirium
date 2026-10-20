@@ -216,7 +216,9 @@ class Query:
                 continue
             coerced: List[Any] = []
             for i, v in enumerate(values):
-                if attr.literal:
+                if name == "id":
+                    coerced.extend(self._id_alternatives(v))
+                elif attr.literal:
                     coerced.append(v)
                 elif isinstance(v, URIRef) or _is_uri(v):
                     coerced.append(str(v))
@@ -228,6 +230,17 @@ class Query:
             value = coerced[0] if len(coerced) == 1 else coerced
             out[name] = Not(value) if negated else value
         return out
+
+    def _id_alternatives(self, value: Any) -> List[Any]:
+        """``where(id=value)`` matches a saved id or the node's URI, so a
+        CURIE also stands for the URI it expands to; anything else is kept
+        as given."""
+        if isinstance(value, str) and not _is_uri(value) and ":" in value:
+            try:
+                return [value, self.client.expand_uri(value)]
+            except Exception:
+                return [value]
+        return [value]
 
     def _resolve_expr_values(self, exprs: "tuple[Expr, ...]") -> "tuple[Expr, ...]":
         """Validate the attributes an expression tree names and resolve text.
@@ -291,6 +304,10 @@ class Query:
 
         def coerce(i: int, e: Compare) -> Compare:
             attr = registry[e.attr]
+            if e.attr == "id" and e.op in ("==", "in"):
+                values = [a for v in (e.value if e.op == "in" else [e.value])
+                          for a in self._id_alternatives(v)]
+                return replace(e, op="in", value=tuple(values)) if len(values) > 1 else e
             if attr.literal or e.op == "exists" or e.op in ORDERING:
                 return e
             values = e.value if e.op == "in" else [e.value]
@@ -1156,6 +1173,8 @@ class Query:
         summary = FacetSummary(node_alias=alias)
         for attr in self._node_attrs(g, nid):
             name = attr.name
+            if name == "id":
+                continue          # one value per node, nothing to count
             if attr.datatypes:          # a user attribute: show its type
                 summary.dtypes[name] = str(self._leaf_dtype(name))
             df = self.options(name, of=alias, include_dependencies=include_dependencies)
@@ -1448,6 +1467,10 @@ class Query:
             res = self.execute(include_dependencies=include_dependencies)
             cols = res.get("columns", [])
             rows = res.get("rows", [])
+            # a server that sends no datatypes leaves every cell unknown, and
+            # a URI-looking string is then taken for a node; one that does
+            # marks nodes "iri", so a literal that looks like a URI stays text
+            typed = bool(res.get("datatypes"))
             datatypes = res.get("datatypes") or [[None] * len(cols) for _ in rows]
             # list attributes: value column -> column holding each element's predicate
             registry = self.registry
@@ -1468,7 +1491,7 @@ class Query:
                 # a node, or a cell whose kind is unknown and looks like one
                 if value is None:
                     return None
-                if datatype == IRI or (datatype is None and isinstance(value, str) and _is_uri(value)):
+                if datatype == IRI or (not typed and isinstance(value, str) and _is_uri(value)):
                     return self._compact_uri_safe(str(value))
                 return value
 
@@ -1662,8 +1685,9 @@ class Query:
 
         One dict per row of :meth:`metadata` (a node can appear in several
         rows when the pattern joins it to several others). Each node alias
-        maps to a dict holding the node's URI under ``"id"``, its label
-        under ``"label"`` when it has one, and every included attribute as
+        maps to a dict holding the node's id under ``"id"`` (the id saved
+        on it, else its URI; see the ``id`` attribute), its label under
+        ``"label"`` when it has one, and every included attribute as
         ``insert_metadata`` was given it: a dict stays a dict, a list a list
         in written order, whatever its elements are. A list of dicts comes
         back as a list of dicts, a nested list as a nested list, and a plain
@@ -1681,16 +1705,20 @@ class Query:
         node: a key it lacks is left out, including the struct fields other
         nodes introduced (``{"mode": "baseline"}``, not ``{"duration": None,
         "mode": "baseline"}``). The table from :meth:`metadata` keeps its
-        shared schema, lists and all. A saved ``id`` attribute replaces the
-        URI. A list saved with a ``None`` element reads back without that
-        position, since nothing empty is stored.
+        shared schema, lists and all. A list saved with a ``None`` element
+        reads back without that position, since nothing empty is stored.
         """
-        res = self.execute(include_dependencies=include_dependencies)
+        # every object carries its id: the saved one, else the node's URI
+        q = self
+        for nid, node in self.query_graph.nodes.items():
+            if not (node.constraints or {}).get("dropped"):
+                q = q.include("id", of=self.query_graph.aliases_reverse.get(nid, f"v{nid}"))
+        res = q.execute(include_dependencies=include_dependencies)
         cols = [str(c) for c in res.get("columns", [])]
         rows = res.get("rows", [])
         datatypes = res.get("datatypes") or [[None] * len(cols) for _ in rows]
-        g = self.query_graph
-        registry = self.registry
+        g = q.query_graph
+        registry = q.registry
         index = {c: i for i, c in enumerate(cols)}
 
         nodes: List[tuple] = []     # (alias, column index)
@@ -1704,7 +1732,7 @@ class Query:
         # every attribute value column once: (alias, name, value index,
         # index of the column naming the element's predicate for a list)
         leaves: Dict[int, tuple] = {}
-        for nid, name, _ in self._expanded_selects()[0]:
+        for nid, name, _ in q._expanded_selects()[0]:
             var = attr_var(nid, name)[1:]
             if var not in index or index[var] in leaves:
                 continue

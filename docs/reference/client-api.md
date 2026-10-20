@@ -134,6 +134,7 @@ See the [querying tutorial](../tutorials/querying.md) and
 Attributes accepted by `where()`, `include()`, `options()` and the inline
 keywords: the built-ins `type`, `process`, `cp_type`, `medium`, `substance`,
 `quantity_kind`, `unit`, `enumeration_kind`, `data_source`, `app`, `label`,
+`id` (the id saved on the node, else the node itself: a URI or CURIE matches it),
 and every user attribute the graph holds (see [Metadata values](#metadata-values)),
 named by its dotted path: `last_cleaned`, `product_info.year`, `tags`.
 A path with dots is passed as a string or as an `acq.attr` path, since it is
@@ -146,7 +147,7 @@ only.
 
 | method | description |
 |---|---|
-| `metadata_objects(*, include_dependencies=True) -> list[dict]` | The rows of `metadata()` as Python dicts: each alias maps to `{"id": <URI>, "label": ..., <attributes as saved>}`. A dict is a dict, a list a list in written order whatever its elements (a list of dicts, a nested list), a plain value plain even when another node holds a list under the key; dates are `date`, URIs full URIs (only the table compacts to CURIEs), a cast applies under its key. Each object holds only what was saved on that node: absent keys, and struct fields other nodes introduced, are left out (the table keeps its shared schema). A saved `id` replaces the URI. |
+| `metadata_objects(*, include_dependencies=True) -> list[dict]` | The rows of `metadata()` as Python dicts: each alias maps to `{"id": <saved id, else the URI>, "label": ..., <attributes as saved>}`. A dict is a dict, a list a list in written order whatever its elements (a list of dicts, a nested list), a plain value plain even when another node holds a list under the key; dates are `date`, URIs full URIs (only the table compacts to CURIEs), a cast applies under its key. Each object holds only what was saved on that node: absent keys, and struct fields other nodes introduced, are left out (the table keeps its shared schema). |
 | `schema() -> pl.Schema` | The schema `metadata()` will return, without running the query: node columns `String`, a measurement's `alias.label`, attribute columns typed from what the graph holds for each attribute (lists as `List`, parent keys as `Struct`, mixtures as `Object`, casts as their target). The one difference from `metadata().schema`: an `alias.label` column that is null on every row is dropped there. |
 | `metadata(*, include_internals=False, include_dependencies=True) -> pl.DataFrame` | The pattern matches, one column per node plus `alias.attr` and `alias.label` columns. Node columns are CURIE strings; attribute columns are typed from the graph (`Int64`, `Float64`, `Boolean`, `Date`, `Datetime`, `String`). A column mixing integers and floats is `Float64`; any other mixture is `pl.Object`, cells as written. A user attribute written as a list is one `pl.List` cell per node in written order (a scalar under the same key becomes a one-element list); built-ins with several values keep one row per value. |
 | `data(*, start=None, end=None, limit=None, order="asc", include_dependencies=True, cast_value="float", value_mode="default") -> DataObject` | A lazy `DataObject` over the matched streams. |
@@ -206,7 +207,7 @@ Keys are handled by name:
 
 | key | written as |
 |---|---|
-| a built-in attribute (`unit`, `medium`, `label`, `type`, `process`, `substance`, `quantity_kind`, `enumeration_kind`, `data_source`, `app`) | that attribute's own predicate; free text is resolved to a URI first, and the text itself is kept as `attr:<key>.raw`, readable with `include("unit.raw")`. `medium` is `s223:ofMedium` on a measurement and `s223:hasMedium` on an entity. `cp_type` cannot be written. |
+| a built-in attribute (`unit`, `medium`, `label`, `type`, `process`, `substance`, `quantity_kind`, `enumeration_kind`, `data_source`, `app`, `id`) | that attribute's own predicate; free text is resolved to a URI first, and the text itself is kept as `attr:<key>.raw`, readable with `include("unit.raw")`. `medium` is `s223:ofMedium` on a measurement and `s223:hasMedium` on an entity. `cp_type` cannot be written. |
 | a relation name (`entity`, `measurement`, `upstream`, `downstream`) | refused: edges of the plant model are not written here |
 | any other key | a user attribute, `urn:acquirium:attr#<key>` (prefix `attr:`) |
 
