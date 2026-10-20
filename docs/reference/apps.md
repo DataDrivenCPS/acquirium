@@ -77,6 +77,14 @@ stable functions of app name, semantic group, and port; changing membership does
 not rename the group's result. Source IDs for derived references are reserved as
 `derived:<app-name>`.
 
+Group membership has no history: the current graph decides which streams feed
+each group, for all time. When a graph change moves a stream from one group to
+another, the old group's results are rebuilt without any of that stream's
+readings and the new group's are rebuilt with all of them, as if it had always
+belonged there. A stream that stops matching drops out of every past result the
+same way. Recording that a stream moved at a particular time, and keeping
+its earlier readings with its old group, is not supported yet.
+
 A Python function has the native signature:
 
 ```python
