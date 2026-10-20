@@ -26,7 +26,7 @@ import polars as pl
 from rdflib import URIRef
 
 from acquirium.Client.explore.attributes import (
-    NOT_IN_ALL, Not, Registry, attributes_doc, is_list_attr, list_index, normalize_value,
+    ATTR_NS, NOT_IN_ALL, Not, Registry, attributes_doc, is_list_attr, list_index, normalize_value,
 )
 from acquirium.Client.explore.compile import attr_var, compile_parts, compile_sparql
 from acquirium.Client.explore.directions import EQUIPMENT_STEPS, PROPERTY_STEPS
@@ -216,7 +216,9 @@ class Query:
                 continue
             coerced: List[Any] = []
             for i, v in enumerate(values):
-                if attr.literal:
+                if name == "id":
+                    coerced.extend(self._id_alternatives(v))
+                elif attr.literal:
                     coerced.append(v)
                 elif isinstance(v, URIRef) or _is_uri(v):
                     coerced.append(str(v))
@@ -228,6 +230,17 @@ class Query:
             value = coerced[0] if len(coerced) == 1 else coerced
             out[name] = Not(value) if negated else value
         return out
+
+    def _id_alternatives(self, value: Any) -> List[Any]:
+        """``where(id=value)`` matches a saved id or the node's URI, so a
+        CURIE also stands for the URI it expands to; anything else is kept
+        as given."""
+        if isinstance(value, str) and not _is_uri(value) and ":" in value:
+            try:
+                return [value, self.client.expand_uri(value)]
+            except Exception:
+                return [value]
+        return [value]
 
     def _resolve_expr_values(self, exprs: "tuple[Expr, ...]") -> "tuple[Expr, ...]":
         """Validate the attributes an expression tree names and resolve text.
@@ -291,6 +304,10 @@ class Query:
 
         def coerce(i: int, e: Compare) -> Compare:
             attr = registry[e.attr]
+            if e.attr == "id" and e.op in ("==", "in"):
+                values = [a for v in (e.value if e.op == "in" else [e.value])
+                          for a in self._id_alternatives(v)]
+                return replace(e, op="in", value=tuple(values)) if len(values) > 1 else e
             if attr.literal or e.op == "exists" or e.op in ORDERING:
                 return e
             values = e.value if e.op == "in" else [e.value]
@@ -1156,6 +1173,8 @@ class Query:
         summary = FacetSummary(node_alias=alias)
         for attr in self._node_attrs(g, nid):
             name = attr.name
+            if name == "id":
+                continue          # one value per node, nothing to count
             if attr.datatypes:          # a user attribute: show its type
                 summary.dtypes[name] = str(self._leaf_dtype(name))
             df = self.options(name, of=alias, include_dependencies=include_dependencies)
@@ -1448,6 +1467,10 @@ class Query:
             res = self.execute(include_dependencies=include_dependencies)
             cols = res.get("columns", [])
             rows = res.get("rows", [])
+            # a server that sends no datatypes leaves every cell unknown, and
+            # a URI-looking string is then taken for a node; one that does
+            # marks nodes "iri", so a literal that looks like a URI stays text
+            typed = bool(res.get("datatypes"))
             datatypes = res.get("datatypes") or [[None] * len(cols) for _ in rows]
             # list attributes: value column -> column holding each element's predicate
             registry = self.registry
@@ -1468,7 +1491,7 @@ class Query:
                 # a node, or a cell whose kind is unknown and looks like one
                 if value is None:
                     return None
-                if datatype == IRI or (datatype is None and isinstance(value, str) and _is_uri(value)):
+                if datatype == IRI or (not typed and isinstance(value, str) and _is_uri(value)):
                     return self._compact_uri_safe(str(value))
                 return value
 
@@ -1658,43 +1681,102 @@ class Query:
     # ---------- display helpers ----------
 
     def metadata_objects(self, *, include_dependencies: bool = True) -> List[Dict[str, Any]]:
-        """The pattern matches as Python dicts, attributes nested by their path.
+        """The pattern matches as Python dicts, attributes in the shape they were saved.
 
         One dict per row of :meth:`metadata` (a node can appear in several
         rows when the pattern joins it to several others). Each node alias
-        maps to a dict holding the node's CURIE under ``"id"``, its label
-        under ``"label"`` when it has one, and every included attribute
-        nested along its dotted path::
+        maps to a dict holding the node's id under ``"id"`` (the id saved
+        on it, else its URI; see the ``id`` attribute), its label under
+        ``"label"`` when it has one, and every included attribute as
+        ``insert_metadata`` was given it: a dict stays a dict, a list a list
+        in written order, whatever its elements are. A list of dicts comes
+        back as a list of dicts, a nested list as a nested list, and a plain
+        value stays plain even when another node holds a list under the
+        same key::
 
-            [{"pump": {"id": "dpr:backwash-dosing-pump",
+            [{"pump": {"id": "urn:dpr#backwash-dosing-pump",
                        "product_info": {"manufacturer": "Grundfos", "year": 2019},
-                       "tags": ["lab", "critical"]}}]
+                       "items": [{"name": "A"}, {"name": "B", "count": 2}]}}]
 
-        Values are the Python values of the frame: ``int``, ``date``,
-        ``list``, ``dict`` for a struct, and the value as written for an
-        ``Object`` column. Each object holds only what was saved on that
+        Values are typed as in the frame: ``int``, ``date``, ``bool``. A URI
+        value stays a full URI, like the id; only the table compacts to
+        CURIEs. A cast asked for with ``include(type=...)`` applies to the
+        value under its key, element by element for a list. Each object holds only what was saved on that
         node: a key it lacks is left out, including the struct fields other
         nodes introduced (``{"mode": "baseline"}``, not ``{"duration": None,
         "mode": "baseline"}``). The table from :meth:`metadata` keeps its
-        shared schema. A leaf included next to its parent key
-        (``"product_info"`` and ``"product_info.year"``) appears once,
-        inside the parent's dict.
+        shared schema, lists and all. A list saved with a ``None`` element
+        reads back without that position, since nothing empty is stored.
         """
-        df = self.metadata(include_dependencies=include_dependencies)
-        aliases = set(self.query_graph.aliases_reverse.values())
-        out: List[Dict[str, Any]] = []
-        for row in df.to_dicts():
-            record: Dict[str, Any] = {}
-            for col, value in row.items():
-                if col in aliases:
-                    record.setdefault(col, {})["id"] = value
+        # every object carries its id: the saved one, else the node's URI
+        q = self
+        for nid, node in self.query_graph.nodes.items():
+            if not (node.constraints or {}).get("dropped"):
+                q = q.include("id", of=self.query_graph.aliases_reverse.get(nid, f"v{nid}"))
+        res = q.execute(include_dependencies=include_dependencies)
+        cols = [str(c) for c in res.get("columns", [])]
+        rows = res.get("rows", [])
+        datatypes = res.get("datatypes") or [[None] * len(cols) for _ in rows]
+        g = q.query_graph
+        registry = q.registry
+        index = {c: i for i, c in enumerate(cols)}
+
+        nodes: List[tuple] = []     # (alias, column index)
+        labels: List[tuple] = []
+        for nid in g.nodes:
+            alias = g.aliases_reverse.get(nid, f"v{nid}")
+            if f"v{nid}" in index:
+                nodes.append((alias, index[f"v{nid}"]))
+            if f"lbl{nid}" in index:
+                labels.append((alias, index[f"lbl{nid}"]))
+        # every attribute value column once: (alias, name, value index,
+        # index of the column naming the element's predicate for a list)
+        leaves: Dict[int, tuple] = {}
+        for nid, name, _ in q._expanded_selects()[0]:
+            var = attr_var(nid, name)[1:]
+            if var not in index or index[var] in leaves:
+                continue
+            pred_col = (index.get(attr_var(nid, name, pred=True)[1:])
+                        if name in registry and is_list_attr(registry[name]) else None)
+            leaves[index[var]] = (g.aliases_reverse.get(nid, f"v{nid}"), name, index[var], pred_col)
+        # a list's elements come one per row: rows that agree on everything
+        # else are one object, as they are one row of the table
+        list_cols = {vi for _, _, vi, pi in leaves.values() if pi is not None}
+        key_cols = [i for i, c in enumerate(cols)
+                    if i not in list_cols and not c.startswith(("ext", "unit", "attrp"))]
+
+        def value_of(raw: Any, datatype: Optional[str]) -> Any:
+            # a URI stays a URI, like the id: the table is where CURIEs live
+            return str(raw) if datatype == IRI else parse_cell(raw, datatype)
+
+        groups: Dict[tuple, Dict[str, Any]] = {}
+        for r, d in zip(rows, datatypes):
+            record = groups.get(tuple(r[i] for i in key_cols))
+            if record is None:
+                record = groups[tuple(r[i] for i in key_cols)] = {}
+                for alias, i in nodes:
+                    if r[i] is not None:
+                        record.setdefault(alias, {})["id"] = str(r[i])
+                for alias, i in labels:
+                    if r[i] is not None:
+                        record.setdefault(alias, {})["label"] = r[i]
+            for alias, name, vi, pi in leaves.values():
+                if r[vi] is None:
                     continue
-                alias, _, path = col.partition(".")
-                if alias not in aliases or not path:
-                    record[col] = value
+                pred = str(r[pi]) if pi is not None and r[pi] is not None else ""
+                path = pred[len(ATTR_NS):] if pred.startswith(ATTR_NS) else name
+                _place(record.setdefault(alias, {}), path.split("."),
+                       value_of(r[vi], d[vi] if vi < len(d) else None))
+        out = [{alias: _lists(obj) for alias, obj in record.items()} for record in groups.values()]
+
+        for nid, name, type_, strict in g.casts:
+            alias = g.aliases_reverse.get(nid, f"v{nid}")
+            for record in out:
+                obj = record.get(alias)
+                if obj is None:
                     continue
-                _nest(record.setdefault(alias, {}), path.split("."), value)
-            out.append({k: _saved(v) if isinstance(v, dict) else v for k, v in record.items()})
+                record[alias] = _cast_at(obj, name.split("."), lambda v, obj=obj: cast_values(
+                    [v], type_, strict=strict, labels=[obj.get("id")], column=name)[0][0])
         return out
 
     def _expanded_selects(self) -> tuple:
@@ -1759,56 +1841,56 @@ class Query:
             return str(uri)
 
 
-def _saved(node: Dict[str, Any]) -> Dict[str, Any]:
-    """``node`` without the keys its node never saved.
+def _place(target: Dict[str, Any], segments: List[str], value: Any) -> None:
+    """Set ``value`` at the exact leaf path ``segments`` inside ``target``.
 
-    Nothing empty is ever stored, so a ``None`` or a dict left empty means
-    the attribute is absent on this node (a frame column, or a struct field,
-    another node introduced). Lists are kept as they are."""
-    out: Dict[str, Any] = {}
-    for k, v in node.items():
-        if isinstance(v, dict):
-            v = _saved(v)
-            if not v:
-                continue
-        elif v is None:
-            continue
-        out[k] = v
-    return out
-
-
-def _nest(target: Dict[str, Any], parts: List[str], value: Any) -> None:
-    """Set ``value`` at ``parts`` inside ``target``, merging dicts.
-
-    A struct value (a dict) merges with keys already there; ``None`` never
-    overwrites a value or a dict already set, so a leaf included next to its
-    parent key adds nothing it does not know. A path that runs into a plain
-    value (``unit.raw`` under the built-in ``unit``) is kept under its dotted
-    name at that level, ``"unit.raw"``, so nothing is lost."""
+    A digit segment is a list position: that level is built as a dict keyed
+    by position and :func:`_lists` turns it into a list. A path that runs
+    into a plain value (``unit.raw`` under the built-in ``unit``) keeps the
+    leaf under its dotted name at that level, and a plain value arriving
+    where leaves were nested first moves those leaves to their dotted names
+    beside it, so nothing is lost."""
     node = target
-    for i, part in enumerate(parts[:-1]):
-        nxt = node.get(part)
-        if not isinstance(nxt, dict):
-            if nxt is not None:
-                _nest(node, [".".join(parts[i:])], value)
-                return
-            if part in node and value is None:
-                return          # a null parent stays null
-            nxt = node[part] = {}
+    for i, seg in enumerate(segments[:-1]):
+        key = int(seg) if seg.isdigit() else seg
+        nxt = node.get(key)
+        if nxt is None:
+            nxt = node[key] = {}
+        elif not isinstance(nxt, dict):
+            node[".".join(segments[i:])] = value
+            return
         node = nxt
-    key = parts[-1]
+    last = segments[-1]
+    key = int(last) if last.isdigit() else last
     current = node.get(key)
-    if isinstance(current, dict) and isinstance(value, dict):
-        for k, v in value.items():
-            _nest(current, [k], v)
-    elif isinstance(current, dict) and value is not None:
-        # a plain value arrives where leaves were nested first: the leaves
-        # move to their dotted names beside it
+    if isinstance(current, dict):
         for k, v in current.items():
             node[f"{key}.{k}"] = v
-        node[key] = value
-    elif value is not None or key not in node:
-        node[key] = value
+    node[key] = value
+
+
+def _lists(value: Any) -> Any:
+    """Turn every position-keyed dict :func:`_place` built into a list, in
+    position order, at any depth."""
+    if isinstance(value, dict):
+        if value and all(isinstance(k, int) for k in value):
+            return [_lists(value[k]) for k in sorted(value)]
+        return {k: _lists(v) for k, v in value.items()}
+    return value
+
+
+def _cast_at(value: Any, segments: List[str], cast: Any) -> Any:
+    """``value`` with ``cast`` applied to what sits under ``segments``; a
+    list on the way applies it to every element."""
+    if not segments:
+        return cast(value)
+    if isinstance(value, list):
+        return [_cast_at(e, segments, cast) for e in value]
+    if isinstance(value, dict) and segments[0] in value:
+        out = dict(value)
+        out[segments[0]] = _cast_at(value[segments[0]], segments[1:], cast)
+        return out
+    return value
 
 
 def _struct_series(name: str, members: Dict[str, pl.Series], *,

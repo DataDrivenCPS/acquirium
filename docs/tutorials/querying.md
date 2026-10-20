@@ -534,6 +534,7 @@ The attribute vocabulary is one shared registry:
 | `data_source` | measurements | origin tag literal, matched verbatim (`"Lab"`, `"SCADA"`) |
 | `app` | measurements | the [app](../explanation/apps.md) that derived the measurement, matched verbatim (`"normalize-temperatures"`); absent on measurements a driver wrote |
 | `label` | both | display name (`rdfs:label`), matched verbatim (`"Influent flow"`) |
+| `id` | both | the id saved on the node with `insert_metadata`, else the node itself; `where(id=...)` takes a saved id, a URI or a CURIE (`"pump-7"`, `"plant:p1"`) |
 
 The same table is generated into the docstring of every attribute-taking
 method, so `help(q.where)` has it too.

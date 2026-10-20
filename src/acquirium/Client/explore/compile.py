@@ -22,7 +22,7 @@ from rdflib.namespace import RDF, RDFS
 
 import itertools
 
-from acquirium.Client.explore.attributes import REGISTRY, Attr, Not, is_list_attr, normalize_value
+from acquirium.Client.explore.attributes import ATTR_NS, REGISTRY, Attr, Not, is_list_attr, normalize_value
 from acquirium.Client.explore.expr import BoolOp
 from acquirium.Client.explore.hidden import hidden_filter
 from acquirium.Client.query_graph import QueryEdge, QueryGraph
@@ -60,10 +60,32 @@ def _term(x: object) -> str:
     """
     if isinstance(x, (bool, int, float, datetime, date)):
         return Literal(x).n3()
-    if _is_iri(x):
+    if _is_iri(x) and not isinstance(x, _Text):
         return f"<{x}>"
     text = str(x).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
     return f'"{text}"'
+
+
+def _id_terms(values) -> str:
+    """The SPARQL terms a ``where(id=...)`` value can match: the value as a
+    URI when it looks like one, and always as the string literal a saved id
+    is written as."""
+    terms: List[str] = []
+    for x in values:
+        for t in (_term(x), _term(_Text(x)) if _is_iri(x) else None):
+            if t is not None and t not in terms:
+                terms.append(t)
+    return ", ".join(terms)
+
+
+class _Text(str):
+    """A string ``_term`` always quotes, even when it looks like a URI."""
+
+
+def _id_filter(v: str, bound: str, cond: str) -> str:
+    """``id`` is the saved ``attr:id`` else the node itself: bind the saved
+    value OPTIONALly as ``bound`` and test ``cond`` on the COALESCE."""
+    return f"OPTIONAL {{ {v} <{ATTR_NS}id> {bound} . }} FILTER({cond})"
 
 
 def _expr_sparql(v: str, expr, registry: Mapping) -> str:
@@ -82,6 +104,18 @@ def _expr_sparql(v: str, expr, registry: Mapping) -> str:
     attr = registry[expr.attr]
     path = "|".join(f"<{p}>" for p in attr.predicates)
     x = "?_x"
+    if attr.name == "id":
+        if expr.op == "exists":
+            return "true"
+        coalesced = f"COALESCE({x}, {v})"
+        if expr.op in ("==", "in"):
+            values = list(expr.value) if expr.op == "in" else [expr.value]
+            cond = f"{coalesced} IN ({_id_terms(values)})"
+        elif expr.op == "!=":
+            return f"!EXISTS {{ {_id_filter(v, x, f'{coalesced} IN ({_id_terms([expr.value])})')} }}"
+        else:
+            cond = f"{coalesced} {expr.op} {_term(expr.value)}"
+        return f"EXISTS {{ {_id_filter(v, x, cond)} }}"
     if expr.op == "exists":
         return f"EXISTS {{ {v} ({path}) {x} . }}"
     if expr.op == "==":
@@ -145,6 +179,11 @@ def _attr_clauses(var: str, attr: Attr, value: Any) -> List[str]:
     if not values:
         return []
     clauses: List[str] = []
+
+    if attr.name == "id":
+        bound = f"{var}_id"
+        test = f"COALESCE({bound}, {var}) {'NOT IN' if negated else 'IN'} ({_id_terms(values)})"
+        return [_id_filter(var, bound, test)]
 
     if attr.via_subclass:
         pred_path = "|".join(f"<{p}>" for p in attr.predicates)
@@ -602,6 +641,11 @@ def _attr_select_clause(v: str, nid: int, name: str, required: bool,
     """
     attr = registry[name]
     avar = attr_var(nid, name)
+    if attr.name == "id":
+        # always bound: the saved id, else the node itself
+        saved = f"{avar}_s"
+        return (f"OPTIONAL {{ {v} <{ATTR_NS}id> {saved} . }} BIND(COALESCE({saved}, {v}) AS {avar})",
+                [avar])
     if is_list_attr(attr):
         pvar = attr_var(nid, name, pred=True)
         values = " ".join(f"<{p}>" for p in attr.predicates)

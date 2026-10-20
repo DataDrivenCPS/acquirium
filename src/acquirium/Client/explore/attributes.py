@@ -118,15 +118,21 @@ REGISTRY: dict[str, Attr] = {
         # rdfs:label literal on a data node (stream label / CSV column name).
         Attr("label", (str(RDFS.label),), "any", BOTH, literal=True,
              doc='stream or entity label, matched verbatim ("Influent flow")'),
+        # The node's name: an id saved with insert_metadata (a literal, kept
+        # as written), else the node's URI. The compiler COALESCEs the two,
+        # so where(id=...) takes a saved id, a URI or a CURIE alike.
+        Attr("id", (str(ACQUIRIUM_ATTR_NS) + "id",), "any", BOTH, literal=True,
+             doc='saved id if any, else the node\'s URI ("pump-7", "urn:plant#p1", "plant:p1")'),
     )
 }
 
 # Attributes include("all") leaves out, per node role. type and cp_type
 # project one row per asserted type / connection point; a measurement's
-# label is already a metadata() column.
+# label is already a metadata() column; id repeats the node column unless
+# saved, and metadata_objects() carries it regardless.
 NOT_IN_ALL = {
-    "entity": frozenset({"type", "cp_type"}),
-    "data": frozenset({"type", "app", "label"}),
+    "entity": frozenset({"type", "cp_type", "id"}),
+    "data": frozenset({"type", "app", "label", "id"}),
 }
 
 
