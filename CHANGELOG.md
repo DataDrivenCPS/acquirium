@@ -15,6 +15,10 @@ change in any release.
   `NameError: name 'uuid' is not defined`, which broke every driver insert.
 
 ### Added
+- Soft-sensor functions can be declared with
+  `PythonFunction.from_file(path, entrypoint, batch=True)` to receive every
+  affected window in one call (Escapement batch functions). `examples/bulk_ingest
+  --batch` runs its six apps this way: 7.6 s instead of 47.1 s.
 - `engine_status()` includes Escapement's per-operator totals under
   `stats.operators` and rolls them up per app under `apps` (groups, input rows,
   changed rows, compute time).

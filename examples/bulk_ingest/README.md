@@ -47,3 +47,9 @@ against 64,426. Engine compute is about 95% of the insert time. The fill app's
 input rows barely change (2.7M), because each rolling window rereads its own
 4-hour span whatever the epoch count; the CSV driver's column-major reshape already
 kept each turbidity column's file in roughly one request.
+
+With `--batch`, the same apps use `batch_transforms.py`, whose functions get
+every affected window in one call (2026-10-20, same machine, both runs back to
+back): 7.6–8.1 s against 47.1–50.6 s per window, with identical outputs and work
+counts. Batch fill still spends about 6 s moving its 2.7M rows, because each
+overlapping window carries its own copy of its span.

@@ -118,6 +118,35 @@ no readings in their span produce nothing. Recompute cost grows with
 `lookback / step`, since every repaired window rereads its whole span. Recurrent
 model state and clock-driven missing-data detection need native core extensions.
 
+## Compute every affected window in one call
+
+By default the function runs once per affected window. An app with thousands of
+windows to repair, as after a bulk backfill, spends most of its time on those
+calls. Declare the function with `batch=True` to receive every affected window
+at once:
+
+```python
+import polars as pl
+
+def bucket_mean(frame, context):
+    means = frame.group_by("group").agg(pl.col("value").mean())
+    return {"mean": means.select(
+        pl.col("group").alias("event_time_ns"), pl.lit(0).alias("sample_key"),
+        "value", pl.lit(0).alias("quality"),
+    ).cast(SCHEMA)}
+
+function = aq.PythonFunction.from_file(path, "bucket_mean", batch=True)
+```
+
+The frame gains an Int64 `group` column naming each row's window; a row read by
+overlapping rolling windows appears once per window. `context["windows"]` lists
+every affected window's context, including windows with no rows. Return rows for
+all windows at their window timestamps; a window left out is retracted, and a
+row at any other timestamp fails the epoch. Switching a function to or from
+batch mode is a new definition and rebuilds its history. The
+[bulk-ingest example](../../examples/bulk_ingest/README.md) runs the same six apps
+both ways.
+
 ## Deploy reproducible calculation versions
 
 ```python

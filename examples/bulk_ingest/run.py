@@ -2,6 +2,9 @@
 
 uv run --locked python -m examples.bulk_ingest.run --output /tmp/acquirium-bulk
 
+Pass --batch to run the same apps with batch_transforms.py, whose functions
+get every affected window in one call.
+
 Generates one wide CSV per day (4 turbidity columns plus filler columns, one
 row every 10 s), starts a local server whose driver watches an empty
 directory, deploys the chain, then moves the files in and times the insert.
@@ -154,6 +157,22 @@ def wait_for(condition, timeout, message):
         time.sleep(0.5)
 
 
+def soft_sensors(batch):
+    if not batch:
+        return SOFT_SENSORS
+    # The same apps, with each function swapped for its batch version.
+    return [
+        aq.App(
+            app.name,
+            app.inputs,
+            app.outputs,
+            aq.PythonFunction.from_file(DIRECTORY / "batch_transforms.py", app.function.entrypoint, batch=True),
+            app.window,
+        )
+        for app in SOFT_SENSORS
+    ]
+
+
 def run(args):
     root = args.output.resolve()
     root.mkdir(parents=True)
@@ -168,7 +187,7 @@ def run(args):
         wait_for(lambda: len(client.client.sparql_query(query)["rows"]) == len(LOCATIONS),
                  60, "driver did not register the turbidity points")
         started = time.monotonic()
-        for app in SOFT_SENSORS:
+        for app in soft_sensors(args.batch):
             state = client.deploy_app(app)["app"]
             if state["status"] != "active" or state["error"] or state["warnings"]:
                 raise RuntimeError(f"{app.name}: {state}")
@@ -192,6 +211,7 @@ def run(args):
         requests = after["requests"] - before["requests"]
         mismatches = verify(client, expected_outputs(raw))
         summary = {
+            "batch": args.batch,
             "days": args.days,
             "rows": rows,
             "readings": readings,
@@ -228,6 +248,7 @@ def main():
     parser.add_argument("--filler-columns", type=int, default=60)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--timeout", type=float, default=3600)
+    parser.add_argument("--batch", action="store_true", help="use the batch calculations")
     raise SystemExit(run(parser.parse_args()))
 
 
