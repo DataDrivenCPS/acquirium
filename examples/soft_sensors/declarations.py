@@ -91,13 +91,13 @@ def declarations(*, threshold=27.0, module=None):
                 aq.Selection(
                     PREFIXES
                     + f"""
-                    SELECT ?stream ?group ?threshold WHERE {{
+                    SELECT ?stream ?group WHERE {{
                         ?group a ex:Plant ; s223:hasProperty ?point .
                         ?point acq:producedBy "{HOTTEST}" ; ref:hasExternalReference ?stream .
-                        BIND({float(threshold)!r} AS ?threshold)
                     }}
                     """,
                     role="hottest",
+                    parameters={PLANT: {"threshold": float(threshold)}},
                 )
             ],
             outputs={"alarm": output},
