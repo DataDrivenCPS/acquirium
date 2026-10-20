@@ -1,7 +1,5 @@
 """Pure calculations; this self-contained file is pinned by its content digest."""
 
-import json
-
 import polars as pl
 from escapement import emit
 
@@ -30,12 +28,11 @@ def hottest_tank(frame, context):
 
 
 def high_temperature(frame, context):
-    """Emit the hottest temperature above the frozen threshold; otherwise clear."""
+    """Emit the hottest temperature above the plant's threshold parameter; otherwise clear."""
     if frame.height > 1:
         raise ValueError("alarm expects one hottest-tank value per timestamp")
     value = None
     if frame.height:
-        threshold = float(json.loads(frame["context"][0])["threshold"])
-        if frame["value"][0] > threshold:
+        if frame["value"][0] > context["parameters"]["threshold"]:
             value = frame["value"][0]
     return {"alarm": emit(context, value)}

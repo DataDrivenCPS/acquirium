@@ -23,7 +23,7 @@ Read these files in order:
 
 - [metadata.ttl](metadata.ttl): tank/plant topology and probe membership.
 - [declarations.py](declarations.py): registration, semantic selections, windows,
-  output metadata, and frozen threshold/unit context.
+  output metadata, frozen unit context, and the alarm threshold as an operator parameter.
 - [transforms.py](transforms.py): self-contained pure Python/Polars calculations.
 - [run.py](run.py): ordinary client ingestion, metadata edits, and snapshot reads.
 

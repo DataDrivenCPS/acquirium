@@ -99,12 +99,11 @@ def plan(tanks):
             ),
             Operator(
                 id="alarm",
-                inputs=[
-                    Input("urn:profile:hottest", "hottest", context={"threshold": "27"})
-                ],
+                inputs=[Input("urn:profile:hottest", "hottest")],
                 outputs={"alarm": "urn:profile:alarm"},
                 window=Pointwise(),
                 function=PythonFunction.from_file(FUNCTIONS, "high_temperature"),
+                parameters={"threshold": 27.0},
             ),
         ]
     )
