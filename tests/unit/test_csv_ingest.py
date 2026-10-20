@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -31,11 +32,14 @@ def make_driver(cfg_overrides: dict | None = None, tmp_path: Path | None = None)
     aq.register_streams.side_effect = lambda streams: AcquiriumClient.register_streams(aq.client, streams)
     aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0}
     watch = str(tmp_path) if tmp_path else "/tmp/csv_test_watch"
+    # Per-test driver state: the default <cwd>/.acquirium is shared across runs,
+    # and a stale cursor for a reused tmp path makes tick() skip the file.
+    state = tmp_path / ".state" if tmp_path else Path(tempfile.mkdtemp())
     driver = CSVIngestDriver(aq, {"driver": {
         "watch_dir": watch, "glob": ["*.csv", "*.tsv"],
         "source_id": "csv_files", "format": "wide",
         **(cfg_overrides or {}),
-    }})
+    }, "server": {"data_dir": str(state)}})
     driver.setup()
     return driver
 
