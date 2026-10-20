@@ -40,6 +40,8 @@ from acquirium.internals.internals_namespaces import (
     HAS_QUANTITY_KIND,
     VIRTUAL_POINT,
     PRODUCED_BY,
+    OUTPUT_PORT,
+    OUTPUT_GROUP,
     S223,
 )
 
@@ -64,6 +66,39 @@ class Selection:
     point_unit: str | None = None
     target_unit: str | None = None
     exclude_app: str | None = None
+    upstream: str | None = None
+    upstream_port: str | None = None
+    # Per-group values added to input context, keyed by group. When set, only
+    # the listed groups are selected; inspect warns about the groups skipped.
+    parameters: Mapping[str, Mapping[str, str | int | float]] | None = None
+
+    @classmethod
+    def outputs_of(cls, app, port, *, role, combine=False, parameters=None):
+        """Select one output port of another app.
+
+        By default each upstream group feeds its own operator, under the same
+        group. ``combine=True`` feeds every upstream group into one operator.
+        ``parameters`` maps groups to values for the function's input context.
+        Deployment rejects the selection while ``app`` is not deployed with
+        this port.
+        """
+        if port not in app.outputs:
+            raise ValueError(f"app {app.name!r} has no output port {port!r}")
+        query = f"""
+            SELECT * WHERE {{
+                ?point <{PRODUCED_BY}> {Literal(app.name).n3()} ;
+                       <{OUTPUT_PORT}> {Literal(port).n3()} ;
+                       <{OUTPUT_GROUP}> ?group ;
+                       <{HAS_EXTERNAL_REFERENCE}> ?stream .
+            }}"""
+        return cls(
+            query,
+            role=role,
+            group=None if combine else "group",
+            upstream=app.name,
+            upstream_port=port,
+            parameters=parameters,
+        )
 
     @classmethod
     def from_query(
@@ -125,6 +160,13 @@ class App:
             raise ValueError("output port names must be nonempty")
         if any(type(spec.on_group) is not bool for spec in self.outputs.values()):
             raise ValueError("output on_group must be a boolean")
+        for selection in self.inputs:
+            for values in (selection.parameters or {}).values():
+                if any(
+                    not key or isinstance(value, bool) or not isinstance(value, (str, int, float))
+                    for key, value in values.items()
+                ):
+                    raise ValueError("parameters map groups to named strings or numbers")
         return dict(
             name=self.name,
             inputs=[asdict(item) for item in self.inputs],
@@ -176,6 +218,9 @@ class Apps:
         self.path = Path(directory) / "apps.json"
         self._revision = -1
         self.error = None
+        # Streams matched and groups skipped per app and input role by the
+        # installed compilation.
+        self.report = {}
         self.state = (
             json.loads(self.path.read_text())
             if self.path.exists()
@@ -218,13 +263,23 @@ class Apps:
             self.refresh()
 
     def _compile(self, declarations):
-        operators, metadata = [], {}
+        for name, declaration in declarations.items():
+            for item in declaration["inputs"]:
+                upstream, port = item.get("upstream"), item.get("upstream_port")
+                if upstream and port not in declarations.get(upstream, {}).get("outputs", {}):
+                    raise ValueError(
+                        f"app {name!r} input {item['role']!r} needs output {port!r} "
+                        f"of app {upstream!r}, which is not deployed"
+                    )
+        operators, metadata, matches, skipped = [], {}, {}, {}
         for name, declaration in sorted(declarations.items()):
             app = App.from_dict(declaration)
             groups = {}
+            matches[name], skipped[name] = {}, {}
             for selection in app.inputs:
                 if not selection.role:
                     raise ValueError("input roles must be nonempty")
+                matches[name].setdefault(selection.role, 0)
                 result = self.graph.sparql_query(selection.query, wait_for_fresh=True)
                 columns = result.get("columns", [])
                 if selection.stream not in columns or (
@@ -254,6 +309,12 @@ class Apps:
                         for key, value in row.items()
                         if value is not None
                     }
+                    if selection.parameters is not None:
+                        values = selection.parameters.get(str(group))
+                        if values is None:
+                            skipped[name].setdefault(selection.role, set()).add(str(group))
+                            continue
+                        context.update({key: str(value) for key, value in values.items()})
                     unit = row.get(selection.unit) if selection.unit else None
                     unit = unit or (
                         row.get(selection.point_unit) if selection.point_unit else None
@@ -277,6 +338,7 @@ class Apps:
                     groups.setdefault(str(group), []).append(
                         Input(str(stream), selection.role, context=context)
                     )
+                    matches[name][selection.role] += 1
             rdf = Graph()
             for group, inputs in sorted(groups.items()):
                 outputs = {
@@ -306,6 +368,14 @@ class Apps:
                     rdf.add((point, RDF.type, VIRTUAL_POINT))
                     rdf.add((point, HAS_EXTERNAL_REFERENCE, ref))
                     rdf.add((point, PRODUCED_BY, Literal(name)))
+                    rdf.add((point, OUTPUT_PORT, Literal(port)))
+                    rdf.add(
+                        (
+                            point,
+                            OUTPUT_GROUP,
+                            URIRef(group) if looks_like_uri(group) else Literal(group),
+                        )
+                    )
                     if spec.on_group:
                         if not looks_like_uri(group):
                             raise ValueError("output on_group requires a group URI")
@@ -318,7 +388,14 @@ class Apps:
                     if spec.quantity_kind:
                         rdf.add((point, HAS_QUANTITY_KIND, URIRef(spec.quantity_kind)))
             metadata[name] = rdf
-        return operators, metadata
+        report = {
+            name: {
+                "matches": matches[name],
+                "skipped": {role: sorted(groups) for role, groups in skipped[name].items()},
+            }
+            for name in matches
+        }
+        return operators, metadata, report
 
     def _publish_metadata(self, metadata):
         changed = False
@@ -353,7 +430,7 @@ class Apps:
         previous = self.state
         try:
             for _ in range(8):
-                operators, metadata = self._compile(declarations)
+                operators, metadata, report = self._compile(declarations)
                 if not self._publish_metadata(metadata):
                     break
             else:
@@ -377,6 +454,7 @@ class Apps:
                 "activation_id": activation_id or uuid4().hex,
             }
             self._save(dict(state, previous=previous))
+            self.report = report
             if not active or active["id"] != plan["id"]:
                 receipt = self.core.activate(state["activation_id"], plan)
                 accepted = True
@@ -445,6 +523,7 @@ class Apps:
                 for item in (plan or {}).get("operators", [])
                 if item["id"].startswith(f"{name}:")
             ]
+            report = self.report.get(name, {"matches": {}, "skipped": {}})
             return {
                 "name": name,
                 "definition": definition,
@@ -456,6 +535,18 @@ class Apps:
                 "desired_plan": (self.state.get("plan") or {}).get("id"),
                 "graph_revision": self.state.get("graph_revision"),
                 "error": self.error or self.core.processor.status()["error"],
+                # An empty selection is valid (e.g. before a driver registers its
+                # streams) but is usually a typo, so report it instead of failing.
+                "matches": report["matches"],
+                "warnings": [
+                    f"input {role!r} matches no streams"
+                    for role, count in sorted(report["matches"].items())
+                    if not count
+                ]
+                + [
+                    f"input {role!r} skips groups without parameters: {', '.join(groups)}"
+                    for role, groups in sorted(report["skipped"].items())
+                ],
             }
 
     def list(self):

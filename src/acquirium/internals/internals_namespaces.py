@@ -96,6 +96,10 @@ DATA_SOURCE = ACQUIRIUM_NS.dataSource
 # Name of the app that produced a derived point (e.g. "normalize-temperatures").
 # Recorded by the materializer so a query can ask for one app's output.
 PRODUCED_BY = ACQUIRIUM_NS.producedBy
+# Port and operator group of a derived point, so a downstream app can select
+# one output of an upstream app without relying on where it is attached.
+OUTPUT_PORT = ACQUIRIUM_NS.outputPort
+OUTPUT_GROUP = ACQUIRIUM_NS.outputGroup
 
 
 # MQTT Reference predicates. timeKey/valueKey are Acquirium-specific (they

@@ -43,11 +43,27 @@ output = aq.Output(unit="http://qudt.org/vocab/unit/DEG_C", on_group=True)
 ```
 
 `on_group=True` adds `group s223:hasProperty output_point` to the app-owned RDF
-graph. The group must be a URI. Downstream selections discover the point through
-that entity and its `acq:producedBy` app tag. Acquirium registers its canonical
-output reference automatically. Membership changes keep output identities stable.
-Scope raw-input selections to their intended sources or exclude the app's own
-outputs to avoid cycles.
+graph. The group must be a URI, and queries about that entity then find the
+output next to its raw measurements. Acquirium registers its canonical output
+reference automatically.
+
+Chain apps with `Selection.outputs_of`, which names the upstream app object and
+port instead of matching strings in SPARQL:
+
+```python
+smoothed = aq.App(
+    name="tank-temperature-smoothed",
+    inputs=[aq.Selection.outputs_of(mean_app, "mean", role="mean")],
+    ...
+)
+```
+
+Each upstream group keeps its own operator; `combine=True` merges them into one
+(for a plant-wide total, say). Deploy fails while the upstream app is missing.
+Check `warnings` in the deploy result for input roles that matched no streams.
+
+Membership changes keep output identities stable. Scope raw-input selections to
+their intended sources or exclude the app's own outputs to avoid cycles.
 
 Input rows carry their resolved role, reference, and frozen semantic context.
 Select a parameter such as `?threshold` in SPARQL to freeze it in input context.

@@ -15,6 +15,14 @@ change in any release.
   `NameError: name 'uuid' is not defined`, which broke every driver insert.
 
 ### Added
+- `Selection.outputs_of(app, port, role=..., combine=False, parameters=None)` selects
+  one output port of an upstream app. Deploy rejects it while that app or port
+  is missing, and removing an upstream app with dependents fails. Output points
+  record `acq:outputPort` and `acq:outputGroup`.
+- App state reports `matches` (streams selected per input role) and a warning for
+  each role that selected no streams.
+- `Selection(parameters={group: {name: value}})` adds per-group values to input
+  context and selects only the listed groups; skipped groups appear in warnings.
 - Apps accept `aq.Rolling(lookback_ns, step_ns, lookahead_ns=0, origin_ns=0)`
   windows: overlapping windows on a fixed grid, where each output at `t` reads
   `[t - lookback, t + lookahead]` and a correction repairs every window that

@@ -478,3 +478,97 @@ def test_output_attachment_requires_a_boolean():
             {"value": Output(on_group="yes")},
             {"kind": "mean", "port": "value", "per_stream": False},
         ).to_dict()
+
+
+def test_outputs_of_chains_by_port_combines_groups_and_guards_dependencies(system):
+    from acquirium.internals.internals_namespaces import OUTPUT_PORT
+    from rdflib import Literal, URIRef
+    from rdflib.namespace import XSD
+
+    manager, http, client = system
+    ref = register(system, "ports")
+    first = mean("ports-first", ref)
+    with pytest.raises(ValueError, match="no output port"):
+        Selection.outputs_of(first, "missing", role="mean")
+
+    def downstream(name, **options):
+        return App(
+            name,
+            [Selection.outputs_of(first, "mean", role="mean", **options)],
+            {"mean": Output()},
+            {"kind": "mean", "port": "mean", "per_stream": False},
+        )
+
+    response = http.put("/apps/ports-early", json=downstream("ports-early").to_dict())
+    assert response.status_code == 400
+    assert "not deployed" in response.text
+
+    client.deploy_app(first)
+    point = URIRef(f"{output_reference(first.name, 'urn:tank', 'mean')}__point")
+    graph = manager.graph_store.data_graph(f"derived:{first.name}")
+    assert (point, OUTPUT_PORT, Literal("mean", datatype=XSD.string)) in graph
+
+    same = client.deploy_app(downstream("ports-same"))["app"]
+    combined = client.deploy_app(downstream("ports-combined", combine=True))["app"]
+    assert same["matches"] == {"mean": 1} and not same["warnings"]
+    snapshot = manager.core.wait(
+        manager.insert_timeseries(
+            source_id="ports", ref_name="temperature", rows=[(5555, 7)], request_id="one"
+        )
+    )
+    # The default keeps the upstream group; combine uses one group for the app.
+    assert snapshot.value(output_reference("ports-same", "urn:tank", "mean"), 5555) == 7
+    assert (
+        snapshot.value(output_reference("ports-combined", "ports-combined", "mean"), 5555)
+        == 7
+    )
+    assert combined["matches"] == {"mean": 1}
+
+    with pytest.raises(ValueError, match="not deployed"):
+        manager.remove_app(first.name)
+    assert manager.apps.inspect(first.name)["status"] == "active"
+    manager.remove_app("ports-same")
+    manager.remove_app("ports-combined")
+    manager.remove_app(first.name)
+
+    empty = mean("ports-empty", "urn:ports:no-such-stream")
+    empty = App(
+        empty.name,
+        [Selection("SELECT ?stream ?group WHERE { FILTER(false) }")],
+        empty.outputs,
+        empty.function,
+    )
+    state = client.deploy_app(empty)["app"]
+    assert state["warnings"] == ["input 'input' matches no streams"]
+    manager.remove_app(empty.name)
+
+
+def test_selection_parameters_reach_listed_groups_and_warn_about_the_rest(system):
+    manager, http, client = system
+    ref = register(system, "parameters")
+    first = mean("parameters-first", ref)
+    client.deploy_app(first)
+
+    def thresholds(name, parameters):
+        return App(
+            name,
+            [Selection.outputs_of(first, "mean", role="mean", parameters=parameters)],
+            {"mean": Output()},
+            {"kind": "mean", "port": "mean", "per_stream": False},
+        )
+
+    state = client.deploy_app(thresholds("parameters-listed", {"urn:tank": {"threshold": 3.5}}))["app"]
+    operator, = state["operators"]
+    context, = [item["context"] for item in operator["inputs"]]
+    assert context["threshold"] == "3.5" and not state["warnings"]
+
+    state = client.deploy_app(thresholds("parameters-other", {"urn:elsewhere": {"threshold": 1}}))["app"]
+    assert state["operators"] == []
+    assert state["warnings"] == [
+        "input 'mean' matches no streams",
+        "input 'mean' skips groups without parameters: urn:tank",
+    ]
+    with pytest.raises(ValueError, match="named strings or numbers"):
+        thresholds("parameters-invalid", {"urn:tank": {"threshold": True}}).to_dict()
+    for name in ("parameters-listed", "parameters-other", first.name):
+        manager.remove_app(name)

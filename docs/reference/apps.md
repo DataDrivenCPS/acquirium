@@ -36,6 +36,30 @@ factors in each input's context; functions apply these factors explicitly.
 `exclude_app` excludes an app's output references from a broad selection, useful
 when an app's outputs share the input quantity kind.
 
+`Selection.outputs_of(app, port, role=...)` selects one output port of another
+app. Each upstream group feeds its own operator under the same group; pass
+`combine=True` to feed every upstream group into one operator. Deploying the
+selection fails while the upstream app or port is missing, and removing an
+upstream app fails while a deployed app selects it. Every output point carries `acq:producedBy`,
+`acq:outputPort`, and `acq:outputGroup`, so hand-written SPARQL can select a port
+the same way.
+
+`parameters` gives per-group values, on any selection:
+
+```python
+aq.Selection.outputs_of(fill, "turbidity", role="filled", parameters={
+    "urn:dpr/uf-unit-out": {"threshold": 0.5},
+    "urn:dpr/conn-baf-4-outlet-junction-to-mb1-valve": {"threshold": 5.0},
+})
+```
+
+Values are strings or numbers and reach each input's context as strings. Only the
+listed groups are selected; the app reports the groups it skipped as warnings.
+
+`deploy_app` and `inspect_app` report `matches`, the number of streams each input
+role selected, and a `warnings` entry for each role that selected none. An empty
+selection is valid, for example before a driver registers its streams.
+
 `Output` declares optional unit, quantity kind, and label. Set `on_group=True`
 to attach its point to the semantic group using `s223:hasProperty`; the group must
 be a URI. Downstream selections and the query DSL can then find measurements
