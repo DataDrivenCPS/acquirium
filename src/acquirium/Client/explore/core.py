@@ -1674,10 +1674,10 @@ class Query:
                        "product_info": {"manufacturer": "Grundfos", "year": 2019},
                        "items": [{"name": "A"}, {"name": "B", "count": 2}]}}]
 
-        Values are typed as in the frame: ``int``, ``date``, ``bool``; a URI
-        value is compacted to a CURIE; a cast asked for with
-        ``include(type=...)`` applies to the value under its key, element by
-        element for a list. Each object holds only what was saved on that
+        Values are typed as in the frame: ``int``, ``date``, ``bool``. A URI
+        value stays a full URI, like the id; only the table compacts to
+        CURIEs. A cast asked for with ``include(type=...)`` applies to the
+        value under its key, element by element for a list. Each object holds only what was saved on that
         node: a key it lacks is left out, including the struct fields other
         nodes introduced (``{"mode": "baseline"}``, not ``{"duration": None,
         "mode": "baseline"}``). The table from :meth:`metadata` keeps its
@@ -1718,9 +1718,8 @@ class Query:
                     if i not in list_cols and not c.startswith(("ext", "unit", "attrp"))]
 
         def value_of(raw: Any, datatype: Optional[str]) -> Any:
-            if datatype == IRI or (datatype is None and isinstance(raw, str) and _is_uri(raw)):
-                return self._compact_uri_safe(str(raw))
-            return parse_cell(raw, datatype)
+            # a URI stays a URI, like the id: the table is where CURIEs live
+            return str(raw) if datatype == IRI else parse_cell(raw, datatype)
 
         groups: Dict[tuple, Dict[str, Any]] = {}
         for r, d in zip(rows, datatypes):

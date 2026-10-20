@@ -141,4 +141,6 @@ class TestMetadataObjects:
         client = make_client(res, [[f"{ATTR_NS}unit.raw", XSD + "string"]])
         client.compact_uri.side_effect = lambda x: str(x).replace("http://qudt.org/vocab/unit/", "unit:")
         q = Query(client=client).entity(CLS_A, alias="m").include("unit", "unit.raw")
-        assert q.metadata_objects() == [{"m": {"id": "urn:p#m", "unit": "unit:PSI", "unit.raw": "PSI"}}]
+        assert q.metadata()["m.unit"].to_list() == ["unit:PSI"]                   # table: CURIE
+        assert q.metadata_objects() == [{"m": {"id": "urn:p#m", "unit": "http://qudt.org/vocab/unit/PSI",
+                                               "unit.raw": "PSI"}}]              # objects: URI

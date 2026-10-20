@@ -189,7 +189,7 @@ table also makes a list column of a key that is a list on any node, so a
 pump that saved `"tags": "lab"` shows `["lab"]` there; the object keeps
 `"lab"`. A list of dicts or a nested list comes back as saved, element
 positions intact. `id` is the node's URI, unless the node saved an `id` of
-its own.
+its own, and a URI value stays a URI; only the table compacts to CURIEs.
 
 ## Know the schema before you run
 
