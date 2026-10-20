@@ -12,6 +12,7 @@ from acquirium.Drivers.Driver import (
     DriverBufferFull,
     EventIngestDriver,
     IngestDriver,
+    INSERT_WAIT_S,
     MAX_INSERT_ROWS,
     PollingIngestDriver,
     UndeclaredStreamError,
@@ -442,3 +443,43 @@ def test_insert_observations_chunks_to_server_request_limit(tmp_path):
     assert [call.kwargs["request_id"] for call in calls] == [
         "req:0", f"req:{MAX_INSERT_ROWS}", f"req:{2 * MAX_INSERT_ROWS}",
     ]
+    # Earlier chunks queue without waiting; only the last waits for publication.
+    assert [call.kwargs["wait"] for call in calls] == [0, 0, INSERT_WAIT_S]
+
+
+def test_insert_retries_a_request_refused_at_engine_capacity(tmp_path):
+    from requests import HTTPError
+
+    driver = make_driver(CollectDriver, tmp_path)
+    full = MagicMock(status_code=503, headers={"Retry-After": "0"})
+    driver.aq.insert_timeseries_arrow.side_effect = [
+        HTTPError("busy", response=full),
+        {"ok": True, "rows_inserted": 1},
+    ]
+    observations = pl.DataFrame({
+        "ts": [datetime(2024, 1, 1, tzinfo=timezone.utc)],
+        "ref_name": ["temp"],
+        "value": [1.0],
+    })
+
+    assert driver.insert_observations(observations)["rows_inserted"] == 1
+    first, second = driver.aq.insert_timeseries_arrow.call_args_list
+    # The resend reuses the refused request's identity.
+    assert first.kwargs["request_id"] == second.kwargs["request_id"]
+
+
+def test_insert_raises_other_http_errors(tmp_path):
+    from requests import HTTPError
+
+    driver = make_driver(CollectDriver, tmp_path)
+    driver.aq.insert_timeseries_arrow.side_effect = HTTPError(
+        "bad", response=MagicMock(status_code=400, headers={})
+    )
+    observations = pl.DataFrame({
+        "ts": [datetime(2024, 1, 1, tzinfo=timezone.utc)],
+        "ref_name": ["temp"],
+        "value": [1.0],
+    })
+    with pytest.raises(HTTPError):
+        driver.insert_observations(observations)
+    assert driver.aq.insert_timeseries_arrow.call_count == 1

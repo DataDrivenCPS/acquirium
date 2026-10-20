@@ -38,6 +38,11 @@ change in any release.
   `nawi:Role-Backwash`.
 
 ### Changed
+- Drivers send the requests of a large insert without waiting for each to
+  publish; only the last waits. Escapement can then apply many requests in one
+  epoch: the bulk-ingest example drops from 102 epochs to 4 (25.5 requests per
+  epoch). Requests refused at engine capacity (HTTP 503) are resent after
+  `Retry-After` for up to 5 minutes.
 - **Drivers run as plain child processes; Ray is no longer a dependency.**
   Each `[[drivers]]` entry runs as `python -m acquirium.Drivers.runner`, which
   imports the driver itself and reports setup success or failure back to the

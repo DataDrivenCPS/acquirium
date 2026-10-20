@@ -40,3 +40,10 @@ ingest but no soft-sensor work.
 Baseline (2026-10-19, defaults: 2 days, 60 filler columns): 1,006,848 readings in
 45.6 s, 102 epochs at 1.00 requests per epoch. The fill app read 2.8M input rows
 to change 10,808 output rows.
+
+After drivers stopped waiting on each request (same machine, same day): 4 epochs
+at 25.5 requests per epoch, 38.3–43.5 s across two runs, 57,024 groups evaluated
+against 64,426. Engine compute is about 95% of the insert time. The fill app's
+input rows barely change (2.7M), because each rolling window rereads its own
+4-hour span whatever the epoch count; the CSV driver's column-major reshape already
+kept each turbidity column's file in roughly one request.

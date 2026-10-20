@@ -176,7 +176,7 @@ with its `ref_name` is minted.
 |---|---|
 | `add(ref_name: str, value: Any, ts: datetime \| None = None, *, source_id: str \| None = None) -> None` | buffer one reading; `ts` defaults to now (UTC), naive datetimes are read as UTC. Raises `UndeclaredStreamError` for a pair this driver has not declared. Thread-safe, no network I/O |
 | `flush() -> dict` | insert everything buffered and clear the buffer; the platform calls it at the end of every tick and after `stop()` |
-| `insert_observations(observations: pl.DataFrame \| None) -> dict` | register what is pending and insert a frame directly |
+| `insert_observations(observations: pl.DataFrame \| None) -> dict` | register what is pending and insert a frame directly. Frames over 10,000 rows go up as several requests; all but the last are admitted without waiting, so the engine can apply them in one epoch, and the call returns once the last is published. A request refused at engine capacity (HTTP 503) is resent after `Retry-After` for up to 5 minutes. |
 | `normalize_observations(observations: pl.DataFrame \| None) -> pl.DataFrame` | the normalization applied before upload |
 | `to_timestamp(date_or_timestamp: pl.Series, time: pl.Series \| None = None, *, date_format=None, timezone="UTC", day_first=False) -> pl.Series` | parse source timestamp columns |
 | `max_buffered_rows = 100000` | class attribute; `add()` raises `DriverBufferFull` once reached |

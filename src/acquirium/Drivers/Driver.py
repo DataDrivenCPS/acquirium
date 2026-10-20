@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import threading
+import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -23,6 +24,10 @@ logger = logging.getLogger("acquirium.driver")
 
 # Server-side cap on rows per insert request (see Core.ingest).
 MAX_INSERT_ROWS = 10_000
+# Seconds the last request of an insert waits for publication on the server.
+INSERT_WAIT_S = 30
+# How long a request refused at engine capacity (HTTP 503) is retried.
+CAPACITY_RETRY_S = 300
 
 
 class UndeclaredStreamError(ValueError):
@@ -548,27 +553,49 @@ class IngestDriver(Driver):
                 for (source,), source_df in df.partition_by("source_id", as_dict=True).items()
             ]
 
-        total = 0
+        # The server rejects requests over MAX_INSERT_ROWS, so a large frame
+        # (e.g. a whole file) goes up as several requests.
+        chunks = []
         for source, payload, source_request_id in batches:
-            # The server rejects requests over MAX_INSERT_ROWS, so a large
-            # frame (e.g. a whole file) goes up as several requests.
             for offset in range(0, len(payload), MAX_INSERT_ROWS):
-                chunk = payload.slice(offset, MAX_INSERT_ROWS)
                 chunk_request_id = (
                     f"{source_request_id}:{offset}"
                     if source_request_id and len(payload) > MAX_INSERT_ROWS
                     else source_request_id
                 )
-                with timed_debug(logger, "%s.aq.insert_timeseries_arrow source=%s rows=%d",
-                                 self.__class__.__name__, source, len(chunk)):
-                    if chunk_request_id is None:
-                        result = self.aq.insert_timeseries_arrow(source, chunk.to_arrow())
-                    else:
-                        result = self.aq.insert_timeseries_arrow(
-                            source, chunk.to_arrow(), request_id=chunk_request_id
-                        )
-                total += self._coerce_insert_result(result, len(chunk))["rows_inserted"]
+                # A stable ID lets a chunk refused for capacity be resent as-is.
+                chunks.append((source, payload.slice(offset, MAX_INSERT_ROWS),
+                               chunk_request_id or str(uuid.uuid4())))
+
+        total = 0
+        for index, (source, chunk, chunk_request_id) in enumerate(chunks):
+            # Only the last request waits for publication. Earlier ones queue
+            # without waiting, so the engine can apply many in one epoch;
+            # epochs publish in order, so the last one covers them all.
+            wait = INSERT_WAIT_S if index == len(chunks) - 1 else 0
+            with timed_debug(logger, "%s.aq.insert_timeseries_arrow source=%s rows=%d",
+                             self.__class__.__name__, source, len(chunk)):
+                result = self._insert_chunk(source, chunk, chunk_request_id, wait)
+            total += self._coerce_insert_result(result, len(chunk))["rows_inserted"]
         return {"ok": True, "rows_inserted": total}
+
+    def _insert_chunk(self, source: str, chunk: "pl.DataFrame", request_id: str, wait: float) -> Any:
+        """Insert one request, waiting out the engine's pending-request limit."""
+        from requests import HTTPError
+
+        deadline = time.monotonic() + CAPACITY_RETRY_S
+        while True:
+            try:
+                return self.aq.insert_timeseries_arrow(
+                    source, chunk.to_arrow(), request_id=request_id, wait=wait
+                )
+            except HTTPError as error:
+                response = error.response
+                if response is None or response.status_code != 503 or time.monotonic() >= deadline:
+                    raise
+                delay = float(response.headers.get("Retry-After", 1))
+                logger.debug("%s: engine at capacity, retrying in %.1f s", type(self).__name__, delay)
+                time.sleep(delay)
 
     def normalize_observations(self, observations: "pl.DataFrame | None") -> "pl.DataFrame":
         import polars as pl

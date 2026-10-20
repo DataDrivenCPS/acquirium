@@ -383,7 +383,7 @@ def test_loop_registers_streams_before_insert(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     _wide_csv(tmp_path)
 
-    def assert_registered_first(source_id, table):
+    def assert_registered_first(source_id, table, **_):
         assert driver.aq.client.insert_graph.called
         return {"ok": True, "rows_inserted": table.num_rows}
 
