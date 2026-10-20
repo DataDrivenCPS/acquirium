@@ -15,6 +15,11 @@ change in any release.
   `NameError: name 'uuid' is not defined`, which broke every driver insert.
 
 ### Added
+- `engine_status()` includes Escapement's per-operator totals under
+  `stats.operators` and rolls them up per app under `apps` (groups, input rows,
+  changed rows, compute time).
+- `examples/bulk_ingest`: a CSV backfill through a six-app turbidity chain, with
+  throughput, per-app work, and a full recomputation check.
 - `Selection.outputs_of(app, port, role=..., combine=False, parameters=None)` selects
   one output port of an upstream app. Deploy rejects it while that app or port
   is missing, and removing an upstream app with dependents fails. Output points

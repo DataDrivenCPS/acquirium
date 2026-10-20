@@ -186,6 +186,11 @@ Workers grow on demand and recycle between jobs. Native timeouts/output bounds
 still apply. The current pool does not scale adaptively or split one operator's
 groups among replicas. Inspect `client.engine_status()["python_workers"]` for
 launch/reuse, recycling/failure, and resident/idle/active counters.
+`client.engine_status()["apps"]` totals each app's work since the server started:
+groups evaluated, input rows handed to its function, changed output rows, and
+compute milliseconds. A rolling app's input rows per changed row shows how much
+history each repair rereads. The [bulk-ingest example](../../examples/bulk_ingest/README.md)
+measures a chain under a CSV backfill.
 
 A worker failure publishes none of its epoch, including source changes, and
 pauses the queue. Failed epochs discard cached processes, so retry starts fresh.

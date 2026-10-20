@@ -489,6 +489,18 @@ def remove_app(name: str):
 def engine_status():
     status = app.state.manager.core.processor.status()
     status["python_workers"] = app.state.manager.core.engine.python_worker_stats()
+    # Operator IDs are "<app>:<group digest>"; roll their totals up per app.
+    # compute_ms sums operators that may have run in parallel.
+    apps = {}
+    for operator, totals in status["stats"]["operators"].items():
+        rollup = apps.setdefault(
+            operator.split(":", 1)[0],
+            {"operators": 0, "groups": 0, "input_rows": 0, "changed_rows": 0, "compute_ms": 0.0},
+        )
+        rollup["operators"] += 1
+        for key in ("groups", "input_rows", "changed_rows", "compute_ms"):
+            rollup[key] += totals[key]
+    status["apps"] = apps
     try:
         import resource
         peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss

@@ -572,3 +572,28 @@ def test_selection_parameters_reach_listed_groups_and_warn_about_the_rest(system
         thresholds("parameters-invalid", {"urn:tank": {"threshold": True}}).to_dict()
     for name in ("parameters-listed", "parameters-other", first.name):
         manager.remove_app(name)
+
+
+def test_engine_status_rolls_operator_totals_up_per_app(system):
+    manager, http, client = system
+    ref = register(system, "totals")
+    declaration = mean("totals-mean", ref)
+    client.deploy_app(declaration)
+    manager.core.wait(
+        manager.insert_timeseries(
+            source_id="totals", ref_name="temperature", rows=[(3333, 1), (3334, 2)], request_id="one"
+        )
+    )
+    status = http.get("/engine/status").json()
+    operators = {
+        key: value
+        for key, value in status["stats"]["operators"].items()
+        if key.startswith("totals-mean:")
+    }
+    rollup = status["apps"]["totals-mean"]
+    assert rollup["operators"] == len(operators) == 1
+    totals, = operators.values()
+    assert totals["groups"] == rollup["groups"] >= 2
+    assert totals["input_rows"] == rollup["input_rows"] >= 2
+    assert rollup["changed_rows"] >= 2
+    manager.remove_app(declaration.name)

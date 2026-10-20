@@ -1,0 +1,20 @@
+@prefix s223: <http://data.ashrae.org/standard223#> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix qk: <http://qudt.org/vocab/quantitykind/> .
+@prefix unit: <http://qudt.org/vocab/unit/> .
+@prefix bulk: <urn:bulk/> .
+
+# Four sampling locations, each with one turbidity property.
+bulk:loc-0 s223:hasProperty bulk:loc-0-turbidity .
+bulk:loc-1 s223:hasProperty bulk:loc-1-turbidity .
+bulk:loc-2 s223:hasProperty bulk:loc-2-turbidity .
+bulk:loc-3 s223:hasProperty bulk:loc-3-turbidity .
+
+bulk:loc-0-turbidity a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qk:Turbidity ; qudt:hasUnit unit:NTU .
+bulk:loc-1-turbidity a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qk:Turbidity ; qudt:hasUnit unit:NTU .
+bulk:loc-2-turbidity a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qk:Turbidity ; qudt:hasUnit unit:NTU .
+bulk:loc-3-turbidity a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qk:Turbidity ; qudt:hasUnit unit:NTU .
