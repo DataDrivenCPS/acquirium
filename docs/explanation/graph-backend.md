@@ -56,7 +56,7 @@ namespaces (e.g. `https://qudt.org/...`).
 | Plant data graph | source dataset | The shared plant model; it is the reserved `plant` source. | `insert_graph(..., source_id="plant")` or `sparql_update(..., source_id="plant")`. |
 | Acquirium data graph | source dataset | Acquirium-owned bookkeeping, such as logs and materialization lineage. | Server internals only. |
 | Source data graph | source dataset | RDF owned by one driver or external metadata source. | `insert_graph(..., source_id="...")`; source-scoped SPARQL update. |
-| Metadata graph | source dataset | Values attached to nodes with `insert_metadata()`; the reserved `metadata` source, an ordinary source graph by URI. Pruned of triples whose subject or URI object no other graph mentions. | `insert_metadata()`, which sends one SPARQL update scoped to it. |
+| Metadata graph | source dataset | Values attached to nodes with `insert_metadata()`; the reserved `metadata` source, an ordinary source graph by URI. Pruned of triples whose subject no other graph mentions. | `insert_metadata()`, which sends one SPARQL update scoped to it. |
 | Ontology/shape graph | source dataset | Ontologies, shapes, rules, and imports managed through OntoEnv. | Server configuration/startup; not application or driver writes. |
 | Dependency cache | memory | Imports closure minus asserted deployment data. | Backend only. |
 | Inferred-data graph | query dataset | `shifty.infer` output. Replaced after every derived rebuild. | Backend only. |
@@ -170,7 +170,7 @@ the current generation. Neither mode ever exposes a partially replaced graph.
 | Replace a data graph | increments | marked stale | stale; one background rebuild is scheduled. |
 | Add data containing `owl:imports` or an `owl:Ontology` declaration | increments | marked stale | stale; one background rebuild is scheduled. |
 | SPARQL UPDATE of a data graph | increments | marked stale only when the graph's `owl:imports` or `owl:Ontology` triples changed | stale; one background rebuild is scheduled. |
-| SPARQL UPDATE or replace of a data graph, as a consequence | unchanged by the pruning itself | unchanged | the metadata graph is pruned in the same write: a triple whose subject, or whose URI object, no longer appears in any other graph of the source dataset is removed before the write is finalized. |
+| SPARQL UPDATE or replace of a data graph, as a consequence | unchanged by the pruning itself | unchanged | the metadata graph is pruned in the same write: a triple whose subject no longer appears in any other graph of the source dataset is removed before the write is finalized. Only the subject is checked; a URI value may point anywhere. |
 | OntoEnv adds/removes/replaces an ontology graph | increments | invalidated and rebuilt when needed | stale; rebuilt on the next query that needs a query view. |
 | Call `validate_graph` | unchanged | brought current if needed | not required; validation uses source data and shapes directly. |
 

@@ -301,17 +301,21 @@ def dataset_with_orphans() -> Dataset:
     m.add((URIRef("urn:x#kept"), URIRef(f"{ATTR_NS}a"), Literal(1)))
     m.add((URIRef("urn:x#kept"), HAS_UNIT, URIRef(UNIT)))            # object in an ontology graph
     m.add((URIRef("urn:x#gone"), URIRef(f"{ATTR_NS}a"), Literal(1)))  # subject gone
-    m.add((URIRef("urn:x#kept"), URIRef(HAS_PROP), URIRef("urn:x#gone-point")))  # object gone
+    m.add((URIRef("urn:x#kept"), URIRef(HAS_PROP), URIRef("urn:x#gone-point")))  # object unknown
+    m.add((URIRef("urn:x#kept"), URIRef(f"{ATTR_NS}datasheet"), URIRef("https://example.org/p.pdf")))
     return ds
 
 
 class TestStore:
-    def test_prune_keeps_live_and_drops_orphans(self):
+    def test_prune_checks_the_subject_only(self):
         ds = dataset_with_orphans()
         gs.prune_orphan_metadata(ds, META)
+        # the subject must be known elsewhere; a URI value may point anywhere
         assert set(ds.graph(META)) == {
             (URIRef("urn:x#kept"), URIRef(f"{ATTR_NS}a"), Literal(1)),
             (URIRef("urn:x#kept"), HAS_UNIT, URIRef(UNIT)),
+            (URIRef("urn:x#kept"), URIRef(HAS_PROP), URIRef("urn:x#gone-point")),
+            (URIRef("urn:x#kept"), URIRef(f"{ATTR_NS}datasheet"), URIRef("https://example.org/p.pdf")),
         }
 
     def test_closure_triples(self):
