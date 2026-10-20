@@ -468,11 +468,17 @@ def inspect_app(name: str) -> dict[str, Any]:
 
 
 @app.put("/apps/{name}")
-def deploy_app(name: str, definition: Annotated[dict, Body()]) -> dict[str, Any]:
+def deploy_app(
+    name: str, definition: Annotated[dict, Body()], dry_run: bool = False
+) -> dict[str, Any]:
+    """Deploy an app, or with ``dry_run`` report what deploying it would do."""
     try:
         if definition.get("name") != name:
             raise ValueError("app name must match the route")
-        return {"ok": True, "app": app.state.manager.deploy_app(App.from_dict(definition))}
+        declaration = App.from_dict(definition)
+        if dry_run:
+            return {"ok": True, "app": app.state.manager.apps.preview(declaration)}
+        return {"ok": True, "app": app.state.manager.deploy_app(declaration)}
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
 

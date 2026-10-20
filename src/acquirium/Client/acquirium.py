@@ -309,9 +309,14 @@ class Acquirium:
         """
         self.client.register_streams(streams)
 
-    def deploy_app(self, declaration: App) -> dict[str, Any]:
-        """Compile semantic inputs and activate a complete native plan."""
-        return self.client.deploy_app(declaration.to_dict())
+    def deploy_app(self, declaration: App, *, dry_run: bool = False) -> dict[str, Any]:
+        """Compile semantic inputs and activate a complete native plan.
+
+        With ``dry_run=True`` nothing is published or activated; the result
+        reports, per app, the operators the plan would add, rebuild or rebind
+        and the groups and input rows that re-evaluates.
+        """
+        return self.client.deploy_app(declaration.to_dict(), dry_run=dry_run)
 
     def wait(self, receipt, *, timeout=30):
         return self.client.wait(receipt, timeout=timeout)

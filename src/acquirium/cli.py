@@ -372,7 +372,11 @@ def _load_app_target(spec: str) -> tuple[object, str | None]:
 
 
 @app_app.command("deploy")
-def app_deploy(spec: str, config: Optional[Path] = None):
+def app_deploy(
+    spec: str,
+    config: Optional[Path] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Report what deploying would do.")] = False,
+):
     """Deploy an App declaration or a factory accepting (client, parameters)."""
     from acquirium import Acquirium, App
     cfg = load_config(config).data
@@ -382,7 +386,7 @@ def app_deploy(spec: str, config: Optional[Path] = None):
     declaration = target(client, {}) if callable(target) else target
     if not isinstance(declaration, App):
         raise ValueError("app target must be an App declaration or factory")
-    typer.echo(json.dumps(client.deploy_app(declaration), indent=2))
+    typer.echo(json.dumps(client.deploy_app(declaration, dry_run=dry_run), indent=2))
 
 
 def _run_uvicorn(

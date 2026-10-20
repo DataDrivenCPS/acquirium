@@ -15,6 +15,11 @@ change in any release.
   `NameError: name 'uuid' is not defined`, which broke every driver insert.
 
 ### Added
+- `deploy_app(app, dry_run=True)`, `PUT /apps/{name}?dry_run=true` and
+  `acquirium app deploy --dry-run` report what a deploy would do, per app:
+  operators new, redefined, rebound or unchanged, groups to re-evaluate, input
+  rows read, rows cleared, and apps downstream of a change. Nothing is published
+  or activated. Uses Escapement `Engine.preview`.
 - `aq.Native.mean/sum/max/min/count/threshold(port, ...)` declare engine-native
   functions, which need no Python worker. `aq.Parameter(name)` takes a native
   argument such as the threshold's `above` from each group's `parameters`.

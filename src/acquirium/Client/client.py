@@ -736,9 +736,11 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
-    def deploy_app(self, definition: dict) -> dict:
+    def deploy_app(self, definition: dict, *, dry_run: bool = False) -> dict:
         response = self._http.put(
-            f"{self.base_url}/apps/{definition['name']}", json=definition
+            f"{self.base_url}/apps/{definition['name']}",
+            json=definition,
+            params={"dry_run": "true"} if dry_run else None,
         )
         _raise_for_status(response)
         return response.json()
