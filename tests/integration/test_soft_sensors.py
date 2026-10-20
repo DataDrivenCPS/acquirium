@@ -324,7 +324,8 @@ def test_native_warm_worker_failure_is_atomic_and_retryable(tmp_path, monkeypatc
         stats = client.engine_status()["python_workers"]
         assert stats["spawned"] == len(original_pids)
         assert stats["resident"] == stats["peak_active"] == 1
-        assert stats["reused"] >= 3
+        # Two tank means and the hottest tank share one worker; the alarm is native.
+        assert stats["reused"] >= 2
         assert all(
             pid != os.getpid() and parent != os.getpid() and pid != parent
             for pid, parent in workers

@@ -90,10 +90,3 @@ def sustained_high_turbidity(frame, context):
     # Both ends are included, so N minutes holds N + 1 samples.
     every_minute_high = span.height == minutes + 1 and span["value"].min() == 1
     return {"alarm": emit(context, 1 if every_minute_high else 0)}
-
-
-def plant_alarm_count(frame, context):
-    """Count how many locations are in sustained alarm at this minute."""
-    if frame.is_empty():
-        return {"locations": empty()}
-    return {"locations": emit(context, (frame["value"] == 1).sum())}

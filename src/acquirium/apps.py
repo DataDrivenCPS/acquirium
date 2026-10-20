@@ -19,6 +19,7 @@ from typing import Any, Mapping
 from escapement import (
     FixedBucket,
     Input,
+    Native,
     Operator,
     Pointwise,
     PythonFunction,
@@ -131,6 +132,38 @@ class Selection:
 
 
 @dataclass(frozen=True)
+class Parameter:
+    """A native function argument taken from each group's ``parameters``,
+    e.g. ``aq.Native.threshold("alarm", above=aq.Parameter("limit"))``."""
+
+    name: str
+
+
+def _function_dict(function):
+    if isinstance(function, (PythonFunction, Native)):
+        function = function.to_dict()
+    return {
+        key: {"parameter": value.name} if isinstance(value, Parameter) else value
+        for key, value in dict(function).items()
+    }
+
+
+def _bind_parameters(function, values, app, group):
+    """The function with each ``{"parameter": name}`` argument replaced by the group's value."""
+    bound = {}
+    for key, value in function.items():
+        if isinstance(value, Mapping) and set(value) == {"parameter"}:
+            if value["parameter"] not in values:
+                raise ValueError(
+                    f"app {app!r} group {group} has no parameter {value['parameter']!r} "
+                    f"for its function's {key!r}"
+                )
+            value = values[value["parameter"]]
+        bound[key] = value
+    return bound
+
+
+@dataclass(frozen=True)
 class Output:
     unit: str | None = None
     quantity_kind: str | None = None
@@ -143,7 +176,7 @@ class App:
     name: str
     inputs: tuple[Selection, ...] | list[Selection]
     outputs: Mapping[str, Output]
-    function: PythonFunction | Mapping[str, Any]
+    function: PythonFunction | Native | Mapping[str, Any]
     window: Pointwise | FixedBucket | Rolling = field(default_factory=Pointwise)
 
     def to_dict(self):
@@ -175,9 +208,7 @@ class App:
             name=self.name,
             inputs=[asdict(item) for item in self.inputs],
             outputs={key: asdict(value) for key, value in self.outputs.items()},
-            function=self.function.to_dict()
-            if isinstance(self.function, PythonFunction)
-            else dict(self.function),
+            function=_function_dict(self.function),
             window=self.window.to_dict(),
         )
 
@@ -355,8 +386,11 @@ class Apps:
                     port: output_reference(name, group, port)
                     for port in sorted(app.outputs)
                 }
+                function = _bind_parameters(
+                    declaration["function"], parameters.get(group, {}), name, group
+                )
                 definition = dict(
-                    function=declaration["function"],
+                    function=function,
                     window=declaration["window"],
                     outputs=outputs,
                 )
@@ -368,7 +402,7 @@ class Apps:
                     inputs=sorted(inputs, key=lambda item: _json(item.to_dict())),
                     outputs=outputs,
                     window=app.window,
-                    function=app.function,
+                    function=function,
                     parameters=parameters.get(group, {}),
                 )
                 operators.append(operator.to_dict())

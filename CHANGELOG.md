@@ -15,6 +15,10 @@ change in any release.
   `NameError: name 'uuid' is not defined`, which broke every driver insert.
 
 ### Added
+- `aq.Native.mean/sum/max/min/count/threshold(port, ...)` declare engine-native
+  functions, which need no Python worker. `aq.Parameter(name)` takes a native
+  argument such as the threshold's `above` from each group's `parameters`.
+  The soft-sensor example's alarm and the bulk-ingest plant alarm count use them.
 - Soft-sensor functions can be declared with
   `PythonFunction.from_file(path, entrypoint, batch=True)` to receive every
   affected window in one call (Escapement batch functions). `examples/bulk_ingest

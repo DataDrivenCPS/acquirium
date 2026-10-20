@@ -612,6 +612,49 @@ def test_python_functions_read_typed_parameters_and_the_window(system, tmp_path)
     manager.remove_app(declaration.name)
 
 
+def test_native_function_arguments_bind_to_each_groups_parameters(system):
+    from acquirium import Native, Parameter
+
+    manager, http, client = system
+    ref = register(system, "native-parameters")
+    template = mean("native-parameters", ref)
+    query = template.inputs[0].query
+
+    def alarm(parameters):
+        return App(
+            template.name,
+            [Selection(query, parameters=parameters)],
+            {"alarm": Output()},
+            Native.threshold("alarm", above=Parameter("limit")),
+        )
+
+    declaration = alarm({"urn:tank": {"limit": 10}})
+    assert declaration.to_dict()["function"] == {
+        "kind": "threshold", "port": "alarm", "above": {"parameter": "limit"}
+    }
+    state = client.deploy_app(declaration)["app"]
+    operator, = state["operators"]
+    assert operator["function"] == {"kind": "threshold", "port": "alarm", "above": 10}
+    manager.core.wait(
+        manager.insert_timeseries(
+            source_id="native-parameters",
+            ref_name="temperature",
+            rows=[(6000, 12), (7000, 8)],
+            request_id="native-parameters",
+        )
+    )
+    reference = output_reference(template.name, "urn:tank", "alarm")
+    snapshot = manager.core.engine.snapshot()
+    assert snapshot.value(reference, 6000) == 12 and snapshot.value(reference, 7000) is None
+
+    response = http.put(
+        f"/apps/{template.name}", json=alarm({"urn:tank": {"other": 1}}).to_dict()
+    )
+    assert response.status_code == 400
+    assert "no parameter 'limit'" in response.text
+    manager.remove_app(template.name)
+
+
 def test_conflicting_parameters_for_one_group_are_rejected(system):
     manager, http, client = system
     ref = register(system, "conflict")

@@ -160,7 +160,7 @@ def wait_for(condition, timeout, message):
 def soft_sensors(batch):
     if not batch:
         return SOFT_SENSORS
-    # The same apps, with each function swapped for its batch version.
+    # The same apps, with each Python function swapped for its batch version.
     return [
         aq.App(
             app.name,
@@ -169,6 +169,8 @@ def soft_sensors(batch):
             aq.PythonFunction.from_file(DIRECTORY / "batch_transforms.py", app.function.entrypoint, batch=True),
             app.window,
         )
+        if isinstance(app.function, aq.PythonFunction)
+        else app
         for app in SOFT_SENSORS
     ]
 
