@@ -30,8 +30,10 @@ change in any release.
   record `acq:outputPort` and `acq:outputGroup`.
 - App state reports `matches` (streams selected per input role) and a warning for
   each role that selected no streams.
-- `Selection(parameters={group: {name: value}})` adds per-group values to input
-  context and selects only the listed groups; skipped groups appear in warnings.
+- `Selection(parameters={group: {name: value}})` gives each listed group's
+  operator typed JSON parameters, read as `context["parameters"]`, and selects
+  only the listed groups; skipped groups appear in warnings. Parameters are part
+  of the operator version, so a new value repairs that group's history.
 - Apps accept `aq.Rolling(lookback_ns, step_ns, lookahead_ns=0, origin_ns=0)`
   windows: overlapping windows on a fixed grid, where each output at `t` reads
   `[t - lookback, t + lookahead]` and a correction repairs every window that
@@ -42,6 +44,11 @@ change in any release.
   `nawi:Role-Backwash`.
 
 ### Changed
+- **Breaking:** soft-sensor functions read the window timestamp as
+  `context["window_ns"]` (was `context["group"]`), and batch frames name the
+  column `window_ns` (was `group`). `escapement.emit`, `empty` and
+  `emit_windows` build output frames, and `context["operator"]["window"]` gives
+  the window sizes. Requires the Escapement function-contract release.
 - Drivers send the requests of a large insert without waiting for each to
   publish; only the last waits. Escapement can then apply many requests in one
   epoch: the bulk-ingest example drops from 102 epochs to 4 (25.5 requests per

@@ -68,9 +68,9 @@ class Selection:
     exclude_app: str | None = None
     upstream: str | None = None
     upstream_port: str | None = None
-    # Per-group values added to input context, keyed by group. When set, only
-    # the listed groups are selected; inspect warns about the groups skipped.
-    parameters: Mapping[str, Mapping[str, str | int | float]] | None = None
+    # Per-group operator parameters (JSON values), keyed by group. When set,
+    # only the listed groups are selected; inspect warns about the groups skipped.
+    parameters: Mapping[str, Mapping[str, Any]] | None = None
 
     @classmethod
     def outputs_of(cls, app, port, *, role, combine=False, parameters=None):
@@ -78,7 +78,8 @@ class Selection:
 
         By default each upstream group feeds its own operator, under the same
         group. ``combine=True`` feeds every upstream group into one operator.
-        ``parameters`` maps groups to values for the function's input context.
+        ``parameters`` maps groups to values the function reads from
+        ``context["parameters"]``.
         Deployment rejects the selection while ``app`` is not deployed with
         this port.
         """
@@ -162,11 +163,14 @@ class App:
             raise ValueError("output on_group must be a boolean")
         for selection in self.inputs:
             for values in (selection.parameters or {}).values():
-                if any(
-                    not key or isinstance(value, bool) or not isinstance(value, (str, int, float))
-                    for key, value in values.items()
+                if not isinstance(values, Mapping) or any(
+                    not isinstance(key, str) or not key for key in values
                 ):
-                    raise ValueError("parameters map groups to named strings or numbers")
+                    raise ValueError("parameters map groups to named values")
+                try:
+                    _json(dict(values))
+                except (TypeError, ValueError) as error:
+                    raise ValueError("parameter values must be JSON") from error
         return dict(
             name=self.name,
             inputs=[asdict(item) for item in self.inputs],
@@ -274,7 +278,7 @@ class Apps:
         operators, metadata, matches, skipped = [], {}, {}, {}
         for name, declaration in sorted(declarations.items()):
             app = App.from_dict(declaration)
-            groups = {}
+            groups, parameters = {}, {}
             matches[name], skipped[name] = {}, {}
             for selection in app.inputs:
                 if not selection.role:
@@ -314,7 +318,13 @@ class Apps:
                         if values is None:
                             skipped[name].setdefault(selection.role, set()).add(str(group))
                             continue
-                        context.update({key: str(value) for key, value in values.items()})
+                        merged = parameters.setdefault(str(group), {})
+                        for key, value in values.items():
+                            if merged.setdefault(key, value) != value:
+                                raise ValueError(
+                                    f"app {name!r} sets parameter {key!r} of group "
+                                    f"{group} to different values"
+                                )
                     unit = row.get(selection.unit) if selection.unit else None
                     unit = unit or (
                         row.get(selection.point_unit) if selection.point_unit else None
@@ -350,6 +360,8 @@ class Apps:
                     window=declaration["window"],
                     outputs=outputs,
                 )
+                if group in parameters:
+                    definition["parameters"] = parameters[group]
                 operator = Operator(
                     id=f"{name}:{_digest(group)}",
                     version=_digest(definition),
@@ -357,6 +369,7 @@ class Apps:
                     outputs=outputs,
                     window=app.window,
                     function=app.function,
+                    parameters=parameters.get(group, {}),
                 )
                 operators.append(operator.to_dict())
                 for port, reference in outputs.items():

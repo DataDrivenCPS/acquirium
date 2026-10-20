@@ -543,7 +543,7 @@ def test_outputs_of_chains_by_port_combines_groups_and_guards_dependencies(syste
     manager.remove_app(empty.name)
 
 
-def test_selection_parameters_reach_listed_groups_and_warn_about_the_rest(system):
+def test_selection_parameters_become_operator_parameters_for_listed_groups(system):
     manager, http, client = system
     ref = register(system, "parameters")
     first = mean("parameters-first", ref)
@@ -559,8 +559,14 @@ def test_selection_parameters_reach_listed_groups_and_warn_about_the_rest(system
 
     state = client.deploy_app(thresholds("parameters-listed", {"urn:tank": {"threshold": 3.5}}))["app"]
     operator, = state["operators"]
+    assert operator["parameters"] == {"threshold": 3.5} and not state["warnings"]
     context, = [item["context"] for item in operator["inputs"]]
-    assert context["threshold"] == "3.5" and not state["warnings"]
+    assert "threshold" not in context
+    # A parameter is part of the operator's definition, so a new value is a new version.
+    state = client.deploy_app(thresholds("parameters-listed", {"urn:tank": {"threshold": 4}}))["app"]
+    changed, = state["operators"]
+    assert changed["parameters"] == {"threshold": 4}
+    assert changed["version"] != operator["version"]
 
     state = client.deploy_app(thresholds("parameters-other", {"urn:elsewhere": {"threshold": 1}}))["app"]
     assert state["operators"] == []
@@ -568,10 +574,61 @@ def test_selection_parameters_reach_listed_groups_and_warn_about_the_rest(system
         "input 'mean' matches no streams",
         "input 'mean' skips groups without parameters: urn:tank",
     ]
-    with pytest.raises(ValueError, match="named strings or numbers"):
-        thresholds("parameters-invalid", {"urn:tank": {"threshold": True}}).to_dict()
+    with pytest.raises(ValueError, match="must be JSON"):
+        thresholds("parameters-invalid", {"urn:tank": {"threshold": float("nan")}}).to_dict()
     for name in ("parameters-listed", "parameters-other", first.name):
         manager.remove_app(name)
+
+
+def test_python_functions_read_typed_parameters_and_the_window(system, tmp_path):
+    from escapement import PythonFunction
+
+    manager, http, client = system
+    ref = register(system, "typed-parameters")
+    manager.core.wait(
+        manager.insert_timeseries(
+            source_id="typed-parameters",
+            ref_name="temperature",
+            rows=[(5000, 12)],
+            request_id="typed-parameters",
+        )
+    )
+    module = tmp_path / "scaled.py"
+    module.write_text(
+        "from escapement import emit\n"
+        "def scaled(frame, context):\n"
+        "    assert context['operator']['window'] == {'kind': 'pointwise'}\n"
+        "    return {'mean': emit(context, frame['value'][0] * context['parameters']['scale'])}\n"
+    )
+    template = mean("typed-parameters", ref)
+    selection = Selection(template.inputs[0].query, parameters={"urn:tank": {"scale": 2.5}})
+    declaration = App(
+        template.name, [selection], template.outputs, PythonFunction.from_file(module, "scaled")
+    )
+    state = client.deploy_app(declaration)["app"]
+    assert state["error"] is None, state
+    snapshot = manager.core.engine.snapshot()
+    assert snapshot.value(output_reference(declaration.name, "urn:tank", "mean"), 5000) == 30
+    manager.remove_app(declaration.name)
+
+
+def test_conflicting_parameters_for_one_group_are_rejected(system):
+    manager, http, client = system
+    ref = register(system, "conflict")
+    template = mean("parameters-conflict", ref)
+    query = template.inputs[0].query
+    declaration = App(
+        template.name,
+        [
+            Selection(query, role="a", parameters={"urn:tank": {"limit": 1}}),
+            Selection(query, role="b", parameters={"urn:tank": {"limit": 2}}),
+        ],
+        template.outputs,
+        template.function,
+    )
+    response = http.put(f"/apps/{declaration.name}", json=declaration.to_dict())
+    assert response.status_code == 400
+    assert "different values" in response.text
 
 
 def test_engine_status_rolls_operator_totals_up_per_app(system):

@@ -23,8 +23,8 @@ from pathlib import Path
 import acquirium as aq
 from acquirium.apps import output_reference
 
-from .chain import SOFT_SENSORS, SOURCE, SUSTAINED_MINUTES
-from .transforms import MAX_GAP_NS, MINUTE_NS, THRESHOLDS_NTU
+from .chain import MAX_GAP, SOFT_SENSORS, SOURCE, SUSTAINED_MINUTES
+from .transforms import MINUTE_NS, THRESHOLDS_NTU
 
 DIRECTORY = Path(__file__).resolve().parent
 START = datetime(2024, 12, 1, tzinfo=timezone.utc)
@@ -101,7 +101,7 @@ def expected_outputs(raw):
     def fill(snapped):
         times, out = sorted(snapped), dict(snapped)
         for t0, t1 in zip(times, times[1:]):
-            if t1 - t0 < MAX_GAP_NS:
+            if t1 - t0 < MAX_GAP:
                 for t in range(t0 + MINUTE_NS, t1, MINUTE_NS):
                     out[t] = snapped[t0] + (snapped[t1] - snapped[t0]) * (t - t0) / (t1 - t0)
         return out
