@@ -655,6 +655,59 @@ def test_native_function_arguments_bind_to_each_groups_parameters(system):
     manager.remove_app(template.name)
 
 
+def test_dry_run_reports_the_work_of_a_deploy_without_making_it(system):
+    from acquirium import Native
+
+    manager, http, client = system
+    ref = register(system, "dry-run")
+    manager.core.wait(
+        manager.insert_timeseries(
+            source_id="dry-run",
+            ref_name="temperature",
+            rows=[(8000, 12), (9000, 14)],
+            request_id="dry-run",
+        )
+    )
+    declaration = mean("dry-run-mean", ref)
+    preview = client.deploy_app(declaration, dry_run=True)["app"]
+    assert preview["dry_run"] and preview["within_limits"]
+    assert preview["apps"]["dry-run-mean"] == {
+        "operators": 1, "changes": {"new": 1}, "groups": 2, "input_rows": 2,
+        "cleared_rows": 0, "downstream": False,
+    }
+    assert preview["metadata_changes"] == ["dry-run-mean"]
+    assert preview["matches"] == {"input": 1} and preview["warnings"] == []
+    # Nothing was deployed, published or activated.
+    assert "dry-run-mean" not in {item["name"] for item in client.list_apps()["apps"]}
+    assert not list(manager.graph_store.data_graph("derived:dry-run-mean"))
+    assert preview["active_plan"] == manager.core.engine.snapshot().plan["id"]
+
+    client.deploy_app(declaration)
+    redefined = App(declaration.name, declaration.inputs, declaration.outputs, Native.sum("mean"))
+    preview = client.deploy_app(redefined, dry_run=True)["app"]
+    assert preview["apps"]["dry-run-mean"] == {
+        "operators": 1, "changes": {"redefined": 1}, "groups": 2, "input_rows": 2,
+        "cleared_rows": 2, "downstream": False,
+    }
+    assert preview["metadata_changes"] == []
+    assert client.deploy_app(declaration, dry_run=True)["app"]["apps"]["dry-run-mean"][
+        "changes"
+    ] == {"unchanged": 1}
+
+    dependent = App(
+        "dry-run-dependent",
+        [Selection.outputs_of(App("dry-run-missing", [], {"mean": Output()}, Native.sum("mean")),
+                              "mean", role="mean")],
+        {"mean": Output()},
+        Native.mean("mean"),
+    )
+    response = http.put(
+        f"/apps/{dependent.name}", params={"dry_run": "true"}, json=dependent.to_dict()
+    )
+    assert response.status_code == 400 and "not deployed" in response.text
+    manager.remove_app(declaration.name)
+
+
 def test_conflicting_parameters_for_one_group_are_rejected(system):
     manager, http, client = system
     ref = register(system, "conflict")

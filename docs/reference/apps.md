@@ -60,6 +60,10 @@ repairs that group's history. Two selections giving one group different values
 for a name fail deployment. Only the listed groups are selected; the app reports
 the groups it skipped as warnings.
 
+`deploy_app(app, dry_run=True)` reports the operators, groups, and input rows a
+deploy would add, rebuild, or re-evaluate, without changing anything; see
+[deploy and inspect apps](../how-to/check-deploy-apps.md).
+
 `deploy_app` and `inspect_app` report `matches`, the number of streams each input
 role selected, and a `warnings` entry for each role that selected none. An empty
 selection is valid, for example before a driver registers its streams.
@@ -131,7 +135,7 @@ to inspect declarations and active operators. `client.remove_app(name)` removes
 operators and retracts their current outputs; historical versions remain in the
 core. Output ownership remains reserved by Escapement. Code changes rebuild the
 operator's retained history. Custom output timestamps, full
-history, the old class-based transform API, dry-run/reprocess commands, and
+history, the old class-based transform API, reprocess commands, and
 wall-clock scheduling options are not supported in this initial replacement.
 
 A failed function pauses the entire native epoch queue. Inspect

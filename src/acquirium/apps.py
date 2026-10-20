@@ -242,6 +242,19 @@ class App:
         return app
 
 
+def _warnings(report):
+    # An empty selection is valid (e.g. before a driver registers its streams)
+    # but is usually a typo, so report it instead of failing.
+    return [
+        f"input {role!r} matches no streams"
+        for role, count in sorted(report["matches"].items())
+        if not count
+    ] + [
+        f"input {role!r} skips groups without parameters: {', '.join(groups)}"
+        for role, groups in sorted(report["skipped"].items())
+    ]
+
+
 def output_reference(app: str, group: str, port: str) -> str:
     return str(compute_ref_uri(f"derived:{app}", _json([group, port])))
 
@@ -444,28 +457,35 @@ class Apps:
         }
         return operators, metadata, report
 
+    def _metadata_changes(self, metadata):
+        """Apps whose output metadata differs from the published graph."""
+
+        def terms(graph):
+            return {
+                (
+                    str(subject),
+                    str(predicate),
+                    (str(obj), str(obj.datatype or XSD.string), obj.language)
+                    if isinstance(obj, Literal)
+                    else str(obj),
+                )
+                for subject, predicate, obj in graph
+            }
+
+        return sorted(
+            name
+            for name in self.state["apps"].keys() | metadata.keys()
+            if terms(self.graph.data_graph(f"derived:{name}"))
+            != terms(metadata.get(name, Graph()))
+        )
+
     def _publish_metadata(self, metadata):
         changed = False
-        for name in self.state["apps"].keys() | metadata.keys():
+        for name in self._metadata_changes(metadata):
             graph_uri = self.graph.source_graph_uri(f"derived:{name}")
             desired = metadata.get(name, Graph())
-            existing = self.graph.data_graph(f"derived:{name}")
-
-            def terms(graph):
-                return {
-                    (
-                        str(subject),
-                        str(predicate),
-                        (str(obj), str(obj.datatype or XSD.string), obj.language)
-                        if isinstance(obj, Literal)
-                        else str(obj),
-                    )
-                    for subject, predicate, obj in graph
-                }
-
-            if terms(existing) != terms(desired):
-                self.graph.insert_graph(desired, replace=True, graph_uri=graph_uri)
-                changed = True
+            self.graph.insert_graph(desired, replace=True, graph_uri=graph_uri)
+            changed = True
         return changed
 
     def _install(self, declarations):
@@ -542,6 +562,62 @@ class Apps:
             self._install(declarations)
             return self.inspect(definition["name"])
 
+    def preview(self, app):
+        """What deploying ``app`` would do, without publishing or activating anything.
+
+        Compiles every app once against the current graph and asks Escapement
+        what the resulting plan would re-evaluate. Apps that select the outputs
+        of an app listed in ``metadata_changes`` are compiled against its
+        current outputs, so their own membership changes are not included.
+        """
+        with self.lock:
+            definition = (
+                app.to_dict() if isinstance(app, App) else App.from_dict(app).to_dict()
+            )
+            name = definition["name"]
+            declarations = dict(self.state["apps"])
+            declarations[name] = definition
+            operators, metadata, report = self._compile(declarations)
+            plan = {"id": f"acquirium:{_digest(operators)}", "operators": operators}
+            preview = self.core.engine.preview(plan)
+            apps = {}
+            for item in preview["operators"]:
+                totals = apps.setdefault(
+                    item["id"].split(":", 1)[0],
+                    {
+                        "operators": 0,
+                        "changes": {},
+                        "groups": 0,
+                        "input_rows": 0,
+                        "cleared_rows": 0,
+                        "downstream": False,
+                    },
+                )
+                totals["operators"] += 1
+                totals["changes"][item["change"]] = totals["changes"].get(item["change"], 0) + 1
+                for key in ("groups", "input_rows", "cleared_rows"):
+                    totals[key] += item[key]
+                totals["downstream"] |= item["downstream"]
+            removed = {}
+            for item in preview["removed"]:
+                app_name = item["id"].split(":", 1)[0]
+                removed[app_name] = removed.get(app_name, 0) + item["retracted_rows"]
+            return {
+                "name": name,
+                "dry_run": True,
+                "plan": plan["id"],
+                "active_plan": (self.core.engine.snapshot().plan or {}).get("id"),
+                "epoch": preview["epoch"],
+                "within_limits": preview["within_limits"],
+                "matches": report[name]["matches"],
+                "warnings": _warnings(report[name]),
+                "apps": apps,
+                "removed": [
+                    {"app": key, "retracted_rows": rows} for key, rows in sorted(removed.items())
+                ],
+                "metadata_changes": self._metadata_changes(metadata),
+            }
+
     def remove(self, name):
         with self.lock:
             if name not in self.state["apps"]:
@@ -582,18 +658,8 @@ class Apps:
                 "desired_plan": (self.state.get("plan") or {}).get("id"),
                 "graph_revision": self.state.get("graph_revision"),
                 "error": self.error or self.core.processor.status()["error"],
-                # An empty selection is valid (e.g. before a driver registers its
-                # streams) but is usually a typo, so report it instead of failing.
                 "matches": report["matches"],
-                "warnings": [
-                    f"input {role!r} matches no streams"
-                    for role, count in sorted(report["matches"].items())
-                    if not count
-                ]
-                + [
-                    f"input {role!r} skips groups without parameters: {', '.join(groups)}"
-                    for role, groups in sorted(report["skipped"].items())
-                ],
+                "warnings": _warnings(report),
             }
 
     def list(self):
