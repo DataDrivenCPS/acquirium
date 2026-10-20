@@ -37,5 +37,5 @@ def predict(frame, context):
         point = np.array([values[role] for role in ROLES]) / SCALES
         distance = np.square(CENTERS - point).sum(axis=1)
         prediction = 50.0 + 100.0 * (np.exp(-distance) * WEIGHTS).sum() / WEIGHT_SUM
-        rows.append((context["group"], 0, float(prediction), 0))
+        rows.append((context["window_ns"], 0, float(prediction), 0))
     return {"prediction": pl.DataFrame(rows, schema=SCHEMA, orient="row")}

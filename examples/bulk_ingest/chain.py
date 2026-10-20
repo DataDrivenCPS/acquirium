@@ -18,6 +18,9 @@ SOURCE = "bulk-ingest"
 
 MINUTE = 60 * 1_000_000_000
 HOUR = 60 * MINUTE
+# Gaps shorter than this are filled by linear interpolation; fill_gaps reads
+# it back as its window's lookback.
+MAX_GAP = 2 * HOUR
 
 NTU = "http://qudt.org/vocab/unit/NTU"
 TURBIDITY = "http://qudt.org/vocab/quantitykind/Turbidity"
@@ -55,7 +58,7 @@ fill = aq.App(
     inputs=[aq.Selection.outputs_of(snap, "turbidity", role="snapped")],
     outputs={"turbidity": location_turbidity},
     function=aq.PythonFunction.from_file(CALCULATIONS, "fill_gaps"),
-    window=aq.Rolling(lookback_ns=2 * HOUR, step_ns=MINUTE, lookahead_ns=2 * HOUR),
+    window=aq.Rolling(lookback_ns=MAX_GAP, step_ns=MINUTE, lookahead_ns=MAX_GAP),
 )
 
 plant_turbidity = aq.App(

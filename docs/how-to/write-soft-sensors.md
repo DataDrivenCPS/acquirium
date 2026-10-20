@@ -65,11 +65,13 @@ Check `warnings` in the deploy result for input roles that matched no streams.
 Membership changes keep output identities stable. Scope raw-input selections to
 their intended sources or exclude the app's own outputs to avoid cycles.
 
-Input rows carry their resolved role, reference, and frozen semantic context.
-Select a parameter such as `?threshold` in SPARQL to freeze it in input context.
-Use `target_unit` to freeze conversion factors, then apply them explicitly in the
-function, as the example does. New parameters or membership activate a new complete
-plan and repair retained history. Functions do not query the live graph, obtain
+Input rows carry their resolved role, reference, and frozen semantic context:
+every column the selection's SPARQL returns, as strings. Use `target_unit` to
+freeze conversion factors, then apply them explicitly in the function, as the
+example does. `Selection(parameters={group: {name: value}})` gives each group's
+operator typed values, which the function reads as `context["parameters"]`.
+New parameters or membership activate a new complete plan and repair retained
+history. Functions do not query the live graph, obtain
 undeclared history, or use wall-clock time.
 
 ## Return the complete result for one window
@@ -77,30 +79,24 @@ undeclared history, or use wall-clock time.
 Write a self-contained module with a function of this form:
 
 ```python
-import polars as pl
-
-SCHEMA = {
-    "event_time_ns": pl.Int64,
-    "sample_key": pl.Int64,
-    "value": pl.Float64,
-    "quality": pl.UInt32,
-}
+from escapement import emit
 
 def bucket_mean(frame, context):
-    value = frame["value"].mean()
-    rows = [] if value is None else [(context["group"], 0, float(value), 0)]
-    return {"mean": pl.DataFrame(rows, schema=SCHEMA, orient="row")}
+    return {"mean": emit(context, frame["value"].mean())}
 ```
 
 Inputs have `role`, `stream`, `event_time_ns`, `sample_key`, `value`, `quality`,
-and JSON `context` columns. `context["group"]` is the event timestamp, bucket
-start, or rolling grid point in UTC nanoseconds, distinct from the semantic entity grouping streams into
-an operator. Context also identifies the operator and declared inputs, including
+and JSON `context` columns. `context["window_ns"]` is the event timestamp, bucket
+start, or rolling grid point in UTC nanoseconds. `context["parameters"]` holds the
+operator's parameters, and `context["operator"]` its declaration, including
+`context["operator"]["window"]`. Context also lists the declared inputs, including
 inputs with no readings in this window.
 
-Return every declared port with exactly the four output columns above, in that
-order and with those dtypes. Use finite numeric values, sample key zero, and the
-provided group timestamp. An empty frame retracts any previous result for that
+Return every declared port with the output columns of `escapement.SCHEMA`:
+`event_time_ns: Int64`, `sample_key: Int64`, `value: Float64`, `quality: UInt32`,
+in that order. `emit(context, value, quality=0)` builds the one-row result at the
+window timestamp, or an empty frame when `value` is None; `empty()` is the empty
+frame. Use finite numeric values and sample key zero. An empty frame retracts any previous result for that
 window. Return the complete window result, including unchanged output rows.
 
 `Pointwise()` sees one exact timestamp. It does not forward-fill or perform an
@@ -127,21 +123,20 @@ at once:
 
 ```python
 import polars as pl
+from escapement import emit_windows
 
 def bucket_mean(frame, context):
-    means = frame.group_by("group").agg(pl.col("value").mean())
-    return {"mean": means.select(
-        pl.col("group").alias("event_time_ns"), pl.lit(0).alias("sample_key"),
-        "value", pl.lit(0).alias("quality"),
-    ).cast(SCHEMA)}
+    means = frame.group_by("window_ns").agg(pl.col("value").mean())
+    return {"mean": emit_windows(means)}
 
 function = aq.PythonFunction.from_file(path, "bucket_mean", batch=True)
 ```
 
-The frame gains an Int64 `group` column naming each row's window; a row read by
+The frame gains an Int64 `window_ns` column naming each row's window; a row read by
 overlapping rolling windows appears once per window. `context["windows"]` lists
-every affected window's context, including windows with no rows. Return rows for
-all windows at their window timestamps; a window left out is retracted, and a
+every affected window's context, including windows with no rows.
+`emit_windows(frame)` turns `window_ns`, `value` and optional `quality` columns
+into the output frame. Return rows for all windows at their window timestamps; a window left out is retracted, and a
 row at any other timestamp fails the epoch. Switching a function to or from
 batch mode is a new definition and rebuilds its history. The
 [bulk-ingest example](../../examples/bulk_ingest/README.md) runs the same six apps

@@ -44,7 +44,7 @@ upstream app fails while a deployed app selects it. Every output point carries `
 `acq:outputPort`, and `acq:outputGroup`, so hand-written SPARQL can select a port
 the same way.
 
-`parameters` gives per-group values, on any selection:
+`parameters` gives per-group operator parameters, on any selection:
 
 ```python
 aq.Selection.outputs_of(fill, "turbidity", role="filled", parameters={
@@ -53,8 +53,12 @@ aq.Selection.outputs_of(fill, "turbidity", role="filled", parameters={
 })
 ```
 
-Values are strings or numbers and reach each input's context as strings. Only the
-listed groups are selected; the app reports the groups it skipped as warnings.
+Values are any JSON values. They become the group operator's
+`parameters`, which the function reads typed as `context["parameters"]`, and
+they are part of its definition: a new value is a new operator version and
+repairs that group's history. Two selections giving one group different values
+for a name fail deployment. Only the listed groups are selected; the app reports
+the groups it skipped as warnings.
 
 `deploy_app` and `inspect_app` report `matches`, the number of streams each input
 role selected, and a `warnings` entry for each role that selected none. An empty
@@ -81,7 +85,10 @@ def convert(frame, context):
 ```
 
 Input columns include `role`, `stream`, `event_time_ns`, `sample_key`, `value`,
-`quality`, and JSON `context`. Each returned port frame must have ordered columns
+`quality`, and JSON `context` (the selection's SPARQL columns, as strings). The
+function's `context` holds `window_ns` (the window timestamp), `parameters`, and
+`operator`, whose `window` gives the window sizes. `escapement.emit`, `empty` and,
+for batch functions, `emit_windows` build output frames. Each returned port frame must have ordered columns
 `event_time_ns: Int64`, `sample_key: Int64`, `value: Float64`, `quality: UInt32`.
 Use sample key zero. Every port must be returned; an empty frame retracts its
 previous group output. Pointwise results use the input timestamp; fixed-bucket

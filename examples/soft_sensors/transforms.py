@@ -3,27 +3,7 @@
 import json
 
 import polars as pl
-
-SCHEMA = {
-    "event_time_ns": pl.Int64,
-    "sample_key": pl.Int64,
-    "value": pl.Float64,
-    "quality": pl.UInt32,
-}
-
-
-def result(value, context):
-    if value is None:
-        return pl.DataFrame(schema=SCHEMA)
-    return pl.DataFrame(
-        {
-            "event_time_ns": [context["group"]],
-            "sample_key": [0],
-            "value": [float(value)],
-            "quality": [0],
-        },
-        schema=SCHEMA,
-    )
+from escapement import emit
 
 
 def tank_mean(frame, context):
@@ -40,13 +20,13 @@ def tank_mean(frame, context):
             - factor("to_offset")
         ).alias("celsius")
     )
-    return {"mean": result(values["celsius"].mean(), context)}
+    return {"mean": emit(context, values["celsius"].mean())}
 
 
 def hottest_tank(frame, context):
     """Maximum of tank means at the same bucket timestamp."""
     value = frame["value"].max()
-    return {"hottest": result(value, context)}
+    return {"hottest": emit(context, value)}
 
 
 def high_temperature(frame, context):
@@ -58,4 +38,4 @@ def high_temperature(frame, context):
         threshold = float(json.loads(frame["context"][0])["threshold"])
         if frame["value"][0] > threshold:
             value = frame["value"][0]
-    return {"alarm": result(value, context)}
+    return {"alarm": emit(context, value)}
