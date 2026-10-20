@@ -107,6 +107,25 @@ Imported dependencies are not yet a hermetic artifact bundle. See
 artifact, subprocess, and deployment contract, and the
 [complete chain](../../examples/soft_sensors/README.md) for a runnable example.
 
+Simple aggregates need no Python. `aq.Native.mean(port, per_stream=False)`,
+`sum`, `max`, `min` and `count` write one value per window to their single port
+from every input row in the window, and nothing for a window with none.
+`aq.Native.threshold(port, above)` passes a window's single value through while
+it is above `above`. They run in the engine process, without a Python worker.
+An argument can come from each group's parameters:
+
+```python
+aq.App(
+    name="high-tank-temperature",
+    inputs=[aq.Selection(query, parameters={"urn:plant": {"limit": 27.0}})],
+    outputs={"alarm": aq.Output()},
+    function=aq.Native.threshold("alarm", above=aq.Parameter("limit")),
+)
+```
+
+Each group's operator gets the function with its value filled in; deployment
+fails when a group lacks the parameter.
+
 Use `client.list_apps()`, `client.inspect_app(name)`, or `acquirium app list/inspect`
 to inspect declarations and active operators. `client.remove_app(name)` removes
 operators and retracts their current outputs; historical versions remain in the

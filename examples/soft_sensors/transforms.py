@@ -28,7 +28,10 @@ def hottest_tank(frame, context):
 
 
 def high_temperature(frame, context):
-    """Emit the hottest temperature above the plant's threshold parameter; otherwise clear."""
+    """Emit the hottest temperature above the plant's threshold parameter; otherwise clear.
+
+    The example app uses the native threshold; examples/profiling runs this
+    Python version to measure the worker."""
     if frame.height > 1:
         raise ValueError("alarm expects one hottest-tank value per timestamp")
     value = None

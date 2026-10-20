@@ -1,7 +1,7 @@
 from acquirium.Client.acquirium import Acquirium
 from acquirium.runtime import init, shutdown
-from acquirium.apps import App, Selection, Output
-from escapement import FixedBucket, Pointwise, PythonFunction, Rolling
+from acquirium.apps import App, Selection, Output, Parameter
+from escapement import FixedBucket, Native, Pointwise, PythonFunction, Rolling
 from acquirium.debug import console
 from acquirium.Client.explore.core import Query
 from acquirium.Client.query import Q
