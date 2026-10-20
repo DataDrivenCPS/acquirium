@@ -1,7 +1,7 @@
 # Experiment metadata integration with PR #120
 
 The experiment branch was rebased on PR #120 at `9b8f051` and now includes
-its update through `c52ea13`.
+its update through `a7eed89`.
 The previous branch tip is saved as
 `backup/experiment-interface-before-pr120-20261014` (`c23f3fd`).
 The materialization changes from main were replayed too.
@@ -56,29 +56,29 @@ the graph and `"PSI"` under `unit.raw`. Both string and URI filters work, and
 `unit.raw` supports exact text filtering. Its saved `.metadata` object still
 gets `"PSI"` from the graph's `unit.raw` field.
 
-The shared object method now omits missing fields, including nested fields
-introduced by other nodes. `{"mode": "baseline"}` stays that shape even when
-another node has `duration`. The table still uses a shared schema. The experiment
-adapter no longer needs its own null cleanup.
+Objects come back in the shape they were saved: lists of objects, nested
+lists, and a scalar on one node next to a list on another. Each object holds
+only the fields saved on its node. `id` is the saved id, or else the node URI;
+the adapter keeps only a saved one. The table still uses a shared schema.
 
-Round-trip tests also found shapes that the shared method cannot yet recover:
+Round-trip tests still find three cases the shared method does not return as
+saved:
 
-- Lists of objects become objects of lists.
-- Nested lists flatten; missing list positions disappear.
-- A scalar becomes a one-element list when another node uses a list for that key.
-- Multi-valued semantic attributes have separate rows rather than an ordered list.
-- Metadata keys `id` and `type` overlap query identity and managed RDF classes.
+- `None` inside a list. Upstream treats `None` as removal, so the list keeps
+  its order but loses that position: `["A", None, "B"]` reads as `["A", "B"]`.
+- A top-level `type` key, which is the node's RDF class upstream.
+- A list on a semantic attribute such as `unit`, which reads as one row per
+  value rather than an ordered list.
 
-`saved_metadata()` retains the SQL snapshot for affected fields only. Graph
+`saved_metadata()` retains the SQL snapshot for these fields only. Graph
 read failures propagate; there is no silent fallback to SQL on a failed read.
 Storage-only ledger callers can still inspect SQL snapshots without a graph.
 
 Next steps:
 
-1. Resolve the remaining container shapes in the shared object API.
-   Keep normalized structs for tables; per-node field presence is fixed.
-2. Remove the field-level `saved_metadata()` compatibility path after the
-   round-trip tests pass without it.
+1. Decide whether experiment metadata keeps `None` list positions or adopts
+   #120's removal rule, and whether `type` becomes a reserved key.
+2. Remove `saved_metadata()` once those cases no longer need SQL.
 3. Decide whether SQL metadata snapshots remain the durable recovery source or
    whether graph metadata becomes authoritative. Removing the snapshots requires
    an explicit migration and a recovery strategy for writes across both stores.
@@ -134,14 +134,16 @@ Removed now:
   fields and fresh graph reads need an adapter now.
 - SQL as the ordinary object-read source for supported metadata shapes.
 - The duplicate null cleanup on object reads, now handled upstream.
+- SQL restoration of lists of objects, nested lists, scalars next to lists,
+  and saved `id` keys, now returned as saved upstream.
 
 Retained temporarily:
 
 - `where(metadata={...})` and the HTTP metadata filter for compatibility. New
   examples use direct attributes. After callers migrate, remove the SQL-side
   `_metadata_matches()` path and its transport parameter.
-- SQL metadata snapshots and the field-level shape compatibility path, pending
-  the round-trip fixes and persistence decision above.
+- SQL metadata snapshots and the field-level compatibility path for the three
+  cases above, pending those decisions and the persistence decision.
 - The graph projection adapter, which publishes lifecycle state and repairs
   interrupted writes from the durable SQL ledger.
 - SQL-backed `.frame()` row layouts for existing experiment analysis. Use
@@ -149,8 +151,8 @@ Retained temporarily:
 
 Further implementation work:
 
-- Remove shape compatibility code once the upstream object reader preserves
-  the original containers and fields.
+- Remove the remaining compatibility code once the three cases above are
+  settled.
 - Add an explicit graph-authoritative metadata migration only if that storage
   decision is made. This branch does not delete existing SQL metadata columns.
 

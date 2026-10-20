@@ -46,6 +46,11 @@ def annotation_uri(annotation_id: str) -> str:
     return str(EXPERIMENT[f"annotation/{annotation_id}"])
 
 
+def node_uri(cls, identifier: str) -> str:
+    return {EXPERIMENT.Study: study_uri, EXPERIMENT.Run: run_uri, EXPERIMENT.Variable: variable_uri,
+            EXPERIMENT.StreamAnnotation: annotation_uri}[cls](identifier)
+
+
 def metadata_values(values: Mapping[str, Any] | None) -> dict[str, Any]:
     """Apply upstream key validation and null/empty deletion semantics.
 
@@ -89,27 +94,24 @@ def records_frame(items: list[dict[str, Any]]) -> pl.DataFrame:
 
 
 def saved_metadata(values, snapshot):
-    """Preserve shapes the shared table-based object reader cannot recover yet.
+    """Restore the fields the shared object reader cannot return as saved.
 
     This is a field-level compatibility path, not a fallback on graph errors.
-    Remove it after upstream objects retain list shape, index gaps, and the
-    distinction between a scalar and a list on different nodes.
+    Upstream treats None as removal, so a list keeps its order but loses a
+    None position; `type` is the node's RDF class; and a list on a semantic
+    attribute such as `unit` comes back as one row per value.
     """
-    def unsupported_shape(value, returned):
+    def has_gap(value):
         if isinstance(value, dict):
-            if not isinstance(returned, dict):
-                return True
-            return any(unsupported_shape(child, returned.get(key)) for key, child in value.items())
+            return any(has_gap(child) for child in value.values())
         if isinstance(value, list):
-            return not isinstance(returned, list) or any(
-                child is None or isinstance(child, (dict, list)) for child in value
-            )
-        return isinstance(returned, (dict, list))
+            return any(child is None or has_gap(child) for child in value)
+        return False
 
     result = dict(values)
     for key, value in snapshot.items():
         attr = REGISTRY.get(key)
-        if (key in {"id", "type"} or unsupported_shape(value, result.get(key))
+        if (key == "type" or has_gap(value)
                 or isinstance(value, list) and attr is not None and not attr.literal):
             result[key] = value
     return result
@@ -192,6 +194,9 @@ class ExperimentMetadataGraph:
                     key: value for key, value in item.items()
                     if key != "id" and key not in RESERVED_METADATA_KEYS
                 }
+                # `id` is the saved id, or else the node URI; keep only a saved one.
+                if item.get("id") != node_uri(cls, identifier):
+                    values["id"] = item["id"]
                 # The experiment API keeps the caller's spelling. Native query
                 # output exposes the resolved value and <key>.raw separately.
                 for key in list(values):

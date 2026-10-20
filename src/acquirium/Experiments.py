@@ -18,7 +18,8 @@ import polars as pl
 from acquirium.internals.models import compute_ref_uri
 from acquirium.ExperimentMetadata import (
     EXPERIMENT, ExperimentMetadataGraph, annotation_uri, experiment_query,
-    matched_ids, metadata_values, records_frame, run_uri, saved_metadata, study_uri, sync_study, variable_uri,
+    matched_ids, metadata_values, node_uri, records_frame, run_uri, saved_metadata, study_uri, sync_study,
+    variable_uri,
 )
 
 UTC = timezone.utc
@@ -233,7 +234,7 @@ class ExperimentStore:
                 records.append((key, study_id, record))
         # Replace every written node, but touch a left-out node only once it
         # converts; otherwise each read would rewrite and re-infer the graph.
-        deleted = [self._node_uri(*key) for key in written]
+        deleted = [node_uri(*key) for key in written]
         triples = []
         for key, study_id, record in records:
             try:
@@ -248,11 +249,6 @@ class ExperimentStore:
         for key in removed:
             self._unpublished.pop(key, None)
         self.metadata_graph.update(deleted, triples)
-
-    @staticmethod
-    def _node_uri(kind, identifier):
-        return {EXPERIMENT.Study: study_uri, EXPERIMENT.Run: run_uri, EXPERIMENT.Variable: variable_uri,
-                EXPERIMENT.StreamAnnotation: annotation_uri}[kind](identifier)
 
     def sync_metadata_graph(self):
         """Publish queued writes, then backfill or repair from SQL as needed.

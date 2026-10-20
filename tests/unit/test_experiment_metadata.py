@@ -275,12 +275,27 @@ def test_object_reads_repair_failed_publication_and_do_not_hide_read_errors(meta
     {"matrix": [[1, 2], [3, 4]]},
     {"tags": ["A", None, "B"]},
     {"datasheet": "https://example.org/input"},
+    {"id": "pump-7"},
+    {"id": "urn:example:pump-7"},
 ])
 def test_shared_metadata_object_round_trip(metadata_api, values):
     api = metadata_api
     study = api.service.define("round trip")
     run = study.start(values)
     result = api.ledger.read_metadata([api.ledger.run(run.run_id)], EXPERIMENT.Run, "run_id")
+    assert result[0]["metadata"] == values
+
+
+def test_container_shapes_come_from_shared_objects(metadata_api):
+    api = metadata_api
+    study = api.service.define("containers")
+    study.start({"tag": ["A", "B"]}).finish()
+    values = {"items": [{"name": "A"}, {"name": "B", "count": 2}], "matrix": [[1, 2], [3, 4]], "tag": "A",
+              "id": "pump-7"}
+    run = study.start(values)
+    record = api.ledger.run(run.run_id)
+    record["metadata"] = {}  # Without SQL snapshots, these must come from the graph.
+    result = api.ledger.read_metadata([record], EXPERIMENT.Run, "run_id")
     assert result[0]["metadata"] == values
 
 
