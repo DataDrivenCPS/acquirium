@@ -167,24 +167,29 @@ or include the leaf next to the struct, `include("product_info", "product_info.y
 `where()` filters leaves, not parent keys.
 
 For code that wants plain Python values rather than a frame,
-`metadata_objects()` returns the same rows as nested dicts, each holding
-only what was saved on that node:
+`metadata_objects()` returns the same rows as dicts, each node's attributes
+in the shape they were saved and holding only what was saved on that node:
 
 ```python
 pumps.include("product_info", "tags").metadata_objects()
 ```
 ```text
-[{'pump': {'id': 'dpr:backwash-dosing-pump',
+[{'pump': {'id': 'urn:dpr#backwash-dosing-pump',
            'product_info': {'manufacturer': 'Grundfos', 'model': 'DDA 7.5', 'year': 2019},
            'tags': ['lab', 'critical', 'spare-available']}},
- {'pump': {'id': 'dpr:chlorine-pump',
+ {'pump': {'id': 'urn:dpr#chlorine-pump',
            'product_info': {'build_year': 2015, 'manufacturer': 'ProMinent'},
            'tags': ['lab']}},
  ...]
 ```
 
 The table from `metadata()` gives both pumps the same four `product_info`
-fields, with nulls; the objects leave out the fields a pump never had.
+fields, with nulls; the objects leave out the fields a pump never had. The
+table also makes a list column of a key that is a list on any node, so a
+pump that saved `"tags": "lab"` shows `["lab"]` there; the object keeps
+`"lab"`. A list of dicts or a nested list comes back as saved, element
+positions intact. `id` is the node's URI, unless the node saved an `id` of
+its own.
 
 ## Know the schema before you run
 
