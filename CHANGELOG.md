@@ -15,6 +15,9 @@ change in any release.
   `NameError: name 'uuid' is not defined`, which broke every driver insert.
 
 ### Added
+- `[server] engine_path` accepts a `postgres://` URL to keep the engine's store
+  in PostgreSQL; the tables go in the URL's `search_path` schema.
+  `examples/bulk_ingest` takes `--engine-path` to benchmark it.
 - `deploy_app(app, dry_run=True)`, `PUT /apps/{name}?dry_run=true` and
   `acquirium app deploy --dry-run` report what a deploy would do, per app:
   operators new, redefined, rebound or unchanged, groups to re-evaluate, input

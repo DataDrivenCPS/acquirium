@@ -20,7 +20,7 @@ max_pending_requests = 10000
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `data_dir` | `.acquirium` | Graph, indexes, deployment manifest, and default engine database |
-| `engine_path` | `data_dir/escapement.duckdb` | Native DuckDB persistence |
+| `engine_path` | `data_dir/escapement.duckdb` | Engine store: a DuckDB file, or a `postgres://` URL (tables go in the URL's `search_path` schema) |
 | `engine_workers` | 2 | Maximum concurrent native operator executions |
 | `python_pool_size` | `engine_workers` | Maximum resident Python workers across function artifacts; zero uses fresh processes for profiling |
 | `python_max_worker_jobs` | 10000 | Recycle a process after this many jobs |
