@@ -3,7 +3,8 @@
 uv run --locked python -m examples.bulk_ingest.run --output /tmp/acquirium-bulk
 
 Pass --batch to run the same apps with batch_transforms.py, whose functions
-get every affected window in one call.
+get every affected window in one call. Pass --engine-path postgres://...
+to keep the engine's store in PostgreSQL.
 
 Generates one wide CSV per day (4 turbidity columns plus filler columns, one
 row every 10 s), starts a local server whose driver watches an empty
@@ -67,13 +68,15 @@ def generate(staging, days, interval_s, filler_columns, seed):
     return raw, rows, rows * (len(header) - 1)
 
 
-def write_config(root, incoming):
+def write_config(root, incoming, engine_path):
     path = root / "acquirium.toml"
+    engine = f'engine_path = "{engine_path}"' if engine_path else ""
     path.write_text(f"""
 [server]
 host = "127.0.0.1"
 exact_only = true
 data_dir = "{root / 'state'}"
+{engine}
 
 [[drivers]]
 spec      = "{DIRECTORY / 'driver.py'}:BulkIngestDriver"
@@ -183,7 +186,7 @@ def run(args):
     incoming.mkdir()
     raw, rows, readings = generate(staging, args.days, args.interval, args.filler_columns, args.seed)
     print(f"generated {args.days} day(s): {rows} rows, {readings} readings")
-    client = aq.init(write_config(root, incoming), timeout=180)
+    client = aq.init(write_config(root, incoming, args.engine_path), timeout=180)
     try:
         query = SOFT_SENSORS[0].inputs[0].query
         wait_for(lambda: len(client.client.sparql_query(query)["rows"]) == len(LOCATIONS),
@@ -214,6 +217,7 @@ def run(args):
         mismatches = verify(client, expected_outputs(raw))
         summary = {
             "batch": args.batch,
+            "engine_path": args.engine_path,
             "days": args.days,
             "rows": rows,
             "readings": readings,
@@ -251,6 +255,7 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--timeout", type=float, default=3600)
     parser.add_argument("--batch", action="store_true", help="use the batch calculations")
+    parser.add_argument("--engine-path", help="engine store: a DuckDB file or a postgres:// URL (default: under --output)")
     raise SystemExit(run(parser.parse_args()))
 
 

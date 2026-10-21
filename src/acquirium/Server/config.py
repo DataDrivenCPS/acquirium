@@ -94,7 +94,10 @@ class LoadedConfig:
             if key not in server:
                 continue
             value = server[key]
-            if key in {"data_dir", "engine_path", "graph_path"}:
+            # A PostgreSQL URL names the engine's database, not a file.
+            if key in {"data_dir", "engine_path", "graph_path"} and not str(
+                value
+            ).startswith(("postgres://", "postgresql://")):
                 path = Path(value)
                 value = (
                     str((self.directory / path).resolve())

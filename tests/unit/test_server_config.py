@@ -86,6 +86,17 @@ def test_server_environment_resolves_paths_without_overriding(monkeypatch, tmp_p
     assert os.environ["ACQUIRIUM_WORKERS"] == "1"
 
 
+def test_postgres_engine_path_is_not_resolved_as_a_file(tmp_path):
+    url = "postgres://acquirium@db/plant?options=-csearch_path%3Descapement"
+    config = tmp_path / "acquirium.toml"
+    config.write_text(f'[server]\nengine_path = "{url}"\n')
+    environ = {}
+
+    load_config(config).apply_server_env(environ)
+
+    assert environ["ACQUIRIUM_ENGINE_PATH"] == url
+
+
 def test_empty_active_config_suppresses_cwd_discovery(monkeypatch, tmp_path):
     (tmp_path / "acquirium.toml").write_text("[server]\nexact_only = true\n")
     monkeypatch.chdir(tmp_path)
