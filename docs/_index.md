@@ -75,6 +75,7 @@ The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acq
 - [Check, deploy, and repair an app](how-to/check-deploy-apps.md) — dry runs, deployment, reprocessing, and execution controls
 - [Compare runs with formulas](how-to/compare-experiment-runs.md) — one row per run, formulas in Polars or plain Python
 - [Record experiments](how-to/record-experiments.md) — record inputs and results, find runs by metadata, and annotate stream intervals
+- [Record a whole model](how-to/record-a-whole-model.md) — explicit general and Pyomo adapters, JSON metadata, and sampling
 - [Run the server](how-to/run-the-server.md) — the server command, startup, Docker
 - [Start from a script](how-to/local-runtime.md) — `aq.init()`, config discovery, and local server ownership
 - [Debugging queries for an unexpected result](how-to/debug-an-empty-query.md) — the five usual causes
@@ -96,6 +97,7 @@ The reference guides contain complete interface of each module:
 - [App reference](reference/apps.md) — the app API, output requirements, and processing rules
 - [Experiment reference](reference/experiments.md) — Studies, variables, runs, stream annotations, and endpoints
 - [Server configuration](reference/server-config.md) — `[server]`, environment variables, `[ontologies]`, the endpoint table
+- [Storage migrations](reference/storage-migrations.md) — versioned schema upgrades and adding future migrations
 - [HTTP API](reference/http-api.md) — the raw endpoints
 - [Glossary](reference/glossary.md) — URIs, CURIEs, free text, the plant model, querying and data terms
 

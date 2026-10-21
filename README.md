@@ -79,6 +79,7 @@ guides, reference and explanation.
 [insert data](./docs/how-to/write-data.md),
 [write an app](./docs/tutorials/first-app.md),
 [record an experiment](./docs/how-to/record-experiments.md),
+[record a whole model](./docs/how-to/record-a-whole-model.md),
 [run the server](./docs/how-to/run-the-server.md),
 [resolve text to URIs](./docs/how-to/resolve-text.md).
 
@@ -88,6 +89,7 @@ guides, reference and explanation.
 [apps](./docs/reference/apps.md),
 [experiments](./docs/reference/experiments.md),
 [server configuration](./docs/reference/server-config.md),
+[storage migrations](./docs/reference/storage-migrations.md),
 [HTTP API](./docs/reference/http-api.md),
 [glossary](./docs/reference/glossary.md).
 

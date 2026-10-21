@@ -51,6 +51,14 @@ The materialization changes from main were replayed too.
 
 ## Remaining difference in object retrieval
 
+Model adapters now preserve their explicit `metadata=` objects as a serialized
+JSON document, with valid paths also projected under `metadata` for queries.
+This retains arbitrary string keys, nulls, and empty containers through graph
+reads as well as SQL snapshots. That representation currently lives in
+`ModelAdapters.metadata_fields()`; it is not a general feature of PR #120's
+metadata writer. The older descriptive metadata path below still uses its
+validation, removal semantics, and field-level SQL compatibility handling.
+
 #120 now provides `.metadata_objects()` and preserves resolved free text under
 `<key>.raw`. Entity queries can also read measurement attributes, so
 `.entity(uri=point).include("all")` includes the point's unit.

@@ -418,7 +418,7 @@ Queries stay within the Study and collection filters. Graph table columns use
 
 Saved metadata retains supplied semantic strings. Native queries expose the
 resolved value and supplied text separately: `unit="unit:PSI"` and
-`unit.raw="PSI"`. Objects contain each node's own fields, with its CURIE under
+`unit.raw="PSI"`. Objects contain each node's own fields, with its full URI under
 `id`. Tables use a shared schema, so missing struct fields appear as nulls.
 Collection `.frame()` methods keep saved metadata dictionaries in `Object` columns;
 variable frames also expose descriptive metadata keys as columns.
@@ -429,6 +429,10 @@ shapes the shared reader cannot yet reproduce. See the
 [integration plan](../plans/experiment-metadata-integration.md).
 
 ### Metadata rules
+
+These rules apply to hand declarations, run metadata, and stream annotations.
+Model adapters' explicit `metadata=` objects preserve arbitrary string keys,
+nulls, and empty containers as described in [Explicit model declarations](#explicit-model-declarations).
 
 Keys contain letters, digits, underscores, and hyphens, starting with a letter
 or underscore. Nested objects and lists use dotted paths and list indices.
@@ -550,6 +554,7 @@ The HTTP API calls a Study a `template`. `template_id`, `variable_id`, and
 | `GET` | `/experiments/templates` | List Studies; optionally filter by exact name |
 | `GET` | `/experiments/templates/lookup?identifier=...` | Retrieve a Study by name or ID |
 | `POST` | `/experiments/templates/{template_id}/variables` | Declare a variable |
+| `POST` | `/experiments/templates/{template_id}/variables/batch` | Declare an ordered batch atomically; see [Batch transport](#batch-transport) |
 | `GET` | `/experiments/templates/{template_id}/variables` | List declarations and metadata |
 | `POST` | `/experiments/templates/{template_id}/runs` | Start an Experiment |
 | `GET` | `/experiments/templates/{template_id}/runs` | Filter and list Experiments |
@@ -559,6 +564,7 @@ The HTTP API calls a Study a `template`. `template_id`, `variable_id`, and
 | `POST` | `/experiments/templates/{template_id}/observations/query` | Retrieve observations for graph-selected runs |
 | `POST` | `/experiments/metadata/sync` | Backfill or repair the experiment metadata graph |
 | `POST` | `/experiments/runs/{run_id}/variables/{variable_id}/observations` | Record a value or reference |
+| `POST` | `/experiments/runs/{run_id}/observations/batch` | Record an ordered batch atomically, including inline artifacts; see [Batch transport](#batch-transport) |
 | `POST` | `/experiments/runs/{run_id}/stream-annotations` | Tag a stream interval |
 | `GET` | `/experiments/stream-annotations` | Find annotations by Study, run, stream, and overlapping time |
 | `POST` | `/experiments/stream-annotations/{annotation_id}/close` | Close an open interval |

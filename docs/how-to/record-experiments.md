@@ -5,6 +5,8 @@ example, see [Your first experiment](../tutorials/first-experiment.py).
 
 Declare variables, record a run, then select saved runs and read their results.
 The [API reference](../reference/experiments.md) groups the available methods by task.
+For model components bound to reader functions, see
+[Record a whole model](record-a-whole-model.md), including the Pyomo adapter.
 
 ## Wrap an analysis in an experiment
 

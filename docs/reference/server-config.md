@@ -52,6 +52,9 @@ still enforces loopback, persistence, and a single worker.
 Timescale backend it also drops and recreates Acquirium's configured database
 tables and views.
 
+With `recreate = false`, supported SQL schema upgrades run automatically using
+the [versioned migration ledger](storage-migrations.md); existing data is retained.
+
 ### Exact-only resolution
 
     [server]

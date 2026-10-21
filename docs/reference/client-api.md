@@ -11,6 +11,10 @@ builds, the `DataObject` a query returns, and the lower-level
 `AcquiriumClient` behind all three.
 Type hints are shortened; `pl` is polars, `pa` is pyarrow.
 
+Studies, runs, variables, and model adapters have their own
+[experiment reference](experiments.md), with a complete
+[model recording example](../how-to/record-a-whole-model.md).
+
 ## init and shutdown
 
 `acquirium.init(config=None, *, data_dir=None, address=None, exact_only=None, timeout=600)`
