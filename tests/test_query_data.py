@@ -3,13 +3,7 @@ import polars as pl
 from acquirium import Acquirium
 from acquirium.internals.internals_namespaces import *
 from acquirium.internals.models import compute_ref_uri
-<<<<<<< HEAD
-from acquirium.Client.query import Q
-from datetime import datetime
-=======
-from acquirium.Client.query import Query
 from datetime import datetime, timedelta
->>>>>>> 4eec471 (First attempt at adding 'reconcile' method (using Claude))
 from zoneinfo import ZoneInfo
 from conftest import ACQUIRIUM_TEST_SERVER_HOST, ACQUIRIUM_TEST_SERVER_PORT, _CSV_SOURCE_ID
 
@@ -264,7 +258,7 @@ def test_find_data_1(acquirium_client_csv):
 ##### reconcile() tests #####
 
 def test_reconcile_query_wrapper(acquirium_client_csv):
-    """Query.reconcile() is a convenience wrapper equivalent to
+    """query.reconcile() is a convenience wrapper equivalent to
     query.data(cast_value='float').reconcile(...)."""
     acq = acquirium_client_csv
     query = acq.find_all_data()
@@ -282,7 +276,7 @@ def test_reconcile_query_wrapper(acquirium_client_csv):
 
 
 def test_reconcile_query_wrapper_with_options(acquirium_client_csv):
-    """Query.reconcile() should forward points/resolution/upsample/downsample."""
+    """query.reconcile() should forward points/resolution/upsample/downsample."""
     acq = acquirium_client_csv
     entity_B = acq.find_entity(_class=ACQUIRIUM_NS.B, alias="b")
     entity_BE = entity_B.find_entity(_class=ACQUIRIUM_NS.E, alias="e")
