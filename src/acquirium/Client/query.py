@@ -711,9 +711,10 @@ class Q:
                 only required, and only an error, if some selected point
                 actually needs upsampling.
             downsample: How to collapse a point that's finer than the target
-                resolution: ``"mean"``/``"average"``, ``"first"``/
-                ``"ignore_intermediate"``, ``"last"``, ``"min"``, or
-                ``"max"``. ``None`` (default): same rule as ``upsample``.
+                resolution: ``"mean"``/``"average"``, ``"median"``,
+                ``"mode"``, ``"first"``/``"ignore_intermediate"``,
+                ``"last"``, ``"min"``, or ``"max"``. ``None`` (default):
+                same rule as ``upsample``.
             fill_value: Constant used to fill in gaps when
                 ``upsample="default_value"``. Required for that method;
                 ignored otherwise.

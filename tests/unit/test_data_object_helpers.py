@@ -1,10 +1,12 @@
 """Unit tests for DataObject's pure frame-shaping helpers."""
 
-from datetime import datetime, timezone
+import warnings
+from datetime import datetime, timedelta, timezone
 
 import polars as pl
+import pytest
 
-from acquirium.Client.data_object import _pivot_split_values
+from acquirium.Client.data_object import _apply_downsample, _pivot_split_values
 
 
 def _tall(keys):
@@ -27,6 +29,37 @@ class TestWideColumnOrder:
                                 "data__ns1:intake-in-tds",
                                 "data__ns1:PXR-brine-out-tds",
                                 "data__ns1:storage-tank-3-out-tds"]
+
+
+class TestApplyDownsample:
+    ORIGIN = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    EVERY = timedelta(hours=1)
+    # first bucket: unimodal (2.0) once nulls are ignored; second bucket: bimodal (1.0, 3.0)
+    VALUES = [1.0, 2.0, 2.0, None, None, None, 1.0, 1.0, 3.0, 3.0, 4.0, 9.0]
+
+    def _series(self, values):
+        times = [self.ORIGIN + i * timedelta(minutes=10) for i in range(len(values))]
+        return pl.DataFrame(
+            {"time": times, "value": values},
+            schema={"time": pl.Datetime(time_zone="UTC"), "value": pl.Float64},
+        )
+
+    def test_median(self):
+        out = _apply_downsample(self._series(self.VALUES), self.ORIGIN, self.EVERY, "median")
+        assert out["time"].to_list() == [self.ORIGIN, self.ORIGIN + self.EVERY]
+        assert out["value"].to_list() == [2.0, 3.0]
+
+    def test_multimodal_mode_warns_and_takes_median_of_modes(self):
+        with pytest.warns(UserWarning, match=r"1 of 2 buckets in 'flow' were multimodal"):
+            out = _apply_downsample(self._series(self.VALUES), self.ORIGIN, self.EVERY, "mode", label="flow")
+        assert out.columns == ["time", "value"]
+        assert out["value"].to_list() == [2.0, 2.0]
+
+    def test_unimodal_mode_does_not_warn(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            out = _apply_downsample(self._series(self.VALUES[:6]), self.ORIGIN, self.EVERY, "mode")
+        assert out["value"].to_list() == [2.0]
 
 
 class TestEmptyDataObjectConversion:

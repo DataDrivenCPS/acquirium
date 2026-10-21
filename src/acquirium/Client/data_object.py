@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 import re
+import warnings
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone, timedelta
 from typing import Any, Iterator, TYPE_CHECKING
@@ -270,8 +271,8 @@ def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
 # gap between its raw timestamps) to the target resolution:
 #   - identical -> used as-is, untouched.
 #   - finer than target (multiple raw readings per target step) ->
-#     downsampled: collapse each step's readings (mean/average,
-#     first/ignore_intermediate, last, min, max).
+#     downsampled: collapse each step's readings (mean/average, median,
+#     mode, first/ignore_intermediate, last, min, max).
 #   - coarser than target (gaps between raw readings at the target step) ->
 #     upsampled: fill the gaps by interpolating/holding/filling directly
 #     from that point's own true timestamps (interpolate, copy/ffill, zero,
@@ -285,7 +286,9 @@ def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
 # not constant and would make cross-series bucket alignment ambiguous.
 
 _UPSAMPLE_METHODS = {"interpolate", "copy", "ffill", "zero", "default_value", "null"}
-_DOWNSAMPLE_METHODS = {"mean", "average", "first", "ignore_intermediate", "last", "min", "max"}
+_DOWNSAMPLE_METHODS = {
+    "mean", "average", "median", "mode", "first", "ignore_intermediate", "last", "min", "max",
+}
 
 # A 5-way difference already yields C(5, 2) = 10 columns; more than that is
 # unwieldy and unlikely to be useful, so difference() caps it here.
@@ -386,6 +389,11 @@ def _build_time_grid(start: datetime, end: datetime, every: timedelta) -> list[d
 def _downsample_expr(method: str) -> pl.Expr:
     if method in ("mean", "average"):
         return pl.col("value").mean().alias("value")
+    if method == "median":
+        return pl.col("value").median().alias("value")
+    if method == "mode":
+        # Nulls are dropped to match the other aggregations; multimodal buckets take the median of the modes.
+        return pl.col("value").drop_nulls().mode().median().alias("value")
     if method in ("first", "ignore_intermediate"):
         return pl.col("value").first().alias("value")
     if method == "last":
@@ -397,9 +405,20 @@ def _downsample_expr(method: str) -> pl.Expr:
     raise ValueError(f"reconcile: unknown downsample method '{method}'")
 
 
-def _apply_downsample(df: pl.DataFrame, origin: datetime, every: timedelta, method: str) -> pl.DataFrame:
+def _apply_downsample(
+    df: pl.DataFrame,
+    origin: datetime,
+    every: timedelta,
+    method: str,
+    *,
+    label: str | None = None,
+) -> pl.DataFrame:
     """Assign each row of a ``[time, value]`` series to a fixed-size bucket
     aligned to ``origin``, then collapse each bucket per ``method``.
+
+    With ``method="mode"``, warns if any bucket is multimodal, since that
+    bucket's value (the median of its modes) may not itself be a mode.
+    ``label`` names the series in that warning.
 
     The downsample counterpart to ``_apply_upsample``. It isn't quite the
     same shape (it takes ``origin``/``every`` and does its own group-by,
@@ -422,7 +441,24 @@ def _apply_downsample(df: pl.DataFrame, origin: datetime, every: timedelta, meth
             )
         ).alias("time")
     )
-    return bucketed.group_by("time", maintain_order=True).agg(_downsample_expr(method)).sort("time")
+    aggs = [_downsample_expr(method)]
+    if method == "mode":
+        aggs.append(pl.col("value").drop_nulls().mode().len().alias("n_modes"))
+    out = bucketed.group_by("time", maintain_order=True).agg(aggs).sort("time")
+    if method != "mode":
+        return out
+
+    n_multimodal = out.filter(pl.col("n_modes") > 1).height
+    if n_multimodal:
+        series = f"'{label}'" if label is not None else "series"
+        warnings.warn(
+            f"reconcile: {n_multimodal} of {out.height} buckets in {series} were "
+            "multimodal; downsample='mode' used the median of each bucket's modes, "
+            "which may not itself be one of the modes",
+            UserWarning,
+            stacklevel=3,
+        )
+    return out.drop("n_modes")
 
 
 def _apply_upsample(df: pl.DataFrame, method: str, fill_value: float | None = None) -> pl.DataFrame:
@@ -1455,12 +1491,14 @@ class DataObject:
                 does, ``reconcile`` raises rather than silently picking a
                 method for you.
             downsample: How to collapse a point that's finer than the target
-                resolution: ``"mean"``/``"average"``, ``"first"``/
-                ``"ignore_intermediate"`` (keep only the first reading in
-                each step and discard the rest), ``"last"``, ``"min"``, or
-                ``"max"``. ``None`` (default): same rule as ``upsample`` —
-                only required, and only an error, if some point actually
-                needs it.
+                resolution: ``"mean"``/``"average"``, ``"median"``,
+                ``"mode"`` (most frequent reading; if multimodal, the median
+                of the modes, with a ``UserWarning`` since that median may
+                not itself be a mode), ``"first"``/``"ignore_intermediate"`` (keep only the
+                first reading in each step and discard the rest), ``"last"``,
+                ``"min"``, or ``"max"``. ``None`` (default): same rule as
+                ``upsample`` — only required, and only an error, if some
+                point actually needs it.
             fill_value: Constant used to fill in gaps when
                 ``upsample="default_value"``. Required for that method;
                 ignored otherwise.
@@ -1552,7 +1590,7 @@ class DataObject:
                         f"than the target resolution ({target}) and needs "
                         f"downsampling, but downsample=None"
                     )
-                bucketed = _apply_downsample(s, origin, target, downsample)
+                bucketed = _apply_downsample(s, origin, target, downsample, label=label)
                 merged = grid_df.join(bucketed, on="time", how="left").sort("time")
 
             else:
