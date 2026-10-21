@@ -51,6 +51,7 @@ from acquirium.internals.models import (
     TimeseriesInfo,
     compute_ref_uri,
 )
+from acquirium.Storage.migrations import DUCKDB_TIMESERIES_MIGRATIONS, migrate
 from acquirium.Storage.values import (
     normalize_value_kind,
     normalize_value_mode,
@@ -115,6 +116,7 @@ class DuckDBStore:
                     "materialization_work",
                     "materialization_lineage",
                     "materialization_deployments",
+                    "schema_migrations",
                     "stream_resets",
                     BINDING_PROGRESS_TABLE,
                     SYSTEM_STATE_TABLE,
@@ -211,6 +213,8 @@ class DuckDBStore:
                 UNIQUE (ref_id, ts)
             )
             """,
+        ]
+        dependent_stmts = [
             f"""
             CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
                 ref_uri   VARCHAR PRIMARY KEY,
@@ -260,6 +264,11 @@ class DuckDBStore:
         ]
         with self._lock, timed_debug(logger, "ensure_table"), self._own_conn() as conn:
             for stmt in stmts:
+                conn.execute(stmt)
+            with self._write_conn() as migration_conn:
+                migrate(migration_conn, backend="duckdb", component="timeseries",
+                        migrations=DUCKDB_TIMESERIES_MIGRATIONS)
+            for stmt in dependent_stmts:
                 conn.execute(stmt)
         return "ok"
 

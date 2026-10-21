@@ -163,6 +163,7 @@ def test_key_column_migrates_existing_ledger(materialization_store, tmp_path):
         ledger._execute(conn, "DROP INDEX experiment_observations_variable_idx")
         ledger._execute(conn, "DROP INDEX experiment_observations_ref_idx")
         ledger._execute(conn, "ALTER TABLE experiment_observations DROP COLUMN key_json")
+        ledger._execute(conn, "DELETE FROM schema_migrations WHERE component='experiments'")
         ledger._execute(conn, "CREATE INDEX experiment_observations_variable_idx ON experiment_observations(variable_id, run_id, sequence)")
         ledger._execute(conn, "CREATE INDEX experiment_observations_ref_idx ON experiment_observations(ref_uri, range_start, range_end)")
     migrated = ExperimentStore(store, tmp_path / "migration-artifacts")

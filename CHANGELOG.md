@@ -155,6 +155,8 @@ change in any release.
   model download grows from 66 MB to 133 MB.
 
 ### Fixed
+- Existing DuckDB and TimescaleDB databases upgrade in place through a shared,
+  versioned migration ledger before dependent views and indexes are created.
 - CURIEs such as `watr:UltrafiltrationUnit` or `quantitykind:Pressure` given as
   a class, relation or attribute value are expanded with the server's prefix
   table, in `client.resolve()` as well. They were sent to text matching

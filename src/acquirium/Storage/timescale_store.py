@@ -15,6 +15,7 @@ import logging
 import pyarrow as pa
 import polars as pl
 from rdflib import URIRef
+from acquirium.Storage.migrations import TIMESERIES_MIGRATIONS, migrate
 from acquirium.Storage.values import (
     normalize_value_kind,
     normalize_value_mode,
@@ -77,7 +78,7 @@ class TimescaleStore(TimeseriesStore):
                     "experiment_variables",
                     "experiment_templates",
                     "experiment_metadata_resolutions",
-                    "stream_resets", "materialization_work", "materialization_lineage", "materialization_deployments",
+                    "schema_migrations", "stream_resets", "materialization_work", "materialization_lineage", "materialization_deployments",
                     BINDING_PROGRESS_TABLE, SYSTEM_STATE_TABLE, TIMESERIES_TABLE, REF_IDS_TABLE, STREAMS_TABLE, LOGS_TABLE,
                 ):
                     cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(table)))
@@ -125,6 +126,9 @@ class TimescaleStore(TimeseriesStore):
                 );
                 """
             )
+            with self._write_conn() as migration_conn:
+                migrate(migration_conn, backend="postgres", component="timeseries",
+                        migrations=TIMESERIES_MIGRATIONS)
             cur.execute(f"CREATE INDEX IF NOT EXISTS idx_timeseries_last_revision ON {TIMESERIES_TABLE} (last_revision);")
             # Every query filters by ref_id first, so the unique (ref_id, ts)
             # index below serves the read path. Avoid Timescale's redundant
