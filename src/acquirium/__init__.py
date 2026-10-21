@@ -2,7 +2,8 @@ from acquirium.Client.acquirium import Acquirium
 from acquirium.runtime import init, shutdown
 from acquirium.Materialization import App, OutputSpec, align, output
 from acquirium.debug import console
-from acquirium.Experiments import RecordedSeries, timestamp
+from acquirium.Client.streams import Stream, StreamInterval
+from acquirium.Experiments import timestamp
 from acquirium.ExperimentValues import register_value_handler
 from acquirium.Client.explore.core import Query
 from acquirium.Client.query import Q

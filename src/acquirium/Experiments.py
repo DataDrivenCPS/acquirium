@@ -8,6 +8,7 @@ from hashlib import sha256
 import functools
 import io
 import json
+import numbers
 import logging
 import re
 import reprlib
@@ -19,6 +20,7 @@ from uuid import uuid4
 from dateutil import parser as dtparser
 import polars as pl
 from acquirium.internals.models import compute_ref_uri
+from acquirium.Client.streams import Stream, StreamInterval, samples_frame
 from acquirium.ExperimentValues import ARTIFACT_KINDS, KINDS, TABLE_MEDIA_TYPE, check_kind, to_json
 from acquirium.ExperimentMetadata import (
     EXPERIMENT, ExperimentMetadataGraph, annotation_uri, experiment_query,
@@ -1022,18 +1024,30 @@ class Point:
     """A deliberately small semantic handle; storage only needs its URI."""
     uri: str
 
-@dataclass(frozen=True)
-class RecordedSeries:
-    """A time-series output recorded by one Experiment."""
-    ref_uri: str
-    _client: Any = field(repr=False, compare=False)
+def _sample_rows(rows: Any) -> list[tuple[datetime, Any]]:
+    """Read (time, value) pairs, or a table with time and value columns.
 
-    def dataframe(self, **kwargs: Any):
-        """Fetch the recorded samples as a Polars DataFrame."""
-        return self._client.timeseries_df(self.ref_uri, **kwargs)
-
-    def __str__(self) -> str:
-        return self.ref_uri
+    Tables may use the names stream reads return: `time` or `ts`, and
+    `value` or `value_numeric`. A wide query frame with a time column and one
+    stream column works too.
+    """
+    if type(rows).__module__.startswith("pyarrow") and hasattr(rows, "schema"):
+        rows = pl.from_arrow(rows)
+    if isinstance(rows, pl.DataFrame):
+        time = next((name for name in ("time", "ts") if name in rows.columns), None)
+        value = next((name for name in ("value", "value_numeric") if name in rows.columns), None)
+        if time is not None and value is None and len(rows.columns) == 2:
+            value = next(name for name in rows.columns if name != time)
+        if time is None or value is None:
+            raise ValueError("time-series tables need a time (or ts) column and a value (or value_numeric) column")
+        for column in ("data_alias", "point_id", "ref", "uri"):
+            if column in rows.columns and rows[column].n_unique() > 1:
+                raise ValueError("these rows come from several streams; record one stream at a time")
+        rows = zip(rows[time].to_list(), rows[value].to_list())
+    pairs = [(timestamp(when), value) for when, value in rows]
+    if any(not isinstance(value, numbers.Real) for _, value in pairs):
+        raise ValueError("time-series rows need a numeric value in every row")
+    return pairs
 
 @dataclass
 class StreamAnnotation:
@@ -1059,13 +1073,17 @@ class StreamAnnotation:
         result = self._client.close_experiment_stream_annotation(self.annotation_id, end=timestamp(end).isoformat())
         self.range_end = timestamp(result["range_end"])
 
+    @property
+    def stream(self) -> Stream:
+        return Stream(self.ref_uri, self._client)
+
     def dataframe(self, **kwargs: Any):
         """Read the current stream values within the claimed interval."""
         options = dict(kwargs)
-        options.setdefault("start", self.range_start.isoformat())
+        options.setdefault("start", self.range_start)
         if self.range_end is not None:
-            options.setdefault("end", self.range_end.isoformat())
-        return self._client.timeseries_df(self.ref_uri, **options)
+            options.setdefault("end", self.range_end)
+        return self.stream.dataframe(**options)
 
 @dataclass(frozen=True)
 class Observation:
@@ -1099,10 +1117,22 @@ class Observation:
             raise TypeError("dataframe() is only available for table and time-series observations")
         options = dict(kwargs)
         if self.range_start is not None:
-            options.setdefault("start", self.range_start.isoformat())
+            options.setdefault("start", self.range_start)
         if self.range_end is not None:
-            options.setdefault("end", self.range_end.isoformat())
-        return self._client.timeseries_df(self.ref_uri, **options)
+            options.setdefault("end", self.range_end)
+        return self.stream.dataframe(**options)
+
+    @property
+    def stream(self) -> Stream | None:
+        """The stream a time-series observation recorded or referenced."""
+        return Stream(self.ref_uri, self._client) if self.ref_uri is not None else None
+
+    @property
+    def interval(self) -> StreamInterval | None:
+        """The stream and time range this observation covers, to record in another run."""
+        if self.ref_uri is None or self.range_start is None or self.range_end is None:
+            return None
+        return self.stream.between(self.range_start, self.range_end)
 
     def read_bytes(self) -> bytes:
         """Download the saved bytes of a file or table observation."""
@@ -1207,7 +1237,12 @@ class ExperimentVariable:
         if self.study._experiment is None: raise RuntimeError("start an experiment before mutating variables")
         return self.study._experiment.run_id
     def record(self, value: Any, *, occurred_at: datetime | None = None):
-        """Record a value, event, file path, or time-series rows in the active run."""
+        """Record a value, event, file, table, or time series in the active run.
+
+        A time-series variable takes rows, which are stored with the run, or
+        `stream.between(start, end)`, which records a reference: later reads
+        see the stream's current samples in that range.
+        """
         # Check before file/stream operations, including empty time series.
         self.run_id
         if self.kind in {"file", "table", "timeseries"} and occurred_at is not None:
@@ -1223,7 +1258,13 @@ class ExperimentVariable:
                 media_type=self.study._metadata[self.variable_id].get("media_type"),
             )
         if self.kind == "timeseries":
+            if isinstance(value, StreamInterval):
+                return self._reference(value)
+            if isinstance(value, Stream):
+                raise TypeError("record a stream as stream.between(start, end), or its rows as stream.dataframe()")
             return self.add(value)
+        if isinstance(value, (Stream, StreamInterval)):
+            raise TypeError(f"{self.label!r} is a {self.kind} variable; only time-series variables record streams")
         return self.set(value, occurred_at=occurred_at)
     def set(self, value: Any, *, occurred_at: datetime | None = None):
         value = to_json(value)
@@ -1231,12 +1272,12 @@ class ExperimentVariable:
         return self.study.client.observe_experiment(self.run_id, self.variable_id, value=value, occurred_at=occurred_at.isoformat() if occurred_at else None)
     def append(self, value: Any, *, occurred_at: datetime | None = None): return self.set(value, occurred_at=occurred_at)
     def attach(self, path: str | Path): return self.study.client.attach_experiment_file(self.run_id, self.variable_id, path)
-    def use(self, ref_uri: str | Point, *, interval: tuple[datetime, datetime] | None = None):
-        # Inputs can point at pre-existing streams without copying their data.
-        # The recorded reference/range is enough to explain what was consumed.
-        body = {"ref_uri": str(ref_uri.uri if isinstance(ref_uri, Point) else ref_uri)}
-        if interval: body.update(start=interval[0].isoformat(), end=interval[1].isoformat())
-        return self.study.client.observe_experiment(self.run_id, self.variable_id, **body)
+    def _reference(self, interval: StreamInterval):
+        # The run keeps the reference and range, not a copy of the samples.
+        return self.study.client.observe_experiment(
+            self.run_id, self.variable_id, ref_uri=interval.ref_uri,
+            start=interval.start.isoformat(), end=interval.end.isoformat(),
+        )
     def add(self, rows: Any):
         if self.kind != "timeseries": raise TypeError("add() is only valid for time-series variables")
         metadata = self.study._metadata[self.variable_id]; observed = metadata.get("observed")
@@ -1246,11 +1287,7 @@ class ExperimentVariable:
         if experiment is None:
             raise RuntimeError("start an experiment before mutating variables")
         source = f"experiment/{experiment.run_id}"; ref_name = self.label
-        if hasattr(rows, "to_pylist"):
-            rows = [(item.get("time", item.get("ts")), item["value"]) for item in rows.to_pylist()]
-        elif hasattr(rows, "to_dicts"):
-            rows = [(item.get("time", item.get("ts")), item["value"]) for item in rows.to_dicts()]
-        rows = [(timestamp(when), value) for when, value in rows]
+        rows = _sample_rows(rows)
         if not rows: return None
         # Each run's samples get their own point carrying the run's identity,
         # so stream queries can select a run. The observed property is an
@@ -1272,9 +1309,9 @@ class ExperimentVariable:
             # Cache on the run so later runs get their own stream metadata.
             experiment._registered_streams.add(self.variable_id)
         self.study.ac.insert_timeseries(source, ref_name, rows)
-        ref_uri = self.study.ac.reference_uri(source, ref_name)
-        self.use(ref_uri, interval=(min(x[0] for x in rows), max(x[0] for x in rows)))
-        return RecordedSeries(str(ref_uri), self.study.client)
+        stream = Stream(str(self.study.ac.reference_uri(source, ref_name)), self.study.client)
+        self._reference(stream.between(min(row[0] for row in rows), max(row[0] for row in rows)))
+        return stream
 
     def observations(self, experiments: "ExperimentCollection | None" = None) -> "ObservationCollection":
         """Select this variable's recorded values across Experiments."""

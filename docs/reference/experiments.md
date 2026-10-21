@@ -94,7 +94,7 @@ Use `record()` for every variable type. Writes go to the Study object's active r
 |---|---|
 | `variable.record(value)` | Store a value or event, upload a file, or write samples according to the declared type |
 | `variable.record(value, occurred_at=...)` | Supply an event time for JSON, text, scalar, or log data |
-| `variable.use(ref_uri, interval=None)` | Record an existing stream reference and optional pair of datetimes without copying samples |
+| `variable.record(stream.between(start, end))` | Record a reference to a stream range without copying its samples |
 | `run.output[label] = value` | Record an output on this active run; infer a declaration if the label is new |
 
 The type-specific write methods remain available:
@@ -131,10 +131,20 @@ string, a scalar for a number or boolean, and a JSON variable otherwise.
 
 `record(path)` sends the file's declared `media_type`; `attach(path)` uses the
 client's default. Time-series rows may be `(timestamp, value)` pairs or an
-Arrow or Polars table with `time` (or `ts`) and `value` columns. Strings must be
-ISO 8601 timestamps; naive datetimes use UTC. A sample write returns
-`RecordedSeries`, or `None` for empty input. Files use server receipt time;
-time-series rows carry sample times and do not accept `occurred_at`.
+Arrow or Polars table with `time` (or `ts`) and `value` (or `value_numeric`)
+columns. A wide query frame with `time` and one stream column also works;
+rows from several streams raise `ValueError`. Every value must be a number.
+Strings must be ISO 8601 timestamps; naive datetimes use UTC. A sample write
+returns the run's `Stream`, or `None` for empty input. Files use server
+receipt time; time-series rows carry sample times and do not accept
+`occurred_at`.
+
+A time-series variable also records a `StreamInterval`, from
+`stream.between(start, end)`. That stores only the stream and range: reads
+return the stream's current samples, including later corrections and data
+that arrives afterwards. Record `interval.dataframe()` instead to store a
+fixed copy. Recording a `Stream` without a range raises `TypeError`, as does
+recording a stream to a variable of another type.
 
 ### Output assignment
 
@@ -249,22 +259,30 @@ columns. Uniform scalar types retain native columns; integers mixed with floats
 widen to `Float64`. Reads hydrate missing declarations added by another session
 while preserving existing handles.
 
-### RecordedSeries
+### Streams
 
-| Member | Behavior |
+| Method / member | Returns |
 |---|---|
-| `recorded_series.ref_uri` | Persistent reference to the stream returned by a sample write |
-| `recorded_series.dataframe(**kwargs)` | Read the stream's samples |
+| `ac.stream(source_id, name)` | A `Stream` for the stream a driver writes as `(source_id, name)` |
+| `ac.stream(ref_uri)` | A `Stream` for a reference URI |
+| `stream.ref_uri` | The stream's reference URI; `str(stream)` returns it too |
+| `stream.dataframe(start=None, end=None, **options)` | The stream's samples as `time` and `value` columns |
+| `stream.between(start, end)` | A `StreamInterval`; the end must not precede the start |
+| `interval.stream`, `interval.start`, `interval.end` | The interval's stream and inclusive bounds |
+| `interval.dataframe(**options)` | The samples in the interval |
+| `observation.stream` | The stream a time-series observation recorded or referenced |
+| `observation.interval` | That stream and the observation's range, or `None` |
 
 ```python
 recorded_power = power.record(power_rows)
 power_samples = recorded_power.dataframe()
 ```
 
-Sample reads accept the low-level time-series client's `start`, `end`, `limit`,
-`order`, `timeout`, and `value_mode` options. `Observation.dataframe()` defaults
-to its recorded range; `RecordedSeries.dataframe()` reads its stream without
-those default bounds.
+Sample reads accept the low-level time-series client's `limit`, `order`,
+`timeout`, and `value_mode` options. Every experiment sample read returns
+`time` and `value` columns: `Stream`, `StreamInterval`, time-series
+`Observation`, and `StreamAnnotation` alike. `Observation.dataframe()` defaults
+to its recorded range. Streams compare equal when their reference URIs do.
 
 ## Metadata
 

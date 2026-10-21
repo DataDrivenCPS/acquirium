@@ -9,6 +9,7 @@ import warnings
 import polars as pl
 import pytest
 
+from acquirium.Client.streams import Stream
 from acquirium.Experiments import ExperimentStore, Study, StudyService, timestamp
 from acquirium.Storage.duckdb_store import DuckDBStore
 from acquirium.internals.models import compute_ref_uri
@@ -103,6 +104,11 @@ def _recorded_stream(store, ledger, run, variable, rows, name="level"):
     store.upsert_rows(ref, rows, value_kind="numeric")
     ledger.observe(run["run_id"], variable["variable_id"], ref_uri=ref, interval=(rows[0][0], rows[-1][0]))
     return ref
+
+
+def _stream_frame(ref, rows):
+    """What the time-series client returns for one stream."""
+    return pl.DataFrame({"ts": [when for when, _ in rows], "value": [value for _, value in rows], "uri": [ref] * len(rows)})
 
 
 def _samples(store, ref):
@@ -398,7 +404,7 @@ def test_handles_print_what_they_hold_without_reading(study_api):
     run = study.start({"scenario": "baseline"})
     assert repr(study) == f"<Study 'study': 1 input, 1 output, 1 log; running {run.run_id}>"
     cost.record(500)
-    source.use("urn:example:ref", interval=(timestamp("2026-01-01T00:00:00Z"), timestamp("2026-01-02T00:00:00Z")))
+    source.record(Stream("urn:example:ref").between("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"))
     log.record("done")
     run.finish()
     observations = study.experiments.observations().all()
@@ -437,9 +443,9 @@ def test_stream_annotations_support_historical_and_live_intervals(study_api):
     assert StudyService(ac).stream_annotations(ref_uri="urn:plant:gas-flow", end=start)[0].run_id == run.run_id
     assert not reopened.stream_annotations(ref_uri="urn:another-stream")
 
-    expected = object()
-    study_api.client.timeseries_df.return_value = expected
-    assert historical.dataframe() is expected
+    study_api.client.timeseries_df.return_value = _stream_frame("urn:plant:gas-flow", [(start, 1.0)])
+    assert historical.dataframe().rows() == [(start, 1.0)]
+    assert historical.stream == Stream("urn:plant:gas-flow")
     study_api.client.timeseries_df.assert_called_once_with(
         "urn:plant:gas-flow", start=start.isoformat(), end=end.isoformat())
 
@@ -535,7 +541,7 @@ def test_reopened_study_hydrates_variables_and_reads_experiments(study_api):
 
     first = study.start({"scenario": "baseline", "batch": "notebook-1"})
     cost.record(12.5)
-    power.use("urn:acquirium:power-1", interval=(start, end))
+    power.record(Stream("urn:acquirium:power-1").between(start, end))
     first.finish()
 
     reopened = StudyService(ac).get("study")
@@ -586,15 +592,17 @@ def test_reopened_study_hydrates_variables_and_reads_experiments(study_api):
     assert reopened.variables["operating cost"].observations(selected).latest().value == 12.5
 
     power_observation = reopened.experiments.get(first.run_id).observations(power.variable_id).latest()
-    expected_frame = object()
-    client.timeseries_df.return_value = expected_frame
+    client.timeseries_df.return_value = _stream_frame("urn:acquirium:power-1", [(start, 3.0), (end, 4.0)])
     assert power_observation.ref_uri == "urn:acquirium:power-1"
-    assert power_observation.dataframe() is expected_frame
-    client.timeseries_df.assert_called_once_with(
+    assert power_observation.dataframe().columns == ["time", "value"]
+    assert power_observation.dataframe()["value"].to_list() == [3.0, 4.0]
+    client.timeseries_df.assert_called_with(
         power_observation.ref_uri,
         start=start.isoformat(),
         end=end.isoformat(),
     )
+    # The recorded range can be recorded again, as another run's input.
+    assert power_observation.interval == Stream("urn:acquirium:power-1").between(start, end)
 
 
 def test_variable_catalog_expands_metadata_and_omits_deleted_keys(study_api):
@@ -751,11 +759,10 @@ def test_record_files_and_streams(study_api, tmp_path):
         "study_id": study.study_id, "run_id": run.run_id, "variable_id": stream.variable_id, "observed": "urn:tank",
     }
     client.observe_experiment.assert_called_once_with(run.run_id, stream.variable_id, ref_uri=recorded.ref_uri, start=when.isoformat(), end=when.isoformat())
-    expected_frame = object()
-    client.timeseries_df.return_value = expected_frame
-    assert recorded.dataframe(limit=5) is expected_frame
-    client.timeseries_df.assert_called_once_with(recorded.ref_uri, limit=5)
-    assert str(recorded) == recorded.ref_uri
+    client.timeseries_df.return_value = _stream_frame(recorded.ref_uri, [(when, 10.0)])
+    assert recorded.dataframe(limit=5).rows() == [(when, 10.0)]
+    client.timeseries_df.assert_called_once_with(recorded.ref_uri, start=None, end=None, limit=5)
+    assert str(recorded) == recorded.ref_uri == "urn:acquirium#recorded-volume"
     for variable in (file, stream):
         with pytest.raises(TypeError, match="occurred_at"):
             variable.record(None, occurred_at=when)
@@ -1042,6 +1049,83 @@ def test_scalars_frame_has_one_row_per_run_and_a_column_per_scalar(study_api):
         study.experiments.scalars("status")
     with pytest.raises(ValueError, match="repeat: pumps"):
         study.experiments.scalars(metadata=["pumps"])
+
+
+def test_stream_handles_name_a_stream_and_a_range():
+    from acquirium.Client.acquirium import Acquirium
+    from acquirium.Client.streams import StreamInterval
+
+    client = Mock()
+    by_name = Acquirium.stream(SimpleNamespace(client=client), "site-driver", "biogas-flow")
+    assert by_name == Stream(str(compute_ref_uri("site-driver", "biogas-flow")))
+    assert Acquirium.stream(SimpleNamespace(client=client), by_name.ref_uri) == by_name
+    assert str(by_name) == by_name.ref_uri and repr(by_name) == f"<Stream {by_name.ref_uri}>"
+    interval = by_name.between("2026-01-01T00:00:00", "2026-01-02T00:00:00Z")
+    assert (interval.start, interval.end) == (T0, T0.replace(day=2))  # naive times are UTC
+    assert isinstance(interval, StreamInterval) and interval.ref_uri == by_name.ref_uri
+    with pytest.raises(ValueError, match="end at or after"):
+        by_name.between(T0.replace(day=2), T0)
+    client.timeseries_df.return_value = pl.DataFrame()
+    empty = interval.dataframe()
+    assert (empty.height, empty.schema["time"], empty.schema["value"]) == (0, pl.Datetime("us", "UTC"), pl.Float64)
+    client.timeseries_df.assert_called_once_with(by_name.ref_uri, start=T0.isoformat(), end=T0.replace(day=2).isoformat())
+    with pytest.raises(RuntimeError, match="not bound"):
+        Stream("urn:x").dataframe()
+
+
+def test_time_series_record_a_reference_or_a_copy(study_api):
+    study, client, ac = study_api.study, study_api.client, study_api.ac
+    site = Stream("urn:site:biogas", client)
+    biogas = study.input("biogas flow").timeseries(unit="M3-PER-HR")
+    trajectory = study.output("trajectory").timeseries()
+    cost = study.output("cost").scalar()
+    window = site.between(T0, T0.replace(hour=2))
+    run = study.start()
+
+    # A range records a reference; no samples are written.
+    biogas.record(window)
+    client.observe_experiment.assert_called_with(
+        run.run_id, biogas.variable_id, ref_uri="urn:site:biogas",
+        start=T0.isoformat(), end=T0.replace(hour=2).isoformat())
+    ac.insert_timeseries.assert_not_called()
+
+    # Rows read from the range are stored with the run, under its own source.
+    client.timeseries_df.return_value = _stream_frame("urn:site:biogas", [(T0, 1.0), (T0.replace(hour=1), 2.0)])
+    ac.reference_uri.return_value = "urn:acquirium#copied"
+    copied = biogas.record(window.dataframe())
+    ac.insert_timeseries.assert_called_once_with(f"experiment/{run.run_id}", "biogas flow", [(T0, 1.0), (T0.replace(hour=1), 2.0)])
+    assert copied == Stream("urn:acquirium#copied")
+
+    # Stream query frames use ts or time, and value or value_numeric.
+    narrow = pl.DataFrame({"data_alias": ["flow"] * 2, "point_id": ["p"] * 2,
+                           "time": [T0, T0.replace(hour=1)], "value_numeric": [3.0, 4.0], "value_text": [None, None]})
+    trajectory.record(narrow)
+    assert ac.insert_timeseries.call_args.args[2] == [(T0, 3.0), (T0.replace(hour=1), 4.0)]
+    # So do wide query frames with one stream column.
+    trajectory.record(pl.DataFrame({"time": [T0], "biogas": [5.0]}))
+    assert ac.insert_timeseries.call_args.args[2] == [(T0, 5.0)]
+    for rows, message in ((narrow.with_columns(point_id=pl.Series(["p", "q"])), "several streams"),
+                          (pl.DataFrame({"time": [T0], "value_numeric": [None]}, schema_overrides={"value_numeric": pl.Float64}), "numeric value"),
+                          (pl.DataFrame({"time": [T0], "value": ["high"]}), "numeric value"),
+                          (pl.DataFrame({"time": [T0], "a": [1.0], "b": [2.0]}), "time \\(or ts\\)"),
+                          (pl.DataFrame({"when": [T0], "value": [1.0]}), "time \\(or ts\\)")):
+        with pytest.raises(ValueError, match=message):
+            trajectory.record(rows)
+    with pytest.raises(TypeError, match="between"):
+        biogas.record(site)
+    with pytest.raises(TypeError, match="only time-series"):
+        cost.record(window)
+    run.finish()
+
+    # One run's recorded range can be another run's input.
+    observations = run.observations(biogas).all()
+    reference, copy = observations
+    assert reference.interval == window and reference.stream == site
+    assert copy.stream == copied
+    second = study.start()
+    biogas.record(copy.interval)
+    assert client.observe_experiment.call_args.kwargs["ref_uri"] == "urn:acquirium#copied"
+    second.finish()
 
 
 def test_output_assignment_reuses_handles_and_preserves_run_boundary(study_api):

@@ -610,7 +610,7 @@ def _(comparison, pl, plt, recorded_study):
         _run = recorded_study.experiments.get(_row["experiment_id"])
         # Each run saved one tank-volume batch. Read that batch's samples.
         _samples = _run.observations("tank volume").latest().dataframe()
-        volume_axis.plot(_samples["ts"], _samples["value"], label=_row["scenario"])
+        volume_axis.plot(_samples["time"], _samples["value"], label=_row["scenario"])
     volume_axis.set(xlabel="Time", ylabel="Tank volume (m³)", title="Saved tank volume by scenario")
     volume_axis.legend()
     volume_axis.grid(alpha=0.25)
@@ -670,14 +670,13 @@ def _(mo):
 
 @app.cell
 def _(current_experiments):
-    # Retrieve the baseline's tank-volume output and its time range.
+    # Retrieve the baseline's tank-volume output and the time range it covers.
     baseline_runs = current_experiments.where(scenario="baseline")
     baseline_volume_observation = baseline_runs.observations("tank volume").latest()
-    comparison_start = baseline_volume_observation.range_start.isoformat()
-    comparison_end = baseline_volume_observation.range_end.isoformat()
+    comparison_range = baseline_volume_observation.interval
     simulated_volume = baseline_volume_observation.dataframe()
     simulated_volume.head()
-    return comparison_end, comparison_start, simulated_volume
+    return comparison_range, simulated_volume
 
 
 @app.cell(hide_code=True)
@@ -700,7 +699,7 @@ def _(TANK_VOLUME_URI, ac, mo, np, simulated_volume):
     ac.insert_timeseries(
         site_source,
         site_stream_name,
-        list(zip(simulated_volume["ts"].to_list(), _measured.tolist(), strict=True)),
+        list(zip(simulated_volume["time"].to_list(), _measured.tolist(), strict=True)),
         point_uri=TANK_VOLUME_URI,
         replace=True,
     )
@@ -719,7 +718,7 @@ def _(mo):
     data only. `ref_uri` identifies each stream.
 
     If you know the source ID and stream name from the driver configuration,
-    `ac.reference_uri(source_id, stream_name)` gives its reference URI.
+    `ac.stream(source_id, stream_name)` gives a handle for that stream.
     """)
     return
 
@@ -731,9 +730,9 @@ def _(TANK_URI, ac, site_source, site_stream_name):
         include_connection_points=False,
     )
     # This example knows the source and name from its setup cell.
-    site_ref_uri = str(ac.reference_uri(site_source, site_stream_name))
+    site_stream = ac.stream(site_source, site_stream_name)
     tank_measurements.data().metadata(include_ref_uris=True)
-    return (site_ref_uri,)
+    return (site_stream,)
 
 
 @app.cell
@@ -757,8 +756,9 @@ def _(mo):
     mo.md(r"""
     ### Match timestamps and compare values
 
-    Read the site stream over the simulation's time range, give the value
-    columns distinct names, and join on timestamp. Both streams use cubic
+    Read the site stream over the simulation's time range with
+    `site_stream.between(start, end)`, give the value columns distinct
+    names, and join on timestamp. Both streams use cubic
     metres; convert units first if yours differ. If your site samples arrive
     at different times, resample both streams to a common interval first.
     """)
@@ -766,13 +766,14 @@ def _(mo):
 
 
 @app.cell
-def _(ac, comparison_end, comparison_start, pl, simulated_volume, site_ref_uri):
-    site_volume = ac.client.timeseries_df(site_ref_uri, start=comparison_start, end=comparison_end)
+def _(comparison_range, pl, simulated_volume, site_stream):
+    site_range = site_stream.between(comparison_range.start, comparison_range.end)
+    site_volume = site_range.dataframe()
     tank_comparison = simulated_volume.select(
-        "ts", pl.col("value").alias("simulated_volume_m3")
+        "time", pl.col("value").alias("simulated_volume_m3")
     ).join(
-        site_volume.select("ts", pl.col("value").alias("site_volume_m3")),
-        on="ts",
+        site_volume.select("time", pl.col("value").alias("site_volume_m3")),
+        on="time",
         how="inner",
     ).with_columns(
         # A positive residual means the site reading is above the simulation.
@@ -796,9 +797,9 @@ def _(pl, tank_comparison):
 @app.cell
 def _(plt, tank_comparison):
     comparison_figure, comparison_axis = plt.subplots()
-    comparison_axis.plot(tank_comparison["ts"], tank_comparison["simulated_volume_m3"], label="Baseline schedule")
+    comparison_axis.plot(tank_comparison["time"], tank_comparison["simulated_volume_m3"], label="Baseline schedule")
     comparison_axis.plot(
-        tank_comparison["ts"],
+        tank_comparison["time"],
         tank_comparison["site_volume_m3"],
         label="Site measurements (synthetic)",
         alpha=0.8,

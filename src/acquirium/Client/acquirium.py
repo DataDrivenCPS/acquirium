@@ -30,6 +30,7 @@ def _dt_to_iso(v: "str | datetime | None") -> "str | None":
 
 
 from acquirium.Client.client import AcquiriumClient, DEFAULT_HEALTH_REQUEST_TIMEOUT
+from acquirium.Client.streams import Stream
 from acquirium.Experiments import Point, StudyService
 from acquirium.internals.models import compute_ref_uri
 
@@ -389,6 +390,16 @@ class Acquirium:
     def reference_uri(self, source_id: str, ref_name: str) -> URIRef:
         """Return the canonical Acquirium reference URI for ``(source_id, ref_name)``."""
         return compute_ref_uri(source_id, ref_name)
+
+    def stream(self, source_id_or_uri: str | URIRef, name: str | None = None) -> Stream:
+        """Return a handle for one stored stream.
+
+        ``ac.stream(source_id, name)`` names a stream by the source and stream
+        name its driver writes with; ``ac.stream(ref_uri)`` wraps a reference
+        URI. Use ``stream.between(start, end)`` to select a time range.
+        """
+        ref_uri = compute_ref_uri(str(source_id_or_uri), name) if name is not None else source_id_or_uri
+        return Stream(str(ref_uri), self.client)
 
     def point(self, uri: str) -> Point:
         """Return a lightweight semantic point handle for experiment variables."""

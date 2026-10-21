@@ -433,7 +433,8 @@ simulated_power = study.output("simulated power").timeseries(unit="kW")
 ```
 
 The run source and variable label identify the stream. `record()` returns a
-`RecordedSeries`; call `.dataframe()` to read its samples.
+`Stream` handle; call `.dataframe()` to read its samples as `time` and
+`value` columns.
 
 For example, this finds mass-flow streams connected to the RO stage, including
 the recorded output:
@@ -461,33 +462,56 @@ for ways to find the available properties.
 
 ## Refer to stored input data
 
-Use `use()` when an Experiment consumes a stream that is already in Acquirium:
+When an Experiment uses a stream that is already in Acquirium, record a range
+of it:
 
 ```python
 # Replace these names with the ones from your driver configuration.
-stream_source = "site-driver"
-stream_name = "biogas-flow"
-stream_ref_uri = str(ac.reference_uri(stream_source, stream_name))
+biogas = ac.stream("site-driver", "biogas-flow")
 
-# Time-series input: reference samples already collected at the site.
+# Time-series input: samples collected at the site.
 source_data = study.input("source data").timeseries()
-input_start = aq.timestamp("2026-08-01T12:00:00Z")
-input_end = aq.timestamp("2026-08-02T12:00:00Z")
-input_interval = (input_start, input_end)
+input_range = biogas.between("2026-08-01T12:00:00Z", "2026-08-02T12:00:00Z")
 
 experiment = study.start()
-source_data.use(stream_ref_uri, interval=input_interval)
+source_data.record(input_range)
 experiment.finish()
 ```
 
-`use()` stores the stream reference and interval. Reads include later
-corrections to the source data. Record a file for a fixed snapshot.
+The run stores the stream and range, not the samples. Each read returns the
+stream's current samples in that range, so it includes later corrections and
+data that arrives after the run, as long as it falls inside the range.
+
+To keep the samples exactly as they are now, record the rows instead:
+
+```python
+experiment = study.start()
+source_data.record(input_range.dataframe())
+experiment.finish()
+```
+
+The copy is stored under the run's own source and does not change when the
+site stream does. `ac.stream(ref_uri)` also accepts a stream's reference URI.
+
+A recorded range can be another run's input. `observation.interval` is the
+stream and range an observation covers:
+
+```python
+previous = study.experiments.where(scenario="baseline").observations("source data").latest()
+
+experiment = study.start({"scenario": "rerun"})
+source_data.record(previous.interval)
+experiment.finish()
+```
+
+A run whose stream another run uses this way cannot be deleted on its own;
+delete the two together.
 
 ## Tag an existing live stream
 
 Use `annotate_stream()` to associate an existing stream interval with a run.
 Set both bounds for past data, or omit the end for an ongoing trial. Find the
-stream URI through discovery or `ac.reference_uri(source, name)`.
+stream URI through discovery or `ac.stream(source, name).ref_uri`.
 
 ```python
 study = ac.study.define("membrane trials")

@@ -97,10 +97,13 @@ For other data it stores references:
 - Tables are saved the same way, as Parquet files, and read back as Polars.
 - Time-series samples go to Acquirium's time-series storage. The ledger records
   their stream URI and time range.
-- `use()` records an existing stream URI and optional interval.
+- A stream range, `stream.between(start, end)`, records an existing stream's
+  URI and interval without copying its samples.
 
 File artifacts are fixed snapshots; identical bytes share one copy. Stream
-references read the current samples, including later corrections.
+references read the current samples, including later corrections and data that
+arrives after the run. To keep a fixed copy of a range, record its rows,
+`interval.dataframe()`; they are stored under the run's own source.
 
 ## Deleting runs
 
@@ -130,8 +133,9 @@ add or close an annotation after the Experiment finishes. `created_at` records
 when the annotation was added; its interval describes the data's time range.
 
 Find annotations by Experiment, Study, stream URI, or overlapping time window.
-Use a variable's `use()` method to record a stream as a named input or output.
-Use `annotate_stream()` to associate an interval without declaring a variable.
+Record `stream.between(start, end)` to a time-series variable to use a stream
+as a named input or output. Use `annotate_stream()` to associate an interval
+without declaring a variable, or to leave its end open.
 
 Metadata belongs to the object it describes. For example, `digester=A` can
 describe a run and `treatment=new membrane` one annotated interval. Read stream
@@ -172,8 +176,8 @@ attributes such as `unit`. The
 [integration plan](../plans/experiment-metadata-integration.md) tracks these
 remaining differences and later cleanup.
 
-Stream annotations read live data; there is no experiment snapshot operation
-for stream intervals. Use file artifacts for fixed copies.
+Stream annotations and stream ranges read live data. Record a range's rows for
+a fixed copy; an annotation has no copy form.
 
 Stream discovery, metadata editing, and derived-stream lineage belong to their
 respective APIs. The experiment interface uses the resulting stream references.
