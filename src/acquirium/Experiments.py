@@ -1418,15 +1418,14 @@ class ExperimentVariable:
         experiment = self.study._experiment
         if experiment is None:
             raise RuntimeError("start an experiment before mutating variables")
-        source = f"experiment/{experiment.run_id}"; ref_name = self.label
+        source = f"experiment/{experiment.run_id}"; ref_name = _stream_name(self.variable_id, ())
         rows = _sample_rows(rows)
         if not rows: return None
         # Each run's samples get their own point carrying the run's identity,
         # so stream queries can select a run. The observed property is an
         # attribute, not the point: plant queries on that property return
         # measured data only, never simulated runs mixed in by timestamp.
-        cache_key = (self.variable_id, ())
-        if cache_key not in experiment._registered_streams:
+        if ref_name not in experiment._registered_streams:
             identity = {"study_id": self.study.study_id, "run_id": experiment.run_id, "variable_id": self.variable_id}
             if observed is not None:
                 identity["observed"] = observed
@@ -1440,7 +1439,7 @@ class ExperimentVariable:
             }])
             # Registration succeeded even if the following sample write fails.
             # Cache on the run so later runs get their own stream metadata.
-            experiment._registered_streams.add(cache_key)
+            experiment._registered_streams.add(ref_name)
         self.study.ac.insert_timeseries(source, ref_name, rows)
         stream = Stream(str(self.study.ac.reference_uri(source, ref_name)), self.study.client)
         self._reference(stream.between(min(row[0] for row in rows), max(row[0] for row in rows)))
@@ -1453,14 +1452,10 @@ class ExperimentVariable:
             raise ValueError("experiments belong to a different study")
         return selected.observations(self)
 
-def _stream_name(label: str, key: tuple) -> str:
-    # Escape delimiters and distinguish numeric keys from strings with the
-    # same spelling. Ordinary string keys retain familiar names, flow[pump1].
-    def part(value):
-        if isinstance(value, str):
-            return quote(value, safe="").replace("~", "%7E")
-        return "~" + quote(_json(value), safe="")
-    return f"{label}[{','.join(part(value) for value in key)}]" if key else label
+def _stream_name(variable_id: str, key: tuple) -> str:
+    # Reuse canonical reference identities for the source-local storage name.
+    # JSON preserves key types and boundaries; labels remain display metadata.
+    return str(compute_ref_uri(f"experiment-variable/{variable_id}", _json(list(key))))
 
 
 def _record_snapshot(study: "Study", values: list[tuple[ExperimentVariable, Any]], *, units: Mapping[str, str] | None = None, quantities: Mapping[str, str] | None = None):
@@ -1492,14 +1487,13 @@ def _record_snapshot(study: "Study", values: list[tuple[ExperimentVariable, Any]
                 rows = _sample_rows(rows)
                 if not rows:
                     continue
-                name = _stream_name(variable.label, key)
+                name = _stream_name(variable.variable_id, key)
                 if name in samples:
                     raise ValueError(f"duplicate stream reference name {name!r}")
                 samples[name] = rows
-                # Python compares True == 1 == 1.0, but these have distinct
-                # reference names and must each get their own registration.
-                cache_key = (variable.variable_id, tuple((type(part).__name__, part) for part in key))
-                if cache_key not in experiment._registered_streams:
+                # Cache the canonical identity, preserving JSON key types and
+                # representations even when Python considers keys equal.
+                if name not in experiment._registered_streams:
                     observed = metadata.get("observed")
                     for mapping in metadata.get("observed_by_key", []):
                         if tuple(mapping.get("key", ())) == key:
@@ -1515,7 +1509,7 @@ def _record_snapshot(study: "Study", values: list[tuple[ExperimentVariable, Any]
                         "unit": (units or {}).get(variable.variable_id, metadata.get("unit")),
                         "quantity_kind": (quantities or {}).get(variable.variable_id, metadata.get("quantity_kind")),
                         "label": variable.label, "value_kind": "numeric", "metadata": identity})
-                    cache_keys.append(cache_key)
+                    cache_keys.append(name)
                 ref_uri = str(compute_ref_uri(source, name))
                 streams[key] = Stream(ref_uri, study.client)
                 observations.append({"variable_id": variable.variable_id, "ref_uri": ref_uri,
@@ -1655,7 +1649,7 @@ class Experiment:
         self.started_at = timestamp(item["started_at"]) if item.get("started_at") else None
         self.finished_at = timestamp(item["finished_at"]) if item.get("finished_at") else None
         self.error = item.get("error")
-        self._registered_streams: set[tuple[str, tuple]] = set()
+        self._registered_streams: set[str] = set()
         self.output = ExperimentOutputs(self)
 
     @property

@@ -12,7 +12,7 @@ from httpx import HTTPStatusError
 
 import acquirium as aq
 from acquirium.Client.client import AcquiriumClient
-from acquirium.Experiments import ExperimentStore, Study, StudyService
+from acquirium.Experiments import ExperimentStore, Study, StudyService, _stream_name
 from acquirium.Storage.duckdb_store import DuckDBStore
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -99,10 +99,14 @@ def test_record_values_sample_and_role_views(model_api):
     assert state.reads == ["level", "flow"]
     assert ac.register_streams.call_count == client.insert_timeseries_batch.call_count == 1
     registrations = ac.register_streams.call_args.args[0]
-    assert [item["ref_name"] for item in registrations] == ["level", "flow[p1]", "flow[p2]"]
+    assert [item["ref_name"] for item in registrations] == [
+        _stream_name(variables["level"].variable_id, ()),
+        _stream_name(variables["flow"].variable_id, ("p1",)),
+        _stream_name(variables["flow"].variable_id, ("p2",)),
+    ]
     assert registrations[1]["metadata"]["pump"] == "p1"
     assert registrations[1]["metadata"]["observed"] == "urn:plant:p1"
-    assert client.insert_timeseries_batch.call_args.args[1]["flow[p2]"] == [(T0, 7)]
+    assert client.insert_timeseries_batch.call_args.args[1][registrations[2]["ref_name"]] == [(T0, 7)]
     assert [obs.key for obs in run.observations(variables["flow"]).all()] == [("p1",), ("p2",)]
     variables.sample(at=T0 + timedelta(hours=1))
     assert ac.register_streams.call_count == 1
@@ -287,7 +291,7 @@ def test_pyomo_explicit_sources_units_and_mutable_values(model_api):
     variables.sample(at=T0, model_time=2)
     variables.output.record_values()
     assert run.observations(variables["cost"]).latest().value == 7
-    assert model_api.client.insert_timeseries_batch.call_args.args[1]["pressure"] == [(T0, 12)]
+    assert model_api.client.insert_timeseries_batch.call_args.args[1][_stream_name(variables["pressure"].variable_id, ())] == [(T0, 12)]
     with pytest.raises(ValueError, match="explicit read"):
         adapter.scalar("bad", model.flow)
     with pytest.raises(TypeError, match="callable"):
@@ -322,7 +326,7 @@ def test_hand_declared_keyed_series_remain_supported(model_api):
     streams = flow.record({("p1", "a,b"): [(T0, np.float32(5))], (1, "x"): [(T0, 2)], ("1", "x"): [(T0, 3)]})
     assert set(streams) == {("p1", "a,b"), (1, "x"), ("1", "x")}
     names = [item["ref_name"] for item in model_api.ac.register_streams.call_args.args[0]]
-    assert names == ["flow[p1,a%2Cb]", "flow[~1,x]", "flow[1,x]"]
+    assert names == [_stream_name(flow.variable_id, key) for key in (("p1", "a,b"), (1, "x"), ("1", "x"))]
     assert len(run.observations().all()) == 3
     for value in ({"p1": [(T0, 5)]}, {("p1",): [(T0, 5)]}, {("p1", None): [(T0, 5)]}):
         with pytest.raises(ValueError, match="key"):
@@ -332,9 +336,9 @@ def test_hand_declared_keyed_series_remain_supported(model_api):
 def test_keyed_registration_distinguishes_numeric_types(model_api):
     flow = model_api.study.output("flow").timeseries(keys=("pump",))
     model_api.study.start()
-    for key in (1, True, 1.0):
+    for key in (1, True, 1.0, 0.0, -0.0):
         flow.record({(key,): [(T0, 5)]})
-    assert model_api.ac.register_streams.call_count == 3
+    assert model_api.ac.register_streams.call_count == 5
 
 
 def test_importing_core_does_not_import_pyomo():

@@ -158,6 +158,9 @@ change in any release.
 - Existing DuckDB and TimescaleDB databases upgrade in place through a shared,
   versioned migration ledger before dependent views and indexes are created.
 - Published timestamps retain their instants with non-UTC PostgreSQL sessions.
+- Experiment stream identities derive from variable IDs and typed keys through
+  the reference URI helper, preventing collisions with literal variable labels.
+  Earlier observations retain their original references.
 - CURIEs such as `watr:UltrafiltrationUnit` or `quantitykind:Pressure` given as
   a class, relation or attribute value are expanded with the server's prefix
   table, in `client.resolve()` as well. They were sent to text matching

@@ -168,10 +168,10 @@ Index names must be distinct metadata names and cannot override built-in stream
 fields or `study_id`, `run_id`, `variable_id`, or `observed`. Key values are
 finite numbers, booleans, or strings.
 
-Stream references use source `experiment/<run_id>` and names such as
-`flow[pump1]`, joining multiple keys with commas. Delimiters in string keys are
-percent-escaped; numeric and boolean keys have a `~` prefix to distinguish
-them from strings. Each stream point carries the study, run, and variable IDs,
+Stream references use source `experiment/<run_id>` and stable storage names
+created by the normal reference URI helper from the variable ID and its JSON key.
+Labels, delimiters, and key types cannot alias another variable's stream.
+The readable variable label stays on the stream point. Each point carries the study, run, and variable IDs,
 its named key attributes, and `observed` when supplied. Query a key across runs
 with `ac.query().measurement(variable_id=flow.variable_id, pump="pump1")`.
 The `observed` argument also accepts per-key mappings on hand declarations.
@@ -493,8 +493,11 @@ then pass their URIs as `observed`.
 
 The server assigns each observation a run-local sequence and UTC `recorded_at`
 receipt time. Caller-supplied `occurred_at` is separate. Time-series writes use
-source `experiment/<run_id>` and the variable label as the reference name.
+source `experiment/<run_id>` and a stable reference name derived from the variable ID and key.
 Each observation records the stream URI and minimum and maximum sample times.
+Observations written by older versions keep their original stream references.
+After upgrading, new writes use the new identity, including when resuming an
+older run; observation queries continue to include its earlier samples.
 Each run's stream has its own point, labeled with the variable name, with the
 attributes `study_id`, `run_id`, `variable_id`, and `observed` when declared.
 `ac.query().measurement(run_id=...)` or `measurement(observed=...)` selects

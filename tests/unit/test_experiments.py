@@ -10,7 +10,7 @@ import polars as pl
 import pytest
 
 from acquirium.Client.streams import Stream
-from acquirium.Experiments import ExperimentStore, Study, StudyService, timestamp
+from acquirium.Experiments import ExperimentStore, Study, StudyService, timestamp, _stream_name
 from acquirium.Storage.duckdb_store import DuckDBStore
 from acquirium.internals.models import compute_ref_uri
 
@@ -749,7 +749,7 @@ def test_record_files_and_streams(study_api, tmp_path):
     when = datetime(2026, 1, 1, tzinfo=timezone.utc)
     ac.reference_uri.return_value = "urn:acquirium#recorded-volume"
     recorded = stream.record([(when.isoformat(), 10)])
-    ac.insert_timeseries.assert_called_once_with(f"experiment/{run.run_id}", "volume", [(when, 10)])
+    ac.insert_timeseries.assert_called_once_with(f"experiment/{run.run_id}", _stream_name(stream.variable_id, ()), [(when, 10)])
     registration = ac.register_streams.call_args.args[0][0]
     assert registration["unit"] == "M3"
     assert registration["value_kind"] == "numeric"
@@ -1093,7 +1093,7 @@ def test_time_series_record_a_reference_or_a_copy(study_api):
     client.timeseries_df.return_value = _stream_frame("urn:site:biogas", [(T0, 1.0), (T0.replace(hour=1), 2.0)])
     ac.reference_uri.return_value = "urn:acquirium#copied"
     copied = biogas.record(window.dataframe())
-    ac.insert_timeseries.assert_called_once_with(f"experiment/{run.run_id}", "biogas flow", [(T0, 1.0), (T0.replace(hour=1), 2.0)])
+    ac.insert_timeseries.assert_called_once_with(f"experiment/{run.run_id}", _stream_name(biogas.variable_id, ()), [(T0, 1.0), (T0.replace(hour=1), 2.0)])
     assert copied == Stream("urn:acquirium#copied")
 
     # Stream query frames use ts or time, and value or value_numeric.

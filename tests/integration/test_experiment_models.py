@@ -94,3 +94,44 @@ def test_model_sweep_roundtrip_request_budget_and_keyed_deletion(tmp_path, monke
         assert ac.study.get("model sweep").variables["config"].metadata == to_json(payload)
     finally:
         aq.shutdown()
+
+
+@pytest.mark.integration
+def test_experiment_stream_identity_survives_label_collisions_and_resume(tmp_path):
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    ac = aq.init(data_dir=tmp_path / "identity-server")
+    try:
+        study = ac.study.define("stream identities")
+        keyed = study.output("flow").timeseries(keys=("pump",))
+        literal = study.output("flow[p1]").timeseries()
+        run = study.start()
+        # Simulate an observation written before variable-based storage names.
+        source = f"experiment/{run.run_id}"
+        old_at = start - timedelta(hours=1)
+        ac.register_streams([{"source_id": source, "ref_name": literal.label, "value_kind": "numeric"}])
+        ac.insert_timeseries(source, literal.label, [(old_at, 5)])
+        legacy_stream = ac.stream(source, literal.label)
+        literal.record(legacy_stream.between(old_at, old_at))
+        keyed_stream = keyed.record({("p1",): [(start, 1)]})[("p1",)]
+        literal_stream = literal.record([(start, 10)])
+        assert literal_stream.ref_uri != legacy_stream.ref_uri
+        assert keyed_stream.ref_uri != literal_stream.ref_uri
+        assert keyed_stream.dataframe()["value"].to_list() == [1.]
+        assert literal_stream.dataframe()["value"].to_list() == [10.]
+        # Reopen the study and resume: identities remain stable without caches.
+        reopened = ac.study.get(study.name)
+        resumed = reopened.resume(run.run_id)
+        assert resumed.observations("flow[p1]").all()[0].dataframe()["value"].to_list() == [5.]
+        end = start + timedelta(hours=1)
+        assert reopened.output["flow"].record({("p1",): [(end, 2)]})[("p1",)].ref_uri == keyed_stream.ref_uri
+        assert reopened.output["flow[p1]"].record([(end, 20)]).ref_uri == literal_stream.ref_uri
+        assert keyed_stream.dataframe()["value"].to_list() == [1., 2.]
+        assert literal_stream.dataframe()["value"].to_list() == [10., 20.]
+        # JSON key encoding distinguishes types and delimiter-containing strings.
+        refs = []
+        for key in (1, 1.0, True, "1", "p1,p2", "p1][p2", "", "日本語"):
+            refs.append(keyed.record({(key,): [(start, 3)]})[(key,)].ref_uri)
+        assert len(set(refs)) == len(refs)
+        resumed.finish()
+    finally:
+        aq.shutdown()
