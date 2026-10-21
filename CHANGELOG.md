@@ -32,6 +32,46 @@ change in any release.
   that extend it, and whatever a loaded model uses with `s223:hasRole`. A role
   is found by its bare name, so `resolve_text("backwash", kind="role")` returns
   `nawi:Role-Backwash`.
+- Studies and Experiments record a calculation's inputs, results, and events.
+  `ac.study.define(name)` declares a reusable Study. `study.input(label)`,
+  `study.output(label)`, and `study.log(label)` declare variables whose type
+  selects storage: `.scalar(unit=...)`, `.text()`, `.json()`, `.file()`,
+  `.table()` (Parquet, read back as Polars), and `.timeseries(observed=...)`.
+  `study.start(metadata)` starts a run, `variable.record(value)` writes to it,
+  and `finish()`, `fail(error)`, and `study.resume(run_id)` manage it. Records
+  live in a SQL ledger beside the time-series storage. Studies, variables,
+  runs, and annotations also get graph nodes, so `study.experiments.where()`
+  and `study.variables.where()` take the same filters and `acq.attr`
+  expressions as plant queries.
+- `record()` converts NumPy values, tuples, and dates to JSON and rejects NaN.
+  `aq.register_value_handler(cls, handler)` adds other types. Each variable
+  type accepts one kind of value, such as a finite number or boolean for a
+  scalar and a string for text; the client and the server both check.
+- Each run's time-series output is a stream under source `experiment/<run_id>`
+  with its own point carrying `study_id`, `run_id`, and `variable_id`, so
+  `ac.query().measurement(run_id=...)` finds it. A declared `observed`
+  property is an attribute of that point; plant queries on the property
+  return site data only.
+- `ac.stream(source_id, name)` and `ac.stream(ref_uri)` return a `Stream`
+  handle, and `stream.between(start, end)` selects a range. Recording a range
+  to a time-series variable stores a reference whose reads see later data;
+  recording its `.dataframe()` stores a copy with the run.
+- `.frame()` lists declarations, runs, or observations. `runs.scalars()`
+  returns one row per run and one column per scalar variable.
+  `observation.dataframe()` reads samples or a table, and
+  `observation.read_bytes()` a file.
+- `run.annotate_stream(ref_uri, start=..., end=None)` associates an existing
+  stream interval with a run, open-ended if needed, and
+  `ac.study.stream_annotations()` finds annotations by stream and overlapping
+  time.
+- `run.delete()`, `runs.delete()`, and `study.delete()` remove runs with
+  their observations, samples, and unshared files. `ac.study.clear(confirm=True)`
+  removes every Study and nothing else. Running runs, and runs whose streams
+  another run uses, are refused. `usage()` reports counts and estimated bytes.
+- HTTP endpoints for experiments under `/experiments/`.
+- Docs: the "Your first experiment" tutorial, how-to guides for recording
+  experiments and comparing runs, and the `examples/pump-tank` example.
+- Currency codes such as `USD` resolve as units (`unit:CCY_USD`).
 
 ### Changed
 - A SPARQL update no longer forces the ontology closure to be recomputed
