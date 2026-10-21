@@ -3,8 +3,7 @@ import polars as pl
 from acquirium import Acquirium
 from acquirium.internals.internals_namespaces import *
 from acquirium.internals.models import compute_ref_uri
-from acquirium.Client.query import Q
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from conftest import ACQUIRIUM_TEST_SERVER_HOST, ACQUIRIUM_TEST_SERVER_PORT, _CSV_SOURCE_ID
 
@@ -254,3 +253,42 @@ def test_find_data_1(acquirium_client_csv):
     meta = entity_BE_data2.metadata()
     assert len(meta) == 8
     assert "data_of_b" in meta.columns
+
+
+##### reconcile() tests #####
+
+def test_reconcile_query_wrapper(acquirium_client_csv):
+    """query.reconcile() is a convenience wrapper equivalent to
+    query.data(cast_value='float').reconcile(...)."""
+    acq = acquirium_client_csv
+    query = acq.find_all_data()
+
+    df = query.reconcile()
+    assert "time" in df.columns
+    assert not df.is_empty()
+
+    reconciled_cols = [c for c in df.columns if c.endswith("_reconciled")]
+    assert len(reconciled_cols) > 0
+
+    direct = query.data(cast_value="float").reconcile()
+    assert df.shape == direct.shape
+    assert set(df.columns) == set(direct.columns)
+
+
+def test_reconcile_query_wrapper_with_options(acquirium_client_csv):
+    """query.reconcile() should forward points/resolution/upsample/downsample."""
+    acq = acquirium_client_csv
+    entity_B = acq.find_entity(_class=ACQUIRIUM_NS.B, alias="b")
+    entity_BE = entity_B.find_entity(_class=ACQUIRIUM_NS.E, alias="e")
+    query = entity_BE.find_all_data()
+
+    data = query.data(cast_value="float")
+    if not data.aliases:
+        pytest.skip("no data aliases bound for this entity chain")
+
+    alias = data.aliases[0]
+    df = query.reconcile([alias], resolution=timedelta(hours=1), upsample="copy", downsample="ignore_intermediate")
+    non_time_cols = [c for c in df.columns if c != "time"]
+    wide_cols = {f"{c}_reconciled" for c in data.dataframe(shape="wide").columns if c != "time"}
+    assert non_time_cols
+    assert set(non_time_cols) <= wide_cols

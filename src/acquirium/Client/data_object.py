@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import itertools
+import re
+import warnings
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
-from typing import Any, Iterator, TYPE_CHECKING
+from datetime import datetime, timezone, timedelta
+from typing import Any, Callable, Iterator, TYPE_CHECKING
 import polars as pl
 import logging
 
@@ -256,6 +259,293 @@ def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
     # deterministic column order: time first, then case-insensitive alphabetical
     value_cols = sorted((c for c in wide.columns if c != "time"), key=str.casefold)
     return wide.select(["time", *value_cols]).sort("time")
+
+
+# ------------------------------------------------------------------
+# Reconciliation helpers
+# ------------------------------------------------------------------
+#
+# "Reconciling" a set of point series means bringing them onto a single,
+# shared, uniform time grid so they can be directly compared. Every grid
+# value is an estimate of the signal at that exact grid time ``t``.
+#
+# Measurements are assigned to the grid time ``t`` whose window
+# ``[t - resolution/2, t + resolution/2)`` contains them (i.e. their nearest
+# grid time; an exact half-step tie goes to the later grid time). A grid time
+# with several measurements is reduced to one value with ``downsample``; one
+# with a single measurement takes it as-is.
+#
+# Any grid time left with no measurement (anywhere on the shared grid,
+# including outside the point's own span) is filled with ``upsample``:
+#   - interpolate, copy/ffill: every grid time not reduced from several
+#     measurements is evaluated at ``t`` directly from the original
+#     measurements' true timestamps (whether or not the point has gaps),
+#     never from snapped ones, since snapping first would shift each
+#     measurement by up to half a step.
+#   - zero, default_value, null: filled with the constant (or left null).
+#
+# Only fixed-length resolutions are supported (seconds/minutes/hours/days/
+# weeks) — calendar units like months/years are not, since their length is
+# not constant and would make cross-series grid alignment ambiguous.
+
+_UPSAMPLE_METHODS = {"interpolate", "copy", "ffill", "zero", "default_value", "null"}
+_DOWNSAMPLE_METHODS = {"mean", "average", "median", "mode", "ignore_intermediate", "closest", "min", "max"}
+# Upsample methods evaluated at grid times from true measurement timestamps.
+_EXACT_TIME_UPSAMPLE_METHODS = {"interpolate", "copy", "ffill"}
+
+# A 5-way difference already yields C(5, 2) = 10 columns; more than that is
+# unwieldy and unlikely to be useful, so difference() caps it here.
+_MAX_DIFFERENCE_POINTS = 5
+
+_DURATION_UNIT_SECONDS = {
+    "ns": 1e-9,
+    "us": 1e-6,
+    "ms": 1e-3,
+    "s": 1.0,
+    "m": 60.0,
+    "min": 60.0,
+    "h": 3600.0,
+    "d": 86400.0,
+    "w": 604800.0,
+}
+_DURATION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(ns|us|ms|min|[smhdw])\s*$")
+
+
+def _parse_resolution(resolution: str | timedelta) -> timedelta:
+    """Parse a ``reconcile(resolution=...)`` value into a ``timedelta``.
+
+    Accepts a ``timedelta`` directly, or a duration string such as ``"10s"``,
+    ``"1.5m"`` (minutes — matches polars' convention where ``"m"`` means
+    minutes and months would be ``"mo"``), ``"2h"``, ``"1d"``, ``"1w"``.
+    """
+    if isinstance(resolution, timedelta):
+        if resolution <= timedelta(0):
+            raise ValueError("reconcile: resolution must be a positive duration")
+        return resolution
+    if isinstance(resolution, str):
+        m = _DURATION_RE.match(resolution)
+        if not m:
+            raise ValueError(
+                f"reconcile: could not parse resolution '{resolution}'. "
+                "Use a timedelta, or a string like '10s', '5m', '1h', '2d', '1w'."
+            )
+        qty = float(m.group(1))
+        unit = m.group(2)
+        td = timedelta(seconds=qty * _DURATION_UNIT_SECONDS[unit])
+        if td <= timedelta(0):
+            raise ValueError("reconcile: resolution must be a positive duration")
+        return td
+    raise TypeError(
+        f"reconcile: resolution must be a str or timedelta, got {type(resolution).__name__}"
+    )
+
+
+def _native_resolution(original_data: pl.DataFrame) -> timedelta | None:
+    """Characterize a ``[time, value]`` series' own native sampling interval
+    as the median gap between its consecutive timestamps.
+
+    Returns ``None`` if there are fewer than 2 points (no interval can be
+    defined). The median (rather than the min) is used so that a single
+    unusually-close pair of readings in an otherwise coarse series doesn't
+    make the inferred default resolution needlessly fine.
+    """
+    if original_data.height < 2:
+        return None
+    diffs = original_data["time"].diff().drop_nulls()
+    if diffs.len() == 0:
+        return None
+    return diffs.median()
+
+
+def _infer_resolution(series: list[pl.DataFrame]) -> timedelta:
+    """Default target resolution when none is given: the highest (finest)
+    native resolution among the series, i.e. the smallest native interval."""
+    intervals = [r for r in (_native_resolution(original_data) for original_data in series) if r is not None]
+    if not intervals:
+        return timedelta(seconds=1)
+    return min(intervals)
+
+
+def _round_to_epoch_grid(dt: datetime, every: timedelta) -> datetime:
+    """Round ``dt`` to the nearest multiple of ``every`` since the UTC epoch
+    (an exact half-step rounds up, matching the ``[t - every/2, t + every/2)``
+    window).
+
+    Using a fixed epoch (rather than each series' own start time) as the
+    origin is what lets independently-sampled series land on the *same*
+    grid times.
+    """
+    epoch = datetime(1970, 1, 1, tzinfo=dt.tzinfo)
+    remainder = (dt - epoch) % every
+    rounded = dt - remainder
+    return rounded + every if 2 * remainder >= every else rounded
+
+
+def _build_time_grid(start: datetime, end: datetime, every: timedelta) -> list[datetime]:
+    """Build the uniform grid timestamps from ``start`` to ``end`` inclusive
+    (both already grid times)."""
+    n_steps = int((end - start) // every)
+    return [start + i * every for i in range(n_steps + 1)]
+
+
+def _downsample_expr(method: str) -> pl.Expr:
+    if method in ("mean", "average"):
+        return pl.col("value").mean().alias("value")
+    if method == "median":
+        return pl.col("value").median().alias("value")
+    if method == "mode":
+        # Nulls are dropped to match the other aggregations; multimodal grid times take the median of the modes.
+        return pl.col("value").drop_nulls().mode().median().alias("value")
+    if method in ("ignore_intermediate", "closest"):
+        # closest measurement to the grid time; an exact tie goes to the earlier one
+        return pl.col("value").sort_by([pl.col("offset_us").abs(), pl.col("offset_us")]).first().alias("value")
+    if method == "min":
+        return pl.col("value").min().alias("value")
+    if method == "max":
+        return pl.col("value").max().alias("value")
+    raise ValueError(f"reconcile: unknown downsample method '{method}'")
+
+
+def _snap_to_grid(df: pl.DataFrame, origin: datetime, every: timedelta) -> pl.DataFrame:
+    """Replace each measurement's ``time`` with the grid time ``t`` (aligned to
+    ``origin``) whose window ``[t - every/2, t + every/2)`` contains it, and add
+    ``offset_us``: the measurement's original time minus ``t``, in microseconds.
+    """
+    every_us = int(round(every.total_seconds() * 1_000_000))
+    since_origin = (pl.col("time") - pl.lit(origin)).dt.total_microseconds()
+    grid_us = ((2 * since_origin + every_us) // (2 * every_us)) * every_us
+    return df.with_columns(
+        (pl.lit(origin) + pl.duration(microseconds=grid_us)).alias("time"),
+        (since_origin - grid_us).alias("offset_us"),
+    )
+
+
+def _apply_downsample(
+    df: pl.DataFrame,
+    origin: datetime,
+    every: timedelta,
+    method: str | None,
+    *,
+    label: str | None = None,
+) -> pl.DataFrame:
+    """Snap a ``[time, value]`` series onto the grid with :func:`_snap_to_grid`,
+    then reduce each grid time to a single value per ``method``.
+
+    A grid time with exactly one measurement takes it as-is under any
+    ``method``. If ``method`` is ``None``, raises when any grid time has more
+    than one measurement, since there's no rule for reducing them.
+
+    Warns if any measurement falls exactly on a window boundary, since the
+    half-open window then holds that boundary on one side but not the other.
+
+    With ``method="mode"``, warns if any grid time is multimodal, since its
+    value (the median of its modes) may not itself be a mode. ``label``
+    names the series in error and warning messages.
+    """
+    series = f"'{label}'" if label is not None else "series"
+    snapped = _snap_to_grid(df, origin, every)
+
+    every_us = int(round(every.total_seconds() * 1_000_000))
+    n_boundary = snapped.filter(2 * pl.col("offset_us") == -every_us).height
+    if n_boundary:
+        warnings.warn(
+            f"reconcile: {n_boundary} measurement(s) in {series} fall exactly on a window "
+            f"boundary at resolution {every} and were assigned to the later grid time, so "
+            "values reduced from those windows are skewed toward the later side",
+            UserWarning,
+            stacklevel=3,
+        )
+
+    if method is None:
+        n_crowded = snapped.group_by("time").len().filter(pl.col("len") > 1).height
+        if n_crowded:
+            raise ValueError(
+                f"reconcile: {series} has more than one measurement at {n_crowded} "
+                f"grid time(s) at resolution {every}, but downsample=None"
+            )
+        return snapped.select("time", "value").sort("time")
+
+    aggs = [_downsample_expr(method)]
+    if method == "mode":
+        aggs.append(pl.col("value").drop_nulls().mode().len().alias("n_modes"))
+    out = snapped.group_by("time", maintain_order=True).agg(aggs).sort("time")
+    if method != "mode":
+        return out
+
+    n_multimodal = out.filter(pl.col("n_modes") > 1).height
+    if n_multimodal:
+        warnings.warn(
+            f"reconcile: {n_multimodal} of {out.height} grid times in {series} were "
+            "multimodal; downsample='mode' used the median of each grid time's modes, "
+            "which may not itself be one of the modes",
+            UserWarning,
+            stacklevel=3,
+        )
+    return out.drop("n_modes")
+
+
+def _apply_upsample(df: pl.DataFrame, method: str, fill_value: float | None = None) -> pl.DataFrame:
+    """Fill null rows in a ``[time, value]`` frame per ``method``, using the
+    real elapsed time between rows (``interpolate_by("time")``) rather than
+    row position.
+
+    For ``interpolate``/``copy``/``ffill``, this must NOT be fed a frame
+    whose rows were snapped onto the grid by ``_apply_downsample`` — that
+    would shift each measurement by up to half a grid step before
+    interpolating or carrying it forward. ``_resample_upsample`` builds the
+    correct input: the true measurement timestamps merged with the grid's.
+    The constant fills (``zero``/``default_value``/``null``) are instead fed
+    an already-snapped frame, since they only fill grid times with no
+    measurement.
+
+    ``"null"`` is conceptually ``"default_value"`` with an implicit
+    ``fill_value=None`` (a no-op, leaving empty grid times as null), and
+    ``"zero"`` is its ``fill_value=0`` case — but each is its own branch
+    below so that an explicit ``"default_value"`` request still enforces
+    that ``fill_value`` was actually provided, rather than silently
+    no-op'ing like ``"null"`` does.
+    """
+    if method == "interpolate":
+        return df.with_columns(pl.col("value").interpolate_by("time"))
+    if method in ("copy", "ffill"):
+        return df.with_columns(pl.col("value").forward_fill())
+    if method == "zero":
+        return df.with_columns(pl.col("value").fill_null(0))
+    if method == "null":
+        return df
+    if method == "default_value":
+        if fill_value is None:
+            raise ValueError(
+                "reconcile: upsample='default_value' requires fill_value to be set"
+            )
+        return df.with_columns(pl.col("value").fill_null(fill_value))
+    raise ValueError(f"reconcile: unknown upsample method '{method}'")
+
+
+def _resample_upsample(
+    original_data: pl.DataFrame, grid_df: pl.DataFrame, method: str, fill_value: float | None = None
+) -> pl.DataFrame:
+    """Evaluate a ``[time, value]`` series at ``grid_df``'s timestamps
+    directly from its original measurements — no snapping. Used for
+    ``interpolate``/``copy``/``ffill``.
+
+    Unions the raw series' real timestamps with the grid's timestamps (so
+    ``interpolate``/``forward_fill`` see genuine, unshifted time gaps),
+    applies ``method`` via :func:`_apply_upsample`, then keeps only the
+    grid's rows.
+    """
+    original_data = original_data.select("time", "value")
+    grid_only = (
+        grid_df.join(original_data, on="time", how="anti")
+        .with_columns(pl.lit(None, dtype=pl.Float64).alias("value"))
+    )
+    combined = (
+        pl.concat([original_data, grid_only.select("time", "value")])
+        .unique(subset="time", keep="first")
+        .sort("time")
+    )
+    filled = _apply_upsample(combined, method, fill_value)
+    return grid_df.join(filled.select("time", "value"), on="time", how="left").sort("time")
 
 
 @dataclass(frozen=True)
@@ -794,9 +1084,9 @@ class DataObject:
         wide = _pivot_split_values(tall, "_pivot_key")
         return wide.sort("time", descending=True) if descending else wide
 
-    def _compact_dataframe(self, tall: pl.DataFrame, *, shape: str, include_ref: bool,
-                           descending: bool = False) -> pl.DataFrame:
-        """Query-compatible layout: CURIE-rendered URIs and a ``point_id`` column.
+    def _column_labeler(self) -> Callable[[str, str], str]:
+        """Return ``label_of(alias, point_uri)``, the column name a point gets
+        in :meth:`dataframe` (and :meth:`reconcile`).
 
         Auto-aliased data nodes (alias == ``str(nid)``) are named by the
         point's ``rdfs:label`` when it has one, else by its compacted
@@ -809,11 +1099,6 @@ class DataObject:
             except Exception:
                 return uri
 
-        # Combine ref_uris sharing the same (data_alias, point_uri, time).
-        tall = tall.clone().unique(
-            subset=["data_alias", "point_uri", "time"], keep="first"
-        )
-
         points_per_alias: dict[str, set[str]] = {}
         auto_aliases: set[str] = set()
         for b in self._bindings:
@@ -823,17 +1108,36 @@ class DataObject:
 
         labels = self._point_labels()
 
-        def _label(alias: str, point_uri: str) -> str:
+        def label_of(alias: str, point_uri: str) -> str:
             if alias in auto_aliases:
                 return labels.get(point_uri) or _compact(point_uri)
             if len(points_per_alias.get(alias, set())) > 1:
                 return f"{alias}__{labels.get(point_uri) or _compact(point_uri)}"
             return alias
 
+        return label_of
+
+    def _compact_dataframe(self, tall: pl.DataFrame, *, shape: str, include_ref: bool,
+                           descending: bool = False) -> pl.DataFrame:
+        """Query-compatible layout: CURIE-rendered URIs and a ``point_id`` column,
+        with each point named by :meth:`_column_labeler`.
+        """
+        def _compact(uri: str) -> str:
+            try:
+                return self._client.compact_uri(uri)
+            except Exception:
+                return uri
+
+        # Combine ref_uris sharing the same (data_alias, point_uri, time), first-wins.
+        tall = tall.clone().unique(
+            subset=["data_alias", "point_uri", "time"], keep="first", maintain_order=True
+        )
+
+        label_of = self._column_labeler()
         tall = tall.with_columns(
             pl.struct(["data_alias", "point_uri"])
             .map_elements(
-                lambda s: _label(s["data_alias"], s["point_uri"]),
+                lambda row: label_of(row["data_alias"], row["point_uri"]),
                 return_dtype=pl.Utf8,
             )
             .alias("_label")
@@ -1110,6 +1414,406 @@ class DataObject:
             _materialized=False,
             _pending_conversions=pending,
         )
+
+    # ------------------------------------------------------------------
+    # Reconciliation
+    # ------------------------------------------------------------------
+
+    def _native_series(self, points: list[str] | None = None) -> dict[str, pl.DataFrame]:
+        """Extract each selected point's original ``[time, value]`` series
+        (no resampling), keyed by the column name :meth:`dataframe` gives it
+        (see :meth:`_column_labeler`) and ordered like its wide columns.
+
+        Every point bound to a selected alias gets an entry, empty if it has
+        no numeric data. Readings from several refs at the same time are
+        combined first-wins, as in :meth:`dataframe`.
+
+        Shared by :meth:`reconcile` and :meth:`plot`. Raises ``ValueError``
+        for aliases not present in ``self.aliases``.
+        """
+        self._materialize()
+
+        aliases = list(points) if points else self.aliases
+        if not aliases:
+            return {}
+
+        unknown = sorted(set(aliases) - set(self.aliases))
+        if unknown:
+            raise ValueError(
+                f"unknown alias(es) {unknown}; available: {self.aliases}"
+            )
+
+        label_of = self._column_labeler()
+        empty = pl.DataFrame(schema={"time": pl.Datetime(time_zone="UTC"), "value": pl.Float64})
+        series = {label_of(b.alias, b.point_uri): empty for b in self._bindings if b.alias in aliases}
+
+        if self._tall is not None and not self._tall.is_empty():
+            tall = (
+                self._tall
+                .filter(pl.col("data_alias").is_in(aliases) & pl.col("value_numeric").is_not_null())
+                .unique(subset=["data_alias", "point_uri", "time"], keep="first", maintain_order=True)
+            )
+            for (alias, point_uri), grp in tall.group_by(["data_alias", "point_uri"], maintain_order=True):
+                label = label_of(alias, point_uri)
+                original_data = grp.select("time", pl.col("value_numeric").alias("value"))
+                if not series[label].is_empty():
+                    # the same point bound under several auto-aliased data nodes
+                    original_data = pl.concat([series[label], original_data]).unique(
+                        subset="time", keep="first", maintain_order=True
+                    )
+                series[label] = original_data.sort("time", maintain_order=True)
+
+        return dict(sorted(series.items(), key=lambda item: item[0].casefold()))
+
+    def reconcile(
+        self,
+        points: list[str] | None = None,
+        *,
+        resolution: str | timedelta | None = None,
+        upsample: str | None = None,
+        downsample: str | None = None,
+        fill_value: float | None = None,
+        suffix: str = "_reconciled",
+    ) -> pl.DataFrame:
+        """Bring two or more time series onto a shared, uniform temporal grid.
+
+        Every value in the result estimates its point's signal at that exact
+        grid time ``t``. For every point, independently:
+
+        1. Each measurement is assigned to the grid time ``t`` whose window
+           ``[t - resolution/2, t + resolution/2)`` contains it.
+        2. A grid time with one measurement takes it as-is; one with several
+           is reduced with ``downsample`` (raises if not given).
+        3. Grid times with no measurement, anywhere on the shared grid
+           (including before the point's first or after its last
+           measurement), are filled with ``upsample`` (raises if not given).
+           When ``upsample`` is ``interpolate``/``copy``/``ffill``, every grid
+           time except those reduced from several measurements is instead
+           evaluated at exactly ``t`` from the original measurements and their
+           true timestamps, whether or not the point has any empty grid times.
+
+        Points are handled independently: e.g. a fast sensor is downsampled
+        while a slow one alongside it is upsampled, in the same call.
+
+        Args:
+            points: Data aliases to reconcile (as seen in ``self.aliases``).
+                If ``None`` (default), every alias in this DataObject is
+                reconciled.
+            resolution: Target temporal resolution, as a ``timedelta`` or a
+                duration string such as ``"10s"``, ``"5m"``, ``"1h"``,
+                ``"2d"``, ``"1w"``. If ``None`` (default), it is the highest
+                (finest) native resolution among the selected points (the
+                median gap between each point's measurements).
+            upsample: How to fill grid times with no measurement:
+                ``"interpolate"`` (linear interpolation, using real elapsed
+                time, between that point's own neighboring readings),
+                ``"copy"``/``"ffill"`` (carry the last known value forward),
+                ``"zero"`` (fill with 0), ``"default_value"`` (fill with the
+                constant given via ``fill_value``), or ``"null"`` (leave as
+                null). ``None`` (default): only required, and only an error,
+                if some point actually has an empty grid time.
+            downsample: How to reduce several measurements at one grid time
+                to a single value: ``"mean"``/``"average"``, ``"median"``,
+                ``"mode"`` (most frequent reading; if multimodal, the median
+                of the modes, with a ``UserWarning`` since that median may
+                not itself be a mode), ``"ignore_intermediate"``/
+                ``"closest"`` (keep only the measurement closest to the grid
+                time; an exact tie goes to the earlier one), ``"min"``, or
+                ``"max"``. ``None`` (default): only required, and only an
+                error, if some grid time actually has several measurements.
+            fill_value: Constant used to fill in gaps when
+                ``upsample="default_value"``. Required for that method;
+                ignored otherwise.
+            suffix: Suffix appended to each point's name to form its
+                reconciled column name (default ``"_reconciled"``).
+
+        Returns:
+            A wide ``pl.DataFrame`` with a shared ``time`` column plus one
+            ``f"{name}{suffix}"`` column per point, where ``name`` and the
+            column order match :meth:`dataframe` (e.g. ``a`` and ``b`` become
+            ``a_reconciled`` and ``b_reconciled``). A point with no numeric
+            data gets an all-null column, and a single ``UserWarning`` lists
+            every such column.
+
+        Raises:
+            ValueError: if a grid time has several measurements but
+                ``downsample`` is ``None``, if a point has an empty grid
+                time but ``upsample`` is ``None``, for an unrecognized ``upsample``/``downsample``
+                name, or for ``upsample="default_value"`` without
+                ``fill_value``.
+
+        Example::
+
+            data = query.data(cast_value="float")
+            df = data.reconcile(["a", "b"], resolution="10s", upsample="interpolate", downsample="mean")
+            # -> columns: time, a_reconciled, b_reconciled
+            data.difference(df).plot(title="a - b")
+        """
+        self._materialize()
+
+        if upsample is not None and upsample not in _UPSAMPLE_METHODS:
+            raise ValueError(
+                f"reconcile: unknown upsample method '{upsample}'; "
+                f"choose from {sorted(_UPSAMPLE_METHODS)}"
+            )
+        if downsample is not None and downsample not in _DOWNSAMPLE_METHODS:
+            raise ValueError(
+                f"reconcile: unknown downsample method '{downsample}'; "
+                f"choose from {sorted(_DOWNSAMPLE_METHODS)}"
+            )
+        if upsample == "default_value" and fill_value is None:
+            raise ValueError(
+                "reconcile: upsample='default_value' requires fill_value to be set"
+            )
+
+        aliases = list(points) if points else self.aliases
+        empty_schema: dict[str, Any] = {"time": pl.Datetime(time_zone="UTC")}
+        if not aliases:
+            return pl.DataFrame(schema=empty_schema)
+
+        try:
+            series = self._native_series(aliases)
+        except ValueError as e:
+            raise ValueError(f"reconcile: {e}") from e
+
+        no_data = [f"{label}{suffix}" for label, original_data in series.items() if original_data.is_empty()]
+        if no_data:
+            warnings.warn(
+                f"reconcile: no numeric data for {len(no_data)} column(s), left all-null: {no_data}",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        with_data = [original_data for original_data in series.values() if not original_data.is_empty()]
+        if not with_data:
+            for label in series:
+                empty_schema[f"{label}{suffix}"] = pl.Float64
+            return pl.DataFrame(schema=empty_schema)
+
+        target = (
+            _parse_resolution(resolution)
+            if resolution is not None
+            else _infer_resolution(with_data)
+        )
+
+        global_min = min(original_data["time"].min() for original_data in with_data)
+        global_max = max(original_data["time"].max() for original_data in with_data)
+        origin = _round_to_epoch_grid(global_min, target)
+        end = _round_to_epoch_grid(global_max, target)
+        grid_times = _build_time_grid(origin, end, target)
+        grid_df = pl.DataFrame({"time": grid_times}, schema={"time": pl.Datetime(time_zone="UTC")})
+
+        out = grid_df
+        for label, original_data in series.items():
+            if original_data.is_empty():
+                out = out.with_columns(pl.lit(None, dtype=pl.Float64).alias(f"{label}{suffix}"))
+                continue
+
+            snapped_data = grid_df.join(
+                _apply_downsample(original_data, origin, target, downsample, label=label),
+                on="time", how="left",
+            ).sort("time")
+
+            n_empty = snapped_data["value"].null_count()
+            if n_empty and upsample is None:
+                raise ValueError(
+                    f"reconcile: '{label}' has no measurement at {n_empty} of "
+                    f"{snapped_data.height} grid times at resolution {target}, but upsample=None"
+                )
+
+            if upsample in _EXACT_TIME_UPSAMPLE_METHODS:
+                # Every grid time except those reduced from several measurements is
+                # evaluated at t from original_data, gaps or not.
+                counts = _snap_to_grid(original_data, origin, target).group_by("time").len()
+                crowded = grid_df.join(counts, on="time", how="left")["len"].fill_null(0) > 1
+                from_original = _resample_upsample(original_data, grid_df, upsample, fill_value)["value"]
+                reconciled = snapped_data.with_columns(
+                    pl.when(crowded).then(pl.col("value")).otherwise(from_original).alias("value")
+                )
+            elif n_empty:
+                reconciled = _apply_upsample(snapped_data, upsample, fill_value)
+            else:
+                reconciled = snapped_data
+
+            out = out.with_columns(reconciled["value"].alias(f"{label}{suffix}"))
+
+        return out
+
+    def difference(
+        self,
+        df: pl.DataFrame,
+        *,
+        labels: list[str] | None = None,
+    ) -> "DataObject":
+        """Compute every pairwise difference between the columns of an
+        already-reconciled frame.
+
+        This is deliberately mechanical: it does not resample, align, fill,
+        or otherwise touch timestamps — it just subtracts columns that are
+        already on the same time axis. Pass in the output of
+        :meth:`reconcile` (or any wide frame shaped like it: a ``"time"``
+        column plus 2-5 other columns) so exactly what up/downsampling was
+        applied is visible at the call site, not hidden inside
+        ``difference()``.
+
+        Pairs are taken in the order ``df``'s columns appear (excluding
+        ``"time"``), so for columns ``[a, b, c]`` the pairs are ``(a, b)``,
+        ``(a, c)``, ``(b, c)`` — i.e. within each pair, whichever column
+        comes first is the one "subtracted from".
+
+        Args:
+            df: A wide frame with a ``"time"`` column plus 2-5 other
+                columns to difference, e.g. the output of :meth:`reconcile`.
+            labels: Optional column names, one per pair, in the order
+                described above. If omitted, each pair is named
+                ``f"{a}_minus_{b}"`` (with any ``"_reconciled"`` suffix
+                stripped from ``a``/``b``).
+
+        Returns:
+            A new :class:`DataObject` whose aliases are the difference
+            labels, so the result can be chained straight into
+            :meth:`plot`, :meth:`reconcile`, :meth:`dataframe`, etc.
+
+        Raises:
+            ValueError: if ``df`` has no ``"time"`` column, fewer than 2 or
+                more than 5 non-``"time"`` columns (5 columns already yields
+                ``C(5, 2) = 10`` difference columns — more than that is
+                unwieldy and unlikely to be useful), or if ``labels``
+                doesn't have exactly one entry per pair.
+
+        Example::
+
+            reconciled = data.reconcile(["a", "b"], resolution="10s", upsample="zero")
+            data.difference(reconciled).plot(title="a - b")
+        """
+        if "time" not in df.columns:
+            raise ValueError("difference: df must have a 'time' column")
+
+        value_cols = [c for c in df.columns if c != "time"]
+        if len(value_cols) > _MAX_DIFFERENCE_POINTS:
+            raise ValueError(
+                f"difference: at most {_MAX_DIFFERENCE_POINTS} columns supported "
+                f"(got {len(value_cols)}); a {_MAX_DIFFERENCE_POINTS}-way difference "
+                f"already yields {len(value_cols) * (len(value_cols) - 1) // 2} columns"
+            )
+        if len(value_cols) < 2:
+            raise ValueError("difference: df needs at least 2 non-'time' columns to difference")
+
+        pairs = list(itertools.combinations(value_cols, 2))
+        if labels is not None and len(labels) != len(pairs):
+            raise ValueError(
+                f"difference: expected {len(pairs)} labels for {len(value_cols)} columns "
+                f"(all pairwise combinations), got {len(labels)}"
+            )
+
+        def _strip(col: str) -> str:
+            return col[: -len("_reconciled")] if col.endswith("_reconciled") else col
+
+        times = df["time"].to_list()
+        schema = {
+            "data_alias": pl.Utf8, "point_uri": pl.Utf8, "ref_uri": pl.Utf8,
+            "time": pl.Datetime(time_zone="UTC"), "value_numeric": pl.Float64, "value_text": pl.Utf8,
+        }
+        diff_rows: list[dict] = []
+        diff_bindings: list[BindingInfo] = []
+        for i, (col_a, col_b) in enumerate(pairs):
+            label = labels[i] if labels else f"{_strip(col_a)}_minus_{_strip(col_b)}"
+            point_uri = f"urn:acquirium:diff#{label}"
+            for t, v in zip(times, (df[col_a] - df[col_b]).to_list()):
+                diff_rows.append({
+                    "data_alias": label, "point_uri": point_uri, "ref_uri": point_uri,
+                    "time": t, "value_numeric": v, "value_text": None,
+                })
+            diff_bindings.append(BindingInfo(
+                nid=i, point_uri=point_uri, ref_uri=point_uri, alias=label, entity_contexts=[{}],
+            ))
+
+        tall = pl.DataFrame(diff_rows, schema=schema) if diff_rows else pl.DataFrame(schema=schema)
+
+        return DataObject(
+            _bindings=diff_bindings,
+            _entity_columns=[],
+            _query_graph=self._query_graph,
+            _client=self._client,
+            _query_params={},
+            _tall=tall,
+            _materialized=True,
+        )
+
+    def plot(
+        self,
+        points: list[str] | None = None,
+        *,
+        labels: list[str] | None = None,
+        output_path: str | None = None,
+        title: str | None = None,
+        xlabel: str = "time",
+        ylabel: str | None = None,
+        figsize: tuple[float, float] = (10, 5),
+    ):
+        """Plot each selected point's native time series for visual comparison.
+
+        Unlike :meth:`reconcile`/:meth:`difference`, plotting doesn't need a
+        shared time grid — each series is drawn against its own native
+        timestamps — so any number of points can be plotted together.
+
+        Args:
+            points: Points to plot. If ``None`` (default), every point in
+                this DataObject is plotted.
+            labels: Optional legend labels, one per plotted series, matching
+                the order of the resolved points. If omitted, each point's
+                alias (or ``f"{alias}__{point_local}"`` when an alias covers
+                multiple points) is used, same as :meth:`reconcile`.
+            output_path: If given, save the figure to this path instead of
+                displaying it interactively.
+            title: Optional plot title.
+            xlabel / ylabel: Axis labels.
+            figsize: Figure size passed to matplotlib.
+
+        Returns:
+            The matplotlib ``Figure``.
+
+        Example::
+
+            data = query.data(cast_value="float")
+            data.difference(["a", "b"], resolution="10s").plot(title="a - b")
+        """
+        import matplotlib.pyplot as plt
+
+        series = {
+            label: original_data
+            for label, original_data in self._native_series(points).items()
+            if not original_data.is_empty()
+        }
+        if not series:
+            raise ValueError("plot: no numeric data available to plot")
+
+        series_labels = list(series.keys())
+        if labels is not None and len(labels) != len(series_labels):
+            raise ValueError(
+                f"plot: expected {len(series_labels)} labels, got {len(labels)}"
+            )
+        display_labels = labels if labels is not None else series_labels
+
+        fig, ax = plt.subplots(figsize=figsize)
+        for original_data, label in zip(series.values(), display_labels):
+            ax.plot(original_data["time"].to_list(), original_data["value"].to_list(), label=label)
+
+        ax.set_xlabel(xlabel)
+        if ylabel:
+            ax.set_ylabel(ylabel)
+        if title:
+            ax.set_title(title)
+        ax.legend()
+        fig.autofmt_xdate()
+
+        if output_path is not None:
+            fig.savefig(output_path)
+            plt.close(fig)
+        else:
+            plt.show()
+
+        return fig
 
     # ------------------------------------------------------------------
     # Display

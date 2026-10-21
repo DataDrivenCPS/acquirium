@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional , Union, TYPE_CHECKING
 from acquirium.internals.internals_namespaces import *
 from acquirium.internals.models import LogEntry
 import polars as pl
-from datetime import datetime
+from datetime import datetime, timedelta
 from acquirium.TextMatch.decorators import flex_query_rdf_inputs, FlexSpec
 from acquirium.Client.query_graph import QueryGraph, QueryNode, QueryEdge, DataNodeInfo
 from acquirium.Client.client import AcquiriumClient
@@ -666,6 +666,112 @@ class Q:
             cast_value=cast_value,
             value_mode=value_mode,
         ).dataframe(shape=shape, include_ref=include_ref, compact=True)
+
+    def reconcile(
+        self,
+        points: list[str] | None = None,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        resolution: str | timedelta | None = None,
+        upsample: str | None = None,
+        downsample: str | None = None,
+        fill_value: float | None = None,
+        suffix: str = "_reconciled",
+        include_dependencies: bool = True,
+    ) -> pl.DataFrame:
+        """Reconcile one or more of this query's points onto a shared time grid.
+
+        Convenience wrapper around :meth:`data` + :meth:`DataObject.reconcile`:
+        it fetches the queried points as floats and brings them onto a single,
+        uniform temporal grid so they can be directly compared. Use this in
+        place of :meth:`dataframe` whenever you need ``a`` and ``b`` to line
+        up on the same timestamps (e.g. before differencing, correlating, or
+        flagging divergence between two sensors).
+
+        Each grid time ``t`` takes the measurements in its window
+        ``[t - resolution/2, t + resolution/2)``, so data is fetched half a
+        step beyond ``start``/``end`` to fill the edge windows, and the
+        result is then trimmed back to grid times within ``[start, end]``.
+        See :meth:`DataObject.reconcile` for the full algorithm.
+
+        Args:
+            points: Data aliases to reconcile. If ``None`` (default), every
+                data node bound by this query is reconciled.
+            start: Optional lower bound for the returned grid times.
+            end: Optional upper bound for the returned grid times.
+            resolution: Target temporal resolution (``timedelta`` or a
+                duration string like ``"10s"``, ``"5m"``, ``"1h"``, ``"2d"``).
+                If ``None`` (default), the highest (finest) native resolution
+                among the selected points.
+            upsample: How to fill grid times with no measurement:
+                ``"interpolate"``, ``"copy"``/``"ffill"``, ``"zero"``,
+                ``"default_value"`` (fill with the constant given via
+                ``fill_value``), or ``"null"``. ``None`` (default): only
+                required, and only an error, if some selected point actually
+                has an empty grid time.
+            downsample: How to reduce several measurements at one grid time
+                to a single value: ``"mean"``/``"average"``, ``"median"``,
+                ``"mode"``, ``"ignore_intermediate"``/``"closest"``,
+                ``"min"``, or ``"max"``. ``None`` (default): only required
+                if some grid time actually has several measurements.
+            fill_value: Constant used to fill in gaps when
+                ``upsample="default_value"``. Required for that method;
+                ignored otherwise.
+            suffix: Suffix appended to each point's name to form its
+                reconciled column name (default ``"_reconciled"``).
+            include_dependencies: Passed through to :meth:`data`.
+
+        Returns:
+            A wide ``pl.DataFrame``: ``time`` plus one ``f"{point}{suffix}"``
+            column per reconciled point.
+
+        Example::
+
+            q = acq.find_all_data(uri="dpr:conn-chlorine-contactor-to-potable-effluent-valve-toc-ppm")
+            df = q.reconcile()          # single point, reconciled onto its own native grid
+
+            # Two points, reconciled onto a common 10-second grid:
+            df = q.reconcile(["a", "b"], resolution="10s", upsample="interpolate", downsample="mean")
+        """
+        from acquirium.Client.data_object import _as_utc_datetime, _infer_resolution, _parse_resolution
+
+        def fetch(pad: timedelta) -> DataObject:
+            return self.data(
+                start=start - pad if start is not None else None,
+                end=end + pad if end is not None else None,
+                include_dependencies=include_dependencies,
+                cast_value="float",
+            )
+
+        if start is None and end is None:
+            data = fetch(timedelta(0))
+            target = resolution
+        else:
+            if resolution is not None:
+                target = _parse_resolution(resolution)
+            else:
+                # the padding depends on the resolution, so infer it from the unpadded data first
+                try:
+                    native = fetch(timedelta(0))._native_series(points)
+                except ValueError as e:
+                    raise ValueError(f"reconcile: {e}") from e
+                target = _infer_resolution(list(native.values()))
+            data = fetch(target / 2)
+
+        df = data.reconcile(
+            points,
+            resolution=target,
+            upsample=upsample,
+            downsample=downsample,
+            fill_value=fill_value,
+            suffix=suffix,
+        )
+        if start is not None:
+            df = df.filter(pl.col("time") >= _as_utc_datetime(start))
+        if end is not None:
+            df = df.filter(pl.col("time") <= _as_utc_datetime(end))
+        return df
 
     def metadata(self, *, include_internals: bool = False, include_dependencies: bool = True) -> pl.DataFrame:
         """
