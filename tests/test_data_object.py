@@ -500,6 +500,13 @@ def _two_alias_data(acq):
     return entity_BE.find_all_data().data(cast_value="float")
 
 
+def _two_columns(reconciled):
+    """Keep ``time`` and the first two numeric columns: each alias from
+    ``_two_alias_data`` covers several points, so reconciling two aliases
+    gives more columns than ``difference()`` accepts."""
+    return reconciled.select("time", *_numeric_reconciled_cols(reconciled)[:2])
+
+
 def test_difference_two_columns(acquirium_client_csv):
     """difference() takes an already-reconciled frame and computes a - b,
     named 'a_minus_b' (no resampling knobs of its own)."""
@@ -510,7 +517,7 @@ def test_difference_two_columns(acquirium_client_csv):
     if len(aliases) < 2:
         pytest.skip("fixture doesn't expose at least two distinct aliases")
 
-    reconciled = data.reconcile(aliases[:2])
+    reconciled = _two_columns(data.reconcile(aliases[:2]))
     diff = data.difference(reconciled)
     assert isinstance(diff, DataObject)
 
@@ -532,7 +539,7 @@ def test_difference_custom_labels(acquirium_client_csv):
     if len(aliases) < 2:
         pytest.skip("fixture doesn't expose at least two distinct aliases")
 
-    reconciled = data.reconcile(aliases[:2])
+    reconciled = _two_columns(data.reconcile(aliases[:2]))
     diff = data.difference(reconciled, labels=["custom_delta"])
     assert diff.aliases == ["custom_delta"]
 
@@ -545,7 +552,7 @@ def test_difference_label_count_mismatch_raises(acquirium_client_csv):
     if len(aliases) < 2:
         pytest.skip("fixture doesn't expose at least two distinct aliases")
 
-    reconciled = data.reconcile(aliases[:2])
+    reconciled = _two_columns(data.reconcile(aliases[:2]))
     with pytest.raises(ValueError):
         data.difference(reconciled, labels=["one", "too_many"])
 
@@ -558,7 +565,7 @@ def test_difference_requires_time_column(acquirium_client_csv):
     if len(aliases) < 2:
         pytest.skip("fixture doesn't expose at least two distinct aliases")
 
-    reconciled = data.reconcile(aliases[:2])
+    reconciled = _two_columns(data.reconcile(aliases[:2]))
     with pytest.raises(ValueError):
         data.difference(reconciled.drop("time"))
 
@@ -566,7 +573,7 @@ def test_difference_requires_time_column(acquirium_client_csv):
 def test_difference_too_few_columns_raises(acquirium_client_csv):
     """A single-column reconciled frame can't be differenced (need at least 2)."""
     acq = acquirium_client_csv
-    query = acq.find_all_data(uri="urn:ex/point_1", alias="only_one")
+    query = acq.find_all_data(uri="urn:ex/point_1")
     data = query.data(cast_value="float")
 
     reconciled = data.reconcile()
@@ -582,7 +589,7 @@ def test_difference_too_many_columns_raises(acquirium_client_csv):
     if len(aliases) < 2:
         pytest.skip("fixture doesn't expose at least two distinct aliases")
 
-    reconciled = data.reconcile(aliases[:2])
+    reconciled = _two_columns(data.reconcile(aliases[:2]))
     value_col = [c for c in reconciled.columns if c != "time"][0]
     # Synthesize extra columns to push past the 5-column cap.
     padded = reconciled
@@ -630,6 +637,6 @@ def test_reconcile_difference_plot_chain(acquirium_client_csv, tmp_path):
         pytest.skip("fixture doesn't expose at least two distinct aliases")
 
     out_path = tmp_path / "chain.png"
-    reconciled = data.reconcile(aliases[:2], resolution="2h", downsample="mean")
+    reconciled = _two_columns(data.reconcile(aliases[:2], resolution="2h", downsample="mean"))
     data.difference(reconciled).plot(output_path=str(out_path), title="difference over time")
     assert out_path.exists()

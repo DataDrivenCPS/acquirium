@@ -678,7 +678,7 @@ class Q:
         downsample: str | None = None,
         fill_value: float | None = None,
         suffix: str = "_reconciled",
-        use_union: bool = True,
+        include_dependencies: bool = True,
     ) -> pl.DataFrame:
         """Reconcile one or more of this query's points onto a shared time grid.
 
@@ -720,6 +720,7 @@ class Q:
                 ignored otherwise.
             suffix: Suffix appended to each point's name to form its
                 reconciled column name (default ``"_reconciled"``).
+            include_dependencies: Passed through to :meth:`data`.
 
         Returns:
             A wide ``pl.DataFrame``: ``time`` plus one ``f"{point}{suffix}"``
@@ -739,7 +740,7 @@ class Q:
             return self.data(
                 start=start - pad if start is not None else None,
                 end=end + pad if end is not None else None,
-                use_union=use_union,
+                include_dependencies=include_dependencies,
                 cast_value="float",
             )
 
