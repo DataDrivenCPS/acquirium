@@ -44,7 +44,6 @@ compute_handle = compute_ref_uri
 
 
 class TimeseriesInfo(BaseModel):
-    table: str
     row_count: int
     earliest: datetime | None = None
     latest: datetime | None = None

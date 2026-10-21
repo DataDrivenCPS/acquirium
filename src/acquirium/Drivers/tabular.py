@@ -136,21 +136,18 @@ def to_observations(
         observations = df.select(
             pl.col("__ts").alias("ts"),
             pl.col(id_col).cast(pl.Utf8).alias("ref_name"),
-            pl.col(value_col).cast(pl.Float64, strict=True).alias("value"),
+            *_values(df, [value_col], ["value"]),
         ).drop_nulls("ref_name")
     else:
         streams = [c for c in df.columns if c not in (*timestamp_columns, "__ts")]
         observations = (
             df.select(
                 pl.col("__ts").alias("ts"),
-                *[pl.col(name).cast(pl.Float64, strict=True).alias(name) for name in streams],
+                *_values(df, streams, streams),
             )
             .unpivot(index="ts", variable_name="ref_name", value_name="value")
         )
-    valid = observations.filter(pl.col("value").is_finite())
-    if len(valid) != len(observations):
-        logger.warning("tabular: ignored %d missing/nonfinite cells", len(observations) - len(valid))
-    return valid
+    return observations.drop_nulls("value")
 
 
 def _resolve_timestamp_columns(
@@ -279,6 +276,17 @@ def _parse_timestamp_text(
     if best is None:
         return pl.Series(col.name, [None] * len(col), dtype=pl.Datetime("us"))
     return best
+
+
+def _values(df: pl.DataFrame, columns: list[str], names: list[str]) -> list[pl.Expr]:
+    """Value columns as Float64 when all are numeric, otherwise as text (the
+    server stores each value as its stream's kind). Float NaN is absent."""
+    if all(df[column].dtype.is_numeric() for column in columns):
+        return [
+            pl.col(column).cast(pl.Float64).fill_nan(None).alias(name)
+            for column, name in zip(columns, names)
+        ]
+    return [_as_text(df, column).alias(name) for column, name in zip(columns, names)]
 
 
 def _as_text(df: pl.DataFrame, column: str) -> pl.Expr:

@@ -32,6 +32,7 @@ from rdflib import Graph, Literal, RDF, RDFS, URIRef
 from rdflib.namespace import XSD
 
 from acquirium.internals.models import compute_ref_uri, looks_like_uri
+from acquirium.Storage.values import normalize_value_kind
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_SOURCE_ID,
     ACQUIRIUM_REF_NAME,
@@ -169,6 +170,8 @@ class Output:
     quantity_kind: str | None = None
     label: str | None = None
     on_group: bool = False
+    # "text" for a port whose function emits text; reads default to it.
+    value_kind: str = "numeric"
 
 
 @dataclass(frozen=True)
@@ -194,6 +197,9 @@ class App:
             raise ValueError("output port names must be nonempty")
         if any(type(spec.on_group) is not bool for spec in self.outputs.values()):
             raise ValueError("output on_group must be a boolean")
+        for spec in self.outputs.values():
+            if spec.value_kind != normalize_value_kind(spec.value_kind):
+                raise ValueError("output value_kind must be 'numeric' or 'text'")
         for selection in self.inputs:
             for values in (selection.parameters or {}).values():
                 if not isinstance(values, Mapping) or any(
@@ -424,7 +430,7 @@ class Apps:
                     ref, point = URIRef(reference), URIRef(f"{reference}__point")
                     rdf.add((ref, ACQUIRIUM_SOURCE_ID, Literal(f"derived:{name}")))
                     rdf.add((ref, ACQUIRIUM_REF_NAME, Literal(_json([group, port]))))
-                    rdf.add((ref, ACQUIRIUM_VALUE_KIND, Literal("numeric")))
+                    rdf.add((ref, ACQUIRIUM_VALUE_KIND, Literal(spec.value_kind)))
                     rdf.add((point, RDF.type, VIRTUAL_POINT))
                     rdf.add((point, HAS_EXTERNAL_REFERENCE, ref))
                     rdf.add((point, PRODUCED_BY, Literal(name)))
