@@ -155,6 +155,35 @@ def test_collections_preserve_handles_and_roles(study_api):
     assert study.output["cost"] is cost
 
 
+def test_handles_print_what_they_hold_without_reading(study_api):
+    study = study_api.study
+    cost = study.output("cost").scalar(unit="USD")
+    source = study.input("source").timeseries()
+    log = study.log("events")
+    run = study.start({"scenario": "baseline"})
+    assert repr(study) == f"<Study 'study': 1 input, 1 output, 1 log; running {run.run_id}>"
+    cost.record(500)
+    source.use("urn:example:ref", interval=(timestamp("2026-01-01T00:00:00Z"), timestamp("2026-01-02T00:00:00Z")))
+    log.record("done")
+    run.finish()
+    observations = study.experiments.observations().all()
+
+    calls = len(study_api.client.mock_calls)
+    assert repr(study) == "<Study 'study': 1 input, 1 output, 1 log>"
+    assert repr(run) == f"<Experiment {run.run_id} succeeded {{'scenario': 'baseline'}}>"
+    assert repr(cost) == "<ExperimentVariable output 'cost' scalar {'unit': 'USD'}>"
+    assert repr(log) == "<ExperimentVariable log 'events'>"
+    assert repr(study.input) == "<VariableCollection input ['source']>"
+    assert repr(study.experiments.where(status="succeeded")) == "<ExperimentCollection study='study' status='succeeded'>"
+    assert repr(cost.observations()) == "<ObservationCollection study='study' variable='cost'>"
+    assert [repr(item) for item in observations] == [
+        f"<Observation 'cost' = 500 (run {run.run_id}, #1)>",
+        f"<Observation 'source' = stream urn:example:ref [2026-01-01T00:00:00+00:00, 2026-01-02T00:00:00+00:00] (run {run.run_id}, #2)>",
+        f"<Observation 'events' = 'done' (run {run.run_id}, #3)>",
+    ]
+    assert len(study_api.client.mock_calls) == calls
+
+
 def test_stream_annotations_support_historical_and_live_intervals(study_api):
     study, ac = study_api.study, study_api.ac
     start = datetime(2026, 1, 1, tzinfo=timezone.utc)

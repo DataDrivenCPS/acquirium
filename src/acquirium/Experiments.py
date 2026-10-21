@@ -8,6 +8,7 @@ from hashlib import sha256
 import functools
 import json
 import logging
+import reprlib
 import threading
 import warnings
 from pathlib import Path
@@ -40,6 +41,23 @@ def _json(value: Any) -> str:
     except TypeError as error: raise ValueError("experiment values must be JSON serializable") from error
 def _metadata_matches(actual: dict[str, Any], expected: dict[str, Any] | None) -> bool:
     return expected is None or all(actual.get(key) == value for key, value in expected.items())
+
+# Printed handles show only what they already hold; a repr never queries the server.
+_brief = reprlib.Repr()
+_brief.maxstring = _brief.maxother = 60
+_brief.maxdict = _brief.maxlist = 4
+_ROLE_NAMES = {"annotation": "log"}
+
+def _count(number: int, noun: str) -> str:
+    return f"{number} {noun}{'' if number == 1 else 's'}"
+
+def _selection_repr(name: str, study: "Study", details: dict[str, Any], *, attributes: bool = False) -> str:
+    """Describe a lazy selection; `.all()` or `.frame()` reads it."""
+    parts = [f"study={study.name!r}"]
+    parts += [f"{key}={_brief.repr(value)}" for key, value in details.items() if value not in (None, {}, [])]
+    if attributes:
+        parts.append("with attribute filters")
+    return f"<{name} {' '.join(parts)}>"
 
 def _publishes(method):
     """Hold the graph lock across a write's SQL commit and queuing its node."""
@@ -799,6 +817,18 @@ class Observation:
             options.setdefault("end", self.range_end.isoformat())
         return self._client.timeseries_df(self.ref_uri, **options)
 
+    def __repr__(self) -> str:
+        if self.ref_uri is not None:
+            value = f"stream {self.ref_uri}"
+            if self.range_start is not None:
+                end = self.range_end.isoformat() if self.range_end is not None else "open"
+                value += f" [{self.range_start.isoformat()}, {end}]"
+        elif self.artifact_digest is not None:
+            value = f"file {self.filename!r} ({_count(self.byte_length or 0, 'byte')})"
+        else:
+            value = _brief.repr(self.value)
+        return f"<Observation {self.variable.label!r} = {value} (run {self.experiment_id}, #{self.sequence})>"
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "experiment_id": self.experiment_id,
@@ -870,6 +900,12 @@ class ExperimentVariable:
     @property
     def uri(self) -> str:
         return variable_uri(self.variable_id)
+
+    def __repr__(self) -> str:
+        role = _ROLE_NAMES.get(self.role, self.role)
+        kind = "" if self.kind == role else f" {self.kind}"
+        metadata = f" {_brief.repr(self.metadata)}" if self.metadata else ""
+        return f"<ExperimentVariable {role} {self.label!r}{kind}{metadata}>"
 
     @property
     def run_id(self) -> str:
@@ -953,6 +989,9 @@ class ExperimentOutputs(Mapping):
     def __len__(self):
         return len(self.experiment.study.output)
 
+    def __repr__(self) -> str:
+        return f"<ExperimentOutputs run={self.experiment.run_id} {_brief.repr(list(self))}>"
+
     def __setitem__(self, label: str, value: Any) -> None:
         study = self.experiment.study
         if study._experiment is not self.experiment:
@@ -998,6 +1037,10 @@ class Experiment:
     @property
     def experiment_id(self) -> str:
         return self.run_id
+
+    def __repr__(self) -> str:
+        metadata = f" {_brief.repr(self.metadata)}" if self.metadata else ""
+        return f"<Experiment {self.run_id} {self.status}{metadata}>"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -1095,6 +1138,9 @@ class VariableCollection:
     def items(self):
         return self._variables.items()
 
+    def __repr__(self) -> str:
+        return f"<VariableCollection {_ROLE_NAMES.get(self.role, self.role)} {_brief.repr(list(self._variables))}>"
+
 
 class VariableCatalog:
     """All persisted variable declarations for a Study, including metadata."""
@@ -1158,6 +1204,11 @@ class VariableCatalog:
 
     def all(self) -> list[ExperimentVariable]:
         return self._items()
+
+    def __repr__(self) -> str:
+        selected = [variable.label for variable in self._selection] if self._selection else None
+        return _selection_repr("VariableCatalog", self.study, {**self._filters, "variables": selected},
+                               attributes=self._query is not None)
 
     def query(self):
         """Return PR #120's query builder for this Study's variable nodes."""
@@ -1296,6 +1347,9 @@ class ExperimentCollection:
     def observations(self, variable: ExperimentVariable | str | None = None) -> "ObservationCollection":
         return ObservationCollection(self.study, variable=variable, selection=self, **self._filters)
 
+    def __repr__(self) -> str:
+        return _selection_repr("ExperimentCollection", self.study, self._filters, attributes=self._query is not None)
+
 
 class ObservationCollection:
     """A selection of persisted observations materialized as objects or data."""
@@ -1378,6 +1432,12 @@ class ObservationCollection:
             raise LookupError("no observations matched this selection")
         return observations[-1]
 
+    def __repr__(self) -> str:
+        details = {"run": self.run_id, "variable": self.variable.label if self.variable else None,
+                   **self.experiment_filters}
+        attributes = self.selection is not None and self.selection._query is not None
+        return _selection_repr("ObservationCollection", self.study, details, attributes=attributes)
+
 
 class Study:
     """Reusable variable declarations plus a single active Experiment."""
@@ -1395,6 +1455,12 @@ class Study:
     @property
     def uri(self) -> str:
         return study_uri(self.study_id)
+
+    def __repr__(self) -> str:
+        counts = ", ".join(_count(len(self._collections[role]), _ROLE_NAMES.get(role, role))
+                           for role in ("input", "output", "annotation"))
+        active = f"; running {self._experiment.run_id}" if self._experiment is not None else ""
+        return f"<Study {self.name!r}: {counts}{active}>"
 
     def start(self, metadata: dict | None = None) -> Experiment:
         # Variable objects deliberately route through one active experiment;

@@ -308,6 +308,18 @@ receipt time. Caller-supplied `occurred_at` is separate. Time-series writes use
 source `experiment/<run_id>` and the variable label as the reference name.
 Each observation records the stream URI and minimum and maximum sample times.
 
+Printing a handle shows what it already holds and never reads from the server.
+A Study lists its variable counts and active run; a run, its status and
+metadata; an Observation, its value or stream range. Collections are lazy, so
+they print their selection; call `.all()` or `.frame()` to read it:
+
+```text
+<Study 'pumps': 1 input, 1 output, 1 log>
+<Experiment 3f2a… succeeded {'scenario': 'baseline'}>
+<ObservationCollection study='pumps' variable='cost'>
+<Observation 'cost' = 500 (run 3f2a…, #1)>
+```
+
 ## Proposed read API
 
 These methods are proposed and are **not implemented**:
