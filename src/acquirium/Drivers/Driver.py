@@ -51,18 +51,28 @@ if TYPE_CHECKING:
     from acquirium.Client.acquirium import Acquirium
 
 
-def _cast_value_to_utf8(col: "pl.Series") -> "pl.Expr":
+def _value_column(col: "pl.Series") -> "pl.Expr":
+    """A column of numbers travels as Float64 and any other as text; the
+    server stores each value as its stream's declared kind."""
     import math
+    from numbers import Real
     import polars as pl
 
     name = col.name
+    if col.dtype.is_numeric():
+        return pl.col(name).cast(pl.Float64)
+    if col.dtype == pl.Boolean:
+        return pl.col(name).cast(pl.Utf8).str.to_titlecase()
+    if col.dtype == pl.Object and all(
+        isinstance(v, Real) and not isinstance(v, bool) for v in col if v is not None
+    ):
+        return pl.lit(pl.Series(name, [None if v is None else float(v) for v in col],
+                                dtype=pl.Float64))
     if col.dtype == pl.Object:
         return pl.col(name).map_elements(
             lambda v: None if (v is None or (isinstance(v, float) and math.isnan(v))) else str(v),
             return_dtype=pl.Utf8,
         )
-    if col.dtype in (pl.Float32, pl.Float64):
-        return pl.col(name).fill_nan(None).cast(pl.Utf8)
     return pl.col(name).cast(pl.Utf8)
 
 
@@ -452,10 +462,6 @@ class IngestDriver(Driver):
 
         Buffered rows are inserted by :meth:`flush` at the end of each tick.
         """
-        import math
-        from numbers import Real
-        if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(value):
-            raise ValueError("observations must be finite non-null numbers")
         source = source_id if source_id is not None else self.source_id
         key = (source, str(ref_name))
         with self._declaration_lock:
@@ -517,7 +523,7 @@ class IngestDriver(Driver):
             "source_id": pl.Series("source_id", [row[0] for row in rows], dtype=pl.Utf8),
             "ts": pl.Series("ts", [row[1] for row in rows]),
             "ref_name": pl.Series("ref_name", [row[2] for row in rows], dtype=pl.Utf8),
-            "value": pl.Series("value", [row[3] for row in rows], dtype=pl.Float64, strict=True),
+            "value": pl.Series("value", [row[3] for row in rows], dtype=pl.Object),
         })
 
     def insert_observations(
@@ -603,7 +609,7 @@ class IngestDriver(Driver):
         schema = {
             "ts": pl.Datetime("us", "UTC"),
             "ref_name": pl.Utf8,
-            "value": pl.Float64,
+            "value": pl.Utf8,
         }
         if observations is None:
             return pl.DataFrame(schema=schema)
@@ -624,20 +630,10 @@ class IngestDriver(Driver):
             columns.insert(0, "source_id")
         df = observations.select(columns).drop_nulls(subset=["ts", "ref_name"])
 
-        import math
-        values = df["value"].to_list()
-        try:
-            if any(value is None or isinstance(value, bool) for value in values):
-                raise ValueError
-            numbers = [float(value) for value in values]
-            if not all(math.isfinite(value) for value in numbers):
-                raise ValueError
-        except (ValueError, TypeError, OverflowError) as error:
-            raise ValueError("observations must be finite non-null numbers") from error
         exprs = [
             self.to_timestamp(df["ts"]).alias("ts"),
             pl.col("ref_name").cast(pl.Utf8),
-            pl.Series("value", numbers, dtype=pl.Float64),
+            _value_column(df["value"]).alias("value"),
         ]
         if "source_id" in df.columns:
             exprs.insert(0, pl.col("source_id").cast(pl.Utf8))

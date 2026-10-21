@@ -352,13 +352,18 @@ def test_successful_flush_releases_buffer_capacity(tmp_path):
 # ------------------------------------------------------------------ value kinds
 
 
-@pytest.mark.parametrize("value", ["ON", None, True, float("nan"), float("inf")])
-def test_add_rejects_non_numeric_values(tmp_path, value):
+def test_add_accepts_non_numeric_values(tmp_path):
     driver = make_driver(AddDriver, tmp_path)
-    with pytest.raises(ValueError, match="finite non-null"):
-        driver.add("temp", value)
-    assert len(driver._pending) == 0
+    driver.declare("state")
+    driver.declare("count")
+    driver.add("state", "ON")
+    driver.add("count", 3)
+    driver.flush()
 
+    # A batch holding text travels as text; the server stores each value as
+    # its stream's kind.
+    (_, cols), = inserted(driver)
+    assert cols["value"] == ["ON", "3"]
 
 
 def test_add_is_available_on_the_shared_ingest_base(tmp_path):
@@ -402,6 +407,23 @@ def test_platform_registers_declared_datasource(tmp_path):
 
 
 
+def test_null_only_batch_does_not_freeze_inferred_value_kind(tmp_path):
+    driver = make_driver(AddDriver, tmp_path)
+    driver.declare("optional")
+    driver.add("optional", None)
+    driver.flush()
+    driver.add("optional", 3.0)
+    driver.flush()
+
+    specs = [
+        spec
+        for call in driver.aq.register_streams.call_args_list
+        for spec in call.args[0]
+        if spec["ref_name"] == "optional"
+    ]
+    assert specs[-1]["value_kind"] == "numeric"
+
+
 def test_conflicting_redeclaration_after_registration_raises(tmp_path):
     driver = make_driver(AddDriver, tmp_path)
     driver.declare("state", point_uri="urn:first")
@@ -420,10 +442,10 @@ def test_graceful_shutdown_flushes_after_stopping_producer(tmp_path):
             self.stopped = True
 
     driver = make_driver(Events, tmp_path)
-    driver.add("state", 1.0)
+    driver.add("state", "ON")
     driver._shutdown()
     assert driver.stopped is True
-    assert inserted(driver)[0][1]["value"] == [1.0]
+    assert inserted(driver)[0][1]["value"] == ["ON"]
 
 
 def test_insert_observations_chunks_to_server_request_limit(tmp_path):

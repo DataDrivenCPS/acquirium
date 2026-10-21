@@ -203,3 +203,15 @@ def test_custom_column_names():
     )
     assert out["ref_name"].to_list() == ["a"]
     assert out["value"].to_list() == [1.5]
+
+
+def test_text_cells_travel_as_text():
+    df = pl.DataFrame({
+        "time": ["2024-01-01T00:00:00Z", "2024-01-02T00:00:00Z"],
+        "temp": [21.5, None],
+        "mode": ["AUTO", "Bad"],
+    })
+    out = to_observations(df, layout="wide")
+    assert sorted(zip(out["ref_name"], out["value"])) == [
+        ("mode", "AUTO"), ("mode", "Bad"), ("temp", "21.5"),
+    ]

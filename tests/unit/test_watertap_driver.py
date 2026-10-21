@@ -172,13 +172,20 @@ def test_loop_can_extract_model_via_result_attr(tmp_path):
     assert values["value_b"] == 6.0
 
 
-def test_loop_rejects_nonnumeric_component_values(tmp_path):
+def test_loop_preserves_nonnumeric_component_values_for_numeric_streams(tmp_path):
     module_path = _write_module(tmp_path)
-    driver = _make_driver(tmp_path, watertap_build_spec=f"{module_path}:build_status_model")
+    driver = _make_driver(
+        tmp_path,
+        watertap_build_spec=f"{module_path}:build_status_model",
+    )
     driver.setup()
-    with pytest.raises(ValueError, match="finite non-null"):
-        driver.tick()
-    driver.aq.insert_timeseries_arrow.assert_not_called()
+
+    driver.tick()
+
+    _, df = driver.aq.insert_timeseries_arrow.call_args.args
+    values = dict(zip(df["ref_name"].to_pylist(), df["value"].to_pylist()))
+    assert values["value_a"] == "Manual Control"
+    assert values["value_b"] == "6.0"
 
 
 

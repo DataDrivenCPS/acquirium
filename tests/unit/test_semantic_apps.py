@@ -207,23 +207,23 @@ def test_atomic_request_retry_and_explicit_delete_over_http(system):
     assert data["value"].to_pylist() == [10]
 
 
-def test_unsupported_text_and_legacy_declarations_are_rejected(system):
+def test_text_on_a_numeric_stream_is_kept_and_legacy_declarations_are_rejected(system):
     manager, http, client = system
     ref = register(system, "invalid")
-    before = manager.core.engine.status()["accepted"]
     response = http.post(
         "/insert_timeseries",
         json=[
             dict(
                 source_id="invalid",
                 ref_name="temperature",
-                request_id="invalid",
-                values=[[1, "text"]],
+                request_id="fault",
+                values=[[1, "Bad"]],
             )
         ],
     )
-    assert response.status_code == 400
-    assert manager.core.engine.status()["accepted"] == before
+    assert response.status_code == 200
+    assert response.json()["receipts"][0]["published"]
+    assert manager.core.engine.snapshot().value(ref, 1) == "Bad"
     definition = mean("invalid-app", ref).to_dict()
     definition["lookback"] = "all"
     response = http.put("/apps/invalid-app", json=definition)
@@ -750,3 +750,33 @@ def test_engine_status_rolls_operator_totals_up_per_app(system):
     assert totals["input_rows"] == rollup["input_rows"] >= 2
     assert rollup["changed_rows"] >= 2
     manager.remove_app(declaration.name)
+
+
+def test_text_streams_store_and_read_text(system):
+    manager, http, client = system
+    client.register_streams(
+        [dict(source_id="pumps", ref_name="mode", value_kind="text", point_uri="urn:pumps:mode")]
+    )
+    numeric = register(system, "pumps")
+    ref = str(compute_ref_uri("pumps", "mode"))
+    response = http.post(
+        "/insert_timeseries",
+        json=[
+            dict(source_id="pumps", ref_name="mode", request_id="modes",
+                 values=[[1, "AUTO"], [2, 3]]),
+            dict(source_id="pumps", ref_name="temperature", request_id="modes",
+                 values=[[1, 70.5], [2, "Bad"]]),
+        ],
+    )
+    assert response.status_code == 200
+
+    def read(uri, value_mode="default"):
+        response = http.get("/timeseries", params={"uri": uri, "value_mode": value_mode})
+        assert response.status_code == 200
+        return ipc.open_stream(response.content).read_all()["value"].to_pylist()
+
+    # A text stream keeps numbers as text; a numeric stream keeps fault codes.
+    assert read(ref) == ["AUTO", "3"]
+    assert read(numeric) == [70.5]
+    assert read(numeric, "text") == ["Bad"]
+    assert read(numeric, "coalesce") == ["70.5", "Bad"]

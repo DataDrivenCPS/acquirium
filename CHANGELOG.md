@@ -15,6 +15,13 @@ change in any release.
   `NameError: name 'uuid' is not defined`, which broke every driver insert.
 
 ### Added
+- Text values are back on the Escapement core. Each reading is a number or
+  text, stored as its stream's `value_kind`: a fault code such as `"Bad"` on a
+  numeric stream is kept as text. `value_mode` takes `numeric`, `text` and
+  `coalesce` again. Native app functions read only numbers; Python functions
+  get `value` and `text` columns and may emit text, declared with
+  `Output(value_kind="text")`. Null, blank and non-finite values are dropped.
+  Existing engine stores must be recreated (Escapement schema version 8).
 - `[server] engine_path` accepts a `postgres://` URL to keep the engine's store
   in PostgreSQL; the tables go in the URL's `search_path` schema.
   `examples/bulk_ingest` takes `--engine-path` to benchmark it.

@@ -755,13 +755,6 @@ def get_timeseries(
                         yield data
                         buf.seek(0)
                         buf.truncate(0)
-                if writer is None:
-                    empty_schema = pa.schema([
-                        ("ts", pa.timestamp("ns", tz="UTC")),
-                        ("value", pa.float64()),
-                        ("uri", pa.string()),
-                    ])
-                    writer = ipc.new_stream(buf, empty_schema)
             finally:
                 if writer is not None:
                     writer.close()

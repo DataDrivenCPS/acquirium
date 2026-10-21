@@ -7,7 +7,6 @@ no stream registry, SQL connections, revision ledger, or computation scheduler.
 from __future__ import annotations
 
 from datetime import datetime
-import math
 from pathlib import Path
 from threading import RLock
 
@@ -16,6 +15,8 @@ import pyarrow as pa
 import pyarrow.compute as pc
 from escapement import Engine, Mutation, Receipt, Snapshot
 
+from acquirium.Storage.values import split_values
+
 SCHEMA = pa.schema(
     [
         ("ts", pa.timestamp("ns", tz="UTC")),
@@ -23,6 +24,22 @@ SCHEMA = pa.schema(
         ("uri", pa.string()),
     ]
 )
+# Text and coalesced reads return the value column as strings.
+TEXT_SCHEMA = SCHEMA.set(1, pa.field("value", pa.string()))
+
+
+def schema(mode: str) -> pa.Schema:
+    return SCHEMA if mode == "numeric" else TEXT_SCHEMA
+
+
+def _selected(rows, mode):
+    """(time, value) of the rows a read in ``mode`` returns: numbers only,
+    text only, or every reading as text ("coalesce")."""
+    if mode == "numeric":
+        return [(r.event_time_ns, r.value) for r in rows if not isinstance(r.value, str)]
+    if mode == "text":
+        return [(r.event_time_ns, r.value) for r in rows if isinstance(r.value, str)]
+    return [(r.event_time_ns, str(r.value)) for r in rows]
 
 
 def time_ns(value: int | datetime | str | None) -> int | None:
@@ -67,45 +84,45 @@ class Core:
             raise
 
     def ingest(self, source: str, request_id: str, frame: pl.DataFrame) -> Receipt:
-        if not source or not request_id:
-            raise ValueError("source and request_id must be nonempty")
+        """Submit ``ref_uri``, timezone-aware ``ts`` and ``value`` rows, or rows
+        with ``operation`` ``"delete"``. Each value is stored as its row's
+        ``value_kind`` (numeric when absent; see ``split_values``)."""
         if frame.height > 10_000:
             raise ValueError(
                 "a request may contain at most 10,000 rows; chunk imports explicitly"
             )
-        if not {"ref_uri", "ts", "value"}.issubset(frame.columns):
-            raise ValueError("observations require ref_uri, ts, and value")
         dtype = frame.schema["ts"]
         if not isinstance(dtype, pl.Datetime) or dtype.time_zone is None:
             raise ValueError("ts must be a timezone-aware datetime column")
+        if "operation" not in frame.columns:
+            frame = frame.with_columns(pl.lit("upsert").alias("operation"))
+        if "value_kind" not in frame.columns:
+            frame = frame.with_columns(pl.lit("numeric").alias("value_kind"))
+        deleted = frame["operation"].eq("delete")
+        frame = pl.concat([
+            frame.filter(deleted).select(
+                "ref_uri", "ts", "operation",
+                pl.lit(None, pl.Float64).alias("number"), pl.lit(None, pl.String).alias("text"),
+            ),
+            split_values(frame.filter(~deleted).select(
+                "ref_uri", "ts", "operation", "value", "value_kind"
+            )),
+        ])
         times = (
             pc.cast(frame["ts"].to_arrow(), pa.timestamp("ns", tz="UTC"), safe=True)
             .cast(pa.int64())
             .to_pylist()
         )
-        operations = (
-            frame["operation"].to_list()
-            if "operation" in frame.columns
-            else ["upsert"] * len(frame)
-        )
+        deletes = frame["operation"].eq("delete").to_list()
         normalized = {}
-        for (stream, value), timestamp, operation in zip(
-            frame.select("ref_uri", "value").iter_rows(), times, operations
+        for (stream, number, text), timestamp, delete in zip(
+            frame.select("ref_uri", "number", "text").iter_rows(), times, deletes
         ):
-            if not isinstance(stream, str) or not stream or timestamp is None:
-                raise ValueError("stream IDs and timestamps must be non-null")
-            if operation == "delete":
-                mutation = Mutation.delete(stream, timestamp)
-            elif operation == "upsert":
-                if value is None or isinstance(value, (bool, str)):
-                    raise ValueError("observations must be finite non-null numbers")
-                number = float(value)
-                if not math.isfinite(number):
-                    raise ValueError("observations must be finite non-null numbers")
-                mutation = Mutation.put(stream, timestamp, number)
-            else:
-                raise ValueError("operation must be upsert or delete")
-            normalized[(stream, timestamp)] = mutation
+            normalized[(stream, timestamp)] = (
+                Mutation.delete(stream, timestamp)
+                if delete
+                else Mutation.put(stream, timestamp, text if number is None else number)
+            )
         with self._gate:
             receipt = self.engine.ingest(
                 source, request_id, [normalized[key] for key in sorted(normalized)]
@@ -164,7 +181,10 @@ class Core:
         batch_size=10_000,
         epoch=None,
         snapshot=None,
+        mode="numeric",
     ):
+        if mode not in {"numeric", "text", "coalesce"}:
+            raise ValueError("mode must be numeric, text or coalesce")
         if order not in {"asc", "desc"}:
             raise ValueError("order must be asc or desc")
         if limit is not None and (isinstance(limit, bool) or limit < 0):
@@ -184,6 +204,7 @@ class Core:
         def pages():
             nonlocal lo, hi
             remaining = limit
+            yielded = False
             while remaining is None or remaining > 0:
                 count = (
                     min(batch_size, remaining) if remaining is not None else batch_size
@@ -198,19 +219,25 @@ class Core:
                     break
                 if any(row.sample_key != 0 for row in rows):
                     raise ValueError("Acquirium streams require sample_key=0")
-                yield pa.RecordBatch.from_arrays(
-                    [
-                        pa.array(
-                            [row.event_time_ns for row in rows],
-                            type=SCHEMA.field("ts").type,
-                        ),
-                        pa.array([row.value for row in rows], type=pa.float64()),
-                        pa.array([stream] * len(rows), type=pa.string()),
-                    ],
-                    schema=SCHEMA,
-                )
+                selected = _selected(rows, mode)
+                if selected:
+                    yielded = True
+                    yield pa.RecordBatch.from_arrays(
+                        [
+                            pa.array(
+                                [time for time, _ in selected],
+                                type=SCHEMA.field("ts").type,
+                            ),
+                            pa.array(
+                                [value for _, value in selected],
+                                type=schema(mode).field("value").type,
+                            ),
+                            pa.array([stream] * len(selected), type=pa.string()),
+                        ],
+                        schema=schema(mode),
+                    )
                 if remaining is not None:
-                    remaining -= len(rows)
+                    remaining -= len(selected)
                 if len(rows) < count:
                     break
                 if order == "desc":
@@ -219,6 +246,9 @@ class Core:
                     if rows[-1].event_time_ns == 2**63 - 1:
                         break
                     lo = rows[-1].event_time_ns + 1
+            if not yielded:
+                # An empty read still carries the mode's schema.
+                yield pa.RecordBatch.from_pylist([], schema=schema(mode))
 
         return pages()
 
@@ -227,7 +257,9 @@ class Core:
         result = {}
         for stream in streams:
             count, earliest, latest = 0, None, None
-            for batch in self.batches(stream, snapshot=snapshot):
+            for batch in self.batches(stream, snapshot=snapshot, mode="coalesce"):
+                if not batch.num_rows:
+                    continue
                 count += batch.num_rows
                 earliest = earliest if earliest is not None else batch["ts"][0].value
                 latest = batch["ts"][-1].value
@@ -243,7 +275,6 @@ class Core:
                 )
 
             result[stream] = dict(
-                table="escapement",
                 row_count=count,
                 earliest=iso(earliest),
                 latest=iso(latest),

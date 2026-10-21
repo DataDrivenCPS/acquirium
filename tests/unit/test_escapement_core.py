@@ -92,12 +92,25 @@ def test_pages_preserve_nanoseconds_and_return_more_than_ten_thousand(core):
     assert core.info(["urn:sensor"])["urn:sensor"]["row_count"] == 10_007
 
 
-@pytest.mark.parametrize("value", [None, True, "20", float("inf"), float("nan")])
-def test_invalid_numeric_batch_is_rejected_before_admission(core, value):
-    accepted = core.engine.status()["accepted"]
-    with pytest.raises(ValueError):
-        core.ingest("gateway", "invalid", frame([1001, 2002], [20, value]))
-    assert core.engine.status()["accepted"] == accepted
+def test_values_are_stored_as_their_stream_kind(core):
+    values = [20, "21.5", "Bad", True, None, "", float("nan"), float("inf")]
+    numeric = frame(list(range(len(values))), values).with_columns(
+        pl.lit("numeric").alias("value_kind")
+    )
+    text = frame([0, 1], [20, "21.5"], stream="urn:status").with_columns(
+        pl.lit("text").alias("value_kind")
+    )
+    snapshot = core.wait(core.ingest("gateway", "kinds", pl.concat([numeric, text])))
+    # Numbers (and numeric strings) are numbers on a numeric stream, anything
+    # else is kept as text, and rows with no reading are dropped.
+    assert [r.value for r in snapshot.readings("urn:sensor")] == [20, 21.5, "Bad", "True"]
+    assert [r.value for r in snapshot.readings("urn:status")] == ["20", "21.5"]
+    read = lambda mode: pa.Table.from_batches(list(core.batches("urn:sensor", mode=mode)))
+    assert read("numeric")["value"].to_pylist() == [20, 21.5]
+    assert read("text")["value"].to_pylist() == ["Bad", "True"]
+    assert read("coalesce")["value"].to_pylist() == ["20.0", "21.5", "Bad", "True"]
+    assert read("text").schema.field("value").type == pa.string()
+    assert pa.Table.from_batches(list(core.batches("urn:none", mode="text"))).num_rows == 0
 
 
 def test_duplicate_key_last_wins_and_transport_order_does_not_change_retry(core):

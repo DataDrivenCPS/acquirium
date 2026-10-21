@@ -34,8 +34,9 @@ The server exposes semantic graph operations and one Escapement timeseries engin
 | `GET /drivers/list`, `POST /drivers/start`, `/drivers/stop` | Driver lifecycle |
 
 JSON values contain timestamp/value pairs. Integer timestamps are UTC nanoseconds;
-timezone-aware datetime strings are also accepted. Values must be finite non-null
-numbers. Arrow timestamps must be timezone-aware. Duplicate keys keep the last
+timezone-aware datetime strings are also accepted. Values are numbers or text,
+each stored as its stream's `value_kind` ([values](../explanation/values.md));
+null, blank and non-finite values are dropped. Arrow timestamps must be timezone-aware. Duplicate keys keep the last
 row before native submission; source/request IDs and normalized payloads identify
 retries within the bounded native retry window.
 
@@ -92,8 +93,10 @@ RSS. Sampling occurs on stats reads and worker removal, not each completed job.
 Timeseries parameters include `uri`, optional `start`/`end` datetime strings or
 `start_ns`/`end_ns` integers, optional `limit`, `order=asc|desc`, and optional
 published `epoch`. Bounds are half-open. Without a limit, paging returns the
-complete range. Related reads should use the same captured epoch. Numeric values
-are the only projection; `value_mode` accepts `default` or `numeric`.
+complete range. Related reads should use the same captured epoch. `value_mode` is
+`default` (the stream's declared kind), `numeric`, `text` or `coalesce` (every
+reading as a string); the Arrow `value` column is `float64` for numeric reads
+and `string` otherwise.
 
 Legacy SQL/logbook, Timescale, whole-stream replacement, class-based app
 registration, reprocessing, and app-check endpoints have been removed.

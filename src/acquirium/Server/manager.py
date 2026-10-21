@@ -16,7 +16,7 @@ from acquirium.Storage.graph_store import OxigraphGraphStore
 from acquirium.core import Core
 from acquirium.apps import Apps
 from acquirium.Storage.graph_store import select_values
-from acquirium.Storage.values import normalize_value_kind
+from acquirium.Storage.values import normalize_value_kind, normalize_value_mode
 from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.Server.config import OntologySource
 from acquirium.internals.models import compute_ref_uri
@@ -561,10 +561,13 @@ class Manager:
 
     def timeseries_batch(self, uri, start=None, end=None, limit=None, order="asc",
                          batch_size=10_000, value_mode="default", epoch=None):
-        if value_mode not in {"default", "numeric"}:
-            raise ValueError("only numeric values are supported")
-        return self.core.batches(self.resolve_storage_keys([uri])[uri], start=start, end=end,
-                                 limit=limit, order=order, batch_size=batch_size, epoch=epoch)
+        stream = self.resolve_storage_keys([uri])[uri]
+        mode = normalize_value_mode(value_mode)
+        if mode == "default":
+            # A stream reads as its declared kind; derived streams are numeric.
+            mode = self._stream_refs.get(stream, {}).get("value_kind", "numeric")
+        return self.core.batches(stream, start=start, end=end, limit=limit, order=order,
+                                 batch_size=batch_size, epoch=epoch, mode=mode)
 
     def timeseries_info_batch(self, uris):
         keys = self.resolve_storage_keys(uris)
@@ -612,8 +615,7 @@ class Manager:
         frame = pl.DataFrame({"ref_uri": pl.Series(refs, dtype=pl.String),
                               "ts": pl.Series(times, dtype=pl.Int64).cast(pl.Datetime("ns", "UTC")),
                               "value": pl.Series(values, dtype=pl.Object)})
-        self._validate_refs(source_id, set(refs))
-        return self.core.ingest(source_id, request_id or str(uuid.uuid4()), frame)
+        return self._ingest(source_id, frame, request_id)
 
     def insert_timeseries_arrow(self, source_id, table, *, request_id=None):
         import polars as pl
@@ -622,23 +624,35 @@ class Manager:
         if any(not isinstance(name, str) or not name for name in names):
             raise ValueError("ref_name must be a nonempty string")
         refs = {name: str(compute_ref_uri(source_id, name)) for name in names}
-        self._validate_refs(source_id, set(refs.values()))
         frame = frame.with_columns(pl.col("ref_name").replace_strict(refs).alias("ref_uri"))
+        return self._ingest(source_id, frame.drop("ref_name"), request_id)
+
+    def _ingest(self, source_id, frame, request_id):
+        """Submit ``ref_uri``/``ts``/``value`` rows, each value stored as its
+        stream's declared kind."""
+        import polars as pl
+        kinds = self._validate_refs(source_id, set(frame["ref_uri"].unique().to_list()))
+        frame = frame.with_columns(
+            pl.col("ref_uri").replace_strict(kinds, return_dtype=pl.String).alias("value_kind")
+        )
         return self.core.ingest(source_id, request_id or str(uuid.uuid4()), frame)
 
     @semantic_operation
     def _validate_refs(self, source, references):
+        """Each registered reference's value kind; unregistered or foreign
+        references fail."""
         # Refresh from the graph, never from a second SQL registry.
         if self._refs_revision != self.graph_store.graph_status()["source_version"]:
             self._sync_stream_refs_from_graph()
+        kinds = {}
         for reference in references:
             declaration = self._stream_refs.get(reference)
             if declaration is None:
                 raise ValueError(f"stream {reference!r} is not registered")
             if declaration["source_id"] != source:
                 raise ValueError("stream source mismatch")
-            if declaration["value_kind"] != "numeric":
-                raise ValueError("only numeric streams are supported")
+            kinds[reference] = declaration["value_kind"]
+        return kinds
 
     def delete_timeseries(self, source_id, ref_name, timestamps, *, request_id=None):
         import polars as pl
