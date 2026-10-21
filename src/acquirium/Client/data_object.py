@@ -809,9 +809,10 @@ class DataObject:
             except Exception:
                 return uri
 
-        # Combine ref_uris sharing the same (data_alias, point_uri, time).
+        # One row per observation. A point fed by several refs keeps every
+        # ref's row; ``include_ref`` only decides whether the ref is shown.
         tall = tall.clone().unique(
-            subset=["data_alias", "point_uri", "time"], keep="first"
+            subset=["data_alias", "point_uri", "ref_uri", "time"], keep="first"
         )
 
         points_per_alias: dict[str, set[str]] = {}
