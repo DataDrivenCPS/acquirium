@@ -13,9 +13,17 @@ that Study, with its own inputs, results, events, status, and errors.
 - **Observation:** one recording of a variable during a run.
 
 A variable's role says why you record it. Its type says how to store it:
-scalar, JSON, text, file, or time series. A scalar cost output, for example,
-records the number calculated by your model. The experiment interface stores
-that result; your code still builds and solves the model.
+scalar, JSON, text, file, table, or time series. A scalar cost output, for
+example, records the number calculated by your model. The experiment interface
+stores that result; your code still builds and solves the model.
+
+Each type accepts one kind of value, so results stay comparable across runs: a
+scalar is always a finite number or boolean, and text is always a string. The
+server checks this too, for clients that bypass the Python API. Common
+scientific values such as NumPy numbers and arrays, tuples, and dates are
+converted to JSON before they are checked. You can
+[register a handler](../how-to/record-experiments.md#record-your-own-types)
+to convert your own classes the same way.
 
 Runs reuse the same declarations so their results can be compared. Reusing a
 variable label with a different role, type, unit, or metadata raises an error.
@@ -84,6 +92,7 @@ The ledger stores JSON, text, scalar, and log observations directly.
 For other data it stores references:
 
 - Files are copied to artifact storage and identified by SHA-256 digest.
+- Tables are saved the same way, as Parquet files, and read back as Polars.
 - Time-series samples go to Acquirium's time-series storage. The ledger records
   their stream URI and time range.
 - `use()` records an existing stream URI and optional interval.

@@ -262,6 +262,64 @@ def test_http_delete_routes_report_conflicts_and_require_confirmation(tmp_path, 
         store.close()
 
 
+def test_ledger_enforces_what_each_kind_stores(tmp_path):
+    store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
+    try:
+        ledger = ExperimentStore(store, tmp_path / "artifacts")
+        study = ledger.define("kinds")
+        declare = lambda label, kind: ledger.declare(study["template_id"], label, "output", kind, {})["variable_id"]
+        with pytest.raises(ValueError, match="kind must be one of"):
+            declare("bogus", "object")
+        scalar, text, data, file, table, series = (declare(kind, kind) for kind in ("scalar", "text", "json", "file", "table", "timeseries"))
+        run = ledger.start(study["template_id"], {})["run_id"]
+        rejected = [
+            (scalar, {"value": "abc"}), (scalar, {"value": None}), (scalar, {"value": float("nan")}),
+            (scalar, {"value": [1]}), (text, {"value": 5}), (data, {"value": {"x": float("inf")}}),
+            (scalar, {"value": 1, "ref_uri": "urn:ref"}), (series, {"value": 1}), (file, {"value": "x"}),
+        ]
+        for variable, body in rejected:
+            with pytest.raises(ValueError):
+                ledger.observe(run, variable, **body)
+        for variable, value in ((scalar, 2), (scalar, 2.5), (scalar, True), (text, "ok"), (data, None), (data, [1, {"a": "b"}])):
+            ledger.observe(run, variable, value=value)
+        with pytest.raises(ValueError, match="only file and table"):
+            ledger.attach_file(run, scalar, "x.txt", None, b"x")
+        with pytest.raises(ValueError, match="Parquet"):
+            ledger.attach_file(run, table, "x.parquet", None, b"not parquet")
+        assert len(ledger.observations(study["template_id"])) == 6
+        assert list(ledger.artifact_dir.iterdir()) == []
+    finally:
+        store.close()
+
+
+def test_http_artifacts_download_with_their_saved_names(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    store = DuckDBStore(tmp_path / "http.duckdb", recreate=True)
+    try:
+        ledger = ExperimentStore(store, tmp_path / "artifacts")
+        module = import_module("acquirium.Server.app")
+        monkeypatch.setattr(module.app.state, "manager", SimpleNamespace(experiments=ledger), raising=False)
+        http = TestClient(module.app)
+        study = ledger.define("http")
+        report = ledger.declare(study["template_id"], "report", "output", "file", {})
+        cost = ledger.declare(study["template_id"], "cost", "output", "scalar", {})
+        run = ledger.start(study["template_id"], {})
+        path = f"/experiments/runs/{run['run_id']}/variables/{quote(report['variable_id'], safe='')}/file"
+        saved = http.post(path, content=b"report", headers={"X-Filename": quote("débit.txt", safe=""), "Content-Type": "text/plain"}).json()
+        download = http.get(f"/experiments/artifacts/{saved['digest']}")
+        assert (download.status_code, download.content) == (200, b"report")
+        assert download.headers["content-type"].startswith("text/plain")
+        assert ledger.observations(study["template_id"])[0]["filename"] == "débit.txt"
+        for digest in ("0" * 64, "..%2F..%2Fdata.duckdb", "not-a-digest"):
+            assert http.get(f"/experiments/artifacts/{digest}").status_code == 404
+        scalar_path = f"/experiments/runs/{run['run_id']}/variables/{quote(cost['variable_id'], safe='')}"
+        assert http.post(f"{scalar_path}/file", content=b"x").status_code == 400
+        assert http.post(f"{scalar_path}/observations", json={"value": "abc"}).status_code == 400
+    finally:
+        store.close()
+
+
 @pytest.fixture
 def study_api(tmp_path):
     store = DuckDBStore(tmp_path / "api.duckdb", recreate=True)
@@ -294,6 +352,10 @@ def study_api(tmp_path):
     client.delete_experiment_study.side_effect = ledger.delete_study
     client.clear_experiments.side_effect = lambda *, confirm: ledger.clear()
     client.experiment_usage.side_effect = ledger.usage
+    client.attach_experiment_bytes.side_effect = (
+        lambda run_id, variable_id, data, *, filename, media_type=None:
+        ledger.attach_file(run_id, variable_id, filename, media_type, data))
+    client.experiment_artifact.side_effect = lambda digest: ledger.artifact(digest)["data"]
     ac = Mock(client=client)
     item = ledger.define("study")
     try:
@@ -876,6 +938,76 @@ def test_handles_delete_their_records_and_clear_needs_confirmation(study_api):
     assert service.clear(confirm=True)["studies"] == 0
 
 
+def test_record_converts_values_and_checks_kinds_before_sending(study_api):
+    from datetime import date
+    np = pytest.importorskip("numpy")
+    study, client = study_api.study, study_api.client
+    flow = study.input("flow").scalar(unit="M3-PER-HR", design=np.float64(12.5))
+    note = study.output("note").text()
+    settings = study.input("settings").json()
+    events = study.log("events")
+    assert flow.metadata["design"] == 12.5
+    run = study.start({"pumps": np.int64(2), "day": date(2026, 1, 1)})
+    assert run.metadata == {"pumps": 2, "day": "2026-01-01"}
+    flow.record(np.float32(0.5))
+    flow.record(np.bool_(True))
+    settings.record({"levels": np.array([1.0, 2.0]), "window": (1, 2)})
+    events.record({"at": datetime(2026, 1, 1, 6), "step": np.int64(3)})
+    values = [item.value for item in run.observations().all()]
+    assert values == [0.5, True, {"levels": [1.0, 2.0], "window": [1, 2]}, {"at": "2026-01-01T06:00:00+00:00", "step": 3}]
+    calls = client.observe_experiment.call_count
+    for variable, value, error in ((flow, "fast", TypeError), (flow, np.nan, ValueError), (note, 5, TypeError),
+                                   (settings, {"x": float("nan")}, ValueError), (settings, {1: "a"}, TypeError)):
+        with pytest.raises(error):
+            variable.record(value)
+    assert client.observe_experiment.call_count == calls  # rejected before sending
+
+
+def test_value_handlers_extend_recording():
+    from acquirium import register_value_handler
+    from acquirium.ExperimentValues import _HANDLERS, to_json
+
+    class Pump:
+        def __init__(self, speed): self.speed = speed
+    class FastPump(Pump):
+        pass
+    with pytest.raises(TypeError, match="register_value_handler"):
+        to_json({"pump": Pump(1)})
+    register_value_handler(Pump, lambda pump: {"speed": pump.speed})
+    try:
+        assert to_json({"pumps": [Pump(1), FastPump(2)]}) == {"pumps": [{"speed": 1}, {"speed": 2}]}
+        with pytest.raises(ValueError, match=r"value\.pumps\[0\]\.speed"):
+            to_json({"pumps": [Pump(float("nan"))]})
+    finally:
+        del _HANDLERS[Pump]
+
+
+def test_table_outputs_round_trip_as_parquet(study_api):
+    study = study_api.study
+    profile = study.output("profile").table(unit="M3")
+    run = study.start()
+    frame = pl.DataFrame({"hour": [0, 1, 2], "flow": [1.5, 2.0, 2.5], "pump": ["a", "b", "a"]})
+    profile.record(frame)
+    profile.record(frame.to_arrow())
+    pandas = pytest.importorskip("pandas")
+    profile.record(pandas.DataFrame({"hour": [3], "flow": [3.0], "pump": ["b"]}))
+    with pytest.raises(TypeError, match="Polars, pandas, or Arrow"):
+        profile.record({"hour": [0]})
+    with pytest.raises(TypeError, match="occurred_at"):
+        profile.record(frame, occurred_at=T0)
+    run.finish()
+    observations = run.observations(profile).all()
+    assert len(observations) == 3
+    assert observations[0].dataframe().equals(frame)
+    assert observations[1].artifact_digest == observations[0].artifact_digest  # identical bytes
+    assert observations[2].dataframe()["flow"].to_list() == [3.0]
+    assert observations[0].read_bytes()[:4] == b"PAR1"
+    assert observations[0].media_type == "application/vnd.apache.parquet"
+    assert repr(observations[0]).startswith("<Observation 'profile' = table 'profile.parquet' (")
+    with pytest.raises(TypeError, match="no options"):
+        observations[0].dataframe(limit=1)
+
+
 def test_output_assignment_reuses_handles_and_preserves_run_boundary(study_api):
     study, client = study_api.study, study_api.client
     cost = study.output("cost").scalar(unit="USD")
@@ -900,7 +1032,7 @@ def test_output_assignment_reuses_handles_and_preserves_run_boundary(study_api):
     assert client.observe_experiment.call_args.args == (second.run_id, cost.variable_id)
 
 
-@pytest.mark.parametrize("value,kind", [(1, "scalar"), (1.5, "scalar"), ("note", "text"), (True, "json"), (None, "json"), ([1, 2], "json"), ({"x": 1}, "json")])
+@pytest.mark.parametrize("value,kind", [(1, "scalar"), (1.5, "scalar"), ("note", "text"), (True, "scalar"), (None, "json"), ([1, 2], "json"), ({"x": 1}, "json")])
 def test_output_assignment_creates_exploratory_handle(study_api, value, kind):
     study, client = study_api.study, study_api.client
     run = study.start()

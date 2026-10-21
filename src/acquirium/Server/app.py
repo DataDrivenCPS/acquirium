@@ -21,6 +21,7 @@ os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
 import ray
 import pyoxigraph as ox
 
+from urllib.parse import quote, unquote
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse, Response
 from dateutil import parser as dtparser
@@ -247,9 +248,16 @@ async def attach_experiment_file(run_id: str, variable_id: str, request: Request
     try:
         # The body is raw file bytes to avoid forcing script users through a
         # multipart/form-data API for a single artifact.
-        return app.state.manager.experiments.attach_file(run_id, variable_id, request.headers.get("X-Filename", "attachment"), request.headers.get("Content-Type"), await request.body())
+        return app.state.manager.experiments.attach_file(run_id, variable_id, unquote(request.headers.get("X-Filename", "attachment")), request.headers.get("Content-Type"), await request.body())
     except KeyError: raise HTTPException(status_code=404, detail="unknown experiment run or variable")
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def get_experiment_artifact(digest: str):
+    try: artifact = app.state.manager.experiments.artifact(digest)
+    except (KeyError, FileNotFoundError): raise HTTPException(status_code=404, detail="unknown artifact")
+    filename = quote(artifact["filename"], safe="")
+    return Response(content=artifact["data"], media_type=artifact["media_type"] or "application/octet-stream",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"})
 
 def finish_experiment(run_id: str, request: ExperimentFinishRequest):
     try: return app.state.manager.experiments.finish(run_id, "succeeded")
@@ -658,6 +666,7 @@ app.post("/experiments/runs/{run_id}/stream-annotations")(annotate_experiment_st
 app.get("/experiments/stream-annotations")(list_experiment_stream_annotations)
 app.post("/experiments/stream-annotations/{annotation_id}/close")(close_experiment_stream_annotation)
 app.post("/experiments/runs/{run_id}/variables/{variable_id}/file")(attach_experiment_file)
+app.get("/experiments/artifacts/{digest}")(get_experiment_artifact)
 app.post("/experiments/runs/{run_id}/finish")(finish_experiment)
 app.post("/experiments/runs/{run_id}/fail")(fail_experiment)
 app.post("/experiments/runs/delete")(delete_experiments)

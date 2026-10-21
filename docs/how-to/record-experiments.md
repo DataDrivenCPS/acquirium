@@ -77,11 +77,31 @@ Use `record(value)` for every variable type:
 | `study.input("operator note").text()` | A string |
 | `study.output("cost").scalar(unit="USD")` | A number |
 | `study.input("configuration file").file(media_type="application/json")` | A file path |
+| `study.output("pump schedule").table()` | A Polars, pandas, or Arrow table |
 | `study.output("permeate flow").timeseries(observed=point, unit="KiloGM-PER-SEC")` | Numeric timestamp/value pairs |
 | `study.log("solver events")` | An event, usually a dictionary |
 
-Inputs and outputs support the same five value types. Labels must be nonempty
+Inputs and outputs support the same six value types. Labels must be nonempty
 and unique across all inputs, outputs, and logs in a Study.
+
+NumPy values, tuples, and dates are converted for you: `cost.record(np.float64(12.5))`
+records `12.5`, and an array inside a JSON value becomes a list. A scalar
+records only finite numbers and booleans, and text only strings; other values
+raise before anything is sent. See the
+[reference](../reference/experiments.md#recording) for the conversion rules,
+and [Record your own types](#record-your-own-types) for other classes.
+
+A table handle saves a table as a Parquet file, and reads it back as Polars:
+
+```python
+pump_schedule = study.output("pump schedule").table()
+
+experiment = study.start()
+pump_schedule.record(schedule_frame)
+experiment.finish()
+
+saved_schedule = experiment.observations(pump_schedule).latest().dataframe()
+```
 
 A file handle copies the file into Acquirium when `record()` is called:
 
@@ -101,6 +121,43 @@ recorded copy unchanged.
 
 Use `record()` throughout your script. The
 [reference](../reference/experiments.md#recording) lists the type-specific alternatives.
+
+## Record your own types
+
+Recording raises `TypeError` for a class it cannot convert to JSON. Register a
+handler that turns your class into a JSON value:
+
+```python
+from dataclasses import asdict, dataclass
+
+@dataclass
+class PumpSetting:
+    pump: str
+    speed_rpm: float
+
+# Record every PumpSetting as a dictionary of its fields.
+aq.register_value_handler(PumpSetting, asdict)
+
+pump_settings = study.input("pump settings").json()
+
+experiment = study.start()
+pump_settings.record([PumpSetting("P1", 1450.0), PumpSetting("P2", 1200.0)])
+experiment.finish()
+
+saved_settings = experiment.observations(pump_settings).latest().value
+# [{'pump': 'P1', 'speed_rpm': 1450.0}, {'pump': 'P2', 'speed_rpm': 1200.0}]
+```
+
+The handler applies wherever the class appears: in a recorded value, inside a
+list or dict, or in run and variable metadata. It also covers subclasses. Its
+result is converted again, so it may contain NumPy values or dates.
+
+Handlers run in your Python session and are not saved. Register them before
+recording, for example where the class is defined. Reading a run back returns
+the saved JSON, not an instance of your class.
+
+The variable's type still applies. A handler that returns a number can record
+to a scalar; one that returns a dictionary needs a JSON or log variable.
 
 ## Record progress and event times
 

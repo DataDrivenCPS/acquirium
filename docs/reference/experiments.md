@@ -55,7 +55,7 @@ reports zero `studies` and `variables`.
 
 ## Declaring variables
 
-Inputs and outputs support the same five value types. The role describes how
+Inputs and outputs support the same six value types. The role describes how
 the calculation uses a value; the type selects its storage.
 
 | Declaration | Records |
@@ -64,6 +64,7 @@ the calculation uses a value; the type selects its storage.
 | `study.input("note").text(**metadata)` | Text |
 | `study.output("cost").scalar(unit=None, **metadata)` | Scalar values with an optional unit |
 | `study.input("model").file(media_type=None, **metadata)` | File copies |
+| `study.output("schedule").table(**metadata)` | Tables, saved as Parquet files |
 | `study.output("power").timeseries(observed=None, unit=None, **metadata)` | Numeric timestamp/value samples |
 | `study.log("solver events", **metadata)` | Events and diagnostics |
 
@@ -104,6 +105,29 @@ The type-specific write methods remain available:
 | `variable.append(event, occurred_at=None)` | Log | Add an event observation |
 | `variable.attach(path)` | File | Copy a file into artifact storage |
 | `variable.add(rows)` | Time series | Write samples to the run's stream |
+
+Each type accepts one kind of value, checked by the client before sending and
+again by the server:
+
+| Type | `record()` accepts |
+|---|---|
+| Scalar | A finite number or boolean |
+| Text | A string |
+| JSON, log | Any JSON value: dicts with string keys, lists, strings, numbers, booleans, or `None` |
+| File | A file path |
+| Table | A Polars, pandas, or Arrow table |
+| Time series | Timestamp/value rows |
+
+Values are converted to JSON first. NumPy scalars become Python numbers,
+NumPy arrays and tuples become lists, and dates and times become ISO 8601
+strings; a naive datetime is UTC. NaN and infinity are rejected anywhere in a
+value. Run, variable, and annotation metadata use the same conversion. Teach
+recording about another type with `aq.register_value_handler(cls, handler)`.
+The handler returns a JSON value, which may still contain NumPy or date values;
+it also applies to subclasses of `cls`.
+
+Assigning a new label through `run.output[label]` creates a text variable for a
+string, a scalar for a number or boolean, and a JSON variable otherwise.
 
 `record(path)` sends the file's declared `media_type`; `attach(path)` uses the
 client's default. Time-series rows may be `(timestamp, value)` pairs or an
@@ -184,7 +208,8 @@ time-series samples.
 | `observations.frame()` | A Polars table with one row per recording |
 | `observations.latest()` | The last matching recording; raises `LookupError` if none match |
 | `observation.value` | The recorded JSON, text, scalar, or event value |
-| `observation.dataframe(**kwargs)` | Samples within a time-series recording's interval |
+| `observation.dataframe(**kwargs)` | Samples within a time-series recording's interval, or a table recording as a Polars DataFrame |
+| `observation.read_bytes()` | The saved bytes of a file or table recording |
 | `observation.as_dict()` | The observation's value, metadata, identifiers, timestamps, and references |
 
 Run observation selectors accept a variable handle, label, or ID. They return
@@ -207,7 +232,9 @@ power_samples = power_recording.dataframe()
 An Observation exposes `experiment_id`, `variable`, `sequence`, `recorded_at`,
 `occurred_at`, `status`, `experiment_metadata`, `started_at`, and `finished_at`.
 Time-series records also carry `ref_uri`, `range_start`, and `range_end`.
-Files carry `artifact_digest`, `filename`, `media_type`, and `byte_length`.
+Files and tables carry `artifact_digest`, `filename`, `media_type`, and
+`byte_length`. A table's file is `<label>.parquet` with media type
+`application/vnd.apache.parquet`.
 
 Observation tables preserve structured and mixed values with Polars `Object`
 columns. Uniform scalar types retain native columns; integers mixed with floats
@@ -307,8 +334,9 @@ start time, run ID, and sequence; omitted search bounds are unbounded.
 
 File bytes are copied into artifact storage and deduplicated by SHA-256 digest.
 Later local edits do not change the saved copy. Filename and media type come
-from the first attachment with that digest. File observations identify the
-artifact; there is currently no high-level method for downloading its bytes.
+from the first attachment with that digest. `observation.read_bytes()`
+downloads the saved bytes. Tables are stored the same way, as Parquet files;
+the server rejects a table attachment that is not Parquet.
 
 ## Identity, timestamps, and shared helpers
 
@@ -317,6 +345,7 @@ artifact; there is currently no high-level method for downloading its bytes.
 | `ac.point(uri)` | Wrap a property URI as a `Point` for declarations |
 | `ac.resolve(text, kind=None, min_score=0.6)` | Resolve an ontology concept to a `Point` |
 | `aq.timestamp(value)` | Parse or normalize a datetime to UTC |
+| `aq.register_value_handler(cls, handler)` | Record instances of `cls` as `handler(value)` |
 
 `ac.resolve()` searches vocabulary concepts. Find deployment property instances
 with [plant queries](../how-to/record-experiments.md#connect-a-time-series-result-to-the-facility),
@@ -390,7 +419,8 @@ The HTTP API calls a Study a `template`. `template_id`, `variable_id`, and
 | `POST` | `/experiments/runs/{run_id}/stream-annotations` | Tag a stream interval |
 | `GET` | `/experiments/stream-annotations` | Find annotations by Study, run, stream, and overlapping time |
 | `POST` | `/experiments/stream-annotations/{annotation_id}/close` | Close an open interval |
-| `POST` | `/experiments/runs/{run_id}/variables/{variable_id}/file` | Attach a file |
+| `POST` | `/experiments/runs/{run_id}/variables/{variable_id}/file` | Attach a file or Parquet table; the body is the bytes and `X-Filename` the percent-encoded name |
+| `GET` | `/experiments/artifacts/{digest}` | Download a file or table by digest |
 | `POST` | `/experiments/runs/{run_id}/finish` | Mark the run succeeded |
 | `POST` | `/experiments/runs/{run_id}/fail` | Mark the run failed |
 | `POST` | `/experiments/runs/delete` | Delete finished runs by `run_ids` |

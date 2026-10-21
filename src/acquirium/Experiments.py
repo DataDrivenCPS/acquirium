@@ -6,8 +6,10 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from hashlib import sha256
 import functools
+import io
 import json
 import logging
+import re
 import reprlib
 import threading
 import warnings
@@ -17,6 +19,7 @@ from uuid import uuid4
 from dateutil import parser as dtparser
 import polars as pl
 from acquirium.internals.models import compute_ref_uri
+from acquirium.ExperimentValues import ARTIFACT_KINDS, KINDS, TABLE_MEDIA_TYPE, check_kind, to_json
 from acquirium.ExperimentMetadata import (
     EXPERIMENT, ExperimentMetadataGraph, annotation_uri, experiment_query,
     matched_ids, metadata_values, node_uri, records_frame, run_uri, saved_metadata, study_uri, sync_study,
@@ -37,8 +40,8 @@ def _database_timestamp(value: datetime | str) -> datetime:
     """Store UTC wall time consistently in SQL TIMESTAMP columns."""
     return timestamp(value).replace(tzinfo=None)
 def _json(value: Any) -> str:
-    try: return json.dumps(value, sort_keys=True, default=str)
-    except TypeError as error: raise ValueError("experiment values must be JSON serializable") from error
+    try: return json.dumps(value, sort_keys=True, default=str, allow_nan=False)
+    except (TypeError, ValueError) as error: raise ValueError("experiment values must be JSON serializable, without NaN or infinity") from error
 def _metadata_matches(actual: dict[str, Any], expected: dict[str, Any] | None) -> bool:
     return expected is None or all(actual.get(key) == value for key, value in expected.items())
 
@@ -358,13 +361,33 @@ class ExperimentStore:
         if row[0] != "running": raise ValueError("experiment run is terminal")
         return row[1]
 
-    def _validate_observation(self, conn: Any, run_id: str, variable_id: str) -> None:
+    def _validate_observation(self, conn: Any, run_id: str, variable_id: str) -> tuple[str, str]:
+        """Check the run and variable, and return the variable's label and kind."""
         template_id = self._active(conn, run_id)
-        row = self._execute(conn, "SELECT template_id FROM experiment_variables WHERE variable_id=?", [variable_id]).fetchone()
+        row = self._execute(conn, "SELECT template_id, label, kind FROM experiment_variables WHERE variable_id=?", [variable_id]).fetchone()
         if row is None:
             raise KeyError(variable_id)
         if row[0] != template_id:
             raise ValueError("variable belongs to a different study")
+        return row[1], row[2]
+
+    @staticmethod
+    def _check_observation(label, kind, value, artifact_digest, ref_uri) -> None:
+        """Each kind stores exactly one thing: a value, an artifact, or a stream."""
+        if kind in ARTIFACT_KINDS:
+            if artifact_digest is None or value is not None or ref_uri is not None:
+                raise ValueError(f"{label!r} is a {kind} variable; attach its bytes instead")
+        elif kind == "timeseries":
+            if ref_uri is None or value is not None or artifact_digest is not None:
+                raise ValueError(f"{label!r} is a time series; record samples or a stream reference")
+        else:
+            if ref_uri is not None or artifact_digest is not None:
+                raise ValueError(f"{label!r} is a {kind} variable and cannot reference a stream or file")
+            if value is not None or kind in {"scalar", "text"}:
+                try:
+                    check_kind(kind, value, label=repr(label))
+                except TypeError as error:
+                    raise ValueError(str(error)) from error
 
     def _next_observation(self, conn: Any, run_id: str) -> tuple[int, datetime]:
         # Values and stream annotations share one run-local recording order.
@@ -385,6 +408,7 @@ class ExperimentStore:
     @_publishes
     def declare(self, template_id: str, label: str, role: str, kind: str, metadata: dict[str, Any]) -> dict[str, Any]:
         if not label.strip() or role not in {"input", "output", "annotation"}: raise ValueError("a non-empty label and valid role are required")
+        if kind not in KINDS: raise ValueError(f"kind must be one of {', '.join(sorted(KINDS))}")
         metadata = metadata_values(metadata)
         # The graph lock serialises declarations, so the label check and the
         # insert need not share a transaction. Resolution happens between them,
@@ -419,7 +443,7 @@ class ExperimentStore:
         return run
     def observe(self, run_id: str, variable_id: str, *, value: Any = None, occurred_at: datetime | None = None, artifact_digest: str | None = None, ref_uri: str | None = None, interval: tuple[datetime,datetime] | None = None) -> dict[str, Any]:
         with self.store._lock, self.store._write_conn() as conn:
-            self._validate_observation(conn, run_id, variable_id)
+            self._check_observation(*self._validate_observation(conn, run_id, variable_id), value, artifact_digest, ref_uri)
             # Wall clocks can collide or arrive out of order. Sequence is the
             # authoritative order of observations within one experiment.
             seq, recorded = self._next_observation(conn, run_id)
@@ -436,13 +460,28 @@ class ExperimentStore:
     def attach_file(self, run_id: str, variable_id: str, filename: str, media_type: str | None, data: bytes) -> dict[str, Any]:
         digest = sha256(data).hexdigest(); target = self.artifact_dir / digest
         with self.store._lock, self.store._write_conn() as conn:
-            self._validate_observation(conn, run_id, variable_id)
+            label, kind = self._validate_observation(conn, run_id, variable_id)
+            if kind not in ARTIFACT_KINDS:
+                raise ValueError(f"{label!r} is a {kind} variable; only file and table variables take attachments")
+            # A table must arrive as Parquet so every reader can open it.
+            if kind == "table" and (len(data) < 8 or data[:4] != b"PAR1" or data[-4:] != b"PAR1"):
+                raise ValueError(f"{label!r} is a table; attach a Parquet file")
             # Validate ownership before storing any artifact bytes or metadata.
             # Identical bytes share one content-addressed artifact.
             if not target.exists(): target.write_bytes(data)
             self._execute(conn, "INSERT INTO experiment_artifacts VALUES (?, ?, ?, ?, ?) ON CONFLICT(digest) DO NOTHING", [digest, filename, media_type, len(data), _database_timestamp(_now())])
         self.observe(run_id, variable_id, artifact_digest=digest)
         return {"digest": digest, "filename": filename, "byte_length": len(data)}
+
+    def artifact(self, digest: str) -> dict[str, Any]:
+        """Return a stored file's bytes with the name and type it was saved under."""
+        if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise KeyError(digest)
+        with self.store._own_conn() as conn:
+            row = self._execute(conn, "SELECT filename, media_type FROM experiment_artifacts WHERE digest=?", [digest]).fetchone()
+        if row is None:
+            raise KeyError(digest)
+        return {"filename": row[0], "media_type": row[1], "data": (self.artifact_dir / digest).read_bytes()}
 
     @_publishes
     def annotate_stream(self, run_id: str, ref_uri: str, start: datetime | str, end: datetime | str | None = None, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -962,6 +1001,20 @@ class ExperimentStore:
         usage["total_bytes"] = usage["sample_bytes"] + usage["file_bytes"] + usage["ledger_bytes"]
         return usage
 
+def _parquet(value: Any) -> bytes:
+    """Serialize a Polars, pandas, or Arrow table as Parquet bytes."""
+    if isinstance(value, pl.DataFrame):
+        frame = value
+    elif type(value).__module__.startswith("pyarrow") and hasattr(value, "schema"):
+        frame = pl.from_arrow(value)
+    elif type(value).__module__.startswith("pandas") and hasattr(value, "columns"):
+        frame = pl.from_pandas(value)
+    else:
+        raise TypeError(f"a table variable records a Polars, pandas, or Arrow table, not {type(value).__name__}")
+    buffer = io.BytesIO()
+    frame.write_parquet(buffer)
+    return buffer.getvalue()
+
 @dataclass(frozen=True)
 class Point:
     """A deliberately small semantic handle; storage only needs its URI."""
@@ -1035,15 +1088,25 @@ class Observation:
     _client: Any = field(default=None, repr=False, compare=False)
 
     def dataframe(self, **kwargs: Any):
-        """Fetch samples for a time-series observation."""
+        """Read a table, or fetch a time-series observation's samples."""
+        if self.variable.kind == "table":
+            if kwargs:
+                raise TypeError("a table observation's dataframe() takes no options")
+            return pl.read_parquet(io.BytesIO(self.read_bytes()))
         if self.variable.kind != "timeseries" or self.ref_uri is None:
-            raise TypeError("dataframe() is only available for time-series observations")
+            raise TypeError("dataframe() is only available for table and time-series observations")
         options = dict(kwargs)
         if self.range_start is not None:
             options.setdefault("start", self.range_start.isoformat())
         if self.range_end is not None:
             options.setdefault("end", self.range_end.isoformat())
         return self._client.timeseries_df(self.ref_uri, **options)
+
+    def read_bytes(self) -> bytes:
+        """Download the saved bytes of a file or table observation."""
+        if self.artifact_digest is None:
+            raise TypeError("read_bytes() is only available for file and table observations")
+        return self._client.experiment_artifact(self.artifact_digest)
 
     def __repr__(self) -> str:
         if self.ref_uri is not None:
@@ -1052,7 +1115,7 @@ class Observation:
                 end = self.range_end.isoformat() if self.range_end is not None else "open"
                 value += f" [{self.range_start.isoformat()}, {end}]"
         elif self.artifact_digest is not None:
-            value = f"file {self.filename!r} ({_count(self.byte_length or 0, 'byte')})"
+            value = f"{self.variable.kind} {self.filename!r} ({_count(self.byte_length or 0, 'byte')})"
         else:
             value = _brief.repr(self.value)
         return f"<Observation {self.variable.label!r} = {value} (run {self.experiment_id}, #{self.sequence})>"
@@ -1086,6 +1149,7 @@ class _Builder:
     """Delay declaration until the caller selects the variable's value kind."""
     def __init__(self, study: "Study", label: str, role: str): self.study, self.label, self.role = study, label, role
     def _make(self, kind: str, **metadata: Any) -> "ExperimentVariable":
+        metadata = to_json(metadata, path="metadata")
         item = self.study.client.declare_experiment_variable(self.study.study_id, label=self.label, role=self.role, kind=kind, metadata=metadata)
         collection = self.study._collections[self.role]
         variable = collection._variables.get(self.label)
@@ -1103,6 +1167,7 @@ class _Builder:
     def text(self, **metadata: Any): return self._make("text", **metadata)
     def scalar(self, *, unit: str | None = None, **metadata: Any): return self._make("scalar", unit=unit, **metadata)
     def file(self, *, media_type: str | None = None, **metadata: Any): return self._make("file", media_type=media_type, **metadata)
+    def table(self, **metadata: Any): return self._make("table", **metadata)
     def timeseries(self, *, observed: str | Point | None = None, unit: str | None = None, **metadata: Any):
         uri = observed.uri if isinstance(observed, Point) else observed
         return self._make("timeseries", observed=str(uri) if uri is not None else None, unit=unit, **metadata)
@@ -1143,8 +1208,13 @@ class ExperimentVariable:
         """Record a value, event, file path, or time-series rows in the active run."""
         # Check before file/stream operations, including empty time series.
         self.run_id
-        if self.kind in {"file", "timeseries"} and occurred_at is not None:
+        if self.kind in {"file", "table", "timeseries"} and occurred_at is not None:
             raise TypeError("occurred_at is only supported for JSON, text, scalar, and log values")
+        if self.kind == "table":
+            return self.study.client.attach_experiment_bytes(
+                self.run_id, self.variable_id, _parquet(value),
+                filename=f"{self.label}.parquet", media_type=TABLE_MEDIA_TYPE,
+            )
         if self.kind == "file":
             return self.study.client.attach_experiment_file(
                 self.run_id, self.variable_id, value,
@@ -1153,7 +1223,10 @@ class ExperimentVariable:
         if self.kind == "timeseries":
             return self.add(value)
         return self.set(value, occurred_at=occurred_at)
-    def set(self, value: Any, *, occurred_at: datetime | None = None): return self.study.client.observe_experiment(self.run_id, self.variable_id, value=value, occurred_at=occurred_at.isoformat() if occurred_at else None)
+    def set(self, value: Any, *, occurred_at: datetime | None = None):
+        value = to_json(value)
+        check_kind(self.kind, value, label=repr(self.label))
+        return self.study.client.observe_experiment(self.run_id, self.variable_id, value=value, occurred_at=occurred_at.isoformat() if occurred_at else None)
     def append(self, value: Any, *, occurred_at: datetime | None = None): return self.set(value, occurred_at=occurred_at)
     def attach(self, path: str | Path): return self.study.client.attach_experiment_file(self.run_id, self.variable_id, path)
     def use(self, ref_uri: str | Point, *, interval: tuple[datetime, datetime] | None = None):
@@ -1235,13 +1308,14 @@ class ExperimentOutputs(Mapping):
             # Validate before creating a persistent declaration. Files and streams
             # need explicit metadata; do not guess their meaning from the payload.
             try:
-                json.dumps(value, allow_nan=False)
+                converted = to_json(value)
             except (TypeError, ValueError) as error:
-                raise TypeError("new outputs require a JSON-compatible value; declare files and time series explicitly") from error
+                raise TypeError(f"new outputs require a JSON-compatible value ({error}); "
+                                "declare files, tables, and time series explicitly") from error
             builder = study.output(label)
-            if isinstance(value, str):
+            if isinstance(converted, str):
                 variable = builder.text()
-            elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            elif isinstance(converted, (int, float)):
                 variable = builder.scalar()
             else:
                 variable = builder.json()
@@ -1294,7 +1368,7 @@ class Experiment:
         item = self.study.client.annotate_experiment_stream(
             self.run_id, ref_uri, start=timestamp(start).isoformat(),
             end=timestamp(end).isoformat() if end is not None else None,
-            metadata={} if metadata is None else metadata,
+            metadata=to_json({} if metadata is None else metadata, path="metadata"),
         )
         return StreamAnnotation.from_item(item, self.study.client)
 
@@ -1711,6 +1785,7 @@ class Study:
         # Variable objects deliberately route through one active experiment;
         # nested/concurrent experiments on the same Study are not ambiguous.
         if self._experiment is not None: raise RuntimeError("finish the active experiment before starting another")
+        metadata = to_json(metadata or {}, path="metadata")
         self._experiment = Experiment(self, self.client.start_experiment(self.study_id, metadata)); return self._experiment
 
     def resume(self, run_id: str) -> Experiment:
