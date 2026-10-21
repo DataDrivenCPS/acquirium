@@ -125,9 +125,10 @@ site stream supplies example data; use your driver's stream at a real site.
 
 ## Limits
 
-`.metadata_objects()` preserves each node's own fields; table output keeps a
-shared schema. Nested lists, lists of objects, and lists with missing positions
-still use their SQL snapshots to retain their shape. The
+`.metadata_objects()` returns each node's metadata in the shape it was saved;
+table output keeps a shared schema. Three cases still use their SQL snapshots:
+`None` positions in lists, a top-level `type` key, and lists on semantic
+attributes such as `unit`. The
 [integration plan](../plans/experiment-metadata-integration.md) tracks these
 remaining differences and later cleanup.
 
