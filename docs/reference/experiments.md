@@ -307,6 +307,11 @@ The server assigns each observation a run-local sequence and UTC `recorded_at`
 receipt time. Caller-supplied `occurred_at` is separate. Time-series writes use
 source `experiment/<run_id>` and the variable label as the reference name.
 Each observation records the stream URI and minimum and maximum sample times.
+Each run's stream has its own point, labeled with the variable name, with the
+attributes `study_id`, `run_id`, `variable_id`, and `observed` when declared.
+`ac.query().measurement(run_id=...)` or `measurement(observed=...)` selects
+these points. Plant queries on an `observed` property do not include them.
+Only time-series values are streams; other kinds stay out of `find_all_data()`.
 
 Printing a handle shows what it already holds and never reads from the server.
 A Study lists its variable counts and active run; a run, its status and

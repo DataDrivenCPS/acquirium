@@ -351,7 +351,14 @@ incremental writes it selects only the last batch's interval.
 kinds. Use plant queries to find property instances.
 
 Each run writes under `experiment/<run_id>`, keeping scenario results separate.
-Read them through Acquirium's query and stream APIs.
+The run's samples get their own stream point with `observed` as an attribute,
+so plant queries on the property still return only site measurements. Find
+every run that simulated the property through the stream query API:
+
+```python
+simulated_flows = ac.query().measurement(alias="flow", observed=permeate_property_uri)
+simulated_flows.include("run_id", "study_id").metadata_objects()
+```
 
 If there is no plant model or known property URI, omit `observed`:
 

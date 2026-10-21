@@ -949,21 +949,26 @@ class ExperimentVariable:
             rows = [(item.get("time", item.get("ts")), item["value"]) for item in rows.to_dicts()]
         rows = [(timestamp(when), value) for when, value in rows]
         if not rows: return None
-        # Register graph metadata before writing data. This makes the output
-        # discoverable by its observed plant property immediately.
+        # Each run's samples get their own point carrying the run's identity,
+        # so stream queries can select a run. The observed property is an
+        # attribute, not the point: plant queries on that property return
+        # measured data only, never simulated runs mixed in by timestamp.
         if self.variable_id not in experiment._registered_streams:
+            identity = {"study_id": self.study.study_id, "run_id": experiment.run_id, "variable_id": self.variable_id}
+            if observed is not None:
+                identity["observed"] = observed
             self.study.ac.register_streams([{
                 "source_id": source,
                 "ref_name": ref_name,
-                "point_uri": observed,
                 "unit": metadata.get("unit"),
                 "label": self.label,
                 "value_kind": "numeric",
+                "metadata": identity,
             }])
             # Registration succeeded even if the following sample write fails.
             # Cache on the run so later runs get their own stream metadata.
             experiment._registered_streams.add(self.variable_id)
-        self.study.ac.insert_timeseries(source, ref_name, rows, point_uri=observed)
+        self.study.ac.insert_timeseries(source, ref_name, rows)
         ref_uri = self.study.ac.reference_uri(source, ref_name)
         self.use(ref_uri, interval=(min(x[0] for x in rows), max(x[0] for x in rows)))
         return RecordedSeries(str(ref_uri), self.study.client)

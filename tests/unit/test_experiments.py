@@ -506,9 +506,15 @@ def test_record_files_and_streams(study_api, tmp_path):
     when = datetime(2026, 1, 1, tzinfo=timezone.utc)
     ac.reference_uri.return_value = "urn:acquirium#recorded-volume"
     recorded = stream.record([(when.isoformat(), 10)])
-    ac.insert_timeseries.assert_called_once_with(f"experiment/{run.run_id}", "volume", [(when, 10)], point_uri="urn:tank")
-    assert ac.register_streams.call_args.args[0][0]["unit"] == "M3"
-    assert ac.register_streams.call_args.args[0][0]["value_kind"] == "numeric"
+    ac.insert_timeseries.assert_called_once_with(f"experiment/{run.run_id}", "volume", [(when, 10)])
+    registration = ac.register_streams.call_args.args[0][0]
+    assert registration["unit"] == "M3"
+    assert registration["value_kind"] == "numeric"
+    # The run gets its own point; the plant property is an attribute of it.
+    assert "point_uri" not in registration
+    assert registration["metadata"] == {
+        "study_id": study.study_id, "run_id": run.run_id, "variable_id": stream.variable_id, "observed": "urn:tank",
+    }
     client.observe_experiment.assert_called_once_with(run.run_id, stream.variable_id, ref_uri=recorded.ref_uri, start=when.isoformat(), end=when.isoformat())
     expected_frame = object()
     client.timeseries_df.return_value = expected_frame
@@ -528,8 +534,11 @@ def test_timeseries_result_does_not_require_plant_model(study_api):
     simulated_power = study.output("simulated power").timeseries(unit="kW")
     run = study.start()
     simulated_power.record([("2026-01-01T00:00:00Z", 42.0)])
-    assert ac.register_streams.call_args.args[0][0]["point_uri"] is None
-    assert ac.insert_timeseries.call_args.kwargs["point_uri"] is None
+    registration = ac.register_streams.call_args.args[0][0]
+    assert "point_uri" not in registration
+    assert registration["metadata"] == {
+        "study_id": study.study_id, "run_id": run.run_id, "variable_id": simulated_power.variable_id,
+    }
     assert run.observations("simulated power").latest().ref_uri is not None
 
 

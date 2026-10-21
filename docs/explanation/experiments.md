@@ -114,9 +114,21 @@ labels and units from stream metadata. Annotations require no plant model.
 Time-series results use source `experiment/<run_id>`. Two runs can therefore
 record different values at the same timestamps without overwriting each other.
 
+Each run's time-series output is its own stream point, labeled with the
+variable name and carrying `study_id`, `run_id`, and `variable_id`. Stream
+queries such as `find_all_data()` and `ac.query().measurement()` list these
+points, and `ac.query().measurement(run_id=run.run_id)` selects one run's
+streams.
+
 The declaration's optional `observed` URI identifies the plant property being
-measured or simulated. A simulation and a site sensor can both refer to the
-tank's volume property while keeping separate stream URIs.
+measured or simulated. It is an attribute of each run's point, not the point
+itself: plant queries on the property return the site's measurements only, so
+simulated runs never mix with them. Select the runs that simulate a property
+with `ac.query().measurement(observed=property_uri)`.
+
+Stream queries list streams only. Scalar, JSON, text, log, and file values
+are stored in the experiment ledger, so they do not appear in
+`find_all_data()`; read them through the Study's variables and observations.
 
 To compare them, select a saved run's output and the site's stream. Read the
 same time range from each, convert units if needed, and match timestamps.
