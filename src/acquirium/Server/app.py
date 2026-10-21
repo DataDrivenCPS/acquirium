@@ -96,6 +96,7 @@ class ExperimentSelectionRequest(BaseModel):
 class ExperimentObservationSelectionRequest(ExperimentSelectionRequest):
     run_id: str | None = None
     variable_id: str | None = None
+    kind: str | None = None
 class ExperimentDeleteRequest(BaseModel):
     run_ids: list[str]
 class ExperimentClearRequest(BaseModel):
@@ -196,6 +197,7 @@ def list_experiment_observations(
     started_after: datetime | None = None,
     started_before: datetime | None = None,
     metadata: str | None = None,
+    kind: str | None = None,
 ):
     try:
         ledger = app.state.manager.experiments
@@ -203,6 +205,7 @@ def list_experiment_observations(
             template_id,
             run_id=run_id,
             variable_id=variable_id,
+            kind=kind,
             status=status,
             started_after=started_after,
             started_before=started_before,

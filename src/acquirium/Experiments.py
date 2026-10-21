@@ -708,6 +708,7 @@ class ExperimentStore:
         started_before: datetime | None = None,
         metadata: dict[str, Any] | None = None,
         run_ids: list[str] | None = None,
+        kind: str | None = None,
     ) -> list[dict[str, Any]]:
         if run_ids == []:
             return []
@@ -719,6 +720,7 @@ class ExperimentStore:
         for condition, value in (
             ("r.run_id=?", run_id),
             ("o.variable_id=?", variable_id),
+            ("v.kind=?", kind),
             ("r.status=?", status),
             ("r.started_at>=?", started_after),
             ("r.started_at<?", started_before),
@@ -1658,6 +1660,54 @@ class ExperimentCollection:
     def observations(self, variable: ExperimentVariable | str | None = None) -> "ObservationCollection":
         return ObservationCollection(self.study, variable=variable, selection=self, **self._filters)
 
+    def scalars(self, *variables: ExperimentVariable | str, metadata: tuple[str, ...] | list[str] = ()) -> pl.DataFrame:
+        """One row per selected run and one column per scalar variable.
+
+        Each cell holds the variable's last recorded value in that run, or
+        null if the run did not record it. Columns are `experiment_id`, the
+        requested run `metadata` keys (dotted paths reach nested fields), then
+        the variables: those given, or every scalar in the Study.
+        """
+        runs = self.all()
+        observations = self.study.client.list_experiment_observations(
+            self.study.study_id, run_ids=[run.run_id for run in runs], kind="scalar") if runs else []
+        # Hydrate declarations another session added before choosing columns.
+        self.study._variables_by_id(item["variable_id"] for item in observations)
+        if variables:
+            selected = [self.study.variables[variable] if isinstance(variable, str) else variable for variable in variables]
+            for variable in selected:
+                if variable.study is not self.study:
+                    raise ValueError("variable belongs to a different study")
+                if variable.kind != "scalar":
+                    raise TypeError(f"{variable.label!r} is a {variable.kind} variable; scalars() reads scalar variables")
+        else:
+            selected = [variable for variable in self.study.variables if variable.kind == "scalar"]
+        columns = ["experiment_id", *metadata, *(variable.label for variable in selected)]
+        repeated = sorted({name for name in columns if columns.count(name) > 1})
+        if repeated:
+            raise ValueError(f"scalars() columns would repeat: {', '.join(repeated)}")
+        # Observations arrive in recording order, so the last one wins.
+        latest = {(item["experiment_id"], item["variable_id"]): item["value"] for item in observations}
+        if not runs:
+            return pl.DataFrame(schema={"experiment_id": pl.String, **{key: pl.Null for key in metadata},
+                                        **{variable.label: pl.Float64 for variable in selected}})
+
+        def field(values, path):
+            for key in path.split("."):
+                values = values.get(key) if isinstance(values, dict) else None
+            return values
+
+        rows = []
+        for run in runs:
+            row = {"experiment_id": run.run_id}
+            row.update({key: field(run.metadata, key) for key in metadata})
+            row.update({variable.label: latest.get((run.run_id, variable.variable_id)) for variable in selected})
+            rows.append(row)
+        frame = records_frame(rows)
+        # A variable no selected run recorded is still a numeric column.
+        return frame.with_columns(pl.lit(None, dtype=pl.Float64).alias(variable.label) for variable in selected
+                                  if frame[variable.label].null_count() == frame.height)
+
     def delete(self) -> dict[str, Any]:
         """Delete the selected runs; nothing is removed if any is still running."""
         return self.study.client.delete_experiments([experiment.run_id for experiment in self.all()])
@@ -1708,16 +1758,7 @@ class ObservationCollection:
     def all(self) -> list[Observation]:
         observations = []
         rows = self._rows()
-        # Each catalog lookup rebuilds and sorts the Study's variables; index
-        # them once per call instead of once per row.
-        variables = {variable.variable_id: variable for variable in self.study.variables}
-        if any(item["variable_id"] not in variables for item in rows):
-            # Another session may have extended the Study since it was opened.
-            # Preserve existing handles while hydrating missing declarations.
-            for declaration in self.study.client.list_experiment_variables(self.study.study_id):
-                if declaration["variable_id"] not in variables:
-                    self.study._collections[declaration["role"]]._add(declaration)
-            variables = {variable.variable_id: variable for variable in self.study.variables}
+        variables = self.study._variables_by_id(item["variable_id"] for item in rows)
         for item in rows:
             variable = variables[item["variable_id"]]
             observations.append(Observation(
@@ -1799,6 +1840,19 @@ class Study:
             raise ValueError("only a running experiment can be resumed")
         self._experiment = Experiment(self, item)
         return self._experiment
+
+    def _variables_by_id(self, wanted=()) -> dict[str, ExperimentVariable]:
+        """Index handles by ID, loading declarations another session added."""
+        # Each catalog lookup rebuilds and sorts the Study's variables; index
+        # them once per call instead of once per row.
+        variables = {variable.variable_id: variable for variable in self.variables}
+        if any(variable_id not in variables for variable_id in wanted):
+            # Preserve existing handles while hydrating missing declarations.
+            for declaration in self.client.list_experiment_variables(self.study_id):
+                if declaration["variable_id"] not in variables:
+                    self._collections[declaration["role"]]._add(declaration)
+            variables = {variable.variable_id: variable for variable in self.variables}
+        return variables
 
     def delete(self) -> dict[str, Any]:
         """Delete this Study, its declarations, and every run."""

@@ -581,3 +581,15 @@ def test_deleted_records_leave_the_metadata_graph(metadata_api):
     assert {str(subject) for subject in ledger_graph.subjects()} <= classes
     assert len(other_graph) == 0
     assert api.service.all() == []
+
+
+def test_scalars_follow_attribute_selections(metadata_api):
+    api = metadata_api
+    study = api.service.define("sweep")
+    cost = study.output("cost").scalar(unit="PSI")
+    for flow in (10, 20, 30):
+        run = study.start({"settings": {"flow": flow}})
+        cost.record(flow * 1.5)
+        run.finish()
+    high_flow = study.experiments.where(api.ac.attr.settings.flow >= 15)
+    assert high_flow.scalars(metadata=["settings.flow"]).select("settings.flow", "cost").rows() == [(20, 30.0), (30, 45.0)]

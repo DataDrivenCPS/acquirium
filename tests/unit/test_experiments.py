@@ -1008,6 +1008,42 @@ def test_table_outputs_round_trip_as_parquet(study_api):
         observations[0].dataframe(limit=1)
 
 
+def test_scalars_frame_has_one_row_per_run_and_a_column_per_scalar(study_api):
+    study = study_api.study
+    pumps = study.input("pumps").scalar()
+    cost = study.output("cost").scalar(unit="USD")
+    feasible = study.output("feasible").scalar()
+    study.output("peak power").scalar(unit="kW")
+    status = study.output("status").text()
+    runs = []
+    for case, (count, value, ok) in enumerate([(1, 480.0, True), (2, 455.5, True), (3, None, False)]):
+        run = study.start({"scenario": f"case {case}", "settings": {"flow": 10 * (case + 1)}})
+        pumps.record(count)
+        if value is not None:
+            cost.record(value + 10)
+            cost.record(value)  # the last recording is the run's value
+        feasible.record(ok)
+        status.record("optimal")
+        run.finish()
+        runs.append(run)
+
+    frame = study.experiments.scalars(metadata=["scenario", "settings.flow", "missing"])
+    assert frame.columns == ["experiment_id", "scenario", "settings.flow", "missing", "pumps", "cost", "feasible", "peak power"]
+    assert frame["experiment_id"].to_list() == [run.run_id for run in runs]
+    assert frame["cost"].to_list() == [480.0, 455.5, None]
+    assert frame["settings.flow"].to_list() == [10, 20, 30]
+    assert frame["missing"].null_count() == 3
+    assert (frame.schema["feasible"], frame.schema["peak power"]) == (pl.Boolean, pl.Float64)
+    selected = study.experiments.where(metadata={"scenario": "case 1"}).scalars("cost", pumps)
+    assert selected.rows() == [(runs[1].run_id, 455.5, 2)]
+    empty = study.experiments.where(metadata={"scenario": "none"}).scalars()
+    assert (empty.height, empty.schema["cost"]) == (0, pl.Float64)
+    with pytest.raises(TypeError, match="text variable"):
+        study.experiments.scalars("status")
+    with pytest.raises(ValueError, match="repeat: pumps"):
+        study.experiments.scalars(metadata=["pumps"])
+
+
 def test_output_assignment_reuses_handles_and_preserves_run_boundary(study_api):
     study, client = study_api.study, study_api.client
     cost = study.output("cost").scalar(unit="USD")

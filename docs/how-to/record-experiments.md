@@ -309,6 +309,15 @@ baseline_cost_history.select("experiment_id", "recorded_at", "value")
 Use `.frame()` for declarations, runs, and recordings. Use `.dataframe()` to
 fetch time-series samples, as shown below.
 
+To compare runs, read one row per run with a column per scalar variable:
+
+```python
+baseline_scalars = baseline_runs.scalars(metadata=["scenario"])
+```
+
+[Compare runs with formulas](compare-experiment-runs.md) shows how to compute
+and rank from this table.
+
 ## Inspect saved metadata
 
 Use `.query()` when you want to choose metadata columns:

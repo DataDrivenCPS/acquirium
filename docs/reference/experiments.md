@@ -207,6 +207,7 @@ time-series samples.
 | `observations.all()` | `list[Observation]` |
 | `observations.frame()` | A Polars table with one row per recording |
 | `observations.latest()` | The last matching recording; raises `LookupError` if none match |
+| `runs.scalars(*variables, metadata=())` | A Polars table with one row per selected run and one column per scalar variable |
 | `observation.value` | The recorded JSON, text, scalar, or event value |
 | `observation.dataframe(**kwargs)` | Samples within a time-series recording's interval, or a table recording as a Polars DataFrame |
 | `observation.read_bytes()` | The saved bytes of a file or table recording |
@@ -235,6 +236,13 @@ Time-series records also carry `ref_uri`, `range_start`, and `range_end`.
 Files and tables carry `artifact_digest`, `filename`, `media_type`, and
 `byte_length`. A table's file is `<label>.parquet` with media type
 `application/vnd.apache.parquet`.
+
+`runs.scalars()` columns are `experiment_id`, the requested run metadata keys
+(dotted paths read nested fields), then each scalar variable by label: those
+passed as labels or handles, or every scalar in the Study. A cell holds the
+run's last recording of that variable, or null. A column no selected run
+recorded is `Float64`. Passing a non-scalar variable raises `TypeError`; a
+metadata key that repeats a column name raises `ValueError`.
 
 Observation tables preserve structured and mixed values with Polars `Object`
 columns. Uniform scalar types retain native columns; integers mixed with floats

@@ -45,7 +45,9 @@ Filters stay within the selected Study. You can reopen a saved Study in another
 session to find its declarations and results.
 
 `.frame()` lists declarations, runs, or observation records. Scalar observation
-tables include the recorded values. Time-series observation tables contain
+tables include the recorded values. `.scalars()` gives one row per run and
+one column per scalar variable, the usual starting point for comparing runs
+and computing formulas. Time-series observation tables contain
 stream references and intervals; `.dataframe()` fetches the samples.
 `.latest()` chooses the last recording, which may be just one batch of a run.
 
