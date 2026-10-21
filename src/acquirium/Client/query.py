@@ -689,32 +689,32 @@ class Q:
         up on the same timestamps (e.g. before differencing, correlating, or
         flagging divergence between two sensors).
 
-        Each point is resampled independently based on its own native
-        resolution relative to the target ``resolution`` — untouched if
-        identical, downsampled with ``downsample`` if finer, upsampled with
-        ``upsample`` (interpolating from its own true timestamps) if
-        coarser. See :meth:`DataObject.reconcile` for the full algorithm.
+        Each grid time ``t`` takes the measurements in its window
+        ``[t - resolution/2, t + resolution/2)``, so data is fetched half a
+        step beyond ``start``/``end`` to fill the edge windows, and the
+        result is then trimmed back to grid times within ``[start, end]``.
+        See :meth:`DataObject.reconcile` for the full algorithm.
 
         Args:
             points: Data aliases to reconcile. If ``None`` (default), every
                 data node bound by this query is reconciled.
-            start: Optional lower time bound for fetched data.
-            end: Optional upper time bound for fetched data.
+            start: Optional lower bound for the returned grid times.
+            end: Optional upper bound for the returned grid times.
             resolution: Target temporal resolution (``timedelta`` or a
                 duration string like ``"10s"``, ``"5m"``, ``"1h"``, ``"2d"``).
                 If ``None`` (default), the highest (finest) native resolution
                 among the selected points.
-            upsample: How to fill in a point that's coarser than the target
-                resolution: ``"interpolate"``, ``"copy"``/``"ffill"``,
-                ``"zero"``, ``"default_value"`` (fill with the constant given
-                via ``fill_value``), or ``"null"``. ``None`` (default):
-                only required, and only an error, if some selected point
-                actually needs upsampling.
-            downsample: How to collapse a point that's finer than the target
-                resolution: ``"mean"``/``"average"``, ``"median"``,
-                ``"mode"``, ``"first"``/``"ignore_intermediate"``,
-                ``"last"``, ``"min"``, or ``"max"``. ``None`` (default):
-                same rule as ``upsample``.
+            upsample: How to fill grid times with no measurement:
+                ``"interpolate"``, ``"copy"``/``"ffill"``, ``"zero"``,
+                ``"default_value"`` (fill with the constant given via
+                ``fill_value``), or ``"null"``. ``None`` (default): only
+                required, and only an error, if some selected point actually
+                has an empty grid time.
+            downsample: How to reduce several measurements at one grid time
+                to a single value: ``"mean"``/``"average"``, ``"median"``,
+                ``"mode"``, ``"ignore_intermediate"``/``"closest"``,
+                ``"min"``, or ``"max"``. ``None`` (default): only required
+                if some grid time actually has several measurements.
             fill_value: Constant used to fill in gaps when
                 ``upsample="default_value"``. Required for that method;
                 ignored otherwise.
@@ -733,19 +733,44 @@ class Q:
             # Two points, reconciled onto a common 10-second grid:
             df = q.reconcile(["a", "b"], resolution="10s", upsample="interpolate", downsample="mean")
         """
-        return self.data(
-            start=start,
-            end=end,
-            use_union=use_union,
-            cast_value="float",
-        ).reconcile(
+        from acquirium.Client.data_object import _as_utc_datetime, _infer_resolution, _parse_resolution
+
+        def fetch(pad: timedelta) -> DataObject:
+            return self.data(
+                start=start - pad if start is not None else None,
+                end=end + pad if end is not None else None,
+                use_union=use_union,
+                cast_value="float",
+            )
+
+        if start is None and end is None:
+            data = fetch(timedelta(0))
+            target = resolution
+        else:
+            if resolution is not None:
+                target = _parse_resolution(resolution)
+            else:
+                # the padding depends on the resolution, so infer it from the unpadded data first
+                try:
+                    native = fetch(timedelta(0))._native_series(points)
+                except ValueError as e:
+                    raise ValueError(f"reconcile: {e}") from e
+                target = _infer_resolution(list(native.values()))
+            data = fetch(target / 2)
+
+        df = data.reconcile(
             points,
-            resolution=resolution,
+            resolution=target,
             upsample=upsample,
             downsample=downsample,
             fill_value=fill_value,
             suffix=suffix,
         )
+        if start is not None:
+            df = df.filter(pl.col("time") >= _as_utc_datetime(start))
+        if end is not None:
+            df = df.filter(pl.col("time") <= _as_utc_datetime(end))
+        return df
 
     def metadata(self, *, include_internals: bool = False, include_dependencies: bool = True) -> pl.DataFrame:
         """

@@ -266,29 +266,32 @@ def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
 # ------------------------------------------------------------------
 #
 # "Reconciling" a set of point series means bringing them onto a single,
-# shared, uniform time grid so they can be directly compared. Each point is
-# classified independently by comparing its own native resolution (median
-# gap between its raw timestamps) to the target resolution:
-#   - identical -> used as-is, untouched.
-#   - finer than target (multiple raw readings per target step) ->
-#     downsampled: collapse each step's readings (mean/average, median,
-#     mode, first/ignore_intermediate, last, min, max).
-#   - coarser than target (gaps between raw readings at the target step) ->
-#     upsampled: fill the gaps by interpolating/holding/filling directly
-#     from that point's own true timestamps (interpolate, copy/ffill, zero,
-#     default_value, or leave as null) -- never by first snapping raw
-#     readings onto bucket boundaries and then filling, which would shift
-#     each reading's effective time by up to one target step and silently
-#     corrupt the interpolated values.
+# shared, uniform time grid so they can be directly compared. Every grid
+# value is an estimate of the signal at that exact grid time ``t``.
+#
+# Measurements are assigned to the grid time ``t`` whose window
+# ``[t - resolution/2, t + resolution/2)`` contains them (i.e. their nearest
+# grid time; an exact half-step tie goes to the later grid time). A grid time
+# with several measurements is reduced to one value with ``downsample``; one
+# with a single measurement takes it as-is.
+#
+# Any grid time left with no measurement (anywhere on the shared grid,
+# including outside the point's own span) is filled with ``upsample``:
+#   - interpolate, copy/ffill: every grid time not reduced from several
+#     measurements is evaluated at ``t`` directly from the original
+#     measurements' true timestamps (whether or not the point has gaps),
+#     never from snapped ones, since snapping first would shift each
+#     measurement by up to half a step.
+#   - zero, default_value, null: filled with the constant (or left null).
 #
 # Only fixed-length resolutions are supported (seconds/minutes/hours/days/
 # weeks) — calendar units like months/years are not, since their length is
-# not constant and would make cross-series bucket alignment ambiguous.
+# not constant and would make cross-series grid alignment ambiguous.
 
 _UPSAMPLE_METHODS = {"interpolate", "copy", "ffill", "zero", "default_value", "null"}
-_DOWNSAMPLE_METHODS = {
-    "mean", "average", "median", "mode", "first", "ignore_intermediate", "last", "min", "max",
-}
+_DOWNSAMPLE_METHODS = {"mean", "average", "median", "mode", "ignore_intermediate", "closest", "min", "max"}
+# Upsample methods evaluated at grid times from true measurement timestamps.
+_EXACT_TIME_UPSAMPLE_METHODS = {"interpolate", "copy", "ffill"}
 
 # A 5-way difference already yields C(5, 2) = 10 columns; more than that is
 # unwieldy and unlikely to be useful, so difference() caps it here.
@@ -337,18 +340,18 @@ def _parse_resolution(resolution: str | timedelta) -> timedelta:
     )
 
 
-def _native_resolution(s: pl.DataFrame) -> timedelta | None:
+def _native_resolution(original_data: pl.DataFrame) -> timedelta | None:
     """Characterize a ``[time, value]`` series' own native sampling interval
     as the median gap between its consecutive timestamps.
 
     Returns ``None`` if there are fewer than 2 points (no interval can be
     defined). The median (rather than the min) is used so that a single
     unusually-close pair of readings in an otherwise coarse series doesn't
-    misclassify it as high-resolution.
+    make the inferred default resolution needlessly fine.
     """
-    if s.height < 2:
+    if original_data.height < 2:
         return None
-    diffs = s["time"].diff().drop_nulls()
+    diffs = original_data["time"].diff().drop_nulls()
     if diffs.len() == 0:
         return None
     return diffs.median()
@@ -357,33 +360,32 @@ def _native_resolution(s: pl.DataFrame) -> timedelta | None:
 def _infer_resolution(series: list[pl.DataFrame]) -> timedelta:
     """Default target resolution when none is given: the highest (finest)
     native resolution among the series, i.e. the smallest native interval."""
-    intervals = [r for r in (_native_resolution(s) for s in series) if r is not None]
+    intervals = [r for r in (_native_resolution(original_data) for original_data in series) if r is not None]
     if not intervals:
         return timedelta(seconds=1)
     return min(intervals)
 
 
-def _truncate_to_epoch_grid(dt: datetime, every: timedelta) -> datetime:
-    """Truncate ``dt`` down to the nearest multiple of ``every`` since the UTC epoch.
+def _round_to_epoch_grid(dt: datetime, every: timedelta) -> datetime:
+    """Round ``dt`` to the nearest multiple of ``every`` since the UTC epoch
+    (an exact half-step rounds up, matching the ``[t - every/2, t + every/2)``
+    window).
 
     Using a fixed epoch (rather than each series' own start time) as the
     origin is what lets independently-sampled series land on the *same*
-    bucket boundaries.
+    grid times.
     """
     epoch = datetime(1970, 1, 1, tzinfo=dt.tzinfo)
     remainder = (dt - epoch) % every
-    return dt - remainder
+    rounded = dt - remainder
+    return rounded + every if 2 * remainder >= every else rounded
 
 
 def _build_time_grid(start: datetime, end: datetime, every: timedelta) -> list[datetime]:
-    """Build the list of uniform grid timestamps covering [start, end]."""
-    if end < start:
-        return [start]
+    """Build the uniform grid timestamps from ``start`` to ``end`` inclusive
+    (both already grid times)."""
     n_steps = int((end - start) // every)
-    grid = [start + i * every for i in range(n_steps + 1)]
-    if grid[-1] < end:
-        grid.append(grid[-1] + every)
-    return grid
+    return [start + i * every for i in range(n_steps + 1)]
 
 
 def _downsample_expr(method: str) -> pl.Expr:
@@ -392,12 +394,11 @@ def _downsample_expr(method: str) -> pl.Expr:
     if method == "median":
         return pl.col("value").median().alias("value")
     if method == "mode":
-        # Nulls are dropped to match the other aggregations; multimodal buckets take the median of the modes.
+        # Nulls are dropped to match the other aggregations; multimodal grid times take the median of the modes.
         return pl.col("value").drop_nulls().mode().median().alias("value")
-    if method in ("first", "ignore_intermediate"):
-        return pl.col("value").first().alias("value")
-    if method == "last":
-        return pl.col("value").last().alias("value")
+    if method in ("ignore_intermediate", "closest"):
+        # closest measurement to the grid time; an exact tie goes to the earlier one
+        return pl.col("value").sort_by([pl.col("offset_us").abs(), pl.col("offset_us")]).first().alias("value")
     if method == "min":
         return pl.col("value").min().alias("value")
     if method == "max":
@@ -405,55 +406,77 @@ def _downsample_expr(method: str) -> pl.Expr:
     raise ValueError(f"reconcile: unknown downsample method '{method}'")
 
 
+def _snap_to_grid(df: pl.DataFrame, origin: datetime, every: timedelta) -> pl.DataFrame:
+    """Replace each measurement's ``time`` with the grid time ``t`` (aligned to
+    ``origin``) whose window ``[t - every/2, t + every/2)`` contains it, and add
+    ``offset_us``: the measurement's original time minus ``t``, in microseconds.
+    """
+    every_us = int(round(every.total_seconds() * 1_000_000))
+    since_origin = (pl.col("time") - pl.lit(origin)).dt.total_microseconds()
+    grid_us = ((2 * since_origin + every_us) // (2 * every_us)) * every_us
+    return df.with_columns(
+        (pl.lit(origin) + pl.duration(microseconds=grid_us)).alias("time"),
+        (since_origin - grid_us).alias("offset_us"),
+    )
+
+
 def _apply_downsample(
     df: pl.DataFrame,
     origin: datetime,
     every: timedelta,
-    method: str,
+    method: str | None,
     *,
     label: str | None = None,
 ) -> pl.DataFrame:
-    """Assign each row of a ``[time, value]`` series to a fixed-size bucket
-    aligned to ``origin``, then collapse each bucket per ``method``.
+    """Snap a ``[time, value]`` series onto the grid with :func:`_snap_to_grid`,
+    then reduce each grid time to a single value per ``method``.
 
-    With ``method="mode"``, warns if any bucket is multimodal, since that
-    bucket's value (the median of its modes) may not itself be a mode.
-    ``label`` names the series in that warning.
+    A grid time with exactly one measurement takes it as-is under any
+    ``method``. If ``method`` is ``None``, raises when any grid time has more
+    than one measurement, since there's no rule for reducing them.
 
-    The downsample counterpart to ``_apply_upsample``. It isn't quite the
-    same shape (it takes ``origin``/``every`` and does its own group-by,
-    where ``_apply_upsample`` just transforms an already-gridded frame)
-    because collapsing many raw rows into one bucket is fundamentally a
-    group-by aggregation (``_downsample_expr`` supplies the ``.agg()``
-    expression), whereas filling an empty bucket is a whole-column
-    transform (``interpolate``/``forward_fill`` need to see neighboring
-    rows in order, not just this bucket's rows).
+    Warns if any measurement falls exactly on a window boundary, since the
+    half-open window then holds that boundary on one side but not the other.
+
+    With ``method="mode"``, warns if any grid time is multimodal, since its
+    value (the median of its modes) may not itself be a mode. ``label``
+    names the series in error and warning messages.
     """
+    series = f"'{label}'" if label is not None else "series"
+    snapped = _snap_to_grid(df, origin, every)
+
     every_us = int(round(every.total_seconds() * 1_000_000))
-    bucketed = df.with_columns(
-        (
-            pl.lit(origin)
-            + pl.duration(
-                microseconds=(
-                    (pl.col("time") - pl.lit(origin)).dt.total_microseconds() // every_us
-                )
-                * every_us
+    n_boundary = snapped.filter(2 * pl.col("offset_us") == -every_us).height
+    if n_boundary:
+        warnings.warn(
+            f"reconcile: {n_boundary} measurement(s) in {series} fall exactly on a window "
+            f"boundary at resolution {every} and were assigned to the later grid time, so "
+            "values reduced from those windows are skewed toward the later side",
+            UserWarning,
+            stacklevel=3,
+        )
+
+    if method is None:
+        n_crowded = snapped.group_by("time").len().filter(pl.col("len") > 1).height
+        if n_crowded:
+            raise ValueError(
+                f"reconcile: {series} has more than one measurement at {n_crowded} "
+                f"grid time(s) at resolution {every}, but downsample=None"
             )
-        ).alias("time")
-    )
+        return snapped.select("time", "value").sort("time")
+
     aggs = [_downsample_expr(method)]
     if method == "mode":
         aggs.append(pl.col("value").drop_nulls().mode().len().alias("n_modes"))
-    out = bucketed.group_by("time", maintain_order=True).agg(aggs).sort("time")
+    out = snapped.group_by("time", maintain_order=True).agg(aggs).sort("time")
     if method != "mode":
         return out
 
     n_multimodal = out.filter(pl.col("n_modes") > 1).height
     if n_multimodal:
-        series = f"'{label}'" if label is not None else "series"
         warnings.warn(
-            f"reconcile: {n_multimodal} of {out.height} buckets in {series} were "
-            "multimodal; downsample='mode' used the median of each bucket's modes, "
+            f"reconcile: {n_multimodal} of {out.height} grid times in {series} were "
+            "multimodal; downsample='mode' used the median of each grid time's modes, "
             "which may not itself be one of the modes",
             UserWarning,
             stacklevel=3,
@@ -466,17 +489,17 @@ def _apply_upsample(df: pl.DataFrame, method: str, fill_value: float | None = No
     real elapsed time between rows (``interpolate_by("time")``) rather than
     row position.
 
-    This must NOT be fed a frame whose rows were pre-snapped onto bucket
-    boundaries by ``_apply_downsample`` — that would silently shift each raw
-    reading's timestamp by up to one grid step before interpolating, which
-    is a real, measurable distortion (not just a cosmetic one), not
-    "the same up to rounding". ``_resample_upsample`` is what builds the
-    correct input for this function: the raw series' true timestamps merged
-    with the target grid's timestamps, so ``"interpolate"`` sees genuine
-    time gaps to weight against.
+    For ``interpolate``/``copy``/``ffill``, this must NOT be fed a frame
+    whose rows were snapped onto the grid by ``_apply_downsample`` — that
+    would shift each measurement by up to half a grid step before
+    interpolating or carrying it forward. ``_resample_upsample`` builds the
+    correct input: the true measurement timestamps merged with the grid's.
+    The constant fills (``zero``/``default_value``/``null``) are instead fed
+    an already-snapped frame, since they only fill grid times with no
+    measurement.
 
     ``"null"`` is conceptually ``"default_value"`` with an implicit
-    ``fill_value=None`` (a no-op, leaving empty buckets as null), and
+    ``fill_value=None`` (a no-op, leaving empty grid times as null), and
     ``"zero"`` is its ``fill_value=0`` case — but each is its own branch
     below so that an explicit ``"default_value"`` request still enforces
     that ``fill_value`` was actually provided, rather than silently
@@ -500,23 +523,24 @@ def _apply_upsample(df: pl.DataFrame, method: str, fill_value: float | None = No
 
 
 def _resample_upsample(
-    raw: pl.DataFrame, grid_df: pl.DataFrame, method: str, fill_value: float | None = None
+    original_data: pl.DataFrame, grid_df: pl.DataFrame, method: str, fill_value: float | None = None
 ) -> pl.DataFrame:
-    """Resample a coarser ``[time, value]`` series onto ``grid_df``'s
-    timestamps directly from its true native readings — no bucket-snapping.
+    """Evaluate a ``[time, value]`` series at ``grid_df``'s timestamps
+    directly from its original measurements — no snapping. Used for
+    ``interpolate``/``copy``/``ffill``.
 
     Unions the raw series' real timestamps with the grid's timestamps (so
     ``interpolate``/``forward_fill`` see genuine, unshifted time gaps),
     applies ``method`` via :func:`_apply_upsample`, then keeps only the
     grid's rows.
     """
-    raw = raw.select("time", "value")
+    original_data = original_data.select("time", "value")
     grid_only = (
-        grid_df.join(raw, on="time", how="anti")
+        grid_df.join(original_data, on="time", how="anti")
         .with_columns(pl.lit(None, dtype=pl.Float64).alias("value"))
     )
     combined = (
-        pl.concat([raw, grid_only.select("time", "value")])
+        pl.concat([original_data, grid_only.select("time", "value")])
         .unique(subset="time", keep="first")
         .sort("time")
     )
@@ -1432,13 +1456,13 @@ class DataObject:
         series: dict[str, pl.DataFrame] = {}
         for (alias, point_uri), grp in tall.group_by(["data_alias", "point_uri"], maintain_order=True):
             label = _label(alias, point_uri)
-            s = grp.select("time", "value").unique(subset="time", keep="first").sort("time")
+            original_data = grp.select("time", "value").unique(subset="time", keep="first").sort("time")
             if label in series:
                 series[label] = (
-                    pl.concat([series[label], s]).unique(subset="time", keep="first").sort("time")
+                    pl.concat([series[label], original_data]).unique(subset="time", keep="first").sort("time")
                 )
             else:
-                series[label] = s
+                series[label] = original_data
         return series
 
     def reconcile(
@@ -1453,20 +1477,20 @@ class DataObject:
     ) -> pl.DataFrame:
         """Bring two or more time series onto a shared, uniform temporal grid.
 
-        Each selected point keeps its own native readings until the last
-        possible moment. For every point, independently:
+        Every value in the result estimates its point's signal at that exact
+        grid time ``t``. For every point, independently:
 
-        1. Its own native resolution is characterized (the median gap
-           between its consecutive raw timestamps).
-        2. That's compared to the target ``resolution``:
-           - identical -> the point is used as-is, untouched.
-           - finer than the target (multiple raw readings per target step)
-             -> it's downsampled with ``downsample`` (raises if not given).
-           - coarser than the target (gaps between raw readings at the
-             target step) -> it's upsampled with ``upsample`` (raises if
-             not given), interpolating/filling directly from its own true
-             timestamps, not from any pre-binned/snapped grid.
-        3. All points are then combined onto the shared ``resolution`` grid.
+        1. Each measurement is assigned to the grid time ``t`` whose window
+           ``[t - resolution/2, t + resolution/2)`` contains it.
+        2. A grid time with one measurement takes it as-is; one with several
+           is reduced with ``downsample`` (raises if not given).
+        3. Grid times with no measurement, anywhere on the shared grid
+           (including before the point's first or after its last
+           measurement), are filled with ``upsample`` (raises if not given).
+           When ``upsample`` is ``interpolate``/``copy``/``ffill``, every grid
+           time except those reduced from several measurements is instead
+           evaluated at exactly ``t`` from the original measurements and their
+           true timestamps, whether or not the point has any empty grid times.
 
         Points are handled independently: e.g. a fast sensor is downsampled
         while a slow one alongside it is upsampled, in the same call.
@@ -1478,27 +1502,25 @@ class DataObject:
             resolution: Target temporal resolution, as a ``timedelta`` or a
                 duration string such as ``"10s"``, ``"5m"``, ``"1h"``,
                 ``"2d"``, ``"1w"``. If ``None`` (default), it is the highest
-                (finest) native resolution among the selected points, so at
-                least one of them never needs resampling at all.
-            upsample: How to fill in a point that's coarser than the target
-                resolution: ``"interpolate"`` (linear interpolation, using
-                real elapsed time, between that point's own neighboring
-                readings), ``"copy"``/``"ffill"`` (carry the last known
-                value forward), ``"zero"`` (fill with 0), ``"default_value"``
-                (fill with the constant given via ``fill_value``), or
-                ``"null"`` (leave as null). ``None`` (default): if no point
-                actually needs upsampling this is never consulted; if one
-                does, ``reconcile`` raises rather than silently picking a
-                method for you.
-            downsample: How to collapse a point that's finer than the target
-                resolution: ``"mean"``/``"average"``, ``"median"``,
+                (finest) native resolution among the selected points (the
+                median gap between each point's measurements).
+            upsample: How to fill grid times with no measurement:
+                ``"interpolate"`` (linear interpolation, using real elapsed
+                time, between that point's own neighboring readings),
+                ``"copy"``/``"ffill"`` (carry the last known value forward),
+                ``"zero"`` (fill with 0), ``"default_value"`` (fill with the
+                constant given via ``fill_value``), or ``"null"`` (leave as
+                null). ``None`` (default): only required, and only an error,
+                if some point actually has an empty grid time.
+            downsample: How to reduce several measurements at one grid time
+                to a single value: ``"mean"``/``"average"``, ``"median"``,
                 ``"mode"`` (most frequent reading; if multimodal, the median
                 of the modes, with a ``UserWarning`` since that median may
-                not itself be a mode), ``"first"``/``"ignore_intermediate"`` (keep only the
-                first reading in each step and discard the rest), ``"last"``,
-                ``"min"``, or ``"max"``. ``None`` (default): same rule as
-                ``upsample`` — only required, and only an error, if some
-                point actually needs it.
+                not itself be a mode), ``"ignore_intermediate"``/
+                ``"closest"`` (keep only the measurement closest to the grid
+                time; an exact tie goes to the earlier one), ``"min"``, or
+                ``"max"``. ``None`` (default): only required, and only an
+                error, if some grid time actually has several measurements.
             fill_value: Constant used to fill in gaps when
                 ``upsample="default_value"``. Required for that method;
                 ignored otherwise.
@@ -1513,9 +1535,9 @@ class DataObject:
             own column, named ``f"{alias}__{point_local}{suffix}"``.
 
         Raises:
-            ValueError: if a point needs downsampling but ``downsample`` is
-                ``None``, if a point needs upsampling but ``upsample`` is
-                ``None``, for an unrecognized ``upsample``/``downsample``
+            ValueError: if a grid time has several measurements but
+                ``downsample`` is ``None``, if a point has an empty grid
+                time but ``upsample`` is ``None``, for an unrecognized ``upsample``/``downsample``
                 name, or for ``upsample="default_value"`` without
                 ``fill_value``.
 
@@ -1558,53 +1580,48 @@ class DataObject:
                 empty_schema[f"{a}{suffix}"] = pl.Float64
             return pl.DataFrame(schema=empty_schema)
 
-        # Step 1 + 2: characterize each point's own native resolution and
-        # pick the target resolution if the caller didn't.
-        native = {label: _native_resolution(s) for label, s in series.items()}
-
         target = (
             _parse_resolution(resolution)
             if resolution is not None
             else _infer_resolution(list(series.values()))
         )
 
-        global_min = min(s["time"].min() for s in series.values())
-        global_max = max(s["time"].max() for s in series.values())
-        origin = _truncate_to_epoch_grid(global_min, target)
-        grid_times = _build_time_grid(origin, global_max, target)
+        global_min = min(original_data["time"].min() for original_data in series.values())
+        global_max = max(original_data["time"].max() for original_data in series.values())
+        origin = _round_to_epoch_grid(global_min, target)
+        end = _round_to_epoch_grid(global_max, target)
+        grid_times = _build_time_grid(origin, end, target)
         grid_df = pl.DataFrame({"time": grid_times}, schema={"time": pl.Datetime(time_zone="UTC")})
 
         out = grid_df
-        for label, s in series.items():
-            n = native[label]
+        for label, original_data in series.items():
+            snapped_data = grid_df.join(
+                _apply_downsample(original_data, origin, target, downsample, label=label),
+                on="time", how="left",
+            ).sort("time")
 
-            if n is None or n == target:
-                # Step 3.i: identical (or too few points to characterize) -> untouched
-                merged = grid_df.join(s, on="time", how="left").sort("time")
+            n_empty = snapped_data["value"].null_count()
+            if n_empty and upsample is None:
+                raise ValueError(
+                    f"reconcile: '{label}' has no measurement at {n_empty} of "
+                    f"{snapped_data.height} grid times at resolution {target}, but upsample=None"
+                )
 
-            elif n < target:
-                # Step 3.ii: finer than target -> must downsample
-                if downsample is None:
-                    raise ValueError(
-                        f"reconcile: '{label}' has a finer native resolution ({n}) "
-                        f"than the target resolution ({target}) and needs "
-                        f"downsampling, but downsample=None"
-                    )
-                bucketed = _apply_downsample(s, origin, target, downsample, label=label)
-                merged = grid_df.join(bucketed, on="time", how="left").sort("time")
-
+            if upsample in _EXACT_TIME_UPSAMPLE_METHODS:
+                # Every grid time except those reduced from several measurements is
+                # evaluated at t from original_data, gaps or not.
+                counts = _snap_to_grid(original_data, origin, target).group_by("time").len()
+                crowded = grid_df.join(counts, on="time", how="left")["len"].fill_null(0) > 1
+                from_original = _resample_upsample(original_data, grid_df, upsample, fill_value)["value"]
+                reconciled = snapped_data.with_columns(
+                    pl.when(crowded).then(pl.col("value")).otherwise(from_original).alias("value")
+                )
+            elif n_empty:
+                reconciled = _apply_upsample(snapped_data, upsample, fill_value)
             else:
-                # Step 3.iii: coarser than target -> must upsample, directly
-                # from this point's own true timestamps (no bucket-snapping)
-                if upsample is None:
-                    raise ValueError(
-                        f"reconcile: '{label}' has a coarser native resolution ({n}) "
-                        f"than the target resolution ({target}) and needs "
-                        f"upsampling, but upsample=None"
-                    )
-                merged = _resample_upsample(s, grid_df, upsample, fill_value)
+                reconciled = snapped_data
 
-            out = out.with_columns(merged["value"].alias(f"{label}{suffix}"))
+            out = out.with_columns(reconciled["value"].alias(f"{label}{suffix}"))
 
         return out
 
@@ -1761,8 +1778,8 @@ class DataObject:
         display_labels = labels if labels is not None else series_labels
 
         fig, ax = plt.subplots(figsize=figsize)
-        for (_, s), label in zip(series.items(), display_labels):
-            ax.plot(s["time"].to_list(), s["value"].to_list(), label=label)
+        for original_data, label in zip(series.values(), display_labels):
+            ax.plot(original_data["time"].to_list(), original_data["value"].to_list(), label=label)
 
         ax.set_xlabel(xlabel)
         if ylabel:

@@ -226,13 +226,12 @@ def test_query_data_method_exists(acquirium_client_csv):
 #
 # The CSV fixture's numeric points are all sampled hourly (one row per hour,
 # for all of 2023 -- 8760 exact hourly readings, no gaps). That means:
-#   - resolution left at its default (native, ~1h) needs neither upsample
-#     nor downsample for any point -- useful for testing the "identical,
-#     untouched" path without providing any method.
-#   - resolution coarser than 1h (e.g. "2h") makes every point need
-#     *downsampling* (raises if downsample=None).
-#   - resolution finer than 1h (e.g. "1m") makes every point need
-#     *upsampling* (raises if upsample=None).
+#   - resolution left at its default (native, 1h) gives every grid time
+#     exactly one measurement, so neither upsample nor downsample is needed.
+#   - resolution coarser than 1h (e.g. "2h") puts several measurements at
+#     each grid time, so it needs *downsampling* (raises if downsample=None).
+#   - resolution finer than 1h (e.g. "1m") leaves empty grid times, so it
+#     needs *upsampling* (raises if upsample=None).
 
 def test_reconcile_basic_shape(acquirium_client_csv):
     """reconcile() returns a wide frame: a shared uniform 'time' column plus
@@ -610,6 +609,6 @@ def test_reconcile_difference_plot_chain(acquirium_client_csv, tmp_path):
         pytest.skip("fixture doesn't expose at least two distinct aliases")
 
     out_path = tmp_path / "chain.png"
-    reconciled = data.reconcile(aliases[:2], resolution="2h")
+    reconciled = data.reconcile(aliases[:2], resolution="2h", downsample="mean")
     data.difference(reconciled).plot(output_path=str(out_path), title="difference over time")
     assert out_path.exists()

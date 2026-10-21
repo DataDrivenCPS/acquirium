@@ -287,7 +287,7 @@ def test_reconcile_query_wrapper_with_options(acquirium_client_csv):
         pytest.skip("no data aliases bound for this entity chain")
 
     alias = data.aliases[0]
-    df = query.reconcile([alias], resolution=timedelta(hours=1), upsample="copy", downsample="first")
+    df = query.reconcile([alias], resolution=timedelta(hours=1), upsample="copy", downsample="ignore_intermediate")
     non_time_cols = [c for c in df.columns if c != "time"]
     assert non_time_cols
     assert all(c.startswith(alias) for c in non_time_cols)
