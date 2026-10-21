@@ -24,9 +24,7 @@ class RevisionPublisher:
         frame = pl.from_arrow(mutations)
         if (frame["operation"] != "upsert").any():
             raise ValueError("deletion is not supported by incremental materialization")
-        writes = frame.select(["ref_uri", "ts", "numeric_value", "text_value"]).with_columns(
-            pl.col("ts").dt.convert_time_zone("UTC").dt.replace_time_zone(None)
-        ).unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
+        writes = self._store._prepare_frame(frame)
         with self._store._lock, self._store._write_conn() as conn:
             revision = self._store._next_revision(conn)
             self._store._insert_frame(conn, writes, revision)

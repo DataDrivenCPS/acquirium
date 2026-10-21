@@ -42,6 +42,23 @@ def test_publication_rejects_deletion(tmp_path):
         store.close()
 
 
+def test_publication_preserves_instants_in_non_utc_session(materialization_store):
+    store = materialization_store
+    if not isinstance(store, DuckDBStore):
+        store.conn.execute("SET TIME ZONE 'America/Denver'")
+    # Both sides of the spring transition and the repeated autumn hour.
+    stamps = [datetime(2026, 3, 8, hour, tzinfo=timezone.utc) for hour in (8, 9)]
+    stamps += [datetime(2026, 11, 1, hour, tzinfo=timezone.utc) for hour in (7, 8)]
+    rows = [dict(operation="upsert", ref_uri="urn:timezone", ts=stamp,
+                 numeric_value=float(index), text_value=None) for index, stamp in enumerate(stamps)]
+    publisher = RevisionPublisher(store)
+    request = PublicationRequest("timezone", pa.Table.from_pylist(rows, schema=MUTATION_SCHEMA))
+    for write in (lambda: publisher.publish(request), lambda: publisher.replace(request, "urn:timezone")):
+        assert write().row_count == 4
+        actual = [stamp for batch in store.timeseries("urn:timezone") for stamp in batch.column("ts").to_pylist()]
+        assert sorted(actual) == stamps
+
+
 def test_duckdb_schema_contains_revision_frontier_tables(tmp_path):
     store = DuckDBStore(tmp_path / "publication.duckdb", recreate=True)
     try:
