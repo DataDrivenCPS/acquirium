@@ -211,3 +211,47 @@ def test_table_artifact_batch_validation_and_atomicity(materialization_store, tm
     assert pl.read_parquet(io.BytesIO(saved))["x"].to_list() == [1, 2]
     with pytest.raises(ValueError, match="unknown artifact"):
         ledger.observe_batch(run["run_id"], [dict(variable_id=table["variable_id"], artifact_digest="missing")])
+
+
+@pytest.mark.parametrize("sweep", [False, True])
+@pytest.mark.parametrize("batch", [False, True])
+def test_cleanup_preserves_artifact_reattached_after_delete_commit(materialization_store, tmp_path, monkeypatch, sweep, batch):
+    import base64
+    from concurrent.futures import ThreadPoolExecutor
+
+    store = materialization_store
+    ledger = ExperimentStore(store, tmp_path / "race-artifacts")
+    study = ledger.define("artifact race")
+    variable = ledger.declare(study["template_id"], "file", "input", "file", {})
+    old = ledger.start(study["template_id"], {})
+    data = b"shared bytes"
+    saved = ledger.attach_file(old["run_id"], variable["variable_id"], "old.txt", "text/plain", data)
+    ledger.finish(old["run_id"], "succeeded")
+    # Separate ledger instances represent concurrent callers sharing a store.
+    # They share the writer lock, without sharing the metadata publication lock.
+    other = ExperimentStore(store, ledger.artifact_dir)
+    active = None
+    if not sweep:
+        active = other.start(study["template_id"], {})
+    after_delete = ledger._after_delete
+    def interleave(result, **kwargs):
+        def attach():
+            nonlocal active, variable
+            if sweep:
+                new_study = other.define("new study")
+                variable = other.declare(new_study["template_id"], "file", "input", "file", {})
+                active = other.start(new_study["template_id"], {})
+            if batch:
+                other.observe_batch(active["run_id"], [{"variable_id": variable["variable_id"], "artifact": {
+                    "filename": "new.txt", "media_type": "text/plain", "data": base64.b64encode(data).decode("ascii")}}])
+            else:
+                other.attach_file(active["run_id"], variable["variable_id"], "new.txt", "text/plain", data)
+        # SQL deletion has committed; cleanup has not yet checked the file.
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            executor.submit(attach).result(timeout=10)
+        return after_delete(result, **kwargs)
+    monkeypatch.setattr(ledger, "_after_delete", interleave)
+    removed = ledger.clear() if sweep else ledger.delete_runs([old["run_id"]])
+    assert removed["files"] == 0
+    assert other.artifact(saved["digest"])["data"] == data
+    assert other.observations(active["template_id"], run_id=active["run_id"])[0]["artifact_digest"] == saved["digest"]

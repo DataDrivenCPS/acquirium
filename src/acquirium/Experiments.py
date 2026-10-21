@@ -582,15 +582,11 @@ class ExperimentStore:
         self._publish_metadata(self._run_record(self.run(run_id)))
         return {"run_id": run_id, "status": status, "finished_at": finished}
     def attach_file(self, run_id: str, variable_id: str, filename: str, media_type: str | None, data: bytes) -> dict[str, Any]:
-        digest = sha256(data).hexdigest(); target = self.artifact_dir / digest
-        with self.store._lock, self.store._write_conn() as conn:
-            label, kind = self._validate_observation(conn, run_id, variable_id)
-            self._check_attachment(label, kind, data)
-            # Validate ownership before storing any artifact bytes or metadata.
-            # Identical bytes share one content-addressed artifact.
-            if not target.exists(): target.write_bytes(data)
-            self._execute(conn, "INSERT INTO experiment_artifacts VALUES (?, ?, ?, ?, ?) ON CONFLICT(digest) DO NOTHING", [digest, filename, media_type, len(data), _database_timestamp(_now())])
-        self.observe(run_id, variable_id, artifact_digest=digest)
+        digest = sha256(data).hexdigest()
+        self.observe_batch(run_id, [{"variable_id": variable_id, "artifact": {
+            "filename": filename, "media_type": media_type,
+            "data": base64.b64encode(data).decode("ascii"),
+        }}])
         return {"digest": digest, "filename": filename, "byte_length": len(data)}
 
     def artifact(self, digest: str) -> dict[str, Any]:
@@ -984,12 +980,17 @@ class ExperimentStore:
 
     def _after_delete(self, result, *, sweep=False) -> dict[str, Any]:
         """Drop the deleted records' files and graph nodes after the SQL commit."""
-        for digest in result["files"]:
-            (self.artifact_dir / digest).unlink(missing_ok=True)
-        if sweep:
-            for path in self.artifact_dir.iterdir():
-                if path.is_file():
-                    path.unlink()
+        # An attachment can recreate an artifact after the deletion commits.
+        # Recheck its record while holding the same lock as attachment writes,
+        # and retain the lock through unlink (including orphan sweeps).
+        with self.store._lock, self.store._own_conn() as conn:
+            paths = list(self.artifact_dir.iterdir()) if sweep else [self.artifact_dir / digest for digest in result["files"]]
+            removed = 0
+            for path in paths:
+                if path.is_file() and self._execute(conn, "SELECT 1 FROM experiment_artifacts WHERE digest=?", [path.name]).fetchone() is None:
+                    path.unlink(missing_ok=True)
+                    removed += 1
+            result["removed"]["files"] = removed
         if self.metadata_graph is not None:
             # Queue first, so a failed graph write still drops the nodes on the next read.
             for key in result["keys"]:
