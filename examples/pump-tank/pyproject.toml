@@ -1,0 +1,17 @@
+[project]
+name = "acquirium-pump-tank-example"
+version = "0.1.0"
+description = "Record a pump schedule optimization with Acquirium's experiment interface"
+requires-python = ">=3.11"
+dependencies = [
+    "acquirium",
+    "marimo>=0.20.4",
+    "matplotlib>=3.10",
+    "scipy>=1.14",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+acquirium = { path = "../..", editable = true }
