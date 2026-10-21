@@ -6,6 +6,10 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from hashlib import sha256
 import functools
+import math
+from copy import deepcopy
+import base64
+from fnmatch import fnmatchcase
 import io
 import json
 import numbers
@@ -17,11 +21,15 @@ import warnings
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+from urllib.parse import quote
 from dateutil import parser as dtparser
 import polars as pl
 from acquirium.internals.models import compute_ref_uri
 from acquirium.Client.streams import Stream, StreamInterval, samples_frame
 from acquirium.ExperimentValues import ARTIFACT_KINDS, KINDS, TABLE_MEDIA_TYPE, check_kind, to_json
+from acquirium.ModelAdapters import (
+    ADAPTER_FORMAT, AdapterDefinition, Component, JSON_METADATA, ModelAdapter, UNSET, metadata_fields, read_component,
+)
 from acquirium.ExperimentMetadata import (
     EXPERIMENT, ExperimentMetadataGraph, annotation_uri, experiment_query,
     matched_ids, metadata_values, node_uri, records_frame, run_uri, saved_metadata, study_uri, sync_study,
@@ -46,6 +54,46 @@ def _json(value: Any) -> str:
     except (TypeError, ValueError) as error: raise ValueError("experiment values must be JSON serializable, without NaN or infinity") from error
 def _metadata_matches(actual: dict[str, Any], expected: dict[str, Any] | None) -> bool:
     return expected is None or all(actual.get(key) == value for key, value in expected.items())
+
+
+def _stream_keys(kind: str, metadata: Mapping) -> tuple[str, ...]:
+    from acquirium.Client.explore.attributes import REGISTRY, check_key
+    from acquirium.Client.explore.relations import RELATIONS
+    from acquirium.Client.metadata import STREAM_FIELDS
+
+    keys = metadata.get("keys", ())
+    if not isinstance(keys, (tuple, list)) or any(not isinstance(key, str) for key in keys):
+        raise ValueError("keys must be a sequence of index names")
+    if keys and kind != "timeseries":
+        raise ValueError("only time-series variables accept keys")
+    reserved = set(REGISTRY) | set(RELATIONS) | set(STREAM_FIELDS) | {"study_id", "run_id", "variable_id", "observed"}
+    for key in keys:
+        check_key(key)
+        if key in reserved:
+            raise ValueError(f"index name {key!r} is reserved stream metadata")
+    if len(set(keys)) != len(keys):
+        raise ValueError("index names must be unique")
+    return tuple(keys)
+
+
+def _stream_key(key: Any, keys: tuple[str, ...]) -> tuple:
+    if not isinstance(key, (tuple, list)) or len(key) != len(keys):
+        raise ValueError(f"expected a key tuple with {len(keys)} entries")
+    key = to_json(list(key), path="key")
+    if any(value is None or not isinstance(value, (str, bool, int, float)) for value in key):
+        raise ValueError("stream keys must contain strings, numbers, or booleans")
+    return tuple(key)
+
+
+def _key_metadata(observed: Any, keys: tuple[str, ...]) -> dict:
+    if isinstance(observed, Mapping):
+        mappings = [
+            {"key": list(_stream_key(key, keys)), "observed": str(uri)}
+            for key, uri in observed.items()
+        ]
+        return {"observed_by_key": sorted(mappings, key=lambda item: _json(item["key"]))}
+    uri = observed.uri if isinstance(observed, Point) else observed
+    return {"observed": str(uri) if uri is not None else None}
 
 # Printed handles show only what they already hold; a repr never queries the server.
 _brief = reprlib.Repr()
@@ -102,6 +150,7 @@ class ExperimentStore:
             self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_variables (variable_id VARCHAR PRIMARY KEY, template_id VARCHAR NOT NULL, label VARCHAR NOT NULL, role VARCHAR NOT NULL, kind VARCHAR NOT NULL, metadata_json VARCHAR NOT NULL, created_at TIMESTAMP NOT NULL, UNIQUE(template_id, label))")
             self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_runs (run_id VARCHAR PRIMARY KEY, template_id VARCHAR NOT NULL, status VARCHAR NOT NULL, metadata_json VARCHAR NOT NULL, started_at TIMESTAMP NOT NULL, finished_at TIMESTAMP, error_json VARCHAR)")
             self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_observations (run_id VARCHAR NOT NULL, variable_id VARCHAR, sequence BIGINT NOT NULL, recorded_at TIMESTAMP NOT NULL, occurred_at TIMESTAMP, value_json VARCHAR, artifact_digest VARCHAR, ref_uri VARCHAR, range_start TIMESTAMP, range_end TIMESTAMP, PRIMARY KEY(run_id, sequence))")
+            self._execute(conn, "ALTER TABLE experiment_observations ADD COLUMN IF NOT EXISTS key_json VARCHAR")
             self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_artifacts (digest VARCHAR PRIMARY KEY, filename VARCHAR NOT NULL, media_type VARCHAR, byte_length BIGINT NOT NULL, created_at TIMESTAMP NOT NULL)")
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_variables_template_idx ON experiment_variables(template_id)")
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_runs_template_idx ON experiment_runs(template_id, status, started_at)")
@@ -407,30 +456,49 @@ class ExperimentStore:
             self._execute(conn, "INSERT INTO experiment_templates VALUES (?, ?, ?)", [item["template_id"], item["name"], _database_timestamp(item["created_at"])])
         self._publish_metadata(self._study_record(item))
         return item
-    @_publishes
     def declare(self, template_id: str, label: str, role: str, kind: str, metadata: dict[str, Any]) -> dict[str, Any]:
-        if not label.strip() or role not in {"input", "output", "annotation"}: raise ValueError("a non-empty label and valid role are required")
-        if kind not in KINDS: raise ValueError(f"kind must be one of {', '.join(sorted(KINDS))}")
-        metadata = metadata_values(metadata)
-        # The graph lock serialises declarations, so the label check and the
-        # insert need not share a transaction. Resolution happens between them,
-        # outside the store's writer lock that ingestion also waits on.
+        return self.declare_batch(template_id, [dict(label=label, role=role, kind=kind, metadata=metadata)])[0]
+
+    @_publishes
+    def declare_batch(self, template_id: str, declarations: list[dict]) -> list[dict]:
+        """Validate and prepare outside the writer lock, then commit together."""
         with self.store._own_conn() as conn:
-            row = self._execute(conn, "SELECT variable_id, role, kind, metadata_json, created_at FROM experiment_variables WHERE template_id=? AND label=?", [template_id, label]).fetchone()
-        if row:
-            # A label cannot silently change shape: an old experiment must
-            # remain interpretable after the script evolves.
-            previous = _json(metadata_values(json.loads(row[3])))
-            if (row[1], row[2], previous) != (role, kind, _json(metadata)): raise ValueError(f"variable {label!r} was already declared differently")
-            return {"variable_id": row[0], "label": label, "role": role, "kind": kind, "metadata": metadata, "created_at": timestamp(row[4]), "created": False}
-        # Study variables use the same source/name identity as streams.
-        variable_id, created_at = str(compute_ref_uri(f"study/{template_id}", label)), _now()
-        metadata = self._prepare_metadata(variable_id, metadata, variable=True)
+            if self._execute(conn, "SELECT 1 FROM experiment_templates WHERE template_id=?", [template_id]).fetchone() is None:
+                raise KeyError(template_id)
+            rows = self._execute(conn, "SELECT variable_id, label, role, kind, metadata_json, created_at FROM experiment_variables WHERE template_id=?", [template_id]).fetchall()
+        existing = {row[1]: dict(variable_id=row[0], label=row[1], role=row[2], kind=row[3], metadata=metadata_values(json.loads(row[4])), created_at=timestamp(row[5]), created=False) for row in rows}
+        result, pending = [], []
+        for declaration in declarations:
+            label, role, kind = (declaration[name] for name in ("label", "role", "kind"))
+            if not label.strip() or role not in {"input", "output", "annotation"}:
+                raise ValueError("a non-empty label and valid role are required")
+            if kind not in KINDS:
+                raise ValueError(f"kind must be one of {', '.join(sorted(KINDS))}")
+            metadata = metadata_values(declaration.get("metadata", {}))
+            keys = _stream_keys(kind, metadata)
+            for item in metadata.get("observed_by_key", []):
+                _stream_key(item.get("key", ()), keys)
+                if not isinstance(item.get("observed"), str):
+                    raise ValueError("observed properties must be URI strings")
+            previous = existing.get(label)
+            if previous is not None:
+                if (previous["role"], previous["kind"], _json(previous["metadata"])) != (role, kind, _json(metadata)):
+                    raise ValueError(f"variable {label!r} was already declared differently")
+                result.append({**previous, "created": False})
+                continue
+            variable_id = str(compute_ref_uri(f"study/{template_id}", label))
+            metadata = self._prepare_metadata(variable_id, metadata, variable=True)
+            item = dict(variable_id=variable_id, label=label, role=role, kind=kind, metadata=metadata, created_at=_now(), created=True)
+            existing[label] = item
+            pending.append(item)
+            result.append(item)
         with self.store._lock, self.store._write_conn() as conn:
-            self._execute(conn, "INSERT INTO experiment_variables VALUES (?, ?, ?, ?, ?, ?, ?)", [variable_id, template_id, label, role, kind, _json(metadata), _database_timestamp(created_at)])
-        item = {"variable_id": variable_id, "label": label, "role": role, "kind": kind, "metadata": metadata, "created_at": created_at, "created": True}
-        self._publish_metadata(self._variable_record(template_id, item))
-        return item
+            for item in pending:
+                self._execute(conn, "INSERT INTO experiment_variables VALUES (?, ?, ?, ?, ?, ?, ?)", [item["variable_id"], template_id, item["label"], item["role"], item["kind"], _json(item["metadata"]), _database_timestamp(item["created_at"])])
+        for item in pending:
+            self._publish_metadata(self._variable_record(template_id, item))
+        return result
+
     @_publishes
     def start(self, template_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
         # Metadata belongs to this execution, while declarations belong to the
@@ -443,14 +511,66 @@ class ExperimentStore:
             self._execute(conn, "INSERT INTO experiment_runs (run_id,template_id,status,metadata_json,started_at) VALUES (?,?,?,?,?)", [run["run_id"], template_id, "running", _json(run["metadata"]), _database_timestamp(run["started_at"])])
         self._publish_metadata(self._run_record(run))
         return run
-    def observe(self, run_id: str, variable_id: str, *, value: Any = None, occurred_at: datetime | None = None, artifact_digest: str | None = None, ref_uri: str | None = None, interval: tuple[datetime,datetime] | None = None) -> dict[str, Any]:
+    def observe(self, run_id: str, variable_id: str, *, value: Any = None, occurred_at: datetime | None = None, artifact_digest: str | None = None, ref_uri: str | None = None, interval: tuple[datetime,datetime] | None = None, key: tuple | list | None = None) -> dict[str, Any]:
+        return self.observe_batch(run_id, [dict(variable_id=variable_id, value=value, occurred_at=occurred_at, artifact_digest=artifact_digest, ref_uri=ref_uri, interval=interval, key=key)])[0]
+
+    def observe_batch(self, run_id: str, observations: list[dict]) -> list[dict]:
+        """Record an ordered batch in one transaction, including table artifacts."""
+        results, prepared = [], []
         with self.store._lock, self.store._write_conn() as conn:
-            self._check_observation(*self._validate_observation(conn, run_id, variable_id), value, artifact_digest, ref_uri)
-            # Wall clocks can collide or arrive out of order. Sequence is the
-            # authoritative order of observations within one experiment.
-            seq, recorded = self._next_observation(conn, run_id)
-            self._execute(conn, "INSERT INTO experiment_observations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [run_id, variable_id, seq, _database_timestamp(recorded), _database_timestamp(occurred_at) if occurred_at else None, _json(value) if value is not None else None, artifact_digest, ref_uri, _database_timestamp(interval[0]) if interval else None, _database_timestamp(interval[1]) if interval else None])
-        return {"sequence": seq, "recorded_at": recorded}
+            self._active(conn, run_id)
+            # Validate every entry before writing bytes or ledger rows.
+            for observation in observations:
+                item = dict(observation)
+                label, kind = self._validate_observation(conn, run_id, item["variable_id"])
+                artifact = item.pop("artifact", None)
+                if artifact is not None:
+                    data = base64.b64decode(artifact["data"], validate=True)
+                    self._check_attachment(label, kind, data)
+                    if item.get("artifact_digest") is not None:
+                        raise ValueError("supply artifact bytes or a digest, not both")
+                    item["artifact_digest"] = sha256(data).hexdigest()
+                    item["attachment"] = (artifact, data)
+                self._check_observation(label, kind, item.get("value"), item.get("artifact_digest"), item.get("ref_uri"))
+                digest = item.get("artifact_digest")
+                if digest and artifact is None and self._execute(conn, "SELECT 1 FROM experiment_artifacts WHERE digest=?", [digest]).fetchone() is None:
+                    raise ValueError("unknown artifact digest")
+                metadata = json.loads(self._execute(conn, "SELECT metadata_json FROM experiment_variables WHERE variable_id=?", [item["variable_id"]]).fetchone()[0])
+                keys = _stream_keys(kind, metadata)
+                key = item.get("key")
+                if keys:
+                    item["key"] = _stream_key(key, keys)
+                elif key is not None:
+                    raise ValueError("only keyed time-series observations accept a key")
+                interval = item.get("interval")
+                if interval is not None:
+                    if kind != "timeseries" or timestamp(interval[1]) < timestamp(interval[0]):
+                        raise ValueError("a stream interval must have start <= end")
+                # JSON conversion also rejects NaN and infinity inside containers.
+                item["value"] = to_json(item.get("value"))
+                prepared.append(item)
+            sequence, recorded = self._next_observation(conn, run_id)
+            for offset, item in enumerate(prepared):
+                if "attachment" in item:
+                    artifact, data = item["attachment"]
+                    digest = item["artifact_digest"]
+                    target = self.artifact_dir / digest
+                    if not target.exists():
+                        target.write_bytes(data)
+                    self._execute(conn, "INSERT INTO experiment_artifacts VALUES (?, ?, ?, ?, ?) ON CONFLICT(digest) DO NOTHING", [digest, artifact["filename"], artifact.get("media_type"), len(data), _database_timestamp(recorded)])
+                interval = item.get("interval")
+                occurred_at = item.get("occurred_at")
+                self._execute(conn, "INSERT INTO experiment_observations (run_id, variable_id, sequence, recorded_at, occurred_at, value_json, artifact_digest, ref_uri, range_start, range_end, key_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [run_id, item["variable_id"], sequence + offset, _database_timestamp(recorded), _database_timestamp(occurred_at) if occurred_at else None, _json(item["value"]) if item["value"] is not None else None, item.get("artifact_digest"), item.get("ref_uri"), _database_timestamp(interval[0]) if interval else None, _database_timestamp(interval[1]) if interval else None, _json(item["key"]) if item.get("key") is not None else None])
+                results.append({"sequence": sequence + offset, "recorded_at": recorded})
+        return results
+
+    @staticmethod
+    def _check_attachment(label: str, kind: str, data: bytes) -> None:
+        if kind not in ARTIFACT_KINDS:
+            raise ValueError(f"{label!r} is a {kind} variable; only file and table variables take attachments")
+        if kind == "table" and (len(data) < 8 or data[:4] != b"PAR1" or data[-4:] != b"PAR1"):
+            raise ValueError(f"{label!r} is a table; attach a Parquet file")
+
     @_publishes
     def finish(self, run_id: str, status: str, error: Any = None) -> dict[str, Any]:
         if status not in {"succeeded", "failed"}: raise ValueError("status must be succeeded or failed")
@@ -463,11 +583,7 @@ class ExperimentStore:
         digest = sha256(data).hexdigest(); target = self.artifact_dir / digest
         with self.store._lock, self.store._write_conn() as conn:
             label, kind = self._validate_observation(conn, run_id, variable_id)
-            if kind not in ARTIFACT_KINDS:
-                raise ValueError(f"{label!r} is a {kind} variable; only file and table variables take attachments")
-            # A table must arrive as Parquet so every reader can open it.
-            if kind == "table" and (len(data) < 8 or data[:4] != b"PAR1" or data[-4:] != b"PAR1"):
-                raise ValueError(f"{label!r} is a table; attach a Parquet file")
+            self._check_attachment(label, kind, data)
             # Validate ownership before storing any artifact bytes or metadata.
             # Identical bytes share one content-addressed artifact.
             if not target.exists(): target.write_bytes(data)
@@ -739,7 +855,7 @@ class ExperimentStore:
                        o.value_json, o.artifact_digest, o.ref_uri,
                        o.range_start, o.range_end, v.variable_id, v.label,
                        v.role, v.kind, v.metadata_json, a.filename,
-                       a.media_type, a.byte_length
+                       a.media_type, a.byte_length, o.key_json
                 FROM experiment_observations AS o
                 JOIN experiment_runs AS r ON r.run_id=o.run_id
                 JOIN experiment_variables AS v ON v.variable_id=o.variable_id
@@ -772,6 +888,7 @@ class ExperimentStore:
                 "filename": row[18],
                 "media_type": row[19],
                 "byte_length": row[20],
+                "key": json.loads(row[21]) if row[21] is not None else None,
             }
             for row in rows
         ]
@@ -986,7 +1103,7 @@ class ExperimentStore:
                     SELECT count(variable_id), count(*) - count(variable_id),
                         coalesce(sum(length(run_id) + coalesce(length(variable_id), 0)
                             + coalesce(length(value_json), 0) + coalesce(length(artifact_digest), 0)
-                            + coalesce(length(ref_uri), 0) + 40), 0)
+                            + coalesce(length(ref_uri), 0) + coalesce(length(key_json), 0) + 40), 0)
                     FROM experiment_observations WHERE run_id IN ({marks})""", selected).fetchone()
                 usage["observations"], usage["annotations"] = int(row[0]), int(row[1])
                 usage["ledger_bytes"] += int(row[2])
@@ -1044,7 +1161,7 @@ def _sample_rows(rows: Any) -> list[tuple[datetime, Any]]:
             if column in rows.columns and rows[column].n_unique() > 1:
                 raise ValueError("these rows come from several streams; record one stream at a time")
         rows = zip(rows[time].to_list(), rows[value].to_list())
-    pairs = [(timestamp(when), value) for when, value in rows]
+    pairs = [(timestamp(when), to_json(value)) for when, value in rows]
     if any(not isinstance(value, numbers.Real) for _, value in pairs):
         raise ValueError("time-series rows need a numeric value in every row")
     return pairs
@@ -1105,6 +1222,7 @@ class Observation:
     filename: str | None = None
     media_type: str | None = None
     byte_length: int | None = None
+    key: tuple | None = None
     _client: Any = field(default=None, repr=False, compare=False)
 
     def dataframe(self, **kwargs: Any):
@@ -1175,6 +1293,7 @@ class Observation:
             "filename": self.filename,
             "media_type": self.media_type,
             "byte_length": self.byte_length,
+            "key": self.key,
         }
 
 class _Builder:
@@ -1200,9 +1319,9 @@ class _Builder:
     def scalar(self, *, unit: str | None = None, **metadata: Any): return self._make("scalar", unit=unit, **metadata)
     def file(self, *, media_type: str | None = None, **metadata: Any): return self._make("file", media_type=media_type, **metadata)
     def table(self, **metadata: Any): return self._make("table", **metadata)
-    def timeseries(self, *, observed: str | Point | None = None, unit: str | None = None, **metadata: Any):
-        uri = observed.uri if isinstance(observed, Point) else observed
-        return self._make("timeseries", observed=str(uri) if uri is not None else None, unit=unit, **metadata)
+    def timeseries(self, *, observed: Mapping[tuple, str] | str | Point | None = None, unit: str | None = None, keys: tuple[str, ...] = (), **metadata: Any):
+        keys = _stream_keys("timeseries", {"keys": keys})
+        return self._make("timeseries", **_key_metadata(observed, keys), unit=unit, keys=keys, **metadata)
 
 class ExperimentVariable:
     def __init__(
@@ -1220,7 +1339,15 @@ class ExperimentVariable:
         self.label = label
         self.role = role
         self.kind = kind
-        self.metadata = dict(metadata or {})
+        self._declaration_metadata = dict(metadata or {})
+        self.metadata = (json.loads(self._declaration_metadata[JSON_METADATA])
+                         if self._declaration_metadata.get(ADAPTER_FORMAT) == 1 else dict(metadata or {}))
+        self.unit = self._declaration_metadata.get("unit")
+        self.quantity_kind = self._declaration_metadata.get("quantity_kind")
+        self.keys = tuple(self._declaration_metadata.get("keys", ()))
+        self.observed = self._declaration_metadata.get("observed")
+        self.source_path = self._declaration_metadata.get("source_path")
+        self.description = self._declaration_metadata.get("description")
         self.created_at = timestamp(created_at) if created_at is not None else None
     @property
     def uri(self) -> str:
@@ -1280,6 +1407,9 @@ class ExperimentVariable:
         )
     def add(self, rows: Any):
         if self.kind != "timeseries": raise TypeError("add() is only valid for time-series variables")
+        if self._declaration_metadata.get("keys") or self._declaration_metadata.get(ADAPTER_FORMAT) == 1:
+            streams = _record_snapshot(self.study, [(self, rows)])[1]
+            return streams if self._declaration_metadata.get("keys") else streams.get(())
         metadata = self.study._metadata[self.variable_id]; observed = metadata.get("observed")
         # A run-scoped source keeps scenarios from overwriting each other's
         # output while still producing ordinary Acquirium stream references.
@@ -1293,7 +1423,8 @@ class ExperimentVariable:
         # so stream queries can select a run. The observed property is an
         # attribute, not the point: plant queries on that property return
         # measured data only, never simulated runs mixed in by timestamp.
-        if self.variable_id not in experiment._registered_streams:
+        cache_key = (self.variable_id, ())
+        if cache_key not in experiment._registered_streams:
             identity = {"study_id": self.study.study_id, "run_id": experiment.run_id, "variable_id": self.variable_id}
             if observed is not None:
                 identity["observed"] = observed
@@ -1307,7 +1438,7 @@ class ExperimentVariable:
             }])
             # Registration succeeded even if the following sample write fails.
             # Cache on the run so later runs get their own stream metadata.
-            experiment._registered_streams.add(self.variable_id)
+            experiment._registered_streams.add(cache_key)
         self.study.ac.insert_timeseries(source, ref_name, rows)
         stream = Stream(str(self.study.ac.reference_uri(source, ref_name)), self.study.client)
         self._reference(stream.between(min(row[0] for row in rows), max(row[0] for row in rows)))
@@ -1319,6 +1450,155 @@ class ExperimentVariable:
         if selected.study is not self.study:
             raise ValueError("experiments belong to a different study")
         return selected.observations(self)
+
+def _stream_name(label: str, key: tuple) -> str:
+    # Escape delimiters and distinguish numeric keys from strings with the
+    # same spelling. Ordinary string keys retain familiar names, flow[pump1].
+    def part(value):
+        if isinstance(value, str):
+            return quote(value, safe="").replace("~", "%7E")
+        return "~" + quote(_json(value), safe="")
+    return f"{label}[{','.join(part(value) for value in key)}]" if key else label
+
+
+def _record_snapshot(study: "Study", values: list[tuple[ExperimentVariable, Any]], *, units: Mapping[str, str] | None = None, quantities: Mapping[str, str] | None = None):
+    """Prepare locally, then register, insert, and observe in three requests."""
+    experiment = study._experiment
+    if experiment is None:
+        raise RuntimeError("start an experiment before mutating variables")
+    source = f"experiment/{experiment.run_id}"
+    observations, registrations, cache_keys, samples, streams = [], [], [], {}, {}
+    for variable, value in values:
+        metadata = variable._declaration_metadata
+        if variable.kind == "table":
+            observations.append({"variable_id": variable.variable_id, "artifact": {
+                "filename": f"{variable.label}.parquet", "media_type": TABLE_MEDIA_TYPE,
+                "data": base64.b64encode(_parquet(value)).decode("ascii"),
+            }})
+        elif variable.kind != "timeseries":
+            value = to_json(value)
+            check_kind(variable.kind, value, label=repr(variable.label))
+            observations.append({"variable_id": variable.variable_id, "value": value})
+        else:
+            keys = _stream_keys(variable.kind, metadata)
+            if not keys and not isinstance(value, Mapping):
+                value = {(): value}
+            if not isinstance(value, Mapping):
+                raise TypeError("keyed time series record a mapping from key tuples to rows")
+            for key, rows in value.items():
+                key = _stream_key(key, keys)
+                rows = _sample_rows(rows)
+                if not rows:
+                    continue
+                name = _stream_name(variable.label, key)
+                if name in samples:
+                    raise ValueError(f"duplicate stream reference name {name!r}")
+                samples[name] = rows
+                # Python compares True == 1 == 1.0, but these have distinct
+                # reference names and must each get their own registration.
+                cache_key = (variable.variable_id, tuple((type(part).__name__, part) for part in key))
+                if cache_key not in experiment._registered_streams:
+                    observed = metadata.get("observed")
+                    for mapping in metadata.get("observed_by_key", []):
+                        if tuple(mapping.get("key", ())) == key:
+                            observed = mapping["observed"]
+                    identity = {"study_id": study.study_id, "run_id": experiment.run_id,
+                                "variable_id": variable.variable_id, **dict(zip(keys, key))}
+                    if observed is not None:
+                        identity["observed"] = observed
+                    for field in (ADAPTER_FORMAT, JSON_METADATA, "metadata", "source_path", "description"):
+                        if field in metadata:
+                            identity[field] = metadata[field]
+                    registrations.append({"source_id": source, "ref_name": name,
+                        "unit": (units or {}).get(variable.variable_id, metadata.get("unit")),
+                        "quantity_kind": (quantities or {}).get(variable.variable_id, metadata.get("quantity_kind")),
+                        "label": variable.label, "value_kind": "numeric", "metadata": identity})
+                    cache_keys.append(cache_key)
+                ref_uri = str(compute_ref_uri(source, name))
+                streams[key] = Stream(ref_uri, study.client)
+                observations.append({"variable_id": variable.variable_id, "ref_uri": ref_uri,
+                    "key": list(key) if keys else None,
+                    "start": min(row[0] for row in rows).isoformat(),
+                    "end": max(row[0] for row in rows).isoformat()})
+    if registrations:
+        study.ac.register_streams(registrations)
+        experiment._registered_streams.update(cache_keys)
+    if samples:
+        # Use the transport directly: the facade splits large batches, but a
+        # model snapshot explicitly promises one insertion request.
+        study.client.insert_timeseries_batch(source, samples)
+    result = study.client.observe_experiment_batch(experiment.run_id, observations) if observations else []
+    return result, streams
+
+
+class DeclaredVariables(Mapping):
+    """A fixed selection of declarations/readers, with role-specific views."""
+
+    def __init__(self, study: "Study", adapter: ModelAdapter, components: list[Component],
+                 variables: list[ExperimentVariable], units: dict[str, str], quantities=None, *, role=None):
+        self.study, self.adapter = study, adapter
+        self._components = tuple(deepcopy(component) for component in components)
+        self._variables = {variable.label: variable for variable in variables}
+        self._units, self._quantities = dict(units), dict(quantities or {})
+        self._role = role
+
+    def _view(self, role):
+        components = [component for component in self._components if component.role == role]
+        return DeclaredVariables(self.study, self.adapter, components,
+            [self[c.label] for c in components], self._units, self._quantities, role=role)
+
+    @property
+    def input(self):
+        return self._view("input")
+
+    @property
+    def output(self):
+        return self._view("output")
+
+    def __getitem__(self, label: str) -> ExperimentVariable:
+        return self._variables[label]
+
+    def __iter__(self):
+        return iter(self._variables)
+
+    def __len__(self):
+        return len(self._variables)
+
+    def frame(self) -> pl.DataFrame:
+        return VariableCatalog(self.study, list(self._variables.values())).frame()
+
+    def preview(self, *, model_time=UNSET) -> dict[str, Any]:
+        """Read this selection locally, without a run or recording requests."""
+        return {c.label: read_component(self.adapter, c, sampling=c.kind == "timeseries", model_time=model_time)
+                for c in self._components}
+
+    def _active(self):
+        if self.study._experiment is None:
+            raise RuntimeError("start an experiment before recording a model")
+
+    def record_values(self) -> list[dict]:
+        """Read and batch scalar, text, JSON, and table values in the active run."""
+        self._active()
+        values = [(self[c.label], read_component(self.adapter, c))
+                  for c in self._components if c.kind != "timeseries"]
+        return _record_snapshot(self.study, values, units=self._units, quantities=self._quantities)[0]
+
+    def sample(self, *, at: datetime | str, model_time=UNSET) -> list[dict]:
+        """Read time-varying values, selecting model_time and storing them at at."""
+        self._active()
+        when = timestamp(at)
+        values = []
+        for component in self._components:
+            if component.kind != "timeseries":
+                continue
+            current = read_component(self.adapter, component, sampling=True, model_time=model_time)
+            rows = {key: [(when, value)] for key, value in current.items()} if component.keys else [(when, current)]
+            values.append((self[component.label], rows))
+        return _record_snapshot(self.study, values, units=self._units, quantities=self._quantities)[0]
+
+    def record_all(self, *args, **kwargs):
+        raise TypeError("use record_values() for scalar/text/JSON/table values, or sample(at=..., model_time=...) for time series; record_all() no longer infers recording behavior")
+
 
 class ExperimentOutputs(Mapping):
     """Run-scoped assignment convenience; reads return study variable handles."""
@@ -1373,7 +1653,7 @@ class Experiment:
         self.started_at = timestamp(item["started_at"]) if item.get("started_at") else None
         self.finished_at = timestamp(item["finished_at"]) if item.get("finished_at") else None
         self.error = item.get("error")
-        self._registered_streams: set[str] = set()
+        self._registered_streams: set[tuple[str, tuple]] = set()
         self.output = ExperimentOutputs(self)
 
     @property
@@ -1456,7 +1736,7 @@ class VariableCollection:
             item.get("created_at"),
         )
         self._variables[variable.label] = variable
-        self.study._metadata[variable.variable_id] = variable.metadata
+        self.study._metadata[variable.variable_id] = variable._declaration_metadata
         return variable
 
     def __call__(self, label: str, **metadata: Any):
@@ -1593,8 +1873,8 @@ class VariableCatalog:
         variables = self._items()
         base_columns = {"variable_id", "label", "role", "kind", "metadata", "created_at"}
         metadata_columns = sorted({
-            key for variable in variables for key in variable.metadata
-            if key not in base_columns
+            key for variable in variables for key in variable._declaration_metadata
+            if key not in base_columns and key not in {ADAPTER_FORMAT, JSON_METADATA}
         })
         items = []
         for variable in variables:
@@ -1604,7 +1884,7 @@ class VariableCatalog:
                 "metadata": variable.metadata, "created_at": variable.created_at,
             }
             for key in metadata_columns:
-                item[key] = variable.metadata.get(key)
+                item[key] = variable._declaration_metadata.get(key)
             items.append(item)
         return records_frame(items)
 
@@ -1816,6 +2096,7 @@ class ObservationCollection:
                 filename=item.get("filename"),
                 media_type=item.get("media_type"),
                 byte_length=item.get("byte_length"),
+                key=tuple(item["key"]) if item.get("key") is not None else None,
                 _client=self.study.client,
             ))
         return observations
@@ -1849,6 +2130,81 @@ class Study:
             self._collections[variable["role"]]._add(variable)
         self.variables = VariableCatalog(self)
         self.experiments = ExperimentCollection(self)
+
+    def declare_from(self, adapter: ModelAdapter, *, include=None, exclude=None, role=None) -> DeclaredVariables:
+        """Declare a fixed selection with roles chosen on adapter.input/output."""
+        if role is not None:
+            raise TypeError("declare roles using adapter.input and adapter.output; role= is no longer supported")
+        if isinstance(adapter, AdapterDefinition):
+            adapter = adapter.freeze()
+        def patterns(value):
+            return [value] if isinstance(value, str) else list(value or [])
+        include, exclude = patterns(include), patterns(exclude)
+        available = list(adapter.components())
+        if not available:
+            raise ValueError("the adapter is empty; declare components with adapter.scalar(), adapter.timeseries(), or adapter.input before declare_from()")
+        components, declarations, labels, resolved_fields = [], [], set(), {}
+        for component in available:
+            component = deepcopy(component)
+            if include and not any(fnmatchcase(component.label, pattern) for pattern in include):
+                continue
+            if any(fnmatchcase(component.label, pattern) for pattern in exclude):
+                continue
+            if component.label in labels:
+                raise ValueError(f"duplicate component label {component.label!r}")
+            if component.role not in {"input", "output"}:
+                raise ValueError("adapter declarations must be inputs or outputs")
+            if component.kind not in {"scalar", "text", "json", "table", "timeseries"}:
+                raise ValueError(f"unsupported model component kind {component.kind!r}")
+            labels.add(component.label)
+            keys = _stream_keys(component.kind, {"keys": component.keys})
+            payload = to_json(component.metadata, path="metadata")
+            if not isinstance(payload, dict):
+                raise TypeError("metadata must be a string-keyed JSON object")
+            metadata = metadata_fields(payload)
+            metadata.update(unit=component.unit, keys=keys, quantity_kind=component.quantity_kind,
+                source_path=component.source_path, description=component.description,
+                **_key_metadata(component.observed, keys))
+            # A spelling override may assert the same unit, but never relabel
+            # values requiring conversion. Check before declaring anything.
+            if component.source_unit and component.source_unit != component.unit:
+                if component.unit is None:
+                    raise ValueError(f"{component.label!r}: cannot discard known source units")
+                factors = self.client.get_conversion_factors(component.source_unit, component.unit)
+                if (not factors["compatible"]
+                        or not math.isclose(factors["from_multiplier"], factors["to_multiplier"], rel_tol=1e-12, abs_tol=0)
+                        or not math.isclose(factors["from_offset"], factors["to_offset"], rel_tol=1e-12, abs_tol=0)):
+                    raise ValueError(f"{component.label!r}: unit override requires conversion; use adapters.define() with an explicit conversion reader and its resulting unit")
+            semantics = {}
+            if component.kind == "timeseries":
+                for field in ("unit", "quantity_kind"):
+                    if metadata.get(field) is not None:
+                        resolved = self.client.resolve(metadata[field], kind=field)
+                        if resolved is None:
+                            raise ValueError(f"could not resolve {field} {metadata[field]!r}")
+                        semantics[field] = str(resolved)
+            resolved_fields[component.label] = semantics
+            declarations.append(dict(label=component.label, role=component.role, kind=component.kind,
+                                     metadata=to_json(metadata, path="metadata")))
+            components.append(component)
+        if not components:
+            raise ValueError("no adapter components match include/exclude")
+        items = self.client.declare_experiment_variables(self.study_id, declarations)
+        variables, units, quantities = [], {}, {}
+        for item in items:
+            collection = self._collections[item["role"]]
+            variable = collection._variables.get(item["label"])
+            if variable is None:
+                variable = collection._add(item)
+            variables.append(variable)
+            fields = resolved_fields[item["label"]]
+            if "unit" in fields:
+                units[variable.variable_id] = fields["unit"]
+            if "quantity_kind" in fields:
+                quantities[variable.variable_id] = fields["quantity_kind"]
+        if self._experiment is not None and any(item.get("created") for item in items):
+            warnings.warn("New model variables declared during an active experiment; they will also be available to future runs.", UserWarning, stacklevel=2)
+        return DeclaredVariables(self, adapter, components, variables, units, quantities)
     @property
     def uri(self) -> str:
         return study_uri(self.study_id)

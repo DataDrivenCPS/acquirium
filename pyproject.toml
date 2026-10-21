@@ -61,6 +61,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+pyomo = ["pyomo>=6", "pint>=0.24"]
 # these provide support for different drivers, which
 # often require external dependencies.
 mqtt = [

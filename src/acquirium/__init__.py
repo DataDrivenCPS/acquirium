@@ -5,6 +5,9 @@ from acquirium.debug import console
 from acquirium.Client.streams import Stream, StreamInterval
 from acquirium.Experiments import timestamp
 from acquirium.ExperimentValues import register_value_handler
+from acquirium.ModelAdapters import AdapterDefinition, Component, ModelAdapter
+from acquirium.Experiments import DeclaredVariables
+from acquirium import adapters
 from acquirium.Client.explore.core import Query
 from acquirium.Client.query import Q
 from acquirium.Client.data_object import DataObject

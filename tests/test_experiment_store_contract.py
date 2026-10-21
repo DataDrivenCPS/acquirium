@@ -78,3 +78,135 @@ def test_backend_deletes_runs_studies_and_clears_experiments(materialization_sto
     assert ledger.clear()["studies"] == 0
     assert ledger.usage()["total_bytes"] == 0
     assert store.timeseries_info(site).row_count == 1
+
+
+def test_batch_declarations_and_observations_are_ordered_and_atomic(materialization_store, tmp_path, monkeypatch):
+    """Both HTTP batches use the same single-item checks on both backends."""
+    from importlib import import_module
+    from types import SimpleNamespace
+    from fastapi.testclient import TestClient
+
+    ledger = ExperimentStore(materialization_store, tmp_path / "batch-artifacts")
+    module = import_module("acquirium.Server.app")
+    monkeypatch.setattr(module.app.state, "manager", SimpleNamespace(experiments=ledger), raising=False)
+    http = TestClient(module.app)
+    study = ledger.define("batches")
+    template_id = study["template_id"]
+    declarations_url = f"/experiments/templates/{template_id}/variables/batch"
+    declarations = [dict(label=label, role="output", kind=kind, metadata=metadata) for label, kind, metadata in (
+        ("cost", "scalar", {}), ("flow", "timeseries", {"keys": ["pump"]}), ("config", "json", {}))]
+    invalid = [*declarations, dict(label="bad", role="output", kind="unknown")]
+    assert http.post(declarations_url, json=invalid).status_code == 400
+    assert ledger.variables(template_id) == []
+    execute = ledger._execute
+    def fail_second_declaration(conn, statement, parameters=None):
+        if statement.startswith("INSERT INTO experiment_variables") and parameters[2] == "flow":
+            raise ValueError("injected declaration failure")
+        return execute(conn, statement, parameters)
+    with monkeypatch.context() as patch:
+        patch.setattr(ledger, "_execute", fail_second_declaration)
+        assert http.post(declarations_url, json=declarations).status_code == 400
+    assert ledger.variables(template_id) == []
+    response = http.post(declarations_url, json=declarations)
+    assert response.status_code == 200, response.text
+    variables = response.json()
+    assert [item["label"] for item in variables] == ["cost", "flow", "config"]
+    assert [item["created"] for item in http.post(declarations_url, json=declarations).json()] == [False] * 3
+    conflict = [dict(label="fresh", role="input", kind="text"), {**declarations[0], "kind": "json"}]
+    assert http.post(declarations_url, json=conflict).status_code == 400
+    assert len(ledger.variables(template_id)) == 3
+    run = ledger.start(template_id, {})
+    url = f"/experiments/runs/{run['run_id']}/observations/batch"
+    observations = [dict(variable_id=variables[0]["variable_id"], value=4),
+                    dict(variable_id=variables[1]["variable_id"], ref_uri="urn:test:flow", key=["p1"]),
+                    dict(variable_id=variables[2]["variable_id"], value={"case": 1})]
+    # The last value is invalid: no prefix of the batch may be committed.
+    assert http.post(url, json=[*observations, {**observations[0], "value": "bad"}]).status_code == 400
+    assert ledger.observations(template_id) == []
+    assert http.post(url, json=[{**observations[1], "key": None}]).status_code == 400
+    assert http.post(url, json=[{**observations[0], "key": ["p1"]}]).status_code == 400
+    assert http.post(url, json=[{**observations[1], "key": ["p1", "p2"]}]).status_code == 400
+    assert http.post(url, json=[{**observations[1], "start": "2026-01-01T00:00:00Z"}]).status_code == 400
+    assert http.post(url, json=[{**observations[0], "variable_id": "missing"}]).status_code == 404
+    other = ledger.define("other batches")
+    foreign = ledger.declare(other["template_id"], "foreign", "output", "scalar", {})
+    assert http.post(url, json=[{**observations[0], "variable_id": foreign["variable_id"]}]).status_code == 400
+
+    # Exercise transaction rollback after an INSERT, beyond prevalidation.
+    execute = ledger._execute
+    def fail_second_insert(conn, statement, parameters=None):
+        if statement.startswith("INSERT INTO experiment_observations") and parameters[2] == 2:
+            raise ValueError("injected failure")
+        return execute(conn, statement, parameters)
+    with monkeypatch.context() as patch:
+        patch.setattr(ledger, "_execute", fail_second_insert)
+        assert http.post(url, json=observations).status_code == 400
+    assert ledger.observations(template_id) == []
+    response = http.post(url, json=observations)
+    assert response.status_code == 200, response.text
+    assert [item["sequence"] for item in response.json()] == [1, 2, 3]
+    assert [item["key"] for item in ledger.observations(template_id)] == [None, ["p1"], None]
+    ledger.finish(run["run_id"], "succeeded")
+    assert http.post(url, json=observations).status_code == 400
+    assert len(ledger.observations(template_id)) == 3
+
+
+def test_key_column_migrates_existing_ledger(materialization_store, tmp_path):
+    store = materialization_store
+    ledger = ExperimentStore(store, tmp_path / "migration-artifacts")
+    study = ledger.define("old ledger")
+    variable = ledger.declare(study["template_id"], "cost", "output", "scalar", {})
+    run = ledger.start(study["template_id"], {})
+    ledger.observe(run["run_id"], variable["variable_id"], value=2)
+    with store._lock, store._write_conn() as conn:
+        # DuckDB requires dropping secondary indexes before dropping columns.
+        ledger._execute(conn, "DROP INDEX experiment_observations_variable_idx")
+        ledger._execute(conn, "DROP INDEX experiment_observations_ref_idx")
+        ledger._execute(conn, "ALTER TABLE experiment_observations DROP COLUMN key_json")
+        ledger._execute(conn, "CREATE INDEX experiment_observations_variable_idx ON experiment_observations(variable_id, run_id, sequence)")
+        ledger._execute(conn, "CREATE INDEX experiment_observations_ref_idx ON experiment_observations(ref_uri, range_start, range_end)")
+    migrated = ExperimentStore(store, tmp_path / "migration-artifacts")
+    observations = migrated.observations(study["template_id"])
+    assert observations[0]["value"] == 2
+    assert observations[0]["key"] is None
+    flow = migrated.declare(study["template_id"], "flow", "output", "timeseries", {"keys": ["pump"]})
+    refs = []
+    for pump in ("p1", "p2"):
+        ref = store.ensure_stream_ref(None, f"experiment/{run['run_id']}", f"flow[{pump}]", value_kind="numeric")
+        refs.append(ref)
+        migrated.observe(run["run_id"], flow["variable_id"], ref_uri=ref, key=(pump,))
+    assert [item["key"] for item in migrated.observations(study["template_id"])][1:] == [["p1"], ["p2"]]
+    migrated.finish(run["run_id"], "succeeded")
+    migrated.delete_runs([run["run_id"]])
+    with store._own_conn() as conn:
+        assert migrated._execute(conn, "SELECT count(*) FROM streams WHERE ref_uri IN (?, ?)", refs).fetchone()[0] == 0
+
+
+def test_table_artifact_batch_validation_and_atomicity(materialization_store, tmp_path):
+    import base64
+    import io
+    import polars as pl
+
+    ledger = ExperimentStore(materialization_store, tmp_path / "table-artifacts")
+    study = ledger.define("table batch")
+    scalar = ledger.declare(study["template_id"], "scalar", "output", "scalar", {})
+    table = ledger.declare(study["template_id"], "table", "output", "table", {})
+    run = ledger.start(study["template_id"], {})
+    buffer = io.BytesIO()
+    pl.DataFrame({"x": [1, 2]}).write_parquet(buffer)
+    attachment = dict(variable_id=table["variable_id"], artifact=dict(filename="table.parquet",
+        media_type="application/vnd.apache.parquet", data=base64.b64encode(buffer.getvalue()).decode()))
+    with pytest.raises(ValueError):
+        ledger.observe_batch(run["run_id"], [attachment, dict(variable_id=scalar["variable_id"], value="bad")])
+    assert ledger.observations(study["template_id"]) == []
+    assert list(ledger.artifact_dir.iterdir()) == []
+    malformed = {**attachment, "artifact": {**attachment["artifact"], "data": base64.b64encode(b"not parquet").decode()}}
+    with pytest.raises(ValueError, match="Parquet"):
+        ledger.observe_batch(run["run_id"], [malformed])
+    ledger.observe_batch(run["run_id"], [attachment, dict(variable_id=scalar["variable_id"], value=3)])
+    rows = ledger.observations(study["template_id"])
+    assert [row["sequence"] for row in rows] == [1, 2]
+    saved = ledger.artifact(rows[0]["artifact_digest"])["data"]
+    assert pl.read_parquet(io.BytesIO(saved))["x"].to_list() == [1, 2]
+    with pytest.raises(ValueError, match="unknown artifact"):
+        ledger.observe_batch(run["run_id"], [dict(variable_id=table["variable_id"], artifact_digest="missing")])

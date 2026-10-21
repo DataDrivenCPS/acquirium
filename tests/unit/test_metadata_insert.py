@@ -68,6 +68,8 @@ class TestTerms:
     @pytest.mark.parametrize("value", [
         "text", 'say "hi"', 2015, 2.5, True, False, date(2020, 1, 2),
         datetime(2020, 1, 2, 3, 4, 5), "urn:x#node", "https://example.org/a",
+        '{"link": "https://example.org/a"}', "See https://example.org/a for details",
+        "https://example.org/a contains a note", "urn:example:also a note",
     ])
     def test_writer_and_compiler_agree(self, value):
         assert to_term(value).n3() == _term(value)

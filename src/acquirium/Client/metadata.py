@@ -31,6 +31,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from rdflib import Literal, URIRef
 from rdflib.namespace import RDF, RDFS
+from acquirium.internals.models import looks_like_uri
 
 from acquirium.Client.explore.attributes import (
     ATTR_NS,
@@ -57,9 +58,9 @@ NOT_WRITABLE = frozenset({"cp_type"})
 
 
 def is_uri(value: Any) -> bool:
-    return isinstance(value, URIRef) or (
-        isinstance(value, str) and ("://" in value or value.startswith("urn:"))
-    )
+    return isinstance(value, URIRef) or (looks_like_uri(value) and not any(
+        char.isspace() or char in '<>"{}|\\^`' for char in value
+    ))
 
 
 def to_term(value: Any) -> "Literal | URIRef":

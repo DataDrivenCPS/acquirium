@@ -11,6 +11,15 @@ change in any release.
 ## [Unreleased]
 
 ### Added
+- Explicit model adapters declare scalar, text, JSON, table, and time-series
+  values with reader functions. `input`/`output` namespaces choose roles;
+  `sample(at=..., model_time=...)` records time series and `record_values()`
+  records other values. Builders support local inspection and preview.
+  The optional Pyomo wrapper extracts units and descriptions from selected
+  components and rejects unit overrides requiring conversion. Arbitrary nested
+  JSON metadata is preserved across graph reads and reopening, separately from
+  semantic fields. Declarations and observations use atomic batch endpoints;
+  advanced keyed time series expose observation keys.
 - `insert_metadata()` attaches a value map to a node: on `Acquirium` for one
   node, on a `Query` for every matched node, and as the `metadata` key of a
   stream in `register_streams()`. Built-in keys write their own predicate

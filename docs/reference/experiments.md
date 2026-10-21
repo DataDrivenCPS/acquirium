@@ -65,7 +65,7 @@ the calculation uses a value; the type selects its storage.
 | `study.output("cost").scalar(unit=None, **metadata)` | Scalar values with an optional unit |
 | `study.input("model").file(media_type=None, **metadata)` | File copies |
 | `study.output("schedule").table(**metadata)` | Tables, saved as Parquet files |
-| `study.output("power").timeseries(observed=None, unit=None, **metadata)` | Numeric timestamp/value samples |
+| `study.output("power").timeseries(observed=None, unit=None, keys=(), **metadata)` | Numeric timestamp/value samples, optionally one stream per key |
 | `study.log("solver events", **metadata)` | Events and diagnostics |
 
 Calling `study.input(label)` or `study.output(label)` returns a builder;
@@ -85,6 +85,120 @@ accepts a plant property URI or a `Point` wrapper.
 Variable handles expose `variable_id`, `uri`, `label`, `role`, `kind`, `metadata`,
 and `created_at`. New IDs are reference URIs derived from the Study ID and label.
 Older UUID IDs remain unchanged; `uri` provides their absolute graph URI.
+
+### Explicit model declarations
+
+`aq.adapters.define()` creates a general adapter builder. `aq.adapters.pyomo(model)`
+creates an explicit Pyomo builder, initially empty. Optional Pyomo dependencies
+are imported lazily; install `acquirium[pyomo]`.
+
+Both builders have `input` and `output` namespaces. Unqualified declarations
+are outputs. All labels are unique across namespaces. Arbitrary metadata uses
+an explicit `metadata=` JSON object; unknown keyword arguments are rejected.
+
+| General builder declaration | Reader result |
+|---|---|
+| `scalar(label, *, read, unit=None, quantity_kind=None, metadata=None)` | Finite number or boolean |
+| `text(label, *, read, metadata=None)` | String |
+| `json(label, *, read, metadata=None)` | Any JSON-convertible value |
+| `table(label, *, read, metadata=None)` | Supported Polars, pandas, or Arrow table |
+| `timeseries(label, *, read=None, read_at=None, unit=None, quantity_kind=None, observed=None, metadata=None)` | One finite numeric value |
+
+Time series require exactly one of zero-argument `read()` and one-argument
+`read_at(model_time)`. Other kinds require `read()`. Pyomo declarations accept a
+source component as a second positional argument. Unindexed sources supply a
+current reader by default; indexed sources require an explicit reader. Pyomo
+extracts units, documentation, and the source path; it does not infer kinds
+or select a time axis. A unit override must denote the same scale and dimension
+as known source units. Explicitly converted values can use a general reader
+and their resulting unit.
+
+`adapter.frame()` lists declarations and reader modes without evaluating them.
+`adapter.preview(*, model_time=UNSET)` returns a label-to-value dictionary after
+local validation, with no server requests.
+
+`study.declare_from(adapter, *, include=None, exclude=None)` declares a fixed
+selection in a batch and returns `DeclaredVariables`, a mapping from label to
+`ExperimentVariable`. Filters accept a glob string or sequence; exclusion wins.
+Empty adapters and empty selections raise `ValueError`. Repeated declarations
+reuse handles and reject changed roles, kinds, units, or metadata. A fresh
+adapter binds readers to a fresh model while reusing the saved declarations.
+
+| `DeclaredVariables` member | Behavior |
+|---|---|
+| `input`, `output` | Role-specific mapping views with the same operations |
+| `record_values()` | Read and batch scalar, text, JSON, and table values in the active run |
+| `sample(*, at, model_time=UNSET)` | Read time series and record each value at the supplied timestamp |
+| `preview(*, model_time=UNSET)` | Locally read and validate the selected values without an active run |
+| `frame()` | List the selected declarations |
+
+`model_time` is passed unchanged to indexed readers; `at` supplies the UTC
+observation timestamp and never selects model indices. Current-state readers
+receive no arguments. Omitted model time is distinct from `0` and `None`.
+Readers for other kinds are not invoked by `sample()`, and time-series readers
+are not invoked by `record_values()`. Reader/validation failures precede any
+recording requests and include the label, source path, and model-time context.
+Full histories are recorded explicitly with `variable.record(rows)`.
+
+Variable `metadata` preserves the user's JSON object, including arbitrary
+string keys, nulls, and empty containers. Semantic fields are exposed separately
+as `unit`, `quantity_kind`, `keys`, `observed`, `source_path`, and `description`.
+Metadata cannot override these fields or the role. Valid attribute paths get a
+queryable graph projection under `metadata`; all other keys remain in the
+complete saved JSON. JSON values and metadata pass through registered value
+handlers and reject NaN and infinity.
+
+The low-level `ModelAdapter` protocol defines `components()`, `read(component)`,
+and `sample(component, *, model_time=UNSET)`. `Component` carries the declaration
+fields, including its role. `AdapterDefinition.add(component, *, read=None,
+read_at=None)` supports advanced explicitly keyed declarations: a keyed reader
+returns a mapping from key tuples to numeric values. The declaration's `keys`
+determines the expected shape. Ordinary single-stream readers return numbers.
+
+The earlier automatic Pyomo constructor options and `record_all()` raise
+migration errors directing callers to explicit declarations, `sample()`, and
+`record_values()`. See [Record a whole model](../how-to/record-a-whole-model.md).
+
+### Keyed time series
+
+Declare `study.output("flow").timeseries(keys=("pump",))` and record a mapping
+such as `{("pump1",): rows, ("pump2",): rows}`. Each nonempty entry records one
+stream observation whose `key` is a tuple. Unkeyed observations have `key=None`.
+Index names must be distinct metadata names and cannot override built-in stream
+fields or `study_id`, `run_id`, `variable_id`, or `observed`. Key values are
+finite numbers, booleans, or strings.
+
+Stream references use source `experiment/<run_id>` and names such as
+`flow[pump1]`, joining multiple keys with commas. Delimiters in string keys are
+percent-escaped; numeric and boolean keys have a `~` prefix to distinguish
+them from strings. Each stream point carries the study, run, and variable IDs,
+its named key attributes, and `observed` when supplied. Query a key across runs
+with `ac.query().measurement(variable_id=flow.variable_id, pump="pump1")`.
+The `observed` argument also accepts per-key mappings on hand declarations.
+
+### Batch transport
+
+Both batch endpoints accept a JSON array and return results in request order:
+
+| Endpoint | Item fields |
+|---|---|
+| `POST /experiments/templates/{template_id}/variables/batch` | `label`, `role`, `kind`, optional `metadata` |
+| `POST /experiments/runs/{run_id}/observations/batch` | `variable_id`, optional `value`, `occurred_at`, `ref_uri`, `start`, `end`, `key`, `artifact_digest`, `artifact` |
+
+Declarations and observations each commit in a single transaction using the
+same validation as individual writes. Unknown runs or observation variables
+return 404; invalid or conflicting items return 400 and record none of the
+batch. Stream intervals require both `start` and `end` with `start <= end`.
+`key` is a JSON array, required for keyed time series and omitted otherwise.
+`artifact` contains `filename`, optional `media_type`, and base64-encoded
+`data`; tables must contain Parquet bytes. This lets a model's final tables
+and scalar observations share one request. Alternatively reference an existing
+`artifact_digest`. Artifact variables cannot also carry `value` or `ref_uri`.
+
+`sample()` uses at most three requests per snapshot: one registration for
+new streams, one sample insertion, and one observation batch. Resolved units
+are cached during declaration. These requests do not share a transaction;
+samples written before an observation failure remain until deletion/clear.
 
 ## Recording
 

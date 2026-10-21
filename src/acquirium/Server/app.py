@@ -78,6 +78,15 @@ class ExperimentObservationRequest(BaseModel):
     ref_uri: str | None = None
     start: datetime | None = None
     end: datetime | None = None
+    key: list[Any] | None = None
+class ExperimentArtifactRequest(BaseModel):
+    filename: str
+    media_type: str | None = None
+    data: str  # base64 bytes; lets table snapshots use the observation batch
+class ExperimentBatchObservationRequest(ExperimentObservationRequest):
+    variable_id: str
+    artifact: ExperimentArtifactRequest | None = None
+    artifact_digest: str | None = None
 class ExperimentFinishRequest(BaseModel):
     error: Any = None
 class ExperimentStreamAnnotationRequest(BaseModel):
@@ -115,6 +124,10 @@ def sync_experiment_metadata():
 
 def declare_experiment_variable(template_id: str, request: ExperimentVariableRequest):
     try: return app.state.manager.experiments.declare(template_id, request.label, request.role, request.kind, request.metadata)
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def declare_experiment_variables(template_id: str, request: list[ExperimentVariableRequest]):
+    try: return app.state.manager.experiments.declare_batch(template_id, [item.model_dump() for item in request])
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
 
 def list_experiment_studies(name: str | None = None):
@@ -220,7 +233,21 @@ def observe_experiment_variable(run_id: str, variable_id: str, request: Experime
         # A range accompanies a stream attachment. Scalar and log observations
         # leave it null, so one append-only ledger covers every variable kind.
         interval = (request.start, request.end) if request.start and request.end else None
-        return app.state.manager.experiments.observe(run_id, variable_id, value=request.value, occurred_at=request.occurred_at, ref_uri=request.ref_uri, interval=interval)
+        return app.state.manager.experiments.observe(run_id, variable_id, value=request.value, occurred_at=request.occurred_at, ref_uri=request.ref_uri, interval=interval, key=request.key)
+    except KeyError: raise HTTPException(status_code=404, detail="unknown experiment run or variable")
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def observe_experiment_batch(run_id: str, request: list[ExperimentBatchObservationRequest]):
+    try:
+        items = []
+        for observation in request:
+            item = observation.model_dump()
+            start, end = item.pop("start"), item.pop("end")
+            if (start is None) != (end is None):
+                raise ValueError("stream ranges require both start and end")
+            item["interval"] = (start, end) if start is not None else None
+            items.append(item)
+        return app.state.manager.experiments.observe_batch(run_id, items)
     except KeyError: raise HTTPException(status_code=404, detail="unknown experiment run or variable")
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
 
@@ -657,6 +684,7 @@ app.post("/experiments/metadata/sync")(sync_experiment_metadata)
 app.get("/experiments/templates")(list_experiment_studies)
 app.get("/experiments/templates/lookup")(get_experiment_study)
 app.post("/experiments/templates/{template_id}/variables")(declare_experiment_variable)
+app.post("/experiments/templates/{template_id}/variables/batch")(declare_experiment_variables)
 app.get("/experiments/templates/{template_id}/variables")(list_experiment_variables)
 app.post("/experiments/templates/{template_id}/runs")(start_experiment)
 app.get("/experiments/templates/{template_id}/runs")(list_experiments)
@@ -665,6 +693,7 @@ app.get("/experiments/templates/{template_id}/observations")(list_experiment_obs
 app.post("/experiments/templates/{template_id}/observations/query")(query_experiment_observations)
 app.get("/experiments/runs/{run_id}")(get_experiment)
 app.post("/experiments/runs/{run_id}/variables/{variable_id}/observations")(observe_experiment_variable)
+app.post("/experiments/runs/{run_id}/observations/batch")(observe_experiment_batch)
 app.post("/experiments/runs/{run_id}/stream-annotations")(annotate_experiment_stream)
 app.get("/experiments/stream-annotations")(list_experiment_stream_annotations)
 app.post("/experiments/stream-annotations/{annotation_id}/close")(close_experiment_stream_annotation)

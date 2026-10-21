@@ -291,6 +291,8 @@ class AcquiriumClient:
                 ) from error
             raise
     def declare_experiment_variable(self, template_id: str, **body: Any) -> dict: return self._experiment_post(f"/experiments/templates/{template_id}/variables", body)
+    def declare_experiment_variables(self, template_id: str, declarations: list[dict]) -> list[dict]:
+        return self._experiment_post(f"/experiments/templates/{template_id}/variables/batch", declarations)
     def list_experiment_studies(self, name: str | None = None) -> list[dict]:
         return self._experiment_get("/experiments/templates", {"name": name})
     def get_experiment_study(self, identifier: str) -> dict:
@@ -305,6 +307,8 @@ class AcquiriumClient:
     def get_experiment(self, run_id: str) -> dict:
         return self._experiment_get(f"/experiments/runs/{run_id}")
     def observe_experiment(self, run_id: str, variable_id: str, **body: Any) -> dict: return self._experiment_post(f"/experiments/runs/{run_id}/variables/{quote(variable_id, safe='')}/observations", body)
+    def observe_experiment_batch(self, run_id: str, observations: list[dict]) -> list[dict]:
+        return self._experiment_post(f"/experiments/runs/{run_id}/observations/batch", observations)
     def annotate_experiment_stream(self, run_id: str, ref_uri: str, *, start: str, end: str | None = None, metadata: dict | None = None) -> dict:
         return self._experiment_post(f"/experiments/runs/{run_id}/stream-annotations", {"ref_uri": ref_uri, "start": start, "end": end, "metadata": {} if metadata is None else metadata})
     def close_experiment_stream_annotation(self, annotation_id: str, *, end: str) -> dict:
@@ -330,7 +334,7 @@ class AcquiriumClient:
         response = self._http.post(f"{self.base_url}/experiments/runs/{run_id}/variables/{quote(variable_id, safe='')}/file", data=data, headers={"X-Filename": quote(filename, safe=""), "Content-Type": media_type or "application/octet-stream"}); _raise_for_status(response); return response.json()
     def experiment_artifact(self, digest: str) -> bytes:
         response = self._http.get(f"{self.base_url}/experiments/artifacts/{digest}"); _raise_for_status(response); return response.content
-    def _experiment_post(self, path: str, body: dict) -> dict:
+    def _experiment_post(self, path: str, body: dict | list) -> Any:
         response = self._http.post(f"{self.base_url}{path}", json=body); _raise_for_status(response); return response.json()
     def _experiment_get(self, path: str, params: dict[str, Any] | None = None):
         response = self._http.get(

@@ -26,6 +26,7 @@ from acquirium.Client.explore.attributes import ATTR_NS, REGISTRY, Attr, Not, is
 from acquirium.Client.explore.expr import BoolOp
 from acquirium.Client.explore.hidden import hidden_filter
 from acquirium.Client.query_graph import QueryEdge, QueryGraph
+from acquirium.Client.metadata import is_uri
 from acquirium.internals.internals_namespaces import (
     CONNECTED_THROUGH,
     CONNECTION_POINT,
@@ -45,7 +46,7 @@ def _format_pred(p: str) -> str:
 
 
 def _is_iri(x: object) -> bool:
-    return isinstance(x, str) and ("://" in x or x.startswith("urn:"))
+    return is_uri(x)
 
 
 def _term(x: object) -> str:
