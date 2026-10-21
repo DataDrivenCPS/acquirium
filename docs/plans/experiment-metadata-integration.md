@@ -38,6 +38,10 @@ The materialization changes from main were replayed too.
   expression built immediately after a metadata write could reject a valid new
   key and cache the stale discovery result under the new graph version.
   This fixes the shared registry for plant metadata too.
+- The server publishes queued experiment writes before reporting the graph
+  version, as it already did before SPARQL reads. Discovery is cached by that
+  version, so a version that missed queued runs kept their new metadata keys
+  unknown: filtering on a key written by the run just finished failed.
 - Experiment frames use #120's scalar type selection. Saved objects use Object
   columns to avoid silently coercing mixed or differently shaped values.
 - Nulls and empty containers remove descriptive metadata, matching #120.

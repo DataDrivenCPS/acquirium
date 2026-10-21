@@ -489,10 +489,16 @@ class Manager:
 
     def graph_version(self) -> int:
         """Return the store-owned source-data generation."""
-        return int(self.graph_store.graph_status()["source_version"])
+        return int(self.graph_status()["source_version"])
 
     def graph_status(self) -> dict[str, int | bool]:
-        """Return source and derived-query generation status."""
+        """Return source and derived-query generation status.
+
+        Queued experiment writes are published first, so the version covers
+        every committed write. Clients cache attribute discovery by version;
+        a version that missed queued runs would keep their new keys unknown.
+        """
+        self.experiments.publish_queued_metadata()
         return self.graph_store.graph_status()
 
     def insert_graph(

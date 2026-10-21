@@ -72,6 +72,13 @@ class MemoryGraphStore:
         return {"source_version": self.version}
 
 
+class _Acquirium(SimpleNamespace):
+    @property
+    def attr(self):
+        # Like Acquirium.attr: a fresh proxy, so discovery sees new keys.
+        return AttrProxy(self.client)
+
+
 @pytest.fixture
 def metadata_api(tmp_path):
     store = DuckDBStore(tmp_path / "experiments.duckdb", recreate=True)
@@ -95,7 +102,13 @@ def metadata_api(tmp_path):
     client.observe_experiment.side_effect = ledger.observe
     client.list_experiment_observations.side_effect = ledger.observations
     client.sync_experiment_metadata.side_effect = ledger.sync_metadata_graph
-    client.graph_version.side_effect = lambda: graph.version
+
+    def graph_version():
+        # The server publishes queued experiment writes before reporting a version.
+        ledger.publish_queued_metadata()
+        return graph.version
+
+    client.graph_version.side_effect = graph_version
 
     def sparql_query(*args, **kwargs):
         # The server publishes queued experiment writes before graph queries.
@@ -109,7 +122,7 @@ def metadata_api(tmp_path):
         return {key: resolve(text, kind) for key, (text, kind) in fields.items()}
 
     client.resolve.side_effect = resolve_query
-    ac = SimpleNamespace(client=client, attr=AttrProxy(client))
+    ac = _Acquirium(client=client)
     service = StudyService(ac)
     yield SimpleNamespace(store=store, graph=graph, ledger=ledger, client=client, ac=ac, service=service)
     store.close()
@@ -540,6 +553,28 @@ def test_general_graph_queries_see_queued_writes(metadata_api):
     api.ledger.publish_queued_metadata()
     assert not api.ledger._pending
     assert (URIRef(run.uri), URIRef(ATTR_NS + "operator"), Literal("ana")) in api.graph.dataset
+
+
+def test_each_new_run_key_is_filterable_right_after_the_run(metadata_api):
+    api = metadata_api
+    study = api.service.define("keys")
+    for index in range(4):
+        run = study.start({f"setting{index}": index})
+        run.finish()
+        # Discovery is cached by graph version; each new key must still be found.
+        selected = study.experiments.where(getattr(api.ac.attr, f"setting{index}") == index)
+        assert [found.run_id for found in selected.all()] == [run.run_id]
+
+
+def test_server_graph_version_includes_queued_experiment_writes():
+    from acquirium.Server.manager import Manager
+
+    manager = object.__new__(Manager)
+    calls = []
+    manager.experiments = Mock(publish_queued_metadata=lambda: calls.append("publish"))
+    manager.graph_store = Mock(graph_status=lambda: calls.append("status") or {"source_version": 7})
+    assert manager.graph_version() == 7
+    assert calls == ["publish", "status"]
 
 
 def test_deleted_records_leave_the_metadata_graph(metadata_api):
