@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from hashlib import sha256
 from importlib import import_module
 from types import SimpleNamespace
 from urllib.parse import quote
@@ -93,6 +94,174 @@ def test_observation_rejects_unknown_or_foreign_variable(tmp_path, attachment, f
         store.close()
 
 
+T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+def _recorded_stream(store, ledger, run, variable, rows, name="level"):
+    """Store samples under the run's source, as a time-series record() does."""
+    ref = store.ensure_stream_ref(None, f"experiment/{run['run_id']}", name, value_kind="numeric")
+    store.upsert_rows(ref, rows, value_kind="numeric")
+    ledger.observe(run["run_id"], variable["variable_id"], ref_uri=ref, interval=(rows[0][0], rows[-1][0]))
+    return ref
+
+
+def _samples(store, ref):
+    with store._own_conn() as conn:
+        return conn.execute("SELECT count(*) FROM timeseries_streams WHERE ref_uri=?", [ref]).fetchone()[0]
+
+
+def test_delete_runs_removes_what_they_recorded_and_keeps_shared_files(tmp_path):
+    store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
+    try:
+        ledger = ExperimentStore(store, tmp_path / "artifacts")
+        study = ledger.define("tank")
+        config = ledger.declare(study["template_id"], "config", "input", "file", {})
+        level = ledger.declare(study["template_id"], "level", "output", "timeseries", {})
+        site = store.ensure_stream_ref("urn:site#level", "site", "level", value_kind="numeric")
+        store.upsert_rows(site, [(T0, 1000.0)], value_kind="numeric")
+        runs, refs = [], []
+        for index in range(2):
+            run = ledger.start(study["template_id"], {"case": index})
+            ledger.attach_file(run["run_id"], config["variable_id"], "shared.json", None, b"{}")
+            refs.append(_recorded_stream(store, ledger, run, level, [(T0, float(index))]))
+            ledger.annotate_stream(run["run_id"], site, T0)
+            runs.append(run)
+        ledger.attach_file(runs[0]["run_id"], config["variable_id"], "own.json", None, b"[]")
+        with pytest.raises(ValueError, match="finish or fail"):
+            ledger.delete_runs([runs[0]["run_id"]])
+        assert ledger.usage(template_id=study["template_id"])["observations"] == 5
+        for run in runs:
+            ledger.finish(run["run_id"], "succeeded")
+
+        removed = ledger.delete_runs([runs[0]["run_id"]])
+        assert removed == {"runs": 1, "observations": 3, "annotations": 1, "samples": 1, "files": 1}
+        assert [run["run_id"] for run in ledger.runs(study["template_id"])] == [runs[1]["run_id"]]
+        assert ledger.stream_annotations(run_id=runs[0]["run_id"]) == []
+        assert (_samples(store, refs[0]), _samples(store, refs[1]), _samples(store, site)) == (0, 1, 1)
+        assert [path.name for path in ledger.artifact_dir.iterdir()] == [sha256(b"{}").hexdigest()]
+        with store._own_conn() as conn:
+            # The reset marker tells materializers to rebuild what they derived.
+            assert conn.execute("SELECT count(*) FROM stream_resets WHERE ref_uri=?", [refs[0]]).fetchone()[0] == 1
+            assert conn.execute("SELECT count(*) FROM streams WHERE ref_uri=?", [refs[0]]).fetchone()[0] == 0
+        ledger.delete_runs([runs[1]["run_id"]])
+        assert list(ledger.artifact_dir.iterdir()) == []
+        with pytest.raises(KeyError):
+            ledger.delete_runs([runs[1]["run_id"]])
+    finally:
+        store.close()
+
+
+def test_delete_keeps_streams_that_other_runs_reference(tmp_path):
+    store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
+    try:
+        ledger = ExperimentStore(store, tmp_path / "artifacts")
+        simulation, analysis = ledger.define("simulation"), ledger.define("analysis")
+        level = ledger.declare(simulation["template_id"], "level", "output", "timeseries", {})
+        used = ledger.declare(analysis["template_id"], "level", "input", "timeseries", {})
+        source = ledger.start(simulation["template_id"], {})
+        ref = _recorded_stream(store, ledger, source, level, [(T0, 1.0)])
+        reader = ledger.start(analysis["template_id"], {})
+        ledger.observe(reader["run_id"], used["variable_id"], ref_uri=ref)
+        for run in (source, reader):
+            ledger.finish(run["run_id"], "succeeded")
+        for delete in (lambda: ledger.delete_runs([source["run_id"]]),
+                       lambda: ledger.delete_study(simulation["template_id"])):
+            with pytest.raises(ValueError, match=reader["run_id"]):
+                delete()
+        assert _samples(store, ref) == 1
+        # Deleting the reader with the run it read from is allowed.
+        assert ledger.delete_runs([source["run_id"], reader["run_id"]])["runs"] == 2
+        assert _samples(store, ref) == 0
+    finally:
+        store.close()
+
+
+def test_delete_study_clear_and_usage_cover_experiments_only(tmp_path):
+    store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
+    try:
+        ledger = ExperimentStore(store, tmp_path / "artifacts", resolve=lambda text, kind: "urn:unit:kW")
+        assert ledger._resolve("kW", "unit") == "urn:unit:kW"
+        site = store.ensure_stream_ref("urn:site#level", "site", "level", value_kind="numeric")
+        store.upsert_rows(site, [(T0, 1000.0)], value_kind="numeric")
+        studies, runs = [], []
+        for name in ("first", "second"):
+            study = ledger.define(name)
+            config = ledger.declare(study["template_id"], "config", "input", "file", {})
+            level = ledger.declare(study["template_id"], "level", "output", "timeseries", {})
+            run = ledger.start(study["template_id"], {})
+            ledger.attach_file(run["run_id"], config["variable_id"], "shared.json", None, b"shared")
+            _recorded_stream(store, ledger, run, level, [(T0, 1.0), (T0.replace(minute=1), 2.0)])
+            studies.append(study); runs.append(run)
+
+        everything = ledger.usage()
+        assert {key: everything[key] for key in ("studies", "variables", "runs", "observations", "samples", "files", "file_bytes")} == {
+            "studies": 2, "variables": 4, "runs": 2, "observations": 4, "samples": 4, "files": 1, "file_bytes": 6,
+        }
+        assert everything["sample_bytes"] == 4 * 16
+        assert everything["total_bytes"] == everything["sample_bytes"] + everything["file_bytes"] + everything["ledger_bytes"]
+        first = ledger.usage(template_id=studies[0]["template_id"])
+        assert (first["studies"], first["runs"], first["files"], first["file_bytes"]) == (1, 1, 1, 6)
+        selected = ledger.usage(run_ids=[runs[0]["run_id"]])
+        assert (selected["studies"], selected["variables"], selected["runs"], selected["samples"]) == (0, 0, 1, 2)
+        assert ledger.usage(run_ids=[])["runs"] == 0
+        with pytest.raises(KeyError):
+            ledger.usage(template_id="missing")
+
+        with pytest.raises(ValueError, match=runs[0]["run_id"]):
+            ledger.delete_study(studies[0]["template_id"])
+        ledger.finish(runs[0]["run_id"], "succeeded")
+        removed = ledger.delete_study(studies[0]["template_id"])
+        assert removed == {"studies": 1, "variables": 2, "runs": 1, "observations": 2, "annotations": 0, "samples": 2, "files": 0}
+        with pytest.raises(KeyError):
+            ledger.study(studies[0]["template_id"])
+        assert len(list(ledger.artifact_dir.iterdir())) == 1  # the second study still uses it
+
+        # A stream left by a deletion that failed after its ledger commit.
+        orphan = store.ensure_stream_ref(None, "experiment/gone", "level", value_kind="numeric")
+        store.upsert_rows(orphan, [(T0, 3.0)], value_kind="numeric")
+        with pytest.raises(ValueError, match="finish or fail"):
+            ledger.clear()
+        ledger.finish(runs[1]["run_id"], "failed", {"message": "abandoned"})
+        assert ledger.clear() == {"studies": 1, "variables": 2, "runs": 1, "observations": 2, "annotations": 0, "samples": 3, "files": 1}
+        assert ledger.studies() == []
+        assert ledger.usage()["total_bytes"] == 0
+        assert list(ledger.artifact_dir.iterdir()) == []
+        assert (_samples(store, orphan), _samples(store, site)) == (0, 1)
+        with store._own_conn() as conn:
+            assert conn.execute("SELECT count(*) FROM experiment_metadata_resolutions").fetchone()[0] == 0
+        assert ledger._resolutions == {}
+        fresh = ledger.define("first")
+        assert ledger.variables(fresh["template_id"]) == []
+    finally:
+        store.close()
+
+
+def test_http_delete_routes_report_conflicts_and_require_confirmation(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    store = DuckDBStore(tmp_path / "http.duckdb", recreate=True)
+    try:
+        ledger = ExperimentStore(store, tmp_path / "artifacts")
+        module = import_module("acquirium.Server.app")
+        monkeypatch.setattr(module.app.state, "manager", SimpleNamespace(experiments=ledger), raising=False)
+        http = TestClient(module.app)
+        study = ledger.define("http")
+        run = ledger.start(study["template_id"], {})
+        assert http.post("/experiments/runs/delete", json={"run_ids": ["missing"]}).status_code == 404
+        assert http.post("/experiments/runs/delete", json={"run_ids": [run["run_id"]]}).status_code == 409
+        assert http.post(f"/experiments/templates/{study['template_id']}/delete").status_code == 409
+        assert http.post("/experiments/clear", json={}).status_code == 400
+        assert http.post("/experiments/clear", json={"confirm": True}).status_code == 409
+        assert http.post("/experiments/usage", json={}).json()["runs"] == 1
+        ledger.finish(run["run_id"], "succeeded")
+        assert http.post("/experiments/runs/delete", json={"run_ids": [run["run_id"]]}).json()["runs"] == 1
+        assert http.post(f"/experiments/templates/{study['template_id']}/delete").json()["studies"] == 1
+        assert http.post("/experiments/templates/missing/delete").status_code == 404
+        assert http.post("/experiments/clear", json={"confirm": True}).json()["studies"] == 0
+    finally:
+        store.close()
+
+
 @pytest.fixture
 def study_api(tmp_path):
     store = DuckDBStore(tmp_path / "api.duckdb", recreate=True)
@@ -121,6 +290,10 @@ def study_api(tmp_path):
     client.annotate_experiment_stream.side_effect = lambda run_id, ref_uri, *, start, end=None, metadata=None: ledger.annotate_stream(run_id, ref_uri, start, end, metadata)
     client.close_experiment_stream_annotation.side_effect = lambda annotation_id, *, end: ledger.close_stream_annotation(annotation_id, end)
     client.list_experiment_stream_annotations.side_effect = ledger.stream_annotations
+    client.delete_experiments.side_effect = ledger.delete_runs
+    client.delete_experiment_study.side_effect = ledger.delete_study
+    client.clear_experiments.side_effect = lambda *, confirm: ledger.clear()
+    client.experiment_usage.side_effect = ledger.usage
     ac = Mock(client=client)
     item = ledger.define("study")
     try:
@@ -678,6 +851,29 @@ def test_http_routes_accept_reference_uri_variable_ids_and_stream_annotations(tm
         ).status_code == 200
     finally:
         store.close()
+
+
+def test_handles_delete_their_records_and_clear_needs_confirmation(study_api):
+    study, client, ac = study_api.study, study_api.client, study_api.ac
+    cost = study.output("cost").scalar()
+    runs = []
+    for case in ("baseline", "trial", "stress"):
+        run = study.start({"case": case})
+        cost.record(1.0)
+        run.finish()
+        runs.append(run)
+    assert study.usage()["runs"] == 3
+    assert study.experiments.where(metadata={"case": "trial"}).usage()["runs"] == 1
+    assert runs[0].delete()["runs"] == 1
+    assert study.experiments.where(metadata={"case": "trial"}).delete()["runs"] == 1
+    assert [run.run_id for run in study.experiments.all()] == [runs[2].run_id]
+    service = StudyService(ac)
+    with pytest.raises(ValueError, match="confirm=True"):
+        service.clear()
+    client.clear_experiments.assert_not_called()
+    assert service.usage()["studies"] == 1
+    assert study.delete()["runs"] == 1
+    assert service.clear(confirm=True)["studies"] == 0
 
 
 def test_output_assignment_reuses_handles_and_preserves_run_boundary(study_api):

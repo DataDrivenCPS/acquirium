@@ -485,5 +485,41 @@ experiment.finish()
 `resume()` requires a running trial. Use separate Study objects for concurrent
 runs.
 
+## Check storage and delete runs
+
+`usage()` counts what experiments store and estimates its size in bytes:
+
+```python
+study = ac.study.get("membrane trials")
+study.usage()        # this Study
+ac.study.usage()     # every Study
+
+failed_runs = study.experiments.where(status="failed")
+failed_runs.usage()  # only the selected runs
+```
+
+Delete runs you no longer need, or a whole Study:
+
+```python
+failed_runs.delete()          # the selected runs
+experiment.delete()           # one run
+study.delete()                # the Study, its declarations, and every run
+ac.study.clear(confirm=True)  # every Study and run
+```
+
+Each call returns the number of runs, observations, samples, and files it
+removed. A file another run still uses is kept.
+
+Running runs cannot be deleted. If a session ended without finishing its run,
+mark the run failed first:
+
+```python
+study.resume(saved_run_id).fail(RuntimeError("abandoned"))
+```
+
+Deleting a run is also refused when another run recorded one of its streams as
+an input. Delete those runs together. `clear()` removes experiment records
+only; the plant model, metadata, and other streams stay.
+
 See the [reference](../reference/experiments.md) for the API and
 [explanation](../explanation/experiments.md) for storage and run behavior.

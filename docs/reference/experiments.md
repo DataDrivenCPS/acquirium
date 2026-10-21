@@ -18,6 +18,11 @@ The tables below describe the implemented Python API. The
 | `run.finish()` | Mark the run `succeeded` |
 | `run.fail(error)` | Mark it `failed` and save the error type and message |
 | `run.as_dict()` | Return the run's ID, status, metadata, timestamps, and error |
+| `run.delete()` | Delete a finished run and what it recorded |
+| `study.experiments.where(...).delete()` | Delete the selected runs |
+| `study.delete()` | Delete the Study, its declarations, and every run |
+| `ac.study.clear(confirm=True)` | Delete every Study and run; raises `ValueError` without `confirm=True` |
+| `study.usage()`, `ac.study.usage()`, `study.experiments.where(...).usage()` | Count and size what the Study, every Study, or the selected runs store |
 
 Study names must contain a non-whitespace character. `define()` reuses an
 existing Study with that name.
@@ -33,6 +38,20 @@ runs reject further variable writes; their stream annotations can still change.
 | Experiment | `run_id`, `experiment_id`, `uri`, `study`, `status`, `metadata`, `started_at`, `finished_at`, `error`, `output` |
 
 `experiment_id` is an alias for `run_id`, used in analysis tables.
+
+Deletion removes a run's observations, stream annotations, the samples and
+stream points under `experiment/<run_id>`, and files no remaining run uses.
+It returns counts: `runs`, `observations`, `annotations`, `samples`, and
+`files` removed, plus `studies` and `variables` for `study.delete()` and
+`clear()`. Nothing is removed when a selected run is still running, or when a
+run outside the selection uses a stream a selected run recorded. The server
+rejects both with HTTP 409.
+
+`usage()` returns `studies`, `variables`, `runs`, `observations`,
+`annotations`, `samples`, `files`, and the sizes `sample_bytes`, `file_bytes`,
+`ledger_bytes`, and `total_bytes`. File sizes are exact, with a shared file
+counted once. Sample and ledger sizes estimate stored values. A run selection
+reports zero `studies` and `variables`.
 
 ## Declaring variables
 
@@ -374,6 +393,10 @@ The HTTP API calls a Study a `template`. `template_id`, `variable_id`, and
 | `POST` | `/experiments/runs/{run_id}/variables/{variable_id}/file` | Attach a file |
 | `POST` | `/experiments/runs/{run_id}/finish` | Mark the run succeeded |
 | `POST` | `/experiments/runs/{run_id}/fail` | Mark the run failed |
+| `POST` | `/experiments/runs/delete` | Delete finished runs by `run_ids` |
+| `POST` | `/experiments/templates/{template_id}/delete` | Delete a Study and its runs |
+| `POST` | `/experiments/clear` | Delete every Study; requires `{"confirm": true}` |
+| `POST` | `/experiments/usage` | Count and size by optional `template_id` or `run_ids` |
 
 See [Record experiments](../how-to/record-experiments.md) for examples and
 [Experiments](../explanation/experiments.md) for storage and run behavior.

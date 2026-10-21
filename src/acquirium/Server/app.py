@@ -95,6 +95,13 @@ class ExperimentSelectionRequest(BaseModel):
 class ExperimentObservationSelectionRequest(ExperimentSelectionRequest):
     run_id: str | None = None
     variable_id: str | None = None
+class ExperimentDeleteRequest(BaseModel):
+    run_ids: list[str]
+class ExperimentClearRequest(BaseModel):
+    confirm: bool = False
+class ExperimentUsageRequest(BaseModel):
+    template_id: str | None = None
+    run_ids: list[str] | None = None
 
 def define_experiment(request: ExperimentTemplateRequest):
     try: return app.state.manager.experiments.define(request.name)
@@ -251,6 +258,27 @@ def finish_experiment(run_id: str, request: ExperimentFinishRequest):
 def fail_experiment(run_id: str, request: ExperimentFinishRequest):
     try: return app.state.manager.experiments.finish(run_id, "failed", request.error)
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def delete_experiments(request: ExperimentDeleteRequest):
+    try: return app.state.manager.experiments.delete_runs(request.run_ids)
+    except KeyError as error: raise HTTPException(status_code=404, detail=f"unknown experiment {error.args[0]}")
+    except ValueError as error: raise HTTPException(status_code=409, detail=str(error))
+
+def delete_experiment_study(template_id: str):
+    try: return app.state.manager.experiments.delete_study(template_id)
+    except KeyError: raise HTTPException(status_code=404, detail="unknown study")
+    except ValueError as error: raise HTTPException(status_code=409, detail=str(error))
+
+def clear_experiments(request: ExperimentClearRequest):
+    # The flag is checked here too, so no client can clear by omission.
+    if not request.confirm:
+        raise HTTPException(status_code=400, detail="clearing experiments requires confirm=true")
+    try: return app.state.manager.experiments.clear()
+    except ValueError as error: raise HTTPException(status_code=409, detail=str(error))
+
+def experiment_usage(request: ExperimentUsageRequest):
+    try: return app.state.manager.experiments.usage(template_id=request.template_id, run_ids=request.run_ids)
+    except KeyError: raise HTTPException(status_code=404, detail="unknown study")
 
 
 def _sparql_results_to_rows(serialized: bytes) -> dict[str, Any]:
@@ -632,6 +660,10 @@ app.post("/experiments/stream-annotations/{annotation_id}/close")(close_experime
 app.post("/experiments/runs/{run_id}/variables/{variable_id}/file")(attach_experiment_file)
 app.post("/experiments/runs/{run_id}/finish")(finish_experiment)
 app.post("/experiments/runs/{run_id}/fail")(fail_experiment)
+app.post("/experiments/runs/delete")(delete_experiments)
+app.post("/experiments/templates/{template_id}/delete")(delete_experiment_study)
+app.post("/experiments/clear")(clear_experiments)
+app.post("/experiments/usage")(experiment_usage)
 
 
 @app.middleware("http")

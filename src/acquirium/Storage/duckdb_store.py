@@ -111,6 +111,7 @@ class DuckDBStore:
                     "experiment_runs",
                     "experiment_variables",
                     "experiment_templates",
+                    "experiment_metadata_resolutions",
                     "materialization_work",
                     "materialization_lineage",
                     "materialization_deployments",

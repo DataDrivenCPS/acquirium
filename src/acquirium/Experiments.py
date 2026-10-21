@@ -734,6 +734,234 @@ class ExperimentStore:
         ]
         return [item for item in result if _metadata_matches(item["experiment_metadata"], metadata)]
 
+    # ---- deletion and storage use ----
+
+    @staticmethod
+    def _marks(values) -> str:
+        return ",".join("?" for _ in values)
+
+    def _run_sources(self, run_ids):
+        return [f"experiment/{run_id}" for run_id in run_ids]
+
+    def _owned_refs(self, conn, run_ids) -> list[str]:
+        """Streams a run's recording created, as opposed to streams it used."""
+        if not run_ids:
+            return []
+        sources = self._run_sources(run_ids)
+        rows = self._execute(conn, f"SELECT ref_uri FROM streams WHERE source_id IN ({self._marks(sources)})", sources).fetchall()
+        return [row[0] for row in rows]
+
+    def _delete_runs(self, conn, run_ids, *, sweep=False) -> dict[str, Any]:
+        """Remove runs, their observations, samples, and unshared files in `conn`.
+
+        Returns the counts removed plus the graph nodes and artifact files to
+        drop once the transaction commits. With `sweep`, every experiment
+        stream and unreferenced artifact goes too, including leftovers from
+        an earlier deletion that failed after its ledger commit.
+        """
+        run_ids = list(dict.fromkeys(run_ids))
+        removed = {"runs": len(run_ids), "observations": 0, "annotations": 0, "samples": 0, "files": 0}
+        keys, digests = [(EXPERIMENT.Run, run_id) for run_id in run_ids], []
+        if run_ids:
+            marks = self._marks(run_ids)
+            refs = self._owned_refs(conn, run_ids)
+            if refs:
+                # Another run's record of a stream must not lose its samples.
+                users = self._execute(conn, f"""
+                    SELECT DISTINCT run_id FROM experiment_observations
+                    WHERE ref_uri IN ({self._marks(refs)}) AND run_id NOT IN ({marks})
+                    ORDER BY run_id
+                    """, [*refs, *run_ids]).fetchall()
+                if users:
+                    raise ValueError("other experiments reference streams these runs recorded: "
+                                     + ", ".join(row[0] for row in users))
+            for run_id, sequence, variable_id in self._execute(conn, f"""
+                    SELECT run_id, sequence, variable_id FROM experiment_observations
+                    WHERE run_id IN ({marks})""", run_ids).fetchall():
+                if variable_id is None:
+                    removed["annotations"] += 1
+                    keys.append((EXPERIMENT.StreamAnnotation, f"{run_id}:{sequence}"))
+                else:
+                    removed["observations"] += 1
+            digests = [row[0] for row in self._execute(conn, f"""
+                SELECT DISTINCT artifact_digest FROM experiment_observations
+                WHERE run_id IN ({marks}) AND artifact_digest IS NOT NULL""", run_ids).fetchall()]
+            self._execute(conn, f"DELETE FROM experiment_observations WHERE run_id IN ({marks})", run_ids)
+            self._execute(conn, f"DELETE FROM experiment_runs WHERE run_id IN ({marks})", run_ids)
+        else:
+            refs = []
+        if sweep:
+            refs = [row[0] for row in self._execute(conn, "SELECT ref_uri FROM streams WHERE source_id LIKE ?", ["experiment/%"]).fetchall()]
+            digests = [row[0] for row in self._execute(conn, "SELECT digest FROM experiment_artifacts").fetchall()]
+        if refs:
+            ref_marks = self._marks(refs)
+            removed["samples"] = int(self._execute(conn, f"""
+                SELECT count(*) FROM timeseries
+                WHERE ref_id IN (SELECT ref_id FROM ref_ids WHERE ref_uri IN ({ref_marks})) AND NOT deleted
+                """, refs).fetchone()[0])
+            # Remove samples the way a stream replacement does: physically,
+            # with a reset marker, so materializers rebuild anything derived.
+            revision = self.store._next_revision(conn)
+            self._execute(conn, f"DELETE FROM timeseries WHERE ref_id IN (SELECT ref_id FROM ref_ids WHERE ref_uri IN ({ref_marks}))", refs)
+            for ref in refs:
+                self._execute(conn, "INSERT INTO stream_resets (ref_uri, last_revision) VALUES (?, ?) "
+                              "ON CONFLICT (ref_uri) DO UPDATE SET last_revision=EXCLUDED.last_revision", [ref, revision])
+            self._execute(conn, f"DELETE FROM streams WHERE ref_uri IN ({ref_marks})", refs)
+        files = []
+        if digests:
+            # Identical bytes are stored once, so keep a file another run still uses.
+            unused = [row[0] for row in self._execute(conn, f"""
+                SELECT digest FROM experiment_artifacts
+                WHERE digest IN ({self._marks(digests)})
+                  AND NOT EXISTS (SELECT 1 FROM experiment_observations AS o WHERE o.artifact_digest=experiment_artifacts.digest)
+                """, digests).fetchall()]
+            if unused:
+                self._execute(conn, f"DELETE FROM experiment_artifacts WHERE digest IN ({self._marks(unused)})", unused)
+            removed["files"], files = len(unused), unused
+        return {"removed": removed, "keys": keys, "files": files, "graphs": self._run_sources(run_ids)}
+
+    def _after_delete(self, result, *, sweep=False) -> dict[str, Any]:
+        """Drop the deleted records' files and graph nodes after the SQL commit."""
+        for digest in result["files"]:
+            (self.artifact_dir / digest).unlink(missing_ok=True)
+        if sweep:
+            for path in self.artifact_dir.iterdir():
+                if path.is_file():
+                    path.unlink()
+        if self.metadata_graph is not None:
+            # Queue first, so a failed graph write still drops the nodes on the next read.
+            for key in result["keys"]:
+                self._pending[key] = None
+            graph_store = self.metadata_graph.graph_store
+            graph_store.clear_graphs(
+                [graph_store.source_graph_uri(source) for source in result["graphs"]],
+                prefix=str(graph_store.source_graph_uri("experiment/")) if sweep else None,
+            )
+            # Publish now: plant queries must not keep listing deleted streams' runs.
+            if self._graph_dirty:
+                self._rebuild_metadata_graph()
+            else:
+                self._publish_pending()
+        return result["removed"]
+
+    def _refuse_running(self, conn, clause, parameters) -> None:
+        running = [row[0] for row in self._execute(
+            conn, f"SELECT run_id FROM experiment_runs WHERE status='running' AND {clause} ORDER BY started_at, run_id",
+            parameters).fetchall()]
+        if running:
+            raise ValueError("finish or fail running experiments before deleting them: " + ", ".join(running))
+
+    @_publishes
+    def delete_runs(self, run_ids: list[str]) -> dict[str, Any]:
+        """Delete finished runs with everything they recorded."""
+        run_ids = list(dict.fromkeys(run_ids))
+        if not run_ids:
+            return {"runs": 0, "observations": 0, "annotations": 0, "samples": 0, "files": 0}
+        with self.store._lock, self.store._write_conn() as conn:
+            marks = self._marks(run_ids)
+            found = {row[0] for row in self._execute(conn, f"SELECT run_id FROM experiment_runs WHERE run_id IN ({marks})", run_ids).fetchall()}
+            missing = [run_id for run_id in run_ids if run_id not in found]
+            if missing:
+                raise KeyError(missing[0])
+            self._refuse_running(conn, f"run_id IN ({marks})", run_ids)
+            result = self._delete_runs(conn, run_ids)
+        return self._after_delete(result)
+
+    @_publishes
+    def delete_study(self, template_id: str) -> dict[str, Any]:
+        """Delete a Study, its declarations, and every run."""
+        with self.store._lock, self.store._write_conn() as conn:
+            if self._execute(conn, "SELECT 1 FROM experiment_templates WHERE template_id=?", [template_id]).fetchone() is None:
+                raise KeyError(template_id)
+            self._refuse_running(conn, "template_id=?", [template_id])
+            run_ids = [row[0] for row in self._execute(conn, "SELECT run_id FROM experiment_runs WHERE template_id=?", [template_id]).fetchall()]
+            result = self._delete_runs(conn, run_ids)
+            variables = [row[0] for row in self._execute(conn, "SELECT variable_id FROM experiment_variables WHERE template_id=?", [template_id]).fetchall()]
+            self._execute(conn, "DELETE FROM experiment_variables WHERE template_id=?", [template_id])
+            self._execute(conn, "DELETE FROM experiment_templates WHERE template_id=?", [template_id])
+        result["keys"] += [(EXPERIMENT.Study, template_id), *((EXPERIMENT.Variable, variable) for variable in variables)]
+        return {"studies": 1, "variables": len(variables), **self._after_delete(result)}
+
+    @_publishes
+    def clear(self) -> dict[str, Any]:
+        """Delete every Study and its records; other Acquirium data is untouched."""
+        with self.store._lock, self.store._write_conn() as conn:
+            self._refuse_running(conn, "1=1", [])
+            run_ids = [row[0] for row in self._execute(conn, "SELECT run_id FROM experiment_runs").fetchall()]
+            studies = int(self._execute(conn, "SELECT count(*) FROM experiment_templates").fetchone()[0])
+            variables = int(self._execute(conn, "SELECT count(*) FROM experiment_variables").fetchone()[0])
+            result = self._delete_runs(conn, run_ids, sweep=True)
+            for table in ("experiment_variables", "experiment_templates", "experiment_metadata_resolutions"):
+                self._execute(conn, f"DELETE FROM {table}")
+        self._resolutions = {}
+        # The rebuild below writes an empty experiment graph.
+        self._graph_dirty = self.metadata_graph is not None
+        return {"studies": studies, "variables": variables, **self._after_delete(result, sweep=True)}
+
+    def usage(self, *, template_id: str | None = None, run_ids: list[str] | None = None) -> dict[str, Any]:
+        """Count what the selected experiments store and estimate its size.
+
+        Files are exact and counted once however many runs share them. Sample
+        and ledger sizes estimate the stored values (8 bytes per number or
+        timestamp, text by length), not the database's compressed size.
+        """
+        clauses, parameters = [], []
+        if template_id is not None:
+            clauses.append("template_id=?"); parameters.append(template_id)
+        if run_ids is not None:
+            if not run_ids:
+                clauses.append("1=0")
+            else:
+                clauses.append(f"run_id IN ({self._marks(run_ids)})"); parameters.extend(run_ids)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        whole_studies = run_ids is None
+        with self.store._own_conn() as conn:
+            if template_id is not None and self._execute(conn, "SELECT 1 FROM experiment_templates WHERE template_id=?", [template_id]).fetchone() is None:
+                raise KeyError(template_id)
+            selected = [row[0] for row in self._execute(conn, f"SELECT run_id FROM experiment_runs {where}", parameters).fetchall()]
+            runs_ledger = int(self._execute(conn, f"""
+                SELECT coalesce(sum(length(run_id) + length(template_id) + length(status)
+                    + length(metadata_json) + coalesce(length(error_json), 0) + 16), 0)
+                FROM experiment_runs {where}""", parameters).fetchone()[0])
+            usage = {"studies": 0, "variables": 0, "runs": len(selected), "observations": 0,
+                     "annotations": 0, "samples": 0, "files": 0,
+                     "sample_bytes": 0, "file_bytes": 0, "ledger_bytes": runs_ledger}
+            if whole_studies:
+                study_where, study_parameters = ("WHERE template_id=?", [template_id]) if template_id is not None else ("", [])
+                usage["studies"] = int(self._execute(conn, f"SELECT count(*) FROM experiment_templates {study_where}", study_parameters).fetchone()[0])
+                usage["ledger_bytes"] += int(self._execute(conn, f"""
+                    SELECT coalesce(sum(length(template_id) + length(name) + 8), 0)
+                    FROM experiment_templates {study_where}""", study_parameters).fetchone()[0])
+                variables = self._execute(conn, f"""
+                    SELECT count(*), coalesce(sum(length(variable_id) + length(template_id) + length(label)
+                        + length(role) + length(kind) + length(metadata_json) + 8), 0)
+                    FROM experiment_variables {study_where}""", study_parameters).fetchone()
+                usage["variables"] = int(variables[0]); usage["ledger_bytes"] += int(variables[1])
+            if selected:
+                marks = self._marks(selected)
+                row = self._execute(conn, f"""
+                    SELECT count(variable_id), count(*) - count(variable_id),
+                        coalesce(sum(length(run_id) + coalesce(length(variable_id), 0)
+                            + coalesce(length(value_json), 0) + coalesce(length(artifact_digest), 0)
+                            + coalesce(length(ref_uri), 0) + 40), 0)
+                    FROM experiment_observations WHERE run_id IN ({marks})""", selected).fetchone()
+                usage["observations"], usage["annotations"] = int(row[0]), int(row[1])
+                usage["ledger_bytes"] += int(row[2])
+                files = self._execute(conn, f"""
+                    SELECT count(*), coalesce(sum(byte_length), 0) FROM experiment_artifacts
+                    WHERE digest IN (SELECT artifact_digest FROM experiment_observations WHERE run_id IN ({marks}))
+                    """, selected).fetchone()
+                usage["files"], usage["file_bytes"] = int(files[0]), int(files[1])
+                refs = self._owned_refs(conn, selected)
+                if refs:
+                    samples = self._execute(conn, f"""
+                        SELECT count(*), coalesce(sum(8 + coalesce(length(text_value), 8)), 0) FROM timeseries
+                        WHERE ref_id IN (SELECT ref_id FROM ref_ids WHERE ref_uri IN ({self._marks(refs)})) AND NOT deleted
+                        """, refs).fetchone()
+                    usage["samples"], usage["sample_bytes"] = int(samples[0]), int(samples[1])
+        usage["total_bytes"] = usage["sample_bytes"] + usage["file_bytes"] + usage["ledger_bytes"]
+        return usage
+
 @dataclass(frozen=True)
 class Point:
     """A deliberately small semantic handle; storage only needs its URI."""
@@ -1091,6 +1319,10 @@ class Experiment:
             self.study._experiment = None
         return result
 
+    def delete(self) -> dict[str, Any]:
+        """Delete this finished run with its observations, samples, and unshared files."""
+        return self.study.client.delete_experiments([self.run_id])
+
 class VariableCollection:
     """Declare and access handles registered through this Study object.
 
@@ -1352,6 +1584,14 @@ class ExperimentCollection:
     def observations(self, variable: ExperimentVariable | str | None = None) -> "ObservationCollection":
         return ObservationCollection(self.study, variable=variable, selection=self, **self._filters)
 
+    def delete(self) -> dict[str, Any]:
+        """Delete the selected runs; nothing is removed if any is still running."""
+        return self.study.client.delete_experiments([experiment.run_id for experiment in self.all()])
+
+    def usage(self) -> dict[str, Any]:
+        """Count and size what the selected runs store."""
+        return self.study.client.experiment_usage(run_ids=[experiment.run_id for experiment in self.all()])
+
     def __repr__(self) -> str:
         return _selection_repr("ExperimentCollection", self.study, self._filters, attributes=self._query is not None)
 
@@ -1485,6 +1725,14 @@ class Study:
         self._experiment = Experiment(self, item)
         return self._experiment
 
+    def delete(self) -> dict[str, Any]:
+        """Delete this Study, its declarations, and every run."""
+        return self.client.delete_experiment_study(self.study_id)
+
+    def usage(self) -> dict[str, Any]:
+        """Count and size what this Study stores."""
+        return self.client.experiment_usage(template_id=self.study_id)
+
     def stream_annotations(self, *, run_id: str | None = None, ref_uri: str | None = None,
                            start: datetime | str | None = None,
                            end: datetime | str | None = None) -> list[StreamAnnotation]:
@@ -1508,6 +1756,14 @@ class StudyService:
         return self._hydrate(self.ac.client.get_experiment_study(name_or_id))
     def all(self) -> list[Study]:
         return [self._hydrate(item) for item in self.ac.client.list_experiment_studies()]
+    def usage(self) -> dict[str, Any]:
+        """Count and size what every Study stores; shared files count once."""
+        return self.ac.client.experiment_usage()
+    def clear(self, *, confirm: bool = False) -> dict[str, Any]:
+        """Delete every Study and run. Streams, metadata, and the plant model stay."""
+        if not confirm:
+            raise ValueError("clear() deletes every Study and run; pass confirm=True")
+        return self.ac.client.clear_experiments(confirm=True)
     def stream_annotations(self, *, ref_uri: str | None = None,
                            start: datetime | str | None = None,
                            end: datetime | str | None = None) -> list[StreamAnnotation]:

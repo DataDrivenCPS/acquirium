@@ -44,3 +44,37 @@ def test_backend_reopen_preserves_or_resets_experiment_ledger(materialization_st
             assert len(ledger.stream_annotations()) == 1
     finally:
         reopened.close()
+
+
+def test_backend_deletes_runs_studies_and_clears_experiments(materialization_store, tmp_path):
+    from datetime import datetime, timezone
+
+    store = materialization_store
+    ledger = ExperimentStore(store, tmp_path / "artifacts")
+    when = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    site = store.ensure_stream_ref("urn:contract:site", "site", "level", value_kind="numeric")
+    store.upsert_rows(site, [(when, 1000.0)], value_kind="numeric")
+    study = ledger.define("experiment delete contract")
+    config = ledger.declare(study["template_id"], "config", "input", "file", {})
+    level = ledger.declare(study["template_id"], "level", "output", "timeseries", {})
+    runs = []
+    for index in range(2):
+        run = ledger.start(study["template_id"], {"case": index})
+        ledger.attach_file(run["run_id"], config["variable_id"], "shared.txt", "text/plain", b"shared")
+        ref = store.ensure_stream_ref(None, f"experiment/{run['run_id']}", "level", value_kind="numeric")
+        store.upsert_rows(ref, [(when, float(index))], value_kind="numeric")
+        ledger.observe(run["run_id"], level["variable_id"], ref_uri=ref, interval=(when, when))
+        ledger.annotate_stream(run["run_id"], site, when)
+        runs.append(run)
+
+    usage = ledger.usage()
+    assert (usage["runs"], usage["observations"], usage["annotations"], usage["samples"], usage["files"], usage["file_bytes"]) == (2, 4, 2, 2, 1, 6)
+    with pytest.raises(ValueError, match="finish or fail"):
+        ledger.delete_runs([runs[0]["run_id"]])
+    for run in runs:
+        ledger.finish(run["run_id"], "succeeded")
+    assert ledger.delete_runs([runs[0]["run_id"]]) == {"runs": 1, "observations": 2, "annotations": 1, "samples": 1, "files": 0}
+    assert ledger.delete_study(study["template_id"])["files"] == 1
+    assert ledger.clear()["studies"] == 0
+    assert ledger.usage()["total_bytes"] == 0
+    assert store.timeseries_info(site).row_count == 1

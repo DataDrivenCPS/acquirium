@@ -316,6 +316,11 @@ class AcquiriumClient:
             return self._experiment_post(f"/experiments/templates/{template_id}/observations/query", self._experiment_params(filters))
         return self._experiment_get(f"/experiments/templates/{template_id}/observations", self._experiment_params(filters))
     def finish_experiment(self, run_id: str, failed: bool = False, error: Any = None) -> dict: return self._experiment_post(f"/experiments/runs/{run_id}/{'fail' if failed else 'finish'}", {"error": error})
+    def delete_experiments(self, run_ids: list[str]) -> dict: return self._experiment_post("/experiments/runs/delete", {"run_ids": list(run_ids)})
+    def delete_experiment_study(self, template_id: str) -> dict: return self._experiment_post(f"/experiments/templates/{template_id}/delete", {})
+    def clear_experiments(self, *, confirm: bool = False) -> dict: return self._experiment_post("/experiments/clear", {"confirm": confirm})
+    def experiment_usage(self, *, template_id: str | None = None, run_ids: list[str] | None = None) -> dict:
+        return self._experiment_post("/experiments/usage", {"template_id": template_id, "run_ids": run_ids})
     def attach_experiment_file(self, run_id: str, variable_id: str, path: str | Path, media_type: str | None = None) -> dict:
         # Send bytes, not a client-local filename. The server owns the durable
         # artifact copy so experiments survive the originating machine.

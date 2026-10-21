@@ -76,6 +76,7 @@ class TimescaleStore(TimeseriesStore):
                     "experiment_runs",
                     "experiment_variables",
                     "experiment_templates",
+                    "experiment_metadata_resolutions",
                     "stream_resets", "materialization_work", "materialization_lineage", "materialization_deployments",
                     BINDING_PROGRESS_TABLE, SYSTEM_STATE_TABLE, TIMESERIES_TABLE, REF_IDS_TABLE, STREAMS_TABLE, LOGS_TABLE,
                 ):

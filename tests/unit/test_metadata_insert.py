@@ -348,6 +348,24 @@ class TestStore:
         store.sparql_update("DELETE WHERE { ?s ?p ?o }", graph_uri=PLANT)
         assert len(store.source_dataset.graph(META)) == 0  # every subject gone with the plant
 
+    def test_clear_graphs_empties_named_and_prefixed_graphs_and_prunes(self):
+        ds = dataset_with_orphans()
+        runs = [source_graph_uri(f"experiment/run-{i}") for i in range(2)]
+        for uri in runs:
+            ds.graph(uri).add((URIRef(f"{uri}#point"), RDF.type, URIRef("urn:w#Point")))
+        ledger = source_graph_uri("experiments")
+        ds.graph(ledger).add((URIRef("urn:x#run"), RDF.type, URIRef("urn:w#Run")))
+        described = (URIRef(f"{runs[0]}#point"), URIRef(f"{ATTR_NS}a"), Literal(2))
+        ds.graph(META).add(described)
+        store = self.make_store(ds)
+        assert store.clear_graphs(prefix=str(source_graph_uri("experiment/"))) == 2
+        assert all(len(ds.graph(uri)) == 0 for uri in runs)
+        assert len(ds.graph(ledger)) == 1  # "experiments" is not under "experiment/"
+        assert described not in ds.graph(META)
+        store._finalize_source_write.assert_called_once_with(affects_closure=False)
+        assert store.clear_graphs([runs[0]]) == 0  # already empty: no write
+        store._finalize_source_write.assert_called_once()
+
     def test_replace_insert_prunes_but_append_does_not(self):
         store = self.make_store(dataset_with_orphans())
         store._prune_orphan_metadata = MagicMock()

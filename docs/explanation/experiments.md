@@ -91,6 +91,23 @@ For other data it stores references:
 File artifacts are fixed snapshots; identical bytes share one copy. Stream
 references read the current samples, including later corrections.
 
+## Deleting runs
+
+Runs cannot be changed after they end, but they can be deleted. Deleting a run
+removes everything it recorded: its observations, its stream annotations, the
+samples and stream points under `experiment/<run_id>`, and files no other run
+uses. A shared file stays until the last run that uses it is deleted. Streams
+a run only read or annotated are not changed.
+
+A running run cannot be deleted. Neither can a run whose recorded stream
+another run uses as an input, unless both are deleted together. Samples are
+removed the same way a stream replacement removes them, so streams derived
+from them are rebuilt. `clear()` deletes every Study and run, and nothing else.
+
+`usage()` reports file sizes exactly and counts a shared file once. Sample and
+ledger sizes are estimates of the stored values: 8 bytes per number or
+timestamp, and text by its length. They are not the compressed size on disk.
+
 ## Stream annotations
 
 An annotation associates an existing stream interval with an Experiment.

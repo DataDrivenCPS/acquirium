@@ -916,6 +916,30 @@ class OxigraphGraphStore:
             self._finalize_source_write(affects_closure=affects_closure)
         return {"message": "update applied", "changed": True}
 
+    def clear_graphs(self, graph_uris: Iterable[URIRef | str] = (), *, prefix: str | None = None) -> int:
+        """Empty data graphs in one write: the given ones and, with ``prefix``,
+        every registered data graph whose URI starts with it. Returns how many
+        graphs held triples."""
+        with self._lock:
+            targets = {URIRef(uri) for uri in graph_uris}
+            if prefix is not None:
+                targets.update(
+                    context.identifier for context in self.source_dataset.graphs()
+                    if str(context.identifier).startswith(prefix)
+                )
+            cleared, affects_closure = 0, False
+            for uri in targets:
+                target = self._registered_data_graph(uri)
+                if not len(target):
+                    continue
+                affects_closure = affects_closure or bool(_closure_triples(target))
+                target.remove((None, None, None))
+                cleared += 1
+            if cleared:
+                self._prune_orphan_metadata()
+                self._finalize_source_write(affects_closure=affects_closure)
+        return cleared
+
     def _prune_orphan_metadata(self) -> None:
         """Cascade: metadata lives as long as the node it describes."""
         try:

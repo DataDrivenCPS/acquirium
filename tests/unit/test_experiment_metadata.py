@@ -59,6 +59,15 @@ class MemoryGraphStore:
 
     sparql_query = query
 
+    def clear_graphs(self, graph_uris=(), *, prefix=None):
+        targets = {URIRef(uri) for uri in graph_uris}
+        if prefix is not None:
+            targets.update(graph.identifier for graph in self.dataset.graphs() if str(graph.identifier).startswith(prefix))
+        for uri in targets:
+            self.dataset.graph(uri).remove((None, None, None))
+        self.version += 1
+        return len(targets)
+
     def graph_status(self):
         return {"source_version": self.version}
 
@@ -531,3 +540,44 @@ def test_general_graph_queries_see_queued_writes(metadata_api):
     api.ledger.publish_queued_metadata()
     assert not api.ledger._pending
     assert (URIRef(run.uri), URIRef(ATTR_NS + "operator"), Literal("ana")) in api.graph.dataset
+
+
+def test_deleted_records_leave_the_metadata_graph(metadata_api):
+    api = metadata_api
+    study = api.service.define("cases")
+    cost = study.output("cost").scalar(unit="PSI")
+    runs = []
+    for scenario in ("baseline", "trial"):
+        run = study.start({"scenario": scenario})
+        cost.record(1.0)
+        run.finish()
+        runs.append(run)
+    annotation = api.ledger.annotate_stream(runs[0].run_id, "urn:plant:flow", "2026-01-01T00:00:00Z")
+    # Each run's stream points live in that run's own source graph.
+    run_graphs = [api.graph.dataset.graph(source_graph_uri(f"experiment/{run.run_id}")) for run in runs]
+    for run, graph in zip(runs, run_graphs):
+        graph.add((URIRef(f"urn:point:{run.run_id}"), RDF.type, URIRef("urn:w#Point")))
+    api.ledger.sync_metadata_graph()
+    ledger_graph = api.graph.dataset.graph(source_graph_uri("experiments"))
+
+    api.ledger.delete_runs([runs[0].run_id])
+    subjects = {str(subject) for subject in ledger_graph.subjects()}
+    assert run_uri(runs[0].run_id) not in subjects
+    assert annotation_uri(annotation["annotation_id"]) not in subjects
+    assert run_uri(runs[1].run_id) in subjects
+    assert (len(run_graphs[0]), len(run_graphs[1])) == (0, 1)
+    assert study.experiments.where(scenario="baseline").all() == []
+
+    api.ledger.delete_study(study.study_id)
+    classes = {str(cls) for cls in (EXPERIMENT.Study, EXPERIMENT.Run, EXPERIMENT.Variable, EXPERIMENT.StreamAnnotation)}
+    assert {str(subject) for subject in ledger_graph.subjects()} <= classes
+    assert len(run_graphs[1]) == 0
+
+    other = api.service.define("other")
+    other.start({"scenario": "baseline"}).finish()
+    other_graph = api.graph.dataset.graph(source_graph_uri(f"experiment/{other.experiments.all()[0].run_id}"))
+    other_graph.add((URIRef("urn:point:other"), RDF.type, URIRef("urn:w#Point")))
+    api.ledger.clear()
+    assert {str(subject) for subject in ledger_graph.subjects()} <= classes
+    assert len(other_graph) == 0
+    assert api.service.all() == []
