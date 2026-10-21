@@ -669,13 +669,21 @@ class DataObject:
                 )
             return
 
-        # Lazy path: group bindings by entity context
+        # Lazy path: group bindings by entity context. A binding whose point
+        # hangs off several entities is narrowed to the contexts of the entity
+        # it is grouped under, so the sub-object materializes only that
+        # entity's rows.
         entity_to_bindings: dict[str, list[BindingInfo]] = {}
         for b in self._bindings:
+            by_entity: dict[str, list[dict[str, str]]] = {}
             for ctx in b.entity_contexts:
                 entity_uri = ctx.get(col)
                 if entity_uri is not None:
-                    entity_to_bindings.setdefault(entity_uri, []).append(b)
+                    by_entity.setdefault(entity_uri, []).append(ctx)
+            for entity_uri, contexts in by_entity.items():
+                entity_to_bindings.setdefault(entity_uri, []).append(
+                    replace(b, entity_contexts=contexts)
+                )
 
         for entity_uri in sorted(entity_to_bindings.keys()):
             sub_bindings = entity_to_bindings[entity_uri]
