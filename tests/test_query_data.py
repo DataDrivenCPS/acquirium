@@ -289,5 +289,6 @@ def test_reconcile_query_wrapper_with_options(acquirium_client_csv):
     alias = data.aliases[0]
     df = query.reconcile([alias], resolution=timedelta(hours=1), upsample="copy", downsample="ignore_intermediate")
     non_time_cols = [c for c in df.columns if c != "time"]
+    wide_cols = {f"{c}_reconciled" for c in data.dataframe(shape="wide").columns if c != "time"}
     assert non_time_cols
-    assert all(c.startswith(alias) for c in non_time_cols)
+    assert set(non_time_cols) <= wide_cols

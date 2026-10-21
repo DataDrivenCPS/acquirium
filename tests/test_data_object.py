@@ -233,6 +233,11 @@ def test_query_data_method_exists(acquirium_client_csv):
 #   - resolution finer than 1h (e.g. "1m") leaves empty grid times, so it
 #     needs *upsampling* (raises if upsample=None).
 
+def _numeric_reconciled_cols(df):
+    """Reconciled columns with any data (the text points 9 and 10 come back all-null)."""
+    return [c for c in df.columns if c.endswith("_reconciled") and df[c].null_count() < df.height]
+
+
 def test_reconcile_basic_shape(acquirium_client_csv):
     """reconcile() returns a wide frame: a shared uniform 'time' column plus
     one '<point>_reconciled' column per reconciled series. At the native
@@ -257,7 +262,8 @@ def test_reconcile_basic_shape(acquirium_client_csv):
 
 
 def test_reconcile_points_subset(acquirium_client_csv):
-    """Passing `points` restricts reconciliation to those aliases only."""
+    """Passing `points` restricts reconciliation to those aliases only, with
+    columns named as in dataframe(shape="wide")."""
     acq = acquirium_client_csv
     query = acq.find_all_data()
     data = query.data(cast_value="float")
@@ -265,8 +271,22 @@ def test_reconcile_points_subset(acquirium_client_csv):
     alias = data.aliases[0]
     df = data.reconcile([alias])
     non_time_cols = [c for c in df.columns if c != "time"]
+    wide_cols = {f"{c}_reconciled" for c in data.dataframe(shape="wide").columns if c != "time"}
     assert non_time_cols
-    assert all(c.startswith(alias) for c in non_time_cols)
+    assert set(non_time_cols) <= wide_cols
+
+
+def test_reconcile_text_points_get_null_columns_and_warning(acquirium_client_csv):
+    """Points 9 and 10 are text, so under cast_value='float' they have no numeric
+    data: they still get (all-null) columns, listed in a single warning."""
+    acq = acquirium_client_csv
+    query = acq.find_all_data()
+    data = query.data(cast_value="float")
+
+    with pytest.warns(UserWarning, match=r"no numeric data for 2 column\(s\)"):
+        df = data.reconcile()
+    all_null = [c for c in df.columns if c != "time" and df[c].null_count() == df.height]
+    assert len(all_null) == 2
 
 
 def test_reconcile_unknown_alias_raises(acquirium_client_csv):
@@ -329,9 +349,9 @@ def test_reconcile_identical_resolution_needs_no_method(acquirium_client_csv):
     data = query.data(cast_value="float")
 
     df = data.reconcile(resolution=timedelta(hours=1))
-    reconciled_cols = [c for c in df.columns if c.endswith("_reconciled")]
+    reconciled_cols = _numeric_reconciled_cols(df)
     assert reconciled_cols
-    # untouched hourly data over a full year should have essentially no gaps
+    # untouched hourly data over a full year should have no gaps
     for c in reconciled_cols:
         assert df[c].null_count() == 0
 
@@ -367,7 +387,8 @@ def test_reconcile_default_value_fill(acquirium_client_csv):
     data = query.data(cast_value="float")
 
     df = data.reconcile(resolution=timedelta(minutes=1), upsample="default_value", fill_value=-999.0)
-    reconciled_cols = [c for c in df.columns if c.endswith("_reconciled")]
+    reconciled_cols = _numeric_reconciled_cols(df)
+    assert reconciled_cols
     for c in reconciled_cols:
         assert df[c].null_count() == 0
     assert any(-999.0 in df[c].to_list() for c in reconciled_cols)
@@ -419,11 +440,11 @@ def test_reconcile_downsample_requires_and_uses_method(acquirium_client_csv):
     df = data.reconcile(resolution=timedelta(hours=2), downsample="mean")
     assert "time" in df.columns
 
-    reconciled_cols = [c for c in df.columns if c.endswith("_reconciled")]
+    reconciled_cols = _numeric_reconciled_cols(df)
+    assert reconciled_cols
     for c in reconciled_cols:
-        # A full year of hourly data resampled to 2h should have at most one
-        # trailing null (the grid may extend one step past the last reading).
-        assert df[c].null_count() <= 1
+        # every 2h window of a full year of hourly data holds at least one reading
+        assert df[c].null_count() == 0
 
     times = df["time"].to_list()
     if len(times) > 1:

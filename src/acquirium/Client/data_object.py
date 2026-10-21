@@ -5,7 +5,7 @@ import re
 import warnings
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone, timedelta
-from typing import Any, Iterator, TYPE_CHECKING
+from typing import Any, Callable, Iterator, TYPE_CHECKING
 import polars as pl
 import logging
 
@@ -1084,9 +1084,9 @@ class DataObject:
         wide = _pivot_split_values(tall, "_pivot_key")
         return wide.sort("time", descending=True) if descending else wide
 
-    def _compact_dataframe(self, tall: pl.DataFrame, *, shape: str, include_ref: bool,
-                           descending: bool = False) -> pl.DataFrame:
-        """Query-compatible layout: CURIE-rendered URIs and a ``point_id`` column.
+    def _column_labeler(self) -> Callable[[str, str], str]:
+        """Return ``label_of(alias, point_uri)``, the column name a point gets
+        in :meth:`dataframe` (and :meth:`reconcile`).
 
         Auto-aliased data nodes (alias == ``str(nid)``) are named by the
         point's ``rdfs:label`` when it has one, else by its compacted
@@ -1099,11 +1099,6 @@ class DataObject:
             except Exception:
                 return uri
 
-        # Combine ref_uris sharing the same (data_alias, point_uri, time).
-        tall = tall.clone().unique(
-            subset=["data_alias", "point_uri", "time"], keep="first"
-        )
-
         points_per_alias: dict[str, set[str]] = {}
         auto_aliases: set[str] = set()
         for b in self._bindings:
@@ -1113,17 +1108,36 @@ class DataObject:
 
         labels = self._point_labels()
 
-        def _label(alias: str, point_uri: str) -> str:
+        def label_of(alias: str, point_uri: str) -> str:
             if alias in auto_aliases:
                 return labels.get(point_uri) or _compact(point_uri)
             if len(points_per_alias.get(alias, set())) > 1:
                 return f"{alias}__{labels.get(point_uri) or _compact(point_uri)}"
             return alias
 
+        return label_of
+
+    def _compact_dataframe(self, tall: pl.DataFrame, *, shape: str, include_ref: bool,
+                           descending: bool = False) -> pl.DataFrame:
+        """Query-compatible layout: CURIE-rendered URIs and a ``point_id`` column,
+        with each point named by :meth:`_column_labeler`.
+        """
+        def _compact(uri: str) -> str:
+            try:
+                return self._client.compact_uri(uri)
+            except Exception:
+                return uri
+
+        # Combine ref_uris sharing the same (data_alias, point_uri, time), first-wins.
+        tall = tall.clone().unique(
+            subset=["data_alias", "point_uri", "time"], keep="first", maintain_order=True
+        )
+
+        label_of = self._column_labeler()
         tall = tall.with_columns(
             pl.struct(["data_alias", "point_uri"])
             .map_elements(
-                lambda s: _label(s["data_alias"], s["point_uri"]),
+                lambda row: label_of(row["data_alias"], row["point_uri"]),
                 return_dtype=pl.Utf8,
             )
             .alias("_label")
@@ -1406,10 +1420,13 @@ class DataObject:
     # ------------------------------------------------------------------
 
     def _native_series(self, points: list[str] | None = None) -> dict[str, pl.DataFrame]:
-        """Extract each selected point's raw, native ``[time, value]`` series
-        (no resampling), keyed by the same disambiguated label used by
-        ``dataframe(shape="wide")``: the bare alias when it resolves to a
-        single point, otherwise ``f"{alias}__{point_local}"``.
+        """Extract each selected point's original ``[time, value]`` series
+        (no resampling), keyed by the column name :meth:`dataframe` gives it
+        (see :meth:`_column_labeler`) and ordered like its wide columns.
+
+        Every point bound to a selected alias gets an entry, empty if it has
+        no numeric data. Readings from several refs at the same time are
+        combined first-wins, as in :meth:`dataframe`.
 
         Shared by :meth:`reconcile` and :meth:`plot`. Raises ``ValueError``
         for aliases not present in ``self.aliases``.
@@ -1426,44 +1443,27 @@ class DataObject:
                 f"unknown alias(es) {unknown}; available: {self.aliases}"
             )
 
-        if self._tall is None or self._tall.is_empty():
-            return {}
+        label_of = self._column_labeler()
+        empty = pl.DataFrame(schema={"time": pl.Datetime(time_zone="UTC"), "value": pl.Float64})
+        series = {label_of(b.alias, b.point_uri): empty for b in self._bindings if b.alias in aliases}
 
-        tall = (
-            self._tall
-            .filter(pl.col("data_alias").is_in(aliases) & pl.col("value_numeric").is_not_null())
-            .select("data_alias", "point_uri", "time", "value_numeric")
-            .rename({"value_numeric": "value"})
-            .sort("time")
-        )
-        if tall.is_empty():
-            return {}
+        if self._tall is not None and not self._tall.is_empty():
+            tall = (
+                self._tall
+                .filter(pl.col("data_alias").is_in(aliases) & pl.col("value_numeric").is_not_null())
+                .unique(subset=["data_alias", "point_uri", "time"], keep="first", maintain_order=True)
+            )
+            for (alias, point_uri), grp in tall.group_by(["data_alias", "point_uri"], maintain_order=True):
+                label = label_of(alias, point_uri)
+                original_data = grp.select("time", pl.col("value_numeric").alias("value"))
+                if not series[label].is_empty():
+                    # the same point bound under several auto-aliased data nodes
+                    original_data = pl.concat([series[label], original_data]).unique(
+                        subset="time", keep="first", maintain_order=True
+                    )
+                series[label] = original_data.sort("time", maintain_order=True)
 
-        points_per_alias: dict[str, set[str]] = {}
-        for b in self._bindings:
-            if b.alias in aliases:
-                points_per_alias.setdefault(b.alias, set()).add(b.point_uri)
-
-        def _label(alias: str, point_uri: str) -> str:
-            pts = points_per_alias.get(alias, {point_uri})
-            if len(pts) <= 1:
-                return alias
-            try:
-                return f"{alias}__{self._client.compact_uri(point_uri)}"
-            except Exception:
-                return f"{alias}__{point_uri}"
-
-        series: dict[str, pl.DataFrame] = {}
-        for (alias, point_uri), grp in tall.group_by(["data_alias", "point_uri"], maintain_order=True):
-            label = _label(alias, point_uri)
-            original_data = grp.select("time", "value").unique(subset="time", keep="first").sort("time")
-            if label in series:
-                series[label] = (
-                    pl.concat([series[label], original_data]).unique(subset="time", keep="first").sort("time")
-                )
-            else:
-                series[label] = original_data
-        return series
+        return dict(sorted(series.items(), key=lambda item: item[0].casefold()))
 
     def reconcile(
         self,
@@ -1529,10 +1529,11 @@ class DataObject:
 
         Returns:
             A wide ``pl.DataFrame`` with a shared ``time`` column plus one
-            ``f"{point}{suffix}"`` column per reconciled series (e.g. ``a``
-            and ``b`` become ``a_reconciled`` and ``b_reconciled``). If an
-            alias resolves to multiple distinct points, each point gets its
-            own column, named ``f"{alias}__{point_local}{suffix}"``.
+            ``f"{name}{suffix}"`` column per point, where ``name`` and the
+            column order match :meth:`dataframe` (e.g. ``a`` and ``b`` become
+            ``a_reconciled`` and ``b_reconciled``). A point with no numeric
+            data gets an all-null column, and a single ``UserWarning`` lists
+            every such column.
 
         Raises:
             ValueError: if a grid time has several measurements but
@@ -1575,19 +1576,28 @@ class DataObject:
         except ValueError as e:
             raise ValueError(f"reconcile: {e}") from e
 
-        if not series:
-            for a in aliases:
-                empty_schema[f"{a}{suffix}"] = pl.Float64
+        no_data = [f"{label}{suffix}" for label, original_data in series.items() if original_data.is_empty()]
+        if no_data:
+            warnings.warn(
+                f"reconcile: no numeric data for {len(no_data)} column(s), left all-null: {no_data}",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        with_data = [original_data for original_data in series.values() if not original_data.is_empty()]
+        if not with_data:
+            for label in series:
+                empty_schema[f"{label}{suffix}"] = pl.Float64
             return pl.DataFrame(schema=empty_schema)
 
         target = (
             _parse_resolution(resolution)
             if resolution is not None
-            else _infer_resolution(list(series.values()))
+            else _infer_resolution(with_data)
         )
 
-        global_min = min(original_data["time"].min() for original_data in series.values())
-        global_max = max(original_data["time"].max() for original_data in series.values())
+        global_min = min(original_data["time"].min() for original_data in with_data)
+        global_max = max(original_data["time"].max() for original_data in with_data)
         origin = _round_to_epoch_grid(global_min, target)
         end = _round_to_epoch_grid(global_max, target)
         grid_times = _build_time_grid(origin, end, target)
@@ -1595,6 +1605,10 @@ class DataObject:
 
         out = grid_df
         for label, original_data in series.items():
+            if original_data.is_empty():
+                out = out.with_columns(pl.lit(None, dtype=pl.Float64).alias(f"{label}{suffix}"))
+                continue
+
             snapped_data = grid_df.join(
                 _apply_downsample(original_data, origin, target, downsample, label=label),
                 on="time", how="left",
@@ -1766,7 +1780,11 @@ class DataObject:
         """
         import matplotlib.pyplot as plt
 
-        series = self._native_series(points)
+        series = {
+            label: original_data
+            for label, original_data in self._native_series(points).items()
+            if not original_data.is_empty()
+        }
         if not series:
             raise ValueError("plot: no numeric data available to plot")
 

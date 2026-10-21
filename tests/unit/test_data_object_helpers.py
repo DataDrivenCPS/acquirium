@@ -107,26 +107,40 @@ class TestApplyDownsample:
         assert out["value"].to_list() == [2.0]
 
 
+def _bound_data_object(bindings, rows):
+    """A materialized DataObject from ``bindings`` and tall ``rows`` of
+    ``(data_alias, point_uri, ref_uri, time, value_numeric, value_text)``."""
+    from unittest.mock import MagicMock
+    from acquirium.Client.data_object import DataObject
+    from acquirium.Client.query_graph import QueryGraph
+
+    tall = pl.DataFrame(
+        rows,
+        schema={
+            "data_alias": pl.Utf8, "point_uri": pl.Utf8, "ref_uri": pl.Utf8,
+            "time": pl.Datetime(time_zone="UTC"), "value_numeric": pl.Float64, "value_text": pl.Utf8,
+        },
+        orient="row",
+    )
+    client = MagicMock()
+    client.compact_uri.side_effect = lambda u: str(u).rsplit("#", 1)[-1]
+    return DataObject(
+        _bindings=bindings, _entity_columns=[], _query_graph=QueryGraph(),
+        _client=client, _tall=tall, _materialized=True,
+    )
+
+
 def _series_data_object(series):
     """A materialized DataObject with one single-point alias per ``series`` entry
     (``{alias: (times, values)}``)."""
-    from unittest.mock import MagicMock
-    from acquirium.Client.data_object import BindingInfo, DataObject
-    from acquirium.Client.query_graph import QueryGraph
+    from acquirium.Client.data_object import BindingInfo
 
-    bindings, frames = [], []
+    bindings, rows = [], []
     for nid, (alias, (times, values)) in enumerate(series.items()):
         uri = f"urn:t#{alias}"
         bindings.append(BindingInfo(nid=nid, point_uri=uri, ref_uri=uri, alias=alias, entity_contexts=[{}]))
-        frames.append(_frame(times, values).rename({"value": "value_numeric"}).with_columns(
-            data_alias=pl.lit(alias), point_uri=pl.lit(uri), ref_uri=pl.lit(uri),
-            value_text=pl.lit(None, dtype=pl.Utf8),
-        ))
-    tall = pl.concat(frames).select("data_alias", "point_uri", "ref_uri", "time", "value_numeric", "value_text")
-    return DataObject(
-        _bindings=bindings, _entity_columns=[], _query_graph=QueryGraph(),
-        _client=MagicMock(), _tall=tall, _materialized=True,
-    )
+        rows += [(alias, uri, uri, t, v, None) for t, v in zip(times, values)]
+    return _bound_data_object(bindings, rows)
 
 
 class TestReconcileGridAlignment:
@@ -238,6 +252,91 @@ class TestReconcileGridAlignment:
         interior = df.filter(pl.col("time").is_between(self.T0 + timedelta(hours=1), self.T0 + timedelta(hours=3)))
         assert interior.height == 3
         assert interior["fast_reconciled"].to_list() == pytest.approx(interior["slow_reconciled"].to_list())
+
+
+class TestReconcilePointsAndNaming:
+    T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    def _times(self, n=3):
+        return [self.T0 + timedelta(hours=h) for h in range(n)]
+
+    def test_column_names_and_order_match_dataframe(self):
+        from acquirium.Client.data_object import BindingInfo
+
+        bindings = [
+            # auto-aliased node: named by rdfs:label, else compacted point name
+            BindingInfo(nid=0, point_uri="urn:t#p2", ref_uri="urn:t#r2", alias="0",
+                        entity_contexts=[{}], point_label="Outlet"),
+            BindingInfo(nid=0, point_uri="urn:t#p3", ref_uri="urn:t#r3", alias="0", entity_contexts=[{}]),
+            # user alias covering two points: alias__label_or_point
+            BindingInfo(nid=1, point_uri="urn:t#p4", ref_uri="urn:t#r4", alias="flow",
+                        entity_contexts=[{}], point_label="inlet"),
+            BindingInfo(nid=1, point_uri="urn:t#p5", ref_uri="urn:t#r5", alias="flow", entity_contexts=[{}]),
+        ]
+        rows = [(b.alias, b.point_uri, b.ref_uri, t, 1.0, None) for b in bindings for t in self._times()]
+        data = _bound_data_object(bindings, rows)
+
+        reconciled = data.reconcile()
+        wide = data.dataframe(shape="wide")
+        assert reconciled.columns == ["time", *(f"{c}_reconciled" for c in wide.columns if c != "time")]
+        assert reconciled.columns == ["time", "flow__inlet_reconciled", "flow__p5_reconciled",
+                                      "Outlet_reconciled", "p3_reconciled"]
+
+    def test_points_without_numeric_data_get_null_columns_and_one_warning(self):
+        from acquirium.Client.data_object import BindingInfo
+
+        bindings = [
+            BindingInfo(nid=0, point_uri="urn:t#a", ref_uri="urn:t#a", alias="a", entity_contexts=[{}]),
+            BindingInfo(nid=1, point_uri="urn:t#status", ref_uri="urn:t#status", alias="status", entity_contexts=[{}]),
+            BindingInfo(nid=2, point_uri="urn:t#idle", ref_uri="urn:t#idle", alias="idle", entity_contexts=[{}]),
+        ]
+        rows = [("a", "urn:t#a", "urn:t#a", t, float(i), None) for i, t in enumerate(self._times())]
+        rows += [("status", "urn:t#status", "urn:t#status", t, None, "ON") for t in self._times()]  # text only
+        data = _bound_data_object(bindings, rows)  # "idle" has no rows at all
+
+        with pytest.warns(UserWarning, match=r"2 column\(s\).*\['idle_reconciled', 'status_reconciled'\]") as record:
+            df = data.reconcile()
+        assert len([w for w in record if "no numeric data" in str(w.message)]) == 1
+        assert df.columns == ["time", "a_reconciled", "idle_reconciled", "status_reconciled"]
+        assert df["a_reconciled"].to_list() == [0.0, 1.0, 2.0]
+        assert df["idle_reconciled"].null_count() == df["status_reconciled"].null_count() == df.height
+
+    def test_all_points_without_data_keep_their_columns(self):
+        from acquirium.Client.data_object import BindingInfo
+
+        bindings = [
+            BindingInfo(nid=0, point_uri="urn:t#a", ref_uri="urn:t#a", alias="a", entity_contexts=[{}]),
+            BindingInfo(nid=1, point_uri="urn:t#b", ref_uri="urn:t#b", alias="b", entity_contexts=[{}]),
+        ]
+        with pytest.warns(UserWarning, match="no numeric data"):
+            df = _bound_data_object(bindings, []).reconcile()
+        assert df.columns == ["time", "a_reconciled", "b_reconciled"]
+        assert df.is_empty()
+
+    def test_duplicate_readings_across_refs_are_first_wins_like_dataframe(self):
+        from acquirium.Client.data_object import BindingInfo
+
+        bindings = [
+            BindingInfo(nid=0, point_uri="urn:t#a", ref_uri=ref, alias="a", entity_contexts=[{}])
+            for ref in ("urn:t#r1", "urn:t#r2")
+        ]
+        rows = []
+        for t in self._times():
+            rows += [("a", "urn:t#a", "urn:t#r1", t, 1.0, None), ("a", "urn:t#a", "urn:t#r2", t, 2.0, None)]
+        data = _bound_data_object(bindings, rows)
+        assert data.reconcile()["a_reconciled"].to_list() == [1.0, 1.0, 1.0]
+        assert data.dataframe(shape="wide")["a"].to_list() == [1.0, 1.0, 1.0]
+
+    def test_plot_skips_points_without_data(self, tmp_path):
+        from acquirium.Client.data_object import BindingInfo
+
+        bindings = [
+            BindingInfo(nid=0, point_uri="urn:t#a", ref_uri="urn:t#a", alias="a", entity_contexts=[{}]),
+            BindingInfo(nid=1, point_uri="urn:t#idle", ref_uri="urn:t#idle", alias="idle", entity_contexts=[{}]),
+        ]
+        rows = [("a", "urn:t#a", "urn:t#a", t, 1.0, None) for t in self._times()]
+        fig = _bound_data_object(bindings, rows).plot(output_path=str(tmp_path / "plot.png"))
+        assert [line.get_label() for line in fig.axes[0].get_lines()] == ["a"]
 
 
 class TestQueryReconcileEdgePadding:
