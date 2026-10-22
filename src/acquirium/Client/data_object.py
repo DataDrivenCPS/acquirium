@@ -578,16 +578,25 @@ class DataObject:
                 _factors_cache[key] = self._client.get_conversion_factors(from_u, to_u)
             return _factors_cache[key]
 
+        # One request per stream. A stream matched by several data nodes
+        # (a pump's measurement node and its connection point's, say) has one
+        # binding per node; they share the fetched frame and differ only in
+        # alias, point, unit and entity columns below.
+        fetched: dict[str, pl.DataFrame] = {}
+        for binding in bindings:
+            if binding.ref_uri not in fetched:
+                fetched[binding.ref_uri] = self._client.timeseries_df(
+                    binding.ref_uri,
+                    start=start,
+                    end=end,
+                    limit=limit,
+                    order=order,
+                    value_mode=value_mode,
+                )
+
         frames: list[pl.DataFrame] = []
         for binding in bindings:
-            df = self._client.timeseries_df(
-                binding.ref_uri,
-                start=start,
-                end=end,
-                limit=limit,
-                order=order,
-                value_mode=value_mode,
-            )
+            df = fetched[binding.ref_uri]
             if df.is_empty():
                 continue
 
