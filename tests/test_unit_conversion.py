@@ -188,7 +188,7 @@ class TestDataObjectUnits:
         units = data.units()
         assert isinstance(units, dict)
         for alias in data.aliases:
-            assert alias in units
+            assert isinstance(units[alias], list)
 
     def test_convert_to_case2(self, acquirium_client):
         """Case 2: property has unit, user provides only to_unit."""
@@ -199,8 +199,8 @@ class TestDataObjectUnits:
         units = data.units()
         # Find an alias that has a unit
         alias_with_unit = None
-        for alias, unit_uri in units.items():
-            if unit_uri and "MilliL-PER-MIN" in unit_uri:
+        for alias, unit_uris in units.items():
+            if any(u and "MilliL-PER-MIN" in u for u in unit_uris):
                 alias_with_unit = alias
                 break
 
@@ -232,8 +232,8 @@ class TestDataObjectUnits:
         units = data.units()
         # Find an alias without a unit
         alias_no_unit = None
-        for alias, unit_uri in units.items():
-            if unit_uri is None:
+        for alias, unit_uris in units.items():
+            if unit_uris == [None]:
                 alias_no_unit = alias
                 break
 
@@ -256,8 +256,8 @@ class TestDataObjectUnits:
         units = data.units()
 
         alias_with_unit = None
-        for alias, unit_uri in units.items():
-            if unit_uri is not None:
+        for alias, unit_uris in units.items():
+            if any(u is not None for u in unit_uris):
                 alias_with_unit = alias
                 break
 

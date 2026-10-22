@@ -314,9 +314,12 @@ class DataObject:
     _materialized: bool = field(default=False, repr=False)
     _metadata_df: pl.DataFrame | None = field(default=None, repr=False)
 
-    # Pending unit conversions: list of (alias_pattern, from_unit, to_unit)
-    # alias_pattern is "*" for all aliases, or a specific alias name
-    _pending_conversions: list[tuple[str, str, str]] = field(default_factory=list, repr=False)
+    # Conversions recorded by convert_to() on a lazy object, applied when the
+    # values are fetched: ((alias, point_uri, ref_uri), from_uri, to_uri),
+    # one per binding.
+    _pending_conversions: list[tuple[tuple[str, str, str], str, str]] = field(
+        default_factory=list, repr=False
+    )
 
     # ------------------------------------------------------------------
     # Construction
@@ -448,35 +451,32 @@ class DataObject:
             counts[lbl] = counts.get(lbl, 0) + 1
         return {uri: lbl for uri, lbl in pairs if counts[lbl] == 1}
 
-    def _binding_units(self) -> dict[str, str | None]:
-        """Unit per alias from the graph annotations, handling Case 3.2/3.2.1.
+    @staticmethod
+    def _key(b: BindingInfo) -> tuple[str, str, str]:
+        return (b.alias, b.point_uri, b.ref_uri)
 
-        Returns {alias: unit_uri_or_None}: the property's unit, else the
-        external reference's unit (Case 3.2), else None.
+    @staticmethod
+    def _binding_mask(key: tuple[str, str, str]) -> pl.Expr:
+        alias, point_uri, ref_uri = key
+        return (
+            (pl.col("data_alias") == alias)
+            & (pl.col("point_uri") == point_uri)
+            & (pl.col("ref_uri") == ref_uri)
+        )
+
+    def _effective_unit(self, b: BindingInfo) -> str | None:
+        """Unit the binding's values are (or will be) expressed in.
+
+        The property's annotation, else the external reference's unit (Case
+        3.2), else None; overlaid with any conversion recorded for this
+        binding by ``convert_to()`` that has not been applied yet.
         """
-        alias_units: dict[str, str | None] = {}
-        for b in self._bindings:
-            if b.alias in alias_units:
-                continue
-            if b.property_unit:
-                alias_units[b.alias] = b.property_unit
-            elif b.ref_unit:
-                # Case 3.2: no property unit, adopt ref_unit
-                alias_units[b.alias] = b.ref_unit
-            else:
-                alias_units[b.alias] = None
-        return alias_units
-
-    def _resolve_effective_units(self) -> dict[str, str | None]:
-        """Unit each alias's values are (or will be) expressed in.
-
-        The graph annotations, overlaid with any conversion recorded by
-        ``convert_to()`` that has not been applied yet.
-        """
-        alias_units = self._binding_units()
-        for alias, _, to_unit in self._pending_conversions:
-            alias_units[alias] = to_unit
-        return alias_units
+        unit = b.property_unit or b.ref_unit
+        key = self._key(b)
+        for k, _, to_unit in self._pending_conversions:
+            if k == key:
+                unit = to_unit
+        return unit
 
     def _empty_tall(self) -> pl.DataFrame:
         schema: dict[str, Any] = {
@@ -510,10 +510,6 @@ class DataObject:
         """
         cast_value = self._query_params.get("cast_value", "float")
         value_mode = self._query_params.get("value_mode", "default")
-
-        # Auto-conversion targets the annotated unit; conversions requested
-        # with convert_to() are applied afterwards, on top of it.
-        effective_units = self._binding_units()
 
         # Cache conversion factors to avoid repeated server calls
         _factors_cache: dict[tuple[str, str], dict] = {}
@@ -556,10 +552,11 @@ class DataObject:
             df = df.drop("ref_uri")
             df = df.with_columns(pl.lit(binding.ref_uri).alias("ref_uri"))
 
-            # --- Case 3 auto-conversion ---
-            target_unit = effective_units.get(binding.alias)
+            # --- Case 3 auto-conversion: raw rows are stored in the external
+            # reference's unit; the point's annotation is the unit of record.
+            # Conversions requested with convert_to() are applied afterwards.
+            target_unit = binding.property_unit
             if binding.ref_unit and target_unit and binding.ref_unit != target_unit:
-                # Case 3.1: ext ref unit differs from effective unit → convert
                 # Need to cast value to float first for conversion
                 try:
                     df = df.with_columns(pl.col("value").cast(pl.Float64))
@@ -597,7 +594,7 @@ class DataObject:
         tall = pl.concat([_split_value_column(df) for df in frames], how="vertical")
 
         # Apply pending conversions (from convert_to() on a lazy DataObject)
-        for alias_pat, from_unit, to_unit in self._pending_conversions:
+        for key, from_unit, to_unit in self._pending_conversions:
             try:
                 factors = _get_factors(from_unit, to_unit)
                 if not factors.get("compatible", False):
@@ -606,17 +603,13 @@ class DataObject:
                         from_unit, to_unit,
                     )
                     continue
-                if alias_pat == "*":
-                    tall = self._apply_conversion(tall, factors)
-                else:
-                    mask = pl.col("data_alias") == alias_pat
-                    converted = self._apply_conversion(tall.filter(mask), factors)
-                    rest = tall.filter(~mask)
-                    tall = pl.concat([rest, converted], how="vertical")
+                mask = self._binding_mask(key)
+                converted = self._apply_conversion(tall.filter(mask), factors)
+                tall = pl.concat([tall.filter(~mask), converted], how="vertical")
             except Exception:
                 logger.warning(
-                    "DataObject: pending conversion failed %s -> %s for alias '%s'",
-                    from_unit, to_unit, alias_pat,
+                    "DataObject: pending conversion failed %s -> %s for %s",
+                    from_unit, to_unit, key,
                 )
 
         # Reorder columns for consistency
@@ -643,9 +636,9 @@ class DataObject:
         if self._pending_conversions:
             # Values are now in the requested units; record that on the
             # bindings so units() and later convert_to() calls start there.
-            final_units = {a: tu for a, _, tu in self._pending_conversions}
+            targets = {key: to_unit for key, _, to_unit in self._pending_conversions}
             self._bindings = [
-                replace(b, property_unit=final_units[b.alias]) if b.alias in final_units else b
+                replace(b, property_unit=targets[self._key(b)]) if self._key(b) in targets else b
                 for b in self._bindings
             ]
         self._materialized = True
@@ -916,19 +909,20 @@ class DataObject:
 
     def metadata(self, *, include_ref_uris: bool = False) -> pl.DataFrame:
         """Return a DataFrame of unique ``(data_alias, point_label,
-        point_uri, entity__*)`` tuples.
+        point_uri, unit, entity__*)`` tuples.
 
         Built from the query's bindings, so the answer is the same before
         and after the values are fetched and lists every matched point,
         including those with no rows in the requested window.
         ``point_label`` is the point's ``rdfs:label`` (null when it has
-        none). By default the UUID ``ref_uri`` column is hidden — multiple
+        none); ``unit`` is the unit the point's values are expressed in
+        (null when unannotated). By default the UUID ``ref_uri`` column is hidden — multiple
         ref_uris sharing the same point are folded into one row. Pass
         ``include_ref_uris=True`` to keep the per-ref breakdown (useful for
         per-ref filtering and debugging).
         """
         ref_col = ["ref_uri"] if include_ref_uris else []
-        cols = ["data_alias", "point_label", "point_uri"] + ref_col + self._entity_columns
+        cols = ["data_alias", "point_label", "point_uri", "unit"] + ref_col + self._entity_columns
         rows: list[dict[str, str | None]] = []
         for b in self._bindings:
             for ctx in (b.entity_contexts or [{}]):
@@ -936,6 +930,7 @@ class DataObject:
                     "data_alias": b.alias,
                     "point_label": b.point_label,
                     "point_uri": b.point_uri,
+                    "unit": self._effective_unit(b),
                 }
                 if include_ref_uris:
                     row["ref_uri"] = b.ref_uri
@@ -1044,14 +1039,21 @@ class DataObject:
     # Unit conversion
     # ------------------------------------------------------------------
 
-    def units(self) -> dict[str, str | None]:
-        """Return ``{alias: unit_uri_or_None}`` for each data alias.
+    def units(self) -> dict[str, list[str | None]]:
+        """Return ``{alias: [unit_uri, ...]}``: the distinct units of each
+        alias's points, in binding order.
 
-        The effective unit considers property annotations and external
-        reference annotations (Case 3.2: ref_unit adopted when property
-        has no unit).
+        An alias whose points all share one unit gives a one-element list.
+        ``None`` stands for a point with no unit annotation. The per-point
+        view is the ``unit`` column of :meth:`metadata`.
         """
-        return self._resolve_effective_units()
+        out: dict[str, list[str | None]] = {}
+        for b in self._bindings:
+            units = out.setdefault(b.alias, [])
+            unit = self._effective_unit(b)
+            if unit not in units:
+                units.append(unit)
+        return out
 
     def convert_to(
         self,
@@ -1062,11 +1064,14 @@ class DataObject:
     ) -> "DataObject":
         """Return a new DataObject with values converted to the target unit.
 
+        Each point converts from its own unit, so an alias whose points are
+        annotated differently still ends up in one unit.
+
         Args:
             to_unit: Target unit identifier (URI, label, symbol, or UCUM code).
-            from_unit: Source unit identifier. If None, the property's
-                ``qudt:hasUnit`` annotation is used (Case 2). If the property
-                has no unit, a ValueError is raised — pass ``from_unit``
+            from_unit: Source unit identifier for every affected point. If
+                None, each point's own unit is used (Case 2). A point with
+                no unit annotation then raises — pass ``from_unit``
                 explicitly (Case 1).
             alias: Apply conversion only to this alias. If None, all aliases
                 are converted.
@@ -1076,14 +1081,15 @@ class DataObject:
             modified.
 
         Raises:
-            ValueError: If ``from_unit`` is None and the alias has no unit
+            KeyError: If ``alias`` is not one of :attr:`aliases`.
+            ValueError: If ``from_unit`` is None and a point has no unit
                 annotation, or if the units are incompatible.
         """
         if self._client is None:
             raise ValueError("Cannot convert units without a client connection")
-
-        effective = self._resolve_effective_units()
-        affected_aliases = [alias] if alias else self.aliases
+        if alias is not None and alias not in self.aliases:
+            raise KeyError(f"Data alias '{alias}' not found. Available: {self.aliases}")
+        affected = [b for b in self._bindings if alias is None or b.alias == alias]
 
         # Resolve a convertible pair per (source, target) — the server picks,
         # among the top matches for a free-text side, the candidate that is
@@ -1102,47 +1108,35 @@ class DataObject:
                     ) from e
             return raw_pairs[key]
 
-        # Validate and determine from_unit per alias; store resolved URIs so
-        # the pending/materialize paths only ever see exact units.
-        conversions: list[tuple[str, str, str]] = []  # (alias, from_uri, to_uri)
-        for a in affected_aliases:
-            src = from_unit
+        # One conversion per binding, with resolved URIs so the
+        # pending/materialize paths only ever see exact units.
+        conversions: list[tuple[tuple[str, str, str], str, str]] = []
+        for b in affected:
+            src = from_unit if from_unit is not None else self._effective_unit(b)
             if src is None:
-                src = effective.get(a)
-                if src is None:
-                    raise ValueError(
-                        f"No unit annotation found for alias '{a}'. "
-                        f"Provide from_unit explicitly."
-                    )
+                raise ValueError(
+                    f"No unit annotation found for point <{b.point_uri}> "
+                    f"(alias '{b.alias}'). Provide from_unit explicitly."
+                )
             f = _factors(src, to_unit)
-            conversions.append((a, f["from_uri"], f["to_uri"]))
+            conversions.append((self._key(b), f["from_uri"], f["to_uri"]))
 
         factors_cache: dict[tuple[str, str], dict] = {
             (f["from_uri"], f["to_uri"]): f for f in raw_pairs.values()
         }
 
         if self._materialized and self._tall is not None:
-            # Eager path: clone the tall frame and apply conversions
+            # Eager path: convert the fetched rows of each binding.
             tall = self._tall.clone()
-            for a, fu, tu in conversions:
-                f = factors_cache[(fu, tu)]
-                mask = pl.col("data_alias") == a
-                converted = self._apply_conversion(tall.filter(mask), f)
-                rest = tall.filter(~mask)
-                tall = pl.concat([rest, converted], how="vertical")
-
-            # Update bindings with new unit
-            new_bindings = []
-            for b in self._bindings:
-                matched = any(c[0] == b.alias for c in conversions)
-                if matched:
-                    # Find the to_unit URI from the factors
-                    conv = next(c for c in conversions if c[0] == b.alias)
-                    new_uri = factors_cache[(conv[1], conv[2])]["to_uri"]
-                    new_bindings.append(replace(b, property_unit=new_uri))
-                else:
-                    new_bindings.append(b)
-
+            for key, fu, tu in conversions:
+                mask = self._binding_mask(key)
+                converted = self._apply_conversion(tall.filter(mask), factors_cache[(fu, tu)])
+                tall = pl.concat([tall.filter(~mask), converted], how="vertical")
+            targets = {key: tu for key, _, tu in conversions}
+            new_bindings = [
+                replace(b, property_unit=targets[self._key(b)]) if self._key(b) in targets else b
+                for b in self._bindings
+            ]
             return DataObject(
                 _bindings=new_bindings,
                 _entity_columns=self._entity_columns,
@@ -1155,7 +1149,7 @@ class DataObject:
 
         # Lazy path: record the conversions for _materialize(). The bindings
         # keep their annotated units until the values are actually converted;
-        # _resolve_effective_units() overlays the pending targets meanwhile.
+        # _effective_unit() overlays the pending targets meanwhile.
         pending = list(self._pending_conversions) + conversions
         return DataObject(
             _bindings=list(self._bindings),

@@ -181,7 +181,8 @@ This is only needed if you need to distinguish data coming from different source
 
 ## Units
 
-`units()` reports the unit per alias.
+`units()` lists the distinct units of each alias's points.
+The `unit` column of `metadata()` gives the unit per point.
 
 ```python
 d = (acq.query().entity(uri="wbs:RO", alias="ro")
@@ -190,10 +191,8 @@ d = (acq.query().entity(uri="wbs:RO", alias="ro")
 d.units()
 ```
 ```text
-{'flow': 'http://qudt.org/vocab/unit/KiloGM-PER-SEC'}
+{'flow': ['http://qudt.org/vocab/unit/KiloGM-PER-SEC']}
 ```
-**TODO**: I need a better visual for `.units()` and potentially, show all the units for each point
-
 `convert_to()` returns a new data object by converting the values into a target unit.
 
 **TODO**: this method and its params should be renamed (something like: `.convert()`)
@@ -203,7 +202,7 @@ kg_per_min = d.convert_to("kg/min")
 kg_per_min.units()
 ```
 ```text
-{'flow': 'http://qudt.org/vocab/unit/KiloGM-PER-MIN'}
+{'flow': ['http://qudt.org/vocab/unit/KiloGM-PER-MIN']}
 ```
 
 Values change with it: `10.67 kg/s` becomes `640.35 kg/min`.
