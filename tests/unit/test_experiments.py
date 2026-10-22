@@ -69,6 +69,46 @@ def test_file_attachment_is_content_addressed(tmp_path):
         store.close()
 
 
+def test_recording_rejects_empty_samples_so_receipts_match_entries(tmp_path):
+    store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
+    try:
+        ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
+        study = ledger.define("samples")
+        empty, full = (ledger.declare(study["template_id"], label, "output", "timeseries", {}) for label in ("empty", "full"))
+        run = ledger.start(study["template_id"], {})
+        when = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with pytest.raises(ValueError, match="at least one sample"):
+            ledger.record_batch(run["run_id"], [
+                {"form": "samples", "variable_id": empty["variable_id"], "samples": []},
+                {"form": "samples", "variable_id": full["variable_id"], "samples": [(when, 1.0)]}])
+        assert ledger.observations(study["template_id"], run_id=run["run_id"]) == []
+    finally:
+        store.close()
+
+
+def test_concurrent_declaration_of_same_label_is_idempotent(tmp_path, monkeypatch):
+    store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
+    try:
+        ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
+        other = ExperimentStore.standalone(store, tmp_path / "artifacts")
+        study = ledger.define("race")
+        record_update = ledger.metadata_graph.record_update
+        def interleave(*args, **kwargs):
+            # Another caller commits the same declaration after this one has
+            # read the existing variables but before it inserts.
+            monkeypatch.setattr(ledger.metadata_graph, "record_update", record_update)
+            other.declare(study["template_id"], "flow", "input", "scalar", {})
+            return record_update(*args, **kwargs)
+        monkeypatch.setattr(ledger.metadata_graph, "record_update", interleave)
+        variable = ledger.declare(study["template_id"], "flow", "input", "scalar", {})
+        assert variable["created"] is False
+        assert [item["label"] for item in ledger.variables(study["template_id"])] == ["flow"]
+        with pytest.raises(ValueError, match="declared differently"):
+            ledger.declare(study["template_id"], "flow", "output", "scalar", {})
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize("attachment", [False, True])
 @pytest.mark.parametrize("foreign", [False, True])
 def test_observation_rejects_unknown_or_foreign_variable(tmp_path, attachment, foreign):

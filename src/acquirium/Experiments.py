@@ -240,6 +240,21 @@ class ExperimentStore:
     @_publishes
     def declare_batch(self, template_id: str, declarations: list[dict]) -> list[dict]:
         """Validate and prepare outside the writer lock, then commit together."""
+        while True:
+            result, pending = self._prepare_declarations(template_id, declarations)
+            with self.store._lock, self.store._write_conn() as conn:
+                labels = [item["label"] for item, _ in pending]
+                marks = ",".join("?" for _ in labels)
+                if labels and self._execute(conn, f"SELECT 1 FROM experiment_variables WHERE template_id=? AND label IN ({marks}) LIMIT 1", [template_id, *labels]).fetchone():
+                    # A concurrent declaration committed after preparation.
+                    # Prepare again so it is compared rather than reinserted.
+                    continue
+                for item, update in pending:
+                    self._execute(conn, "INSERT INTO experiment_variables VALUES (?, ?, ?, ?, ?, ?)", [item["variable_id"], template_id, item["label"], item["role"], item["kind"], _database_timestamp(item["created_at"])])
+                    self._queue_metadata(conn, update)
+            return result
+
+    def _prepare_declarations(self, template_id, declarations):
         with self.store._own_conn() as conn:
             if self._execute(conn, "SELECT 1 FROM experiment_templates WHERE template_id=?", [template_id]).fetchone() is None:
                 raise KeyError(template_id)
@@ -264,11 +279,7 @@ class ExperimentStore:
             existing[label] = item
             pending.append((item, self.metadata_graph.record_update(variable_record(template_id, item))))
             result.append(item)
-        with self.store._lock, self.store._write_conn() as conn:
-            for item, update in pending:
-                self._execute(conn, "INSERT INTO experiment_variables VALUES (?, ?, ?, ?, ?, ?)", [item["variable_id"], template_id, item["label"], item["role"], item["kind"], _database_timestamp(item["created_at"])])
-                self._queue_metadata(conn, update)
-        return result
+        return result, pending
 
     @_publishes
     def start(self, template_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
@@ -351,7 +362,9 @@ class ExperimentStore:
                     raise ValueError(f"{label!r} is a {kind} variable; samples require a time series")
                 rows = _sample_rows(entry["samples"])
                 if not rows:
-                    continue
+                    # Receipts pair with entries by position; skipping one
+                    # would shift every later receipt onto the wrong entry.
+                    raise ValueError(f"samples recording for {label!r} requires at least one sample")
                 key = tuple(key or ())
                 name = _stream_name(entry["variable_id"], key)
                 ref = str(compute_ref_uri(source, name))
