@@ -4,7 +4,6 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Iterator, TYPE_CHECKING
 import polars as pl
-import logging
 import warnings
 
 if TYPE_CHECKING:
@@ -12,7 +11,6 @@ if TYPE_CHECKING:
     from acquirium.Client.query_graph import QueryGraph
     from acquirium.Client.client import AcquiriumClient
 
-logger = logging.getLogger(__name__)
 
 
 def _parse_sparql_bindings(
@@ -594,22 +592,29 @@ class DataObject:
             # Conversions requested with convert_to() are applied afterwards.
             target_unit = binding.property_unit
             if binding.ref_unit and target_unit and binding.ref_unit != target_unit:
-                # Need to cast value to float first for conversion
+                # The user did not ask for this conversion, so a failure is a
+                # warning they can see; the raw values are returned as stored.
                 try:
-                    df = df.with_columns(pl.col("value").cast(pl.Float64))
                     factors = _get_factors(binding.ref_unit, target_unit)
                     if factors.get("compatible", False):
-                        df = self._apply_conversion(df, factors)
-                    else:
-                        logger.warning(
-                            "DataObject: incompatible units for auto-conversion "
-                            "%s -> %s on ref %s, skipping",
-                            binding.ref_unit, target_unit, binding.ref_uri,
+                        df = self._apply_conversion(
+                            df.with_columns(pl.col("value").cast(pl.Float64)), factors
                         )
-                except Exception:
-                    logger.warning(
-                        "DataObject: auto-conversion failed for ref %s (%s -> %s)",
-                        binding.ref_uri, binding.ref_unit, target_unit,
+                    else:
+                        warnings.warn(
+                            f"point <{binding.point_uri}> is annotated {target_unit} but its "
+                            f"stream is stored in {binding.ref_unit}, which does not convert; "
+                            f"the values are returned in {binding.ref_unit}",
+                            UserWarning,
+                            stacklevel=4,
+                        )
+                except Exception as e:
+                    warnings.warn(
+                        f"could not convert point <{binding.point_uri}> from its stored unit "
+                        f"{binding.ref_unit} to its annotation {target_unit} ({e}); the values "
+                        f"are returned in {binding.ref_unit}",
+                        UserWarning,
+                        stacklevel=4,
                     )
 
             # Resolve entity columns for this data key
@@ -630,24 +635,26 @@ class DataObject:
 
         tall = pl.concat([_split_value_column(df, cast_value) for df in frames], how="vertical")
 
-        # Apply pending conversions (from convert_to() on a lazy DataObject)
+        # Apply the conversions convert_to() recorded on a lazy object. The
+        # user asked for these, so a failure is an error, not a frame in
+        # the wrong unit.
         for key, from_unit, to_unit in self._pending_conversions:
+            alias, point_uri, _ref = key
             try:
                 factors = _get_factors(from_unit, to_unit)
-                if not factors.get("compatible", False):
-                    logger.warning(
-                        "DataObject: incompatible units in pending conversion %s -> %s",
-                        from_unit, to_unit,
-                    )
-                    continue
-                mask = self._binding_mask(key)
-                converted = self._apply_conversion(tall.filter(mask), factors)
-                tall = pl.concat([tall.filter(~mask), converted], how="vertical")
-            except Exception:
-                logger.warning(
-                    "DataObject: pending conversion failed %s -> %s for %s",
-                    from_unit, to_unit, key,
+            except Exception as e:
+                raise ValueError(
+                    f"convert_to: could not resolve {from_unit} -> {to_unit} for point "
+                    f"<{point_uri}> (alias '{alias}'): {e}"
+                ) from e
+            if not factors.get("compatible", False):
+                raise ValueError(
+                    f"convert_to: {from_unit} does not convert to {to_unit} for point "
+                    f"<{point_uri}> (alias '{alias}')"
                 )
+            mask = self._binding_mask(key)
+            converted = self._apply_conversion(tall.filter(mask), factors)
+            tall = pl.concat([tall.filter(~mask), converted], how="vertical")
 
         # Reorder columns for consistency
         base_cols = ["data_alias", "point_uri", "ref_uri"] + self._entity_columns + ["time", "value_numeric", "value_text"]
