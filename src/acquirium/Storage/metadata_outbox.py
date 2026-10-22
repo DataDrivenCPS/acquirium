@@ -7,11 +7,11 @@ import threading
 from uuid import uuid4
 from weakref import WeakValueDictionary
 
-from rdflib import Dataset
+from rdflib import Dataset, Graph
 from oxrdflib.store import OxigraphStore
 import pyoxigraph
 
-from acquirium.Storage.graph_registry import source_graph_uri
+from acquirium.Storage.graph_registry import METADATA_SOURCE_ID, source_graph_uri
 
 
 def execute(conn, statement, parameters=()):
@@ -90,8 +90,26 @@ class LocalMetadataGraph:
         self.version = 0
 
     def sparql_query(self, query, **kwargs):
-        result = self.dataset.query(query)
+        from acquirium.Metadata import overlay_documents
+
+        # Keep native SPARQL term equality (including plain/xsd:string
+        # equivalence) when querying the disposable effective view.
+        graph = Graph(store=OxigraphStore(store=pyoxigraph.Store()))
+        for context in self.dataset.graphs():
+            graph += context
+        overlay_documents(graph, self.dataset.graph(source_graph_uri(METADATA_SOURCE_ID)))
+        result = graph.query(query)
         return {"columns": [str(v) for v in result.vars], "rows": [list(row) for row in result]}
+
+    def metadata_documents(self, subjects):
+        from acquirium.Metadata import DOCUMENT_NS, decode_document_rows
+
+        subjects = sorted(set(map(str, subjects)))
+        rows = [(subject, quad.predicate.value, quad.object.value, quad.graph_name.value)
+                for subject in subjects
+                for quad in self.dataset.store._inner.quads_for_pattern(pyoxigraph.NamedNode(subject), None, None, None)
+                if quad.predicate.value.startswith(DOCUMENT_NS)]
+        return decode_document_rows(subjects, rows)
 
     def sparql_update(self, update, *, graph_uri):
         self.dataset.graph(graph_uri).update(update)

@@ -73,6 +73,14 @@ def test_model_sweep_roundtrip_request_budget_and_keyed_deletion(tmp_path, monke
         assert ac.query().measurement(quantity_kind="http://qudt.org/vocab/quantitykind/VolumeFlowRate").dataframe(shape="narrow").height == 18
         assert runs[0].observations(variables["capacity"]).latest().dataframe().height == 2
         assert {obs.key for obs in runs[0].observations(variables["flow"]).all()} == {("p1",), ("p2",)}
+        # Public metadata edits agree with native and saved-document filters.
+        ac.insert_metadata(runs[1].uri, {"scenario": 99, "items": [{"name": "A", "cost": 1}]})
+        assert study.experiments.where(scenario=1).all() == []
+        assert [run.run_id for run in study.experiments.where(scenario=99).all()] == [runs[1].run_id]
+        assert [run.run_id for run in study.experiments.where(metadata={"scenario": 99}).all()] == [runs[1].run_id]
+        selected = study.experiments.where(scenario=99).query()
+        assert selected.include("scenario").metadata()["experiment.scenario"].to_list() == [99]
+        assert selected.include("items").drop("items.name").metadata_objects()[0]["experiment"]["items"] == [{"cost": 1}]
         assert runs[0].delete()["samples"] == 9
         assert ac.query().measurement(variable_id=variables["flow"].variable_id, pump="p1").dataframe(shape="narrow").height == 6
 
@@ -92,6 +100,7 @@ def test_model_sweep_roundtrip_request_budget_and_keyed_deletion(tmp_path, monke
         aq.shutdown()
         ac = aq.init(data_dir=tmp_path / "local-server")
         assert ac.study.get("model sweep").variables["config"].metadata == to_json(payload)
+        assert ac.study.get("model sweep").experiments.where(scenario=99).all()[0].metadata["scenario"] == 99
     finally:
         aq.shutdown()
 

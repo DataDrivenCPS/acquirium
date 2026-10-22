@@ -19,6 +19,12 @@ schemas; saved experiment metadata reads complete documents directly through the
 same SPARQL seam. `metadata_objects()` restores selected user documents before
 applying requested casts.
 
+Explicit edits in the reserved metadata source override complete user fields
+in the derived query view as well as document reads, preserving the original
+source assertions. Semantic predicates remain additive. Object selections and
+exclusions traverse both implicit list elements and explicit numeric positions
+without shifting list positions or reintroducing dropped fields.
+
 The graph owns descriptive variable, run, and annotation metadata. SQL owns
 Study identity, declaration identity/kind/role, run lifecycle, recorded values,
 observation ordering, stream references and intervals, and artifact ownership.

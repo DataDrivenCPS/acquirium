@@ -1050,11 +1050,14 @@ class OxigraphGraphStore:
         return _compute_source_graph_uri(source_id, plant_graph_uri=str(self.main_graph_uri))
 
     def _source_data_graph(self) -> Graph:
-        """Materialize the union of registered deployment data graphs only."""
+        """Materialize deployment data with explicit user metadata overrides."""
+        from acquirium.Metadata import overlay_documents
+
         merged = Graph()
         for context in self.source_dataset.graphs():
             if self._is_registered_data_graph_uri(context.identifier):
                 merged += context
+        overlay_documents(merged, self.source_dataset.graph(self.source_graph_uri(METADATA_SOURCE_ID)))
         return merged
 
     @staticmethod

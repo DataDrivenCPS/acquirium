@@ -1772,9 +1772,8 @@ class Query:
                        value_of(r[vi], d[vi] if vi < len(d) else None))
         out = [{alias: _lists(obj) for alias, obj in record.items()} for record in groups.values()]
 
-        from acquirium.Metadata import read_documents
+        from acquirium.Metadata import read_documents, select_document, drop_document_path
         from acquirium.Client.explore.attributes import REGISTRY
-        from copy import deepcopy
         subjects = {str(row[i]) for row in rows for _, i in nodes if row[i] is not None}
         documents = read_documents(self.client, subjects, include_dependencies=include_dependencies) if subjects else {}
         node_subjects = {}
@@ -1790,29 +1789,15 @@ class Query:
                 selected = [name for snid, name, _ in g.selects if snid == nid]
                 if nid in g.object_all:
                     selected += [name for name in doc if name not in REGISTRY]
-                for name in sorted(set(selected), key=len):
-                    if (nid, name) in g.object_excluded or name.split(".", 1)[0] in REGISTRY:
-                        continue
-                    parts = name.split(".")
-                    value = doc
-                    try:
-                        for part in parts:
-                            value = value[int(part)] if isinstance(value, list) else value[part]
-                    except (KeyError, IndexError, ValueError, TypeError):
-                        continue
-                    # A complete parent wins over individual projected leaves.
-                    if len(parts) == 1:
-                        record[alias][name] = deepcopy(value)
-                    else:
-                        _place(record[alias], parts, deepcopy(value))
+                selected = [name for name in selected if name.split(".", 1)[0] not in REGISTRY]
+                # Replace whole projected roots: _place builds position-keyed
+                # dicts and cannot safely extend already reconstructed lists.
+                for root in {name.split(".", 1)[0] for name in selected} & doc.keys():
+                    record[alias].pop(root, None)
+                record[alias].update(select_document(doc, selected))
                 for snid, name in g.object_excluded:
                     if snid == nid:
-                        parent = record[alias]
-                        parts = name.split(".")
-                        for part in parts[:-1]:
-                            parent = parent.get(part, {}) if isinstance(parent, dict) else {}
-                        if isinstance(parent, dict):
-                            parent.pop(parts[-1], None)
+                        drop_document_path(record[alias], name.split("."))
 
         for nid, name, type_, strict in g.casts:
             alias = g.aliases_reverse.get(nid, f"v{nid}")
@@ -1930,6 +1915,12 @@ def _cast_at(value: Any, segments: List[str], cast: Any) -> Any:
     if not segments:
         return cast(value)
     if isinstance(value, list):
+        if segments[0].isdigit():
+            result = list(value)
+            index = int(segments[0])
+            if index < len(result):
+                result[index] = _cast_at(result[index], segments[1:], cast)
+            return result
         return [_cast_at(e, segments, cast) for e in value]
     if isinstance(value, dict) and segments[0] in value:
         out = dict(value)

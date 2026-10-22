@@ -162,6 +162,10 @@ change in any release.
   model download grows from 66 MB to 133 MB.
 
 ### Fixed
+- Explicit user metadata edits use the same values in graph filters, tables,
+  and document reads while preserving source assertions. Object selections and
+  exclusions handle list paths without shifting positions or restoring dropped
+  fields.
 - Existing DuckDB and TimescaleDB databases upgrade in place through a shared,
   versioned migration ledger before dependent views and indexes are created.
 - Published timestamps retain their instants with non-UTC PostgreSQL sessions.

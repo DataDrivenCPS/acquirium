@@ -210,6 +210,12 @@ pump that saved `"tags": "lab"` shows `["lab"]` there; the object keeps
 `"lab"`. A list of dicts or a nested list comes back as saved, element
 positions intact. A URI value stays a URI; only the table compacts to CURIEs.
 
+For a list of objects, `include("items.name")` selects each object's `name`
+and preserves list positions, including nulls and empty objects.
+`include("items.1.name")` selects the second object's name; the other positions
+are null. `include("items").drop("items.name")` removes names from every item,
+while `drop("items.1.name")` removes the name only from the second item.
+
 `id` is an attribute like the others, with a fallback: it is the id saved on
 the node, else the node itself. The objects always carry it, as the URI.
 `include("id")` adds it to the table, as the CURIE; `include("all")` leaves
@@ -321,7 +327,16 @@ After a write, build a new query to see the change.
 
 Writing a key replaces the node's previous value for it, including every
 leaf under a nested key.
-Keys you do not mention stay as they are:
+Keys you do not mention stay as they are.
+
+For user fields saved by another source, an explicit metadata edit takes
+precedence in filters, query tables, and object reads. The query view replaces
+the whole field, so old nested leaves do not remain visible. The source's
+original assertions stay intact; removing the edit reveals them again.
+Semantic fields such as `unit` retain their additive source semantics described
+below.
+
+For example:
 
 ```python
 acq.insert_metadata("swro:P1", {

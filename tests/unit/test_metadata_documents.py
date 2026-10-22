@@ -82,6 +82,101 @@ def test_explicit_metadata_edits_take_precedence_over_source_documents():
     assert matching_documents(client, [uri], {"metadata": {"value": "edited"}}) == {uri}
 
 
+def test_metadata_edits_use_the_same_values_for_filters_tables_and_objects(tmp_path):
+    from acquirium.Storage.graph_store import OxigraphGraphStore
+    from acquirium.internals.internals_namespaces import HAS_UNIT
+
+    graph = OxigraphGraphStore(store_path=tmp_path / "graph", env_root=tmp_path / "ontoenv")
+    uri, cls = "urn:example:node", "urn:example:Class"
+    source = source_graph_uri("driver")
+    original = {"scenario": "baseline", "settings": {"old": True, "mode": "A"},
+                "unit": "urn:unit:original"}
+    try:
+        content = Graph()
+        content.add((URIRef(uri), RDF.type, URIRef(cls)))
+        for triple in plan_write(uri, original, role="data", resolve=lambda *args: None).triples:
+            content.add(triple)
+        graph.insert_graph(content, replace=True, graph_uri=source)
+        edits = {"scenario": "edited", "settings": {"mode": "B"}, "unit": "urn:unit:edited"}
+        graph.sparql_update(update_text([plan_write(uri, edits, role="data", resolve=lambda *args: None)]),
+                            graph_uri=source_graph_uri("metadata"))
+        client = _GraphQueryClient(graph)
+        query = Query(client).entity(cls, alias="item")
+        assert query.where(scenario="baseline").metadata_objects() == []
+        assert query.where(**{"settings.mode": "A"}).metadata_objects() == []
+        assert not list(graph._source_data_graph().objects(URIRef(uri), URIRef("urn:acquirium:attr#settings.old")))
+        selected = query.where(scenario="edited").include("scenario", "settings")
+        assert selected.metadata_objects() == [{"item": {"id": uri, "scenario": "edited", "settings": {"mode": "B"}}}]
+        assert selected.metadata()["item.scenario"].to_list() == ["edited"]
+        # The overlay changes the query view, never the driver's assertions.
+        assert (URIRef(uri), URIRef("urn:acquirium:attr#scenario"), Literal("baseline")) in graph.source_dataset.graph(source)
+        # Semantic assertions keep PR 120's additive ownership semantics.
+        assert set(graph._source_data_graph().objects(URIRef(uri), HAS_UNIT)) == {URIRef(original["unit"]), URIRef(edits["unit"])}
+        # Removing an edit reveals the source value again.
+        graph.sparql_update(update_text([plan_write(uri, {"scenario": None}, role="data", resolve=lambda *args: None)]),
+                            graph_uri=source_graph_uri("metadata"))
+        assert Query(client).entity(cls, alias="item").where(scenario="baseline").include("scenario").metadata_objects() == [
+            {"item": {"id": uri, "scenario": "baseline"}}]
+    finally:
+        graph.close()
+
+
+@pytest.mark.parametrize(("selection", "excluded", "expected"), [
+    ("items", "items.name", [None, {"cost": 1}, {}, {"cost": 2}, None]),
+    ("items.name", None, [None, {"name": "A"}, {}, {"name": "B"}, None]),
+    ("items.1.name", None, [None, {"name": "A"}, None, None, None]),
+    ("items", "items.1.name", [None, {"cost": 1}, {}, {"name": "B", "cost": 2}, None]),
+    ("all", "items.name", [None, {"cost": 1}, {}, {"cost": 2}, None]),
+])
+def test_object_selection_and_exclusion_preserve_list_paths(selection, excluded, expected):
+    graph = MemoryGraphStore()
+    uri, cls = "urn:example:node", "urn:example:Class"
+    items = [None, {"name": "A", "cost": 1}, {}, {"name": "B", "cost": 2}, None]
+    content = Graph()
+    content.add((URIRef(uri), RDF.type, URIRef(cls)))
+    for triple in plan_write(uri, {"items": items}, role="entity", resolve=lambda *args: None).triples:
+        content.add(triple)
+    graph.insert_graph(content, replace=True, graph_uri=source_graph_uri("test"))
+    query = Query(_GraphQueryClient(graph)).entity(cls, alias="item").include(selection)
+    if excluded:
+        query = query.drop(excluded)
+    assert query.metadata_objects() == [{"item": {"id": uri, "items": expected}}]
+    # Reading a selection must not mutate the authoritative document.
+    assert read_documents(_GraphQueryClient(graph), [uri])[uri] == {"items": items}
+    assert query.include("items", "items.1.name").metadata_objects()[0]["item"].keys() == {"id", "items"}
+
+
+def test_indexed_object_selection_applies_casts_at_the_original_position():
+    graph = MemoryGraphStore()
+    uri, cls = "urn:example:node", "urn:example:Class"
+    graph.sparql_update(f"INSERT DATA {{ <{uri}> a <{cls}> }}", graph_uri=source_graph_uri("test"))
+    write = plan_write(uri, {"items": [None, {"cost": 1}, {"cost": 2}]}, role="entity", resolve=lambda *args: None)
+    graph.sparql_update(update_text([write]), graph_uri=source_graph_uri("test"))
+    query = Query(_GraphQueryClient(graph)).entity(cls, alias="item").include("items.1.cost", type="string")
+    assert query.metadata_objects() == [{"item": {"id": uri, "items": [None, {"cost": "1"}, None]}}]
+
+
+def test_standalone_graph_uses_document_precedence_for_queries(tmp_path):
+    from acquirium.Storage.metadata_outbox import LocalMetadataGraph
+
+    graph = LocalMetadataGraph(tmp_path / "standalone")
+    uri, cls = "urn:example:node", "urn:example:Class"
+    source = source_graph_uri("experiments")
+    try:
+        graph.sparql_update(f"INSERT DATA {{ <{uri}> a <{cls}> }}", graph_uri=source)
+        for owner, values in ((source, {"scenario": "baseline", "metadata": {"old": True}}),
+                              (source_graph_uri("metadata"), {"scenario": "edited", "metadata": {}})):
+            graph.sparql_update(update_text([plan_write(uri, values, role="entity", resolve=lambda *args: None)]), graph_uri=owner)
+        client = _GraphQueryClient(graph)
+        query = Query(client).entity(cls, alias="item")
+        assert query.where(scenario="baseline").metadata_objects() == []
+        assert query.where(scenario="edited").include("scenario", "metadata").metadata_objects() == [
+            {"item": {"id": uri, "scenario": "edited", "metadata": {}}}]
+        assert graph.metadata_documents([uri])[uri] == {"scenario": "edited", "metadata": {}}
+    finally:
+        graph.dataset.close()
+
+
 def test_http_documents_preserve_types_and_read_asserted_source(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from importlib import import_module

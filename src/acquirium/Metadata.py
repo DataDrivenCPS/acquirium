@@ -7,6 +7,7 @@ null positions, and the dates and URIs accepted by the metadata writer.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from datetime import date, datetime
 import json
 from urllib.parse import quote, unquote
@@ -120,6 +121,87 @@ def matching_documents(client, subjects, values):
     documents = read_documents(client, subjects)
     return {subject for subject, document in documents.items()
             if all(dumps(document.get(key)) == value for key, value in expected.items())}
+
+
+def overlay_documents(graph, metadata):
+    """Apply explicit user-field edits to a disposable query graph in place.
+
+    Ownership and the original assertions stay in the source dataset. A saved
+    document replaces its entire user field, including old flattened leaves.
+    Semantic predicates retain their additive source ownership semantics.
+    """
+    from acquirium.Client.explore.attributes import ATTR_NS, REGISTRY
+
+    fields = {}
+    for subject, predicate, _ in metadata:
+        if str(predicate).startswith(DOCUMENT_NS):
+            fields.setdefault(subject, set()).add(unquote(str(predicate)[len(DOCUMENT_NS):]))
+    for subject, keys in fields.items():
+        documents = {document_predicate(key) for key in keys}
+        user_keys = keys - REGISTRY.keys()
+        for triple in list(graph.triples((subject, None, None))):
+            predicate = str(triple[1])
+            if triple[1] in documents or (predicate.startswith(ATTR_NS)
+                    and predicate[len(ATTR_NS):].split(".", 1)[0] in user_keys):
+                graph.remove(triple)
+    graph += metadata
+
+
+_MISSING = object()
+
+
+def select_document(document, paths):
+    """Select dotted paths while retaining the positions of list elements.
+
+    A name traverses every element of a list; a numeric segment selects one
+    position. Unselected positions are null, rather than shifting later items.
+    """
+    def select(value, selected):
+        if () in selected:
+            return deepcopy(value)
+        if isinstance(value, dict):
+            result = {}
+            for key in {path[0] for path in selected}:
+                if key in value:
+                    child = select(value[key], [path[1:] for path in selected if path[0] == key])
+                    if child is not _MISSING:
+                        result[key] = child
+            return result if result else _MISSING
+        if isinstance(value, list):
+            result = []
+            for index, item in enumerate(value):
+                children = [path[1:] if path[0].isdigit() else path for path in selected
+                            if not path[0].isdigit() or int(path[0]) == index]
+                child = select(item, children) if children else _MISSING
+                if child is _MISSING:
+                    child = {} if children and isinstance(item, dict) else None
+                result.append(child)
+            return result
+        return _MISSING
+
+    result = select(document, [tuple(path.split(".")) for path in paths]) if paths else _MISSING
+    return {} if result is _MISSING else result
+
+
+def drop_document_path(value, path):
+    """Remove a selected field in place, traversing implicit or indexed lists."""
+    head, *rest = path
+    if isinstance(value, list):
+        if head.isdigit():
+            index = int(head)
+            if index < len(value):
+                if rest:
+                    drop_document_path(value[index], rest)
+                else:
+                    value[index] = None
+        else:
+            for item in value:
+                drop_document_path(item, path)
+    elif isinstance(value, dict) and head in value:
+        if rest:
+            drop_document_path(value[head], rest)
+        else:
+            value.pop(head)
 
 
 def projected_values(values):
