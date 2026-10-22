@@ -40,9 +40,6 @@ def compute_ref_uri(source_id: str, ref_name: str) -> URIRef:
     return ACQUIRIUM_NS[ref_uri_str]
 
 
-compute_handle = compute_ref_uri
-
-
 class TimeseriesInfo(BaseModel):
     row_count: int
     earliest: datetime | None = None

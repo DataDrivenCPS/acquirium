@@ -41,10 +41,10 @@ Startup runs in this order:
 
 1. Read the config, open both stores, load the ontologies.
 2. Build or load the embedding indexes.
-3. Sync the `streams` table from the graph.
-   A reference node failing the canonical-URI check aborts startup; see the
-   [lifecycle guide](../explanation/stream-lifecycle.md#registration-and-the-streams-table).
-4. Restore durable app deployments and start the materialization coordinator.
+3. Read the registered streams from the graph.
+   A reference node failing the canonical-URI check aborts startup.
+4. Restore app deployments. If the engine runs a plan that `apps.json` does not
+   record, startup fails instead of retracting every derived output.
 5. Serve HTTP. `/health` answers from this point.
 6. In the background, start the `[[drivers]]` entries and then deploy the
    `[[apps]]` entries. Drivers start first because their setup may load the
@@ -53,7 +53,7 @@ Startup runs in this order:
 Note that `/health` only means the core is up; drivers and apps may still be
 starting.
 Check `GET /drivers/list` for configured drivers and
-`GET /materialization/dag` for app bindings and execution state.
+`GET /apps` and `GET /engine/status` for app bindings and execution state.
 The `Acquirium()` client constructor waits for `/health` (60 seconds by
 default) so scripts can start before the server finishes booting.
 
@@ -63,11 +63,10 @@ A warm restart with an intact data directory is much faster.
 
 ## Docker
 
-`compose.yaml` runs the server with TimescaleDB, Mosquitto and Grafana;
-`compose.minimal.yaml` is the same stack without profiles, hardcoded to
-`acquirium.docker.toml`.
-Postgres credentials and `PG_DSN` come from `.env` (see `.env.example`).
-Since these are environment variables, they override the toml keys.
+`compose.yaml` runs the server with Mosquitto. `compose.minimal.yaml` is the
+same stack without profiles, hardcoded to `acquirium.docker.toml`. Overrides
+come from `.env` (see `.env.example`); they are environment variables, so they
+override the toml keys.
 `compose.testing.yaml` runs the same services on offset ports (server 8010,
-Postgres 55432, MQTT 11883) for the integration test suite; the Makefile's
-`testing-up`, `test` and `wait-health` targets wrap it.
+MQTT 11883) for the integration test suite; the Makefile's `testing-up`, `test`
+and `wait-health` targets wrap it.

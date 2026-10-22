@@ -26,7 +26,8 @@ logger = logging.getLogger("acquirium.driver")
 MAX_INSERT_ROWS = 10_000
 # Seconds the last request of an insert waits for publication on the server.
 INSERT_WAIT_S = 30
-# How long a request refused at engine capacity (HTTP 503) is retried.
+# How long a request refused with HTTP 503 (a full inbox, or the engine or its
+# database unavailable) is retried.
 CAPACITY_RETRY_S = 300
 
 
@@ -586,7 +587,7 @@ class IngestDriver(Driver):
         return {"ok": True, "rows_inserted": total}
 
     def _insert_chunk(self, source: str, chunk: "pl.DataFrame", request_id: str, wait: float) -> Any:
-        """Insert one request, waiting out the engine's pending-request limit."""
+        """Insert one request, retrying while the server answers 503."""
         from requests import HTTPError
 
         deadline = time.monotonic() + CAPACITY_RETRY_S
@@ -600,7 +601,8 @@ class IngestDriver(Driver):
                 if response is None or response.status_code != 503 or time.monotonic() >= deadline:
                     raise
                 delay = float(response.headers.get("Retry-After", 1))
-                logger.debug("%s: engine at capacity, retrying in %.1f s", type(self).__name__, delay)
+                logger.debug("%s: engine unavailable (%s), retrying in %.1f s",
+                             type(self).__name__, response.text[:200], delay)
                 time.sleep(delay)
 
     def normalize_observations(self, observations: "pl.DataFrame | None") -> "pl.DataFrame":
