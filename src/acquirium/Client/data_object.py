@@ -647,6 +647,18 @@ class DataObject:
     # Alias-based access (triggers materialization)
     # ------------------------------------------------------------------
 
+    def __contains__(self, alias: object) -> bool:
+        """``alias in data`` — answered from the bindings, without a fetch."""
+        return alias in self.aliases
+
+    def __iter__(self) -> Iterator[str]:
+        """Iterate over the data aliases, like a dict over its keys."""
+        return iter(self.aliases)
+
+    def __len__(self) -> int:
+        """Number of data aliases."""
+        return len(self.aliases)
+
     def __getitem__(self, alias: str) -> pl.DataFrame:
         """Return time-series for a data alias.
 
@@ -654,8 +666,14 @@ class DataObject:
         (first-wins). If the alias resolves to a single point_uri the result
         is ``[time, value]``; if several point_uris share the alias the
         result is ``[time, value, point_uri]`` so the caller can
-        disambiguate.
+        disambiguate. An alias that exists but has no rows in the window
+        returns an empty ``[time, value]`` frame.
+
+        Raises:
+            KeyError: If ``alias`` is not one of :attr:`aliases`.
         """
+        if alias not in self.aliases:
+            raise KeyError(f"Data alias '{alias}' not found. Available: {self.aliases}")
         self._materialize()
         subset = self._tall.filter(pl.col("data_alias") == alias)
         if subset.is_empty():

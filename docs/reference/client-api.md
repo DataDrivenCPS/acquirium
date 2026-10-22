@@ -167,7 +167,8 @@ See the [data tutorial](../tutorials/data.md).
 | method | description |
 |---|---|
 | `dataframe(shape="wide", *, start=None, end=None, limit=None, order="asc", include_ref=False, compact=True) -> pl.DataFrame` | The values as one frame; the window filters the fetched rows (`limit` per stream). |
-| `d["alias"] -> pl.DataFrame` | One alias as `[time, value]`, plus `point_uri` when the alias covers several points. |
+| `d["alias"] -> pl.DataFrame` | One alias as `[time, value]`, plus `point_uri` when the alias covers several points. `KeyError` for an unknown alias. |
+| `"alias" in d`, `iter(d)`, `len(d)` | Membership, iteration and count over `aliases`; none of them fetch. |
 | `metadata(*, include_ref_uris=False) -> pl.DataFrame` | Unique `(data_alias, point_label, point_uri, unit, entity__*)` rows. |
 | `units() -> dict[str, list[str \| None]]` | The distinct unit URIs of each alias's points; `metadata()` has the unit per point. |
 | `convert_to(to_unit, *, from_unit=None, alias=None) -> DataObject` | A new object with values converted to `to_unit`, each point from its own unit; `from_unit=` for points with no unit, `alias=` to convert one alias. |
