@@ -435,10 +435,11 @@ class DataObject:
             counts[lbl] = counts.get(lbl, 0) + 1
         return {uri: lbl for uri, lbl in pairs if counts[lbl] == 1}
 
-    def _resolve_effective_units(self) -> dict[str, str | None]:
-        """Determine the effective unit for each alias, handling Case 3.2/3.2.1.
+    def _binding_units(self) -> dict[str, str | None]:
+        """Unit per alias from the graph annotations, handling Case 3.2/3.2.1.
 
-        Returns {alias: effective_unit_uri_or_None}.
+        Returns {alias: unit_uri_or_None}: the property's unit, else the
+        external reference's unit (Case 3.2), else None.
         """
         alias_units: dict[str, str | None] = {}
         for b in self._bindings:
@@ -451,6 +452,17 @@ class DataObject:
                 alias_units[b.alias] = b.ref_unit
             else:
                 alias_units[b.alias] = None
+        return alias_units
+
+    def _resolve_effective_units(self) -> dict[str, str | None]:
+        """Unit each alias's values are (or will be) expressed in.
+
+        The graph annotations, overlaid with any conversion recorded by
+        ``convert_to()`` that has not been applied yet.
+        """
+        alias_units = self._binding_units()
+        for alias, _, to_unit in self._pending_conversions:
+            alias_units[alias] = to_unit
         return alias_units
 
     def _materialize(self) -> None:
@@ -480,8 +492,9 @@ class DataObject:
         order = self._query_params.get("order", "asc")
         value_mode = self._query_params.get("value_mode", "default")
 
-        # Pre-compute effective units per alias for Case 3.2/3.2.1
-        effective_units = self._resolve_effective_units()
+        # Auto-conversion targets the annotated unit; conversions requested
+        # with convert_to() are applied afterwards, on top of it.
+        effective_units = self._binding_units()
 
         # Cache conversion factors to avoid repeated server calls
         _factors_cache: dict[tuple[str, str], dict] = {}
@@ -598,6 +611,14 @@ class DataObject:
                     "DataObject: pending conversion failed %s -> %s for alias '%s'",
                     from_unit, to_unit, alias_pat,
                 )
+        if self._pending_conversions:
+            # Values are now in the requested units; record that on the
+            # bindings so units() and later convert_to() calls start there.
+            final_units = {a: tu for a, _, tu in self._pending_conversions}
+            self._bindings = [
+                replace(b, property_unit=final_units[b.alias]) if b.alias in final_units else b
+                for b in self._bindings
+            ]
 
         # Reorder columns for consistency
         base_cols = ["data_alias", "point_uri", "ref_uri"] + self._entity_columns + ["time", "value_numeric", "value_text"]
@@ -1097,20 +1118,12 @@ class DataObject:
                 _materialized=True,
             )
 
-        # Lazy path: store pending conversions to apply during _materialize()
-        new_bindings = []
-        for b in self._bindings:
-            matched = any(c[0] == b.alias for c in conversions)
-            if matched:
-                conv = next(c for c in conversions if c[0] == b.alias)
-                new_uri = factors_cache[(conv[1], conv[2])]["to_uri"]
-                new_bindings.append(replace(b, property_unit=new_uri))
-            else:
-                new_bindings.append(b)
-
+        # Lazy path: record the conversions for _materialize(). The bindings
+        # keep their annotated units until the values are actually converted;
+        # _resolve_effective_units() overlays the pending targets meanwhile.
         pending = list(self._pending_conversions) + conversions
         return DataObject(
-            _bindings=new_bindings,
+            _bindings=list(self._bindings),
             _entity_columns=self._entity_columns,
             _query_graph=self._query_graph,
             _client=self._client,
