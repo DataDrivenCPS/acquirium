@@ -36,8 +36,6 @@ max_pending_requests = 10000
 
 `aq.init()` uses loopback, an automatically selected port, persistent storage,
 and exact-only resolution by default. Its first caller owns the server lifetime.
-Changing the stored app/function definitions uses native plan activation rather
-than an Acquirium materialization polling interval.
 
 Environment overrides include `ACQUIRIUM_DATA_DIR`, `ACQUIRIUM_ENGINE_PATH`,
 `ACQUIRIUM_ENGINE_WORKERS`, `ACQUIRIUM_PYTHON_POOL_SIZE`,

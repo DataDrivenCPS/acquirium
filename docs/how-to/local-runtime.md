@@ -88,8 +88,7 @@ conflicting mode raises an error.
 Local startup uses the standard server lifecycle, including driver processes
 and apps. Configured drivers start in the background after the server becomes
 healthy. Inherited `ACQUIRIUM_*` environment settings do not override the chosen
-config or redirect its storage. The Timescale backend still requires an
-available PostgreSQL service and its configured DSN (or `PG_DSN`).
+config or redirect its storage.
 
 The local runtime binds to loopback even if the config specifies another host.
 Drivers and apps launched by the managed runtime use its actual loopback port,

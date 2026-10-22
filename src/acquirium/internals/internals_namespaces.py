@@ -86,7 +86,6 @@ HAS_ENUMERATION_KIND = QUDT.hasEnumerationKind
 HAS_UNIT = QUDT.hasUnit
 
 HAS_LOG = ACQUIRIUM_NS.hasLog
-LOGBOOK = ACQUIRIUM_NS.Logbook
 PLANT_URI = str(ACQUIRIUM_NS.Plant)  # Generic URI representing the entire plant
 
 
@@ -94,7 +93,7 @@ PLANT_URI = str(ACQUIRIUM_NS.Plant)  # Generic URI representing the entire plant
 DATA_SOURCE = ACQUIRIUM_NS.dataSource
 
 # Name of the app that produced a derived point (e.g. "normalize-temperatures").
-# Recorded by the materializer so a query can ask for one app's output.
+# Recorded when an app is deployed, so a query can ask for one app's output.
 PRODUCED_BY = ACQUIRIUM_NS.producedBy
 # Port and operator group of a derived point, so a downstream app can select
 # one output of an upstream app without relying on where it is attached.

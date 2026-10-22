@@ -38,7 +38,7 @@ Applications in Water Treatment Systems](https://dl.acm.org/doi/abs/10.1145/3744
                                   │               acquirium server               │
  ┌───────────┐   ┌────────────┐   │                                              │
  │ your code │──▶│  Acquirium │   │   graph store        semantic model + WaTr   │
- │ notebooks │◀──│   client   │◀─▶│   timeseries store   duckdb or timescale     │
+ │ notebooks │◀──│   client   │◀─▶│   Escapement engine  duckdb or postgres      │
  └───────────┘   └────────────┘   │   text resolution    embedding indexes       │
                        HTTP       │                    ▲                         │
                                   │                    │ write                   │
@@ -74,18 +74,15 @@ The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acq
 - [Write soft sensors](how-to/write-soft-sensors.md) — semantic DAGs, Python subprocesses, and immutable calculation releases
 - [Consume streaming changes](how-to/consume-streaming-changes.md) — resumable signed changes, epoch completion, and a sustained workload
 - [Profile soft-sensor execution](../examples/profiling/README.md) — native epoch and Python stage measurements, with [initial results](profiling/2026-10-18/README.md)
-- [Check, deploy, and repair an app](how-to/check-deploy-apps.md) — dry runs, deployment, reprocessing, and execution controls
+- [Check, deploy, and repair an app](how-to/check-deploy-apps.md) — dry runs, deployment, removal, and execution controls
 - [Run the server](how-to/run-the-server.md) — the server command, startup, Docker
 - [Start from a script](how-to/local-runtime.md) — `aq.init()`, config discovery, and local server ownership
 - [Debugging queries for an unexpected result](how-to/debug-an-empty-query.md) — the five usual causes
 - [Explore a model](how-to/explore-a-model.md) — build a query step by step; `options()` and `facets()`
 - [Load a plant model](how-to/load-a-plant-model.md) — insert the model, check it landed, validate it against the shapes
-- [Inserting data](how-to/write-data.md) — register streams and write rows without a driver; the logbook
+- [Inserting data](how-to/write-data.md) — register streams and write rows without a driver
 - [Resolve text to URIs](how-to/resolve-text.md) — `resolve()`, units and conversion, tuning
 
-<!-- TODO: `generate_grafana_dashboard()` and the Grafana service in
-     compose.yaml are undocumented everywhere except one row of the client-API
-     table. Either write a how-to or drop it from the public API list. -->
 
 ## Reference
 

@@ -96,7 +96,7 @@ REGISTRY: dict[str, Attr] = {
         Attr("data_source", (str(DATA_SOURCE),), "any", DATA, literal=True,
              doc='origin tag literal, matched verbatim ("Lab", "SCADA")'),
         # Name of the app that derived this measurement, recorded by the
-        # materializer. Absent on measurements that came from a driver.
+        # app compiler. Absent on measurements that came from a driver.
         Attr("app", (str(PRODUCED_BY),), "any", DATA, literal=True,
              doc='app that derived the measurement ("normalize-temperatures")'),
         # rdfs:label literal on a data node (stream label / CSV column name).

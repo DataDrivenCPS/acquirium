@@ -281,8 +281,8 @@ place of the `filter_by_*` family.
 
 Keyword names changed with them: `_class` is `cls`, `_from` is `frm`, `hops`
 is `max_depth`, and `predicates` is `via`.
-`metadata()`, `data()`, `dataframe()`, `execute()`, `to_sparql()`,
-`insert_log()` and `read_logs()` kept their names and behave the same.
+`metadata()`, `data()`, `dataframe()`, `execute()` and `to_sparql()` kept
+their names and behave the same.
 
 Two behavior differences matter when porting.
 

@@ -142,9 +142,8 @@ Use `client.list_apps()`, `client.inspect_app(name)`, or `acquirium app list/ins
 to inspect declarations and active operators. `client.remove_app(name)` removes
 operators and retracts their current outputs; historical versions remain in the
 core. Output ownership remains reserved by Escapement. Code changes rebuild the
-operator's retained history. Custom output timestamps, full
-history, the old class-based transform API, reprocess commands, and
-wall-clock scheduling options are not supported in this initial replacement.
+operator's retained history. Apps have no custom output timestamps and no
+wall-clock scheduling.
 
 A failed function pauses the entire native epoch queue. Inspect
 `client.engine_status()`, repair the artifact/environment, and explicitly call

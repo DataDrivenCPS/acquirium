@@ -105,7 +105,7 @@ class SystemMetricsDriver(PollingIngestDriver):
 
         g = Graph()
         g.add((ACQUIRIUM_DB_URI, RDF.type,   DATABASE))
-        g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
+        g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium engine store")))
         g.add((self._host_uri, RDF.type,                   S223.Computer))
         g.add((self._host_uri, RDFS.label,                 Literal(hostname)))
         g.add((self._host_uri, HOST_NS.hasHostname,        Literal(hostname)))

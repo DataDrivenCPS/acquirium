@@ -4,14 +4,11 @@ A semantic data framework for water treatment systems, built on
 [Escapement](https://github.com/gtfierro/escapement).
 
 Acquirium connects plant models, units, and semantic queries to sensor streams.
-Escapement is the required timeseries engine: its embedded DuckDB database stores
-raw observations, corrections, deletions, derived values, plans, and epoch history.
-One server process owns the graph and engine; no separate database service is needed.
+Escapement is the timeseries engine. It stores raw observations, corrections,
+deletions, derived values, plans and epoch history, in an embedded DuckDB file
+or in PostgreSQL. One server process owns the graph and the engine.
 
-This branch replaces the previous storage and app APIs. TimescaleDB, the old
-Acquirium DuckDB schema, text/null observations, rolling/full-history apps, and
-whole-stream `replace=True` are unsupported. Existing databases are not imported
-or erased automatically. Use a new data directory.
+Databases from before Escapement are not imported. Use a new data directory.
 
 ## Development setup
 
@@ -92,6 +89,6 @@ uv run pytest tests/unit
 ```
 
 The native/semantic integration tests use temporary local engine databases and
-require no TimescaleDB or Docker services. MQTT service tests still need a broker.
+require no Docker services. MQTT service tests still need a broker.
 The optional Docker configuration runs Acquirium and Mosquitto; native builds
-forward your SSH agent with BuildKit. No SQL database or Grafana service is included.
+forward your SSH agent with BuildKit.

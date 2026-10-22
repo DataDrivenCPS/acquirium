@@ -1,0 +1,2485 @@
+                                                                         SBDDW-23-001
+                                                                    Direct Potable Reuse
+
+
+
+
+Description of Method for Indicating Changes to SBDDW-23-
+  001, the Proposed Regulations for Direct Potable Reuse
+
+Changes made to the proposed regulations SBDDW-23-001 are indicated as follows:
+
+   •   Additional regulation text is indicated by a double underline (double underline).
+
+   •   Deleted regulation text is indicated by a double strikethrough (double
+       strikethrough).
+
+   •   Regulation text changes are also highlighted in yellow.
+                                                                             SBDDW-23-001
+                                                                        Direct Potable Reuse
+                                                                             October 4, 2023
+
+
+                    TITLE 22, CALIFORNIA CODE OF REGULATIONS
+
+                             Division 4. Environmental Health
+                          Chapter 17. Surface Water Treatment
+                             Article 10. Direct Potable Reuse
+
+
+
+Adopt Section 64669.00 as follows:
+§ 64669.00. Application.
+In addition to meeting the requirements of this Chapter, a public water system that uses
+municipal wastewater to produce water to augment a source of supply for a public water
+system’s drinking water treatment plant or placed into a public water system’s drinking
+water distribution system shall meet the requirements of this Article.
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13520,
+13560, 13561.2, 13563, 13566 and 13567, Water Code; and Sections 116270, 116275,
+116350, 116360, 116365, 116375, 116525, 116527, 116530, 116535, 116540, 116545,
+116550, 116555, 116655 and 116735, Health and Safety Code.
+
+
+
+Adopt Section 64669.05 as follows:
+§ 64669.05. Definitions.
+   (a)    For the purposes of this Article, the following definitions shall apply:
+         (1)   “Acute exposure threat” means the increased imminent risk of adverse
+health effects, including infectious disease and toxic effects from short-term exposures
+to contaminants in water.
+         (2)   “Advanced treated water” means municipal wastewater that has undergone
+treatment for chemical control pursuant to section 64669.50.
+
+
+
+
+Regulation Text                             1 of 63
+                                                                          SBDDW-23-001
+                                                                     Direct Potable Reuse
+                                                                          October 4, 2023
+
+       (3)   "AWTOTM” means the Advanced Water Treatment Operator certification
+program of the California-Nevada Section of the American Water Works Association
+and the California Water Environment Association.
+       (4)   “AWT5TM” means a specific advanced water treatment certificate issued by
+the AWTOTM certification program.
+       (5)   "BAC” means biologically activated carbon.
+       (6)   "Challenge test” means a study comparing a pathogen, surrogate
+parameter, or indicator compound concentration between the influent and effluent of a
+treatment process to determine the removal capacity of the treatment process. The
+influent concentration must be high enough to ensure that a measurable concentration
+is detected in the effluent.
+       (7)   “Chemical control point” means an activity, procedure, or process that is
+applied and is essential for preventing, reducing or eliminating a chemical hazard threat.
+       (8)   “Chronic exposure threat” means the increased risk of adverse health
+effects including cancer or other longer-term effects or disease from continued
+exposures to contaminants in water.
+       (9)   “Critical limit” means a maximum and/or minimum value of a continuously
+monitored parameter that indicates that a treatment process or an operation is
+effectively controlling the pathogen or chemical risk.
+       (10) “Direct potable reuse project” or “DPR project” means a project involving the
+planned introduction of recycled water that meets the requirements of this Article either
+directly into a public water system or into a raw water supply immediately upstream of a
+water treatment plant.
+       (11) “DPR project water” means municipal wastewater used by a DPR project
+that has undergone partial or complete treatment as set forth in this Article.
+       (12) “Direct potable reuse responsible agency (DiPRRA)” means the public water
+system responsible for compliance with this Article for a DPR project.
+       (13) “Finished water” has the same meaning set forth in section 64400.41, Article
+1, Chapter 15, Division 4, Title 22.
+
+
+
+
+Regulation Text                           2 of 63
+                                                                          SBDDW-23-001
+                                                                     Direct Potable Reuse
+                                                                          October 4, 2023
+
+       (14) “Indicator compound” or “indicator” means a chemical in municipal
+wastewater that represents the physical, chemical, and/or biodegradation
+characteristics of a specific family of trace organic compounds and that is present in
+concentrations that may be used to monitor the efficacy of trace organic compound
+reduction by a treatment process, and/or that provides an indication of treatment
+process failure.
+       (15) “Local limits” means restrictions on the discharge of pollutants established
+by an industrial pretreatment and pollutant source control program to protect a
+wastewater treatment plant’s operations and the receiving water provided to a DPR
+project.
+       (16) “Log reduction” means the logarithm base 10 of the ratio of the levels of a
+pathogenic organism or other contaminant before and after treatment.
+       (17) “Log reduction value” or “LRV” means the measure of the ability of a
+treatment train or a treatment process to remove or inactivate microorganisms such as
+bacteria, protozoa and viruses. LRV is the log reduction validated or credited for a
+treatment process or treatment train.
+       (18) “Maximum contaminant level” or “MCL” has the same meaning set forth in
+section 116275(f) of the Health and Safety Code. MCLs are specified in Chapters 15
+and 15.5, Division 4, Title 22.
+       (19) “Municipal wastewater” means wastewater that includes mostly domestic
+waste and may include commercial and industrial waste. For the purposes of this
+Article, municipal wastewater is considered a surface water.
+       (20) “Notification level” has the same meaning set forth in section 116455(c)(3)
+of the Health and Safety Code.
+       (21) “Operating envelope” means the specified range of a set of continuously
+monitored parameters, including those with critical limits, of a treatment process within
+which an operation is consistent with validation conditions.
+       (22) “Operational parameter” means a measurable property used to characterize
+or partially characterize the operation of a treatment process.
+
+
+
+
+Regulation Text                           3 of 63
+                                                                         SBDDW-23-001
+                                                                    Direct Potable Reuse
+                                                                         October 4, 2023
+
+       (23) “Ozone/BAC” means an ozonation process immediately followed by
+biologically activated carbon.
+       (24) “Partner agency” means an entity included in a DPR project other than a
+DiPRRA, such as a wastewater management agency, wastewater collection agency,
+public water system, or other entity responsible for water treatment, water conveyance,
+or storage.
+       (25) “Pathogen control point” means an activity, procedure, or process that may
+be applied to remove or reduce the pathogen hazard threat.
+       (26) "Regional monitoring consortium” means a group of DPR projects that
+cooperate in developing and implementing monitoring plans that comply with the
+monitoring requirements set forth in this Article.
+       (27) “Response level” has the same meaning set forth in section 116455(c)(4) of
+the Health and Safety Code.
+       (28) “SCADA system” means a supervisory control and data acquisition system.
+       (29) “Surrogate parameter” or “surrogate” means a measurable chemical or
+physical property, microorganism, or chemical that has been demonstrated to provide a
+direct correlation with the concentration of an indicator compound or pathogen; that may
+be used to monitor the efficacy of trace organic compound or pathogen reduction by a
+treatment process; and/or that provides an indication of a treatment process failure.
+       (30) “TOC” means total organic carbon, which is the concentration of organic
+carbon present in water.
+       (31) “Treatment mechanism” means a physical, biological, or chemical action
+that reduces the concentration of a pathogen or chemical contaminant.
+       (32) “Treatment train” means a group or assemblage of physical, chemical, and
+biological treatment processes that conditions or treats water to achieve a specific water
+quality objective.
+       (33) “UV” means ultraviolet light.
+       (34) “Validation” means a demonstration of the pathogen or chemical
+contaminant reduction capacity of a treatment process.
+
+
+
+
+Regulation Text                             4 of 63
+                                                                            SBDDW-23-001
+                                                                       Direct Potable Reuse
+                                                                            October 4, 2023
+
+            (35) “Verification” means monitoring to demonstrate the effectiveness of a
+treatment process for compliance determination.
+            (36) “Wastewater contribution” or “WWC” means the fraction equal to the
+quantity of municipal wastewater divided by the sum of the quantities of raw or treated
+municipal wastewater and a dilution water that is either an untreated source of drinking
+water that has received permit approval from the State Board in accordance with
+sections 116525 through 116550 of the Health and Safety Code, or a finished water that
+has received permit approval from the State Board in accordance with sections 116525
+through 116550 of the Health and Safety Code. The municipal wastewater used in the
+WWC calculation can be either raw or treated municipal wastewater.
+            (37) “Water treatment plant” has the same meaning set forth in Health and
+Safety Code section 116275(w).
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13520,
+13561, 13561.2, 13563, 13566 and 13567, Water Code; and Sections 116270, 116275,
+116350, 116360, 116365, 116375, 116455, 116525, 116527, 116530, 116535, 116540,
+116545, 116550 and 116655, Health and Safety Code.
+
+
+
+Adopt Section 64669.10 as follows:
+§ 64669.10. General Requirements.
+      (a)    The source water for a DPR project shall be municipal wastewater.
+      (b)    There shall be no bypass constructed around required treatment processes for
+municipal wastewater from the DPR project to the distribution system.
+      (c)    A DiPRRA shall enable and facilitate the inspection by the State Board at any
+time of all facilities, operations, and records used to comply with the requirements in this
+Article as described in the engineering report including facilities and operations related
+to:
+            (1)   Source(s) and treatment;
+            (2)   Wastewater source control pursuant to section 64669.40;
+            (3)   Cross-connection control pursuant to section 64669.105;
+
+
+Regulation Text                              5 of 63
+                                                                            SBDDW-23-001
+                                                                       Direct Potable Reuse
+                                                                            October 4, 2023
+
+         (4)   Technical, managerial, and financial capacity demonstration pursuant to
+section 64669.30; and
+         (5)   Operations plan, monitoring plan, and water safety plan pursuant to sections
+64669.80, 64669.90, and 64669.55, respectively.
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13520,
+13522, 13522.5, 13524, 13561, 13561.2, 13563, 13566 and 13567, Water Code; and
+Sections 116270, 116275, 116350, 116360, 116365, 116375, 116385, 116390, 116400,
+116525, 116527, 116530, 116535, 116540, 116555, 116555.5, 116655 and 116735,
+Health and Safety Code.
+
+
+
+Adopt Section 64669.15 as follows:
+§ 64669.15. Permit.
+   (a)    A DiPRRA shall be the entity responsible for complying with the requirements
+of this Article. Only one DiPRRA shall be designated for a DPR project.
+   (b)    A DiPRRA shall submit a permit application for the DPR project, pursuant to
+section 64001, Article 1, Chapter 14, Division 4, Title 22. The permit application shall
+include the following:
+         (1)   An engineering report prepared pursuant to section 64669.75;
+         (2)   A joint plan prepared pursuant to section 64669.20;
+         (3)   A demonstration of technical, managerial, and financial capacity pursuant to
+section 64669.30;
+         (4)   An operations plan prepared pursuant to section 64669.80;
+         (5)   A monitoring plan prepared pursuant to section 64669.90;
+         (6)   For an initial permit for a public water system, the requirements pursuant to
+section 64552, Article 2, Chapter 16, Division 4, Title 22; and
+         (7)   For an amended permit for a public water system, the requirements
+pursuant to section 64556, Article 2, Chapter 16, Division 4, Title 22.
+   (c)    A DiPRRA shall obtain a domestic water supply permit or amended domestic
+water supply permit prior to the operation of a DPR project.
+
+
+Regulation Text                             6 of 63
+                                                                              SBDDW-23-001
+                                                                         Direct Potable Reuse
+                                                                              October 4, 2023
+
+   (d)     A DiPRRA shall comply at all times with its domestic water supply permit. The
+State Board may conduct enforcement for a violation of a permit condition by the
+DiPRRA pursuant to the authorities set forth in Articles 8, 9, and 11 of Chapter 4, Part
+12, Division 104 of the Health and Safety Code.
+   (e)     The State Board may elect to require a partner agency to obtain a domestic
+water supply permit when, in the judgment of the State Board, a partner agency is
+treating water in such a manner or to such an extent as to meet the definition of a public
+water system set forth in section 116275(h) of the Health and Safety Code.
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13561,
+13561.2, 13563, 13566 and 13567, Water Code; and Sections 116270, 116275,
+116350, 116360, 116365, 116375, 116385, 116390, 116400, 116525, 116527, 116530,
+116535, 116540, 116545, 116550, 116551, 116555, 116655, 116725, 116730, 116735
+and 116750, Health and Safety Code.
+
+
+
+Adopt Section 64669.20 as follows:
+§ 64669.20. Joint Plan.
+   (a)     A DiPRRA shall develop a joint plan that describes partner agency coordination
+procedures and includes the following:
+         (1)   Identification of each partner agency, the roles and responsibilities of each
+partner agency, the legal authority of each partner agency to fulfill its role and
+responsibilities, and the overall organizational structure involved in implementing the
+joint plan over a 20-year life cycle planning horizon;
+         (2)   Procedures to ensure that operations are conducted in accordance with an
+approved operations plan pursuant to section 64669.80;
+         (3)   Procedures to ensure that the DiPRRA will have knowledge of the current
+status of treatment for the entire DPR project at all times;
+         (4)   A description of corrective actions to be taken to protect public health if
+water delivered from a water treatment plant fails to meet the requirements of this
+Article;
+
+
+Regulation Text                              7 of 63
+                                                                             SBDDW-23-001
+                                                                        Direct Potable Reuse
+                                                                             October 4, 2023
+
+         (5)    Procedures to ensure that monitoring is conducted in accordance with an
+approved monitoring plan pursuant to section 64669.90;
+         (6)    Procedures to ensure that the DiPRRA will have knowledge of the current
+status of water quality monitoring pursuant to sections 64669.60 and 64669.65 and
+water quality monitoring results;
+         (7)    A plan to investigate and implement wastewater treatment improvement that
+would enable a water treatment plant that provides treatment pursuant to this Article to
+reduce the level of chemicals to lowest achievable concentrations;
+         (8)    Procedures to ensure the wastewater source control program complies with
+the requirements pursuant to section 64669.40;
+         (9)    Procedures for providing access to all DPR project facilities, operations, and
+records for inspection at any time by the State Board;
+         (10) A plan to timely communicate water quality status and water quality
+monitoring results among the DiPRRA and partner agencies;
+         (11) Procedures the DiPRRA will implement for notifying partner agency(ies) and
+the State Board of:
+               (A) Operational changes that may adversely affect the quality of DPR project
+water delivered by a water treatment plant; and
+               (B) Treatment failure incidents and the corresponding corrective actions
+taken;
+         (12) Procedures for notifying customers pursuant to sections 64669.25,
+64669.60, and 64669.125, and the procedures for receiving customer water quality
+complaints and reports of gastrointestinal illness pursuant to section 64669.95;
+         (13) Procedures to implement cross-connection control requirements pursuant to
+section 64669.105;
+         (14) Procedures to optimize corrosion control to reduce lead and copper levels in
+the distribution system; and
+         (15) The steps the DiPRRA and partner agency(ies) will take to provide an
+alternative source of domestic water supply or drinking water in the event that the DPR
+project is unable to supply water.
+
+
+
+Regulation Text                              8 of 63
+                                                                           SBDDW-23-001
+                                                                      Direct Potable Reuse
+                                                                           October 4, 2023
+
+   (b)   Entities that collect the municipal wastewater, provide the municipal wastewater
+to the DPR project, provide wastewater source control, provide treatment pursuant to
+the requirements of this Article, or use DPR project water as a source of supply for a
+water treatment plant that delivers water to a water distribution system of a public water
+system shall participate in the joint plan as a partner agency.; notwithstanding that, if an
+entity pursuant to section 64669.40(a) is the designated authority over wastewater
+connections and the industrial pretreatment and pollutant source control program for
+associated upstream entities that collect the municipal wastewater, then the associated
+upstream entities that collect the municipal wastewater are not required to participate in
+the Joint Plan as partner agencies.
+   (c)   A joint plan shall be signed by a DiPRRA and each partner agency. The
+DiPRRA shall require that each partner agency implements the action(s) designated in
+the joint plan.
+   (d)   The joint plan shall include copies of all agreements, such as Joint Powers
+Authority or bilateral agreements, that were executed to facilitate the operation of the
+DPR project.
+   (e)   A DiPRRA shall submit an updated joint plan under the following
+circumstances: when there is a change in organization, responsibility, authority to fulfill
+a role, operation, or ownership of the DiPRRA or partner agency, including the addition
+of any partner agency; or when there is a change in the information provided pursuant
+to subsection (a). Updates to the joint plan shall be submitted to the State Board not
+less than sixty (60) days prior to the effective date of any change required by this
+subsection.
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13520,
+13561, 13561.2, 13563, 13566 and 13567, Water Code; and Sections 116270, 116275,
+116350, 116360, 116365, 116375, 116385, 116390, 116400, 116525, 116527, 116530,
+116535, 116540, 116545, 116550, 116555, 116655 and 116735, Health and Safety
+Code.
+
+
+
+
+Regulation Text                           9 of 63
+                                                                                SBDDW-23-001
+                                                                           Direct Potable Reuse
+                                                                                October 4, 2023
+
+Adopt Section 64669.25 as follows:
+§ 64669.25. Public Meeting.
+       (a)    A DiPRRA shall facilitate, and provide information for, at least one public
+meeting held by the State Board. The public meeting(s) shall be held before a permit or
+permit amendment can be issued for the DPR project.
+       (b)    In coordination with partner agency(ies), a DiPRRA shall develop information to
+be provided to the public for each public meeting. The information shall include at
+minimum:
+             (1)   a description of the DPR project;
+             (2)   identification of the municipal wastewater source(s) for the DPR project;
+             (3)   a description of the treatment processes, monitoring, and contingency plans
+to be used by the DPR project;
+             (4)   the anticipated State Board permit provisions as provided by the State
+Board;
+             (5)   the anticipated start date for operations of the DPR project and delivery of
+DPR project water to customers;
+             (6)   the name, business address, and phone number for the public water system
+contact designated by the DiPRRA that the public may contact for additional information
+about the DPR project; and
+             (7)   other information required by the State Board on a project-specific basis.
+       (c)    A DiPRRA shall provide the information developed pursuant to subsections (b)
+and (e)(1) to the State Board prior to holding a public meeting pursuant to subsection
+(a).
+       (d)    At least 30 days prior to a public meeting, a DiPRRA shall place the State
+Board-approved information to be presented at the public meeting in a publicly
+accessible repository (such as a local public library), on the DiPRRA internet website,
+on the internet website(s) of all public water system(s) that would receive DPR project
+water, and on all partner agency internet websites. The DiPRRA shall make the
+information available to the public upon request.
+
+
+
+
+Regulation Text                                 10 of 63
+                                                                              SBDDW-23-001
+                                                                         Direct Potable Reuse
+                                                                              October 4, 2023
+
+   (e)    At least 30 days prior to a public meeting, a DiPRRA shall provide notification of
+the public meeting and of the availability of information approved pursuant to subsection
+(c) in the following manner:
+         (1)    At minimum, the public notice shall contain the following information:
+               (A) the nature and purpose of the meeting,
+               (B) the location and hours of operation of the public repository where the
+project information is available pursuant to subsection (d),
+               (C) the Internet website address(es) where the project information may be
+viewed,
+               (D) the manner in which the public can provide comments, and
+               (E) the date, time, and location of the public meeting.
+         (2)    Public notification of the meeting shall be designed to reach all persons to
+be served by the proposed DPR project. The DiPRRA shall coordinate with public water
+systems on the public notification. The DiPRRA shall:
+               (A) Provide public notification by mail or direct delivery to each customer
+receiving a bill from the DiPRRA or any other public water systems that will deliver DPR
+project water under the proposed DPR project, including those that provide their
+drinking water to others (for example, schools, apartment buildings, offices), and
+               (B) Use of one or more of the following methods to reach persons not likely
+to be reached by mailing or direct delivery:
+                  1. Local newspaper,
+                  2. Local television, radio and/or social media,
+                  3. Posting in conspicuous public places, or
+                  4. Delivery to community organizations.
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13561,
+13561.2, 13563, 13566 and 13567, Water Code; and Sections 116270, 116275,
+116350, 116375, 116525, 116527, 116530, 116535, 116540, 116545, 116550, 116551,
+116555, 116655 and 116735, Health and Safety Code.
+
+
+
+
+Regulation Text                              11 of 63
+                                                                            SBDDW-23-001
+                                                                       Direct Potable Reuse
+                                                                            October 4, 2023
+
+
+Adopt Section 64669.30 as follows:
+§ 64669.30. Technical, Managerial, and Financial Capacity.
+   (a)     A DiPRRA shall demonstrate that it and all partner agencies possess technical,
+managerial, and financial capacity sufficient to comply with the joint plan and with this
+Article. The demonstration shall include the following:
+         (1)   Identification of those project elements in the engineering report prepared
+pursuant to section 64669.75 that have associated ongoing costs. Ongoing costs shall
+include operation and maintenance costs, capital replacement costs, energy costs,
+personnel costs, and all 20-year life cycle costs of equipment;
+         (2)   Identification of reliable and continuing funding sources to cover the costs
+identified in subsection (a)(1);
+         (3)   A description of the available financial, physical, and personnel resources to
+be made available when and where needed, as well as a description of how any
+reasonably foreseeable supply chain issue would be resolved; and
+         (4)   A description of tools and processes that are used for management and
+accounting, including a strategic asset management plan and a computerized
+maintenance management system.
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13520,
+13561, 13561.2, 13563, 13566 and 13567, Water Code; and Sections 116270, 116275,
+116350, 116360, 116365, 116375, 116385, 116390, 116400, 116525, 116527, 116530,
+116535, 116540, 116550, 116555, 116655 and 116735, Health and Safety Code.
+
+
+
+Adopt Section 64669.35 as follows:
+§ 64669.35. Operator Certification.
+   (a)     Any facility that provides treatment pursuant to section 64669.45, 64669.50, or
+64669.110 is a water treatment plant pursuant to Health and Safety Code section
+116275(w) and is subject to operator certification requirements contained in Title 22,
+
+
+
+
+Regulation Text                             12 of 63
+                                                                          SBDDW-23-001
+                                                                     Direct Potable Reuse
+                                                                          October 4, 2023
+
+Division 4, Chapter 13, in addition to any other operator certification requirements
+required by law.
+   (b)   A DiPRRA shall designate at least one chief operator who holds a valid grade
+T5 water treatment operator certification pursuant to Title 22, Division 4, Chapter 13 to
+oversee the operations of the entire treatment train used to comply with the
+requirements in this Article. The DiPRRA shall designate at least one shift operator who
+holds at least a valid grade T3 water treatment operator certification pursuant to Title
+22, Division 4, Chapter 13 to oversee the operations of the entire treatment train used to
+comply with the requirements in this Article for each operating shift.
+   (c)   A DiPRRA shall require that the chief operator(s) for each water treatment plant
+that provides treatment pursuant to section 64669.50 each holds a valid Advanced
+Water Treatment Operator (AWTOTM) grade AWT5TM certificate issued by the
+California-Nevada Section of the American Water Works Association and the California
+Water Environment Association. A DiPRRA shall require that the shift operator(s) for
+each water treatment plant that provides treatment pursuant to section 64669.50 each
+holds at least a valid grade AWT3TM certificate. If the AWTOTM program is not available,
+a certificate issued by an equivalent training and certification program approved by the
+State Board that assures the same operator knowledge, skills, and abilities may be
+used to meet the requirement of this subsection.
+   (d)   A designated chief operator or shift operator shall be on-site at all times when a
+water treatment plant that provides treatment pursuant to section 64669.45 and/or
+section 64669.50 is operating.
+   (e)   After 12 months of operation pursuant to subsection (d), a DiPRRA may apply
+to the State Board to waive the requirement in subsection (d) if an operations plan or
+amended operations plan, submitted to the State Board pursuant to section 64669.80,
+demonstrates an equivalent degree of operational oversight and treatment reliability
+with either unmanned operation or operation under reduced operator oversight. If the
+State Board issues such a waiver, the chief operator or shift operator is not required to
+be on-site at all times but shall be able to monitor operations and exert physical control
+
+
+
+
+Regulation Text                          13 of 63
+                                                                             SBDDW-23-001
+                                                                        Direct Potable Reuse
+                                                                             October 4, 2023
+
+over the water treatment plant within the period specified in the operations plan, or one
+hour, whichever is shorter.
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13561,
+13561.2, 13563, 13566 and 13567, Water Code; and Sections 106875, 106876,
+106885, 116270, 116275, 116350, 116360, 116365, 116375, 116525, 116527, 116530,
+116535, 116540, 116550, 116555, 116655 and 116735, Health and Safety Code.
+
+
+
+Adopt Section 64669.40 as follows:
+§ 64669.40. Wastewater Source Control.
+   (a)    The municipal wastewater used to supply a DPR project shall be from an entity
+that:
+         (1)    Is in compliance with waste discharge requirements issued pursuant to
+Article 4, Chapter 4, Division 7 of the Water Code;
+         (2)    Has the legal authority to implement an industrial pretreatment and pollutant
+source control program, including authority for oversight and inspection, to control
+industrial and commercial waste discharges into the wastewater collection system;
+         (3)    Administers an industrial pretreatment and pollutant source control program
+that:
+               (A) identifies and limits contaminants in wastewater, through the use of local
+limits, local ordinances, or other discharge control methods;
+               (B) assesses the fate of chemicals specified by the State Board in the
+wastewater treatment system prior to treatment pursuant to section 64669.50;
+               (C) investigates chemical sources and chemicals detected in monitoring
+pursuant to sections 64669.50, 64669.60 and 64669.65;
+               (D) operates an outreach program to industrial, commercial, and residential
+communities that discharge into a wastewater collection system that serves as the
+source for the DPR project, for the purpose of managing and minimizing the discharge
+of chemicals at the source;
+
+
+
+Regulation Text                              14 of 63
+                                                                             SBDDW-23-001
+                                                                        Direct Potable Reuse
+                                                                             October 4, 2023
+
+               (E) maintains a current inventory of chemicals identified pursuant to this
+section, including new chemicals resulting from new sources or changes to existing
+sources, that may be discharged into the wastewater collection system; and
+               (F) is audited at least every five years by an independent party to assess the
+effectiveness of the industrial pretreatment and pollutant source control program in
+controlling the discharge of contaminants.
+   (b)    Documentation that establishes the local limits and other discharge control
+methods used by the wastewater provider(s) for the DPR project shall be submitted to
+the State Board, and a summary shall be included in the Annual Report prepared
+pursuant to section 64669.100.
+   (c)    A DiPRRA shall implement a program to receive early warning of a potential
+occurrence that could interfere with the operation of a treatment process at a water
+treatment plant that provides treatment pursuant to this Article; reduce the reliability or
+effectiveness of a water treatment process at the water treatment plant; or result in an
+increase in contaminant levels in the advanced treated water. The early warning
+program shall include, at a minimum, the following:
+         (1)    Online monitoring instrumentation that measures indicator compound(s) or
+surrogate parameter(s) and that indicates an increase in chemical contamination that
+may adversely impact the operations of the DPR project treatment or cause
+contamination of the advanced treated water;
+         (2)    A process for notification by the industrial pretreatment and pollutant source
+control program(s) to the DiPRRA of any discharge that can potentially result in the
+release of contaminants above limits established pursuant to subsection (a)(3)(A);
+         (3)    Tracking the results of local county public health departments’ disease
+surveillance programs and community raw wastewater surveillance monitoring
+programs to identify whether and when community outbreaks of disease occur; and
+         (4)    Other early warning measures required by the State Board, which are
+necessary to protect the operations of the DPR project treatment or prevent
+contamination of the advanced treated water, based on a review of the DPR project
+
+
+
+
+Regulation Text                              15 of 63
+                                                                            SBDDW-23-001
+                                                                       Direct Potable Reuse
+                                                                            October 4, 2023
+
+engineering report submitted pursuant to section 64669.75 and on the availability of
+such measures.
+   (d)    A DiPRRA shall form and maintain a source control committee that includes
+representatives from each partner agency that supplies municipal wastewater to the
+DPR project or that owns and/or operates a water treatment plant that provides
+treatment pursuant to this Article, as well as representatives from key industrial users
+and others that discharge to the wastewater collection system chemicals that may pose
+a risk to public health.
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13520,
+13522, 13522.5, 13524, 13561, 13561.2, 13563, 13566 and 13567, Water Code; and
+Sections 116270, 116275, 116350, 116360, 116365, 116375, 116385, 116390, 116400,
+116525, 116527, 116530, 116535, 116540, 116550, 116555, 116655 and 116735,
+Health and Safety Code.
+
+
+
+Adopt Section 64669.45 as follows:
+§ 64669.45. Pathogen Control.
+Municipal wastewater used in a DPR project shall receive continuous treatment
+pursuant to this section prior to entering a water distribution system of a public water
+system.
+   (a)    The DPR project treatment train shall be designed and constructed to comply
+with the following:
+         (1)   The sum of the treatment process validated pathogen log reductions for the
+treatment train shall be at least 20 log for enteric virus, 14 log for Giardia lamblia cyst,
+and 15 log for Cryptosporidium oocyst.
+         (2)   The treatment train shall consist of no less than four separate treatment
+processes for each of the following pathogens: enteric virus, Giardia lamblia cyst, and
+Cryptosporidium oocyst. Four treatment processes for each pathogen shall each be
+credited with no less than 1.0 log reduction, and no single process may be credited with
+
+
+
+
+Regulation Text                            16 of 63
+                                                                           SBDDW-23-001
+                                                                      Direct Potable Reuse
+                                                                           October 4, 2023
+
+more than 6 log reduction. A single treatment process may receive pathogen log
+reduction credits for one or more pathogens.
+       (3)    The treatment train shall consist of no less than three diverse treatment
+mechanisms each for enteric virus, Giardia lamblia cyst, and Cryptosporidium oocyst.
+The three treatment mechanisms shall include one membrane physical separation
+mechanism, one chemical inactivation mechanism, and one UV inactivation
+mechanism, with each treatment mechanism validated for no less than 1.0 log reduction
+for each of the three pathogens, enteric virus, Giardia lamblia cyst, and Cryptosporidium
+oocyst. Additional treatment mechanisms may be used.
+             (A) An alternative mechanism to a treatment mechanism identified in
+subsection (3) may be approved as long as the three treatment train mechanisms
+include physical separation and inactivation. Use of the alternative shall assure an
+equivalent or better level of protection of public health with respect to treatment
+technique diversity and treatment train robustness.
+             (B) The proposed alternative shall be reviewed by an independent advisory
+panel pursuant to section 64669.120.
+       (4)    Each treatment process used to meet the requirements in this subsection
+shall have the pathogen log reduction validated. The DiPRRA may use:
+             (A) A validation study report previously approved by the State Board
+conducted using an approved protocol with elements described in subsection (a)(5)(C),
+             (B) A pathogen log inactivation table pursuant to Chapter 17, or
+             (C) A validation study pursuant to subsection (a)(5).
+       (5)    A validation study is subject to the following requirements.
+             (A) Prior to conducting a validation study, the DiPRRA shall submit a
+validation study protocol to the State Board.
+             (B) The validation study protocol shall be prepared by an engineer licensed
+in California with at least five years of experience, as a licensed engineer, in drinking
+water or wastewater treatment evaluating treatment processes for pathogen control in a
+public water supply. The validation study protocol may rely on validation study
+protocol(s) previously approved by the State Board for use in validating water treatment
+
+
+
+Regulation Text                            17 of 63
+                                                                            SBDDW-23-001
+                                                                       Direct Potable Reuse
+                                                                            October 4, 2023
+
+technologies for pathogen control. Validation of granular media filters may be conducted
+using a pilot plant with verification based on turbidity and periodic particle count
+monitoring.
+             (C) The validation study protocol shall:
+                1. Identify the treatment mechanism(s) of pathogen reduction by the
+treatment process.
+                2. Identify the pathogen(s) being addressed by the treatment, or
+appropriate surrogate(s) for the pathogen(s), that are used in the validation study. The
+pathogen(s) and surrogate(s) selected for the validation study shall be one(s) most
+resistant to the treatment mechanism(s).
+                3. Ensure that the pathogen(s) or surrogate(s) for the pathogen(s) are
+present in the test water in concentrations sufficient to demonstrate a pathogen log
+reduction.
+                4. Identify the factors that influence the pathogen reduction efficiency for
+the treatment mechanism(s). Influencing factors include feed water characteristics such
+as temperature and pH, hydraulic loading, deterioration of components, and integrity
+failure.
+                5. Identify the surrogate and/or operational parameters that can be
+measured continuously and that will correlate with the reduction of the pathogen(s) or
+surrogate(s) for the pathogen(s).
+                6. Identify the validation methodology to demonstrate the pathogen log
+removal capability of the treatment process. The validation methodology shall involve a
+challenge test to quantify the reduction of the target pathogen or appropriate surrogate
+while concurrently monitoring the operational parameters to determine an operating
+envelope.
+                7. Describe the method to collect and analyze data to formulate
+evidence-based conclusions.
+                8. Describe the method to determine the critical limit(s) and the
+operational monitoring and control strategy.
+
+
+
+
+Regulation Text                            18 of 63
+                                                                              SBDDW-23-001
+                                                                         Direct Potable Reuse
+                                                                              October 4, 2023
+
+                  9. Describe the method to be used to calculate the LRV for the treatment
+process for each pathogen. The validated LRV shall not exceed that achieved by 95
+percent of the challenge test results when the treatment process is operating in
+compliance with the critical limit(s).
+                  10. Identify the circumstances that would require a re-validation or
+additional on-site validation (for example, when conditions are inconsistent with the
+previous validation study conditions).
+               (D) A validation study report documenting the validation study methodology
+and results shall be submitted to the State Board as part of the submittal of the
+engineering report prepared pursuant to section 64669.75. The validation study report
+shall be prepared by an engineer licensed in California with at least five years of
+experience, as a licensed engineer, in drinking water or wastewater treatment
+evaluating treatment processes for pathogen control in a public water supply. The
+validation study report shall identify the LRV demonstrated by each treatment process
+for each pathogen pursuant to subsection (a)(5)(C)(9.), the operating envelope, and the
+critical limit(s) for each validated treatment process. When a previous validation study
+pursuant to subsection (a)(4)(A) is used, the test protocol and report of the previous
+validation study shall be included in the engineering report prepared pursuant to section
+64669.75 and shall be reviewed by the engineer preparing the engineering report.
+         (6)    The treatment train LRV for enteric virus, Giardia lamblia cyst, and
+Cryptosporidium oocyst is the sum of the treatment process LRVs for each pathogen.
+         (7)    The treatment train shall include UV disinfection with a dose of at least 300
+mJ per cm2.
+   (b)    The DPR project treatment train shall be operated to comply with the following:
+         (1)    To determine compliance with the pathogen log reductions pursuant to this
+subsection, treatment train LRVs shall be tracked continuously with a SCADA system
+utilizing online monitoring of surrogates and/or operational parameters for each
+treatment process that was credited for pathogen reduction based on the validation
+study report prepared pursuant to subsection (a)(5).
+
+
+
+
+Regulation Text                              19 of 63
+                                                                             SBDDW-23-001
+                                                                        Direct Potable Reuse
+                                                                             October 4, 2023
+
+       (2)    The treatment train shall be continuously operated to achieve 16 log
+reduction of enteric virus, 10 log reduction of Giardia lamblia cyst, and 11 log reduction
+of Cryptosporidium oocyst using validated treatment LRVs and available options in
+subsection (d) at all times while conforming to the operations plan prepared pursuant to
+section 64669.80.
+       (3)    The treatment train shall be operated to achieve 20 log reduction of enteric
+virus, 14 log reduction of Giardia lamblia cyst, and 15 log reduction of Cryptosporidium
+oocyst no less than 90 percent of the time the treatment train produces water in a
+calendar month while conforming to the operations plan prepared pursuant to section
+64669.80.
+       (4)    If the treatment train achieves 20 log reduction for enteric virus, 14 log
+reduction for Giardia lamblia cyst, or 15 log reduction for Cryptosporidium oocyst less
+than 90 percent of the time the treatment train produced water in a calendar month for
+two consecutive months, a DiPRRA shall:
+             (A) Evaluate the cause(s) of the failure to achieve the 20 log reduction for
+enteric virus, 14 log reduction for Giardia lamblia cyst, or 15 log reduction for
+Cryptosporidium oocyst;
+             (B) Take corrective action; and
+             (C) Summarize the evaluation and corrective actions taken in the monthly
+compliance report submitted pursuant to section 64669.95.
+       (5)    The DiPRRA shall take action to immediately discontinue delivery of DPR
+project water to any distribution system if 16 log reduction for enteric virus, 10 log
+reduction for Giardia lamblia cyst, or 11 log reduction for Cryptosporidium oocyst are not
+met, with compliance determined based on subsection (b)(1).
+       (6)    The DiPRRA shall take immediate action pursuant to the operations plan to
+restore functionality of a treatment process if the minimum number of treatment
+processes identified in subsection (a)(2) for any pathogen listed in subsection (a)(1) are
+not functional. The DiPRRA shall notify the State Board within 24 hours of determination
+that the number of pathogen treatment processes used in an operating treatment train is
+fewer than four.
+
+
+
+Regulation Text                            20 of 63
+                                                                            SBDDW-23-001
+                                                                       Direct Potable Reuse
+                                                                            October 4, 2023
+
+         (7)   The DiPRRA shall take immediate action pursuant to the operations plan to
+restore functionality of a treatment mechanism if a treatment mechanism identified in
+subsection (a)(3) for any pathogen listed in subsection (a)(1) is not functional. The
+DiPRRA shall notify the State Board within 24 hours of determination that the number of
+treatment mechanisms used in an operating treatment train is fewer than three or does
+not include those specified in subsection (a)(3).
+         (8)   The DiPRRA shall notify the State Board and each public water system
+receiving finished water directly from the DPR project within 60 minutes of knowledge of
+a failure that necessitates discontinuing delivery of DPR project water to any distribution
+system pursuant to subsection (b)(5).
+         (9)   The DiPRRA shall notify the State Board before commencing delivery of
+finished water to a distribution system after an incident pursuant to subsection (b)(5)
+occurs and restart the DPR plant in accordance with a protocol in an approved
+operations plan prepared pursuant to section 964669.80. The DiPRRA shall submit an
+incident report, including corrective actions taken, to the State Board with the monthly
+compliance report submitted pursuant to section 64669.95.
+   (c)    The SCADA system shall be designed to identify a failure of a process to meet
+its critical limit(s) and shall be able to automatically discontinue delivery of DPR project
+water to any distribution system if the treatment train does not meet the 16 log reduction
+for enteric virus, 10 log reduction for Giardia lamblia cyst, or 11 log reduction for
+Cryptosporidium oocyst. The SCADA system shall be able to discontinue delivery of
+DPR project water to any distribution system within the time provided by the flow path
+determined in section 64669.85(b)(3). The SCADA system shall have associated alarms
+that indicate when a process is not operating as designed.
+   (d)    A DiPRRA may propose to use subsections (d)(1), (d)(2), and (d)(3) to receive
+credit for a portion of the pathogen log reduction criteria in subsections (a)(1), (b)(2),
+and (b)(3). In no case shall a combination of options in subsections (d)(1), (d)(2) or
+(d)(3) be credited with more than two logs of the pathogen log reduction criteria in
+subsections (a)(1), (b)(2), and (b)(3). The proposal shall be included in the engineering
+report prepared pursuant to section 64669.75.
+
+
+
+Regulation Text                           21 of 63
+                                                                           SBDDW-23-001
+                                                                      Direct Potable Reuse
+                                                                           October 4, 2023
+
+         (1)   Continuous blending of DPR project water with an extracted ground water
+source or a surface water source of drinking water has received permit approval from
+the State Board in accordance with sections 116525 through 116550 of the Health and
+Safety Code, or a finished water that has received permit approval from the State Board
+in accordance with sections 116525 through 116550 of the Health and Safety Code,
+such that the blended water is demonstrated to be completely blended and credit for the
+blended water is no more than the result of the calculation: the negative log of the
+WWC. Continuous blending may be credited with no more than two logs of the
+pathogen log reduction criteria in subsections (a)(1), (b)(2), and (b)(3).
+         (2)   Continuous mixing of DPR project water in a reservoir such that the
+elevated pathogen density in a one-hour discharge of inadequately treated water is
+attenuated by a factor commensurate with the credit in the water withdrawn from the
+reservoir as demonstrated with hydrodynamic modeling and tracer testing that is
+reviewed by an independent advisory panel pursuant to section 64669.120. The
+treatment train upstream of mixing pursuant to this subsection shall be designed and
+constructed to provide at least 16 log for enteric virus, 10 log for Giardia lamblia cyst,
+and 11 log for Cryptosporidium oocyst. Continuous mixing may be credited with no
+more than two logs of the pathogen log reduction criteria in subsections (a)(1) and
+(b)(3). The credit pursuant to this subsection may only be used to meet the
+requirements of subsection (b)(2) for up to 60 minutes in any 24-hour period.
+         (3)   Recharge or storage of DPR project water into a groundwater basin such
+that the virus credit is no more than the result of the calculation: 0.033 log per day times
+the retention time (days) of DPR project water in groundwater basin. The retention time
+must be demonstrated with groundwater modeling and tracer testing that is reviewed by
+an independent advisory panel pursuant to section 64669.120. Groundwater recharge
+or storage may be credited with no more than two logs of the pathogen log reduction
+criteria in subsections (a)(1), (b)(2), and (b)(3).
+   (e)    A proposal pursuant to subsection (d) shall:
+         (1)   identify the pathogen control point(s) and the operational parameter(s) and
+establish critical limit(s) that indicate whether the operation demonstrates the credit; and
+
+
+
+Regulation Text                            22 of 63
+                                                                           SBDDW-23-001
+                                                                      Direct Potable Reuse
+                                                                           October 4, 2023
+
+         (2)   identify the circumstances that would require a re-evaluation of an approved
+credit, such as when conditions are inconsistent with the previous demonstration test
+conditions.
+   (f)    The DiPRRA may propose an alternative to the two log limitation and for the
+virus reduction rate pursuant to subsection (d)(3). The proposal shall:
+         (1)   demonstrate that the proposed alternative credit provides pathogen control
+at least as health protective as a treatment process validated to the same log reduction
+pursuant to subsection (a)(5)(C); and
+         (2)   be reviewed by an independent advisory panel pursuant to section
+64669.120(b);
+   (g)    Water delivered to a water distribution system of a public water system shall
+meet the disinfection performance standards pursuant to section 64654(b).
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13520,
+13522, 13561, 13561.2, 13563, 13566 and 13567, Water Code; and Sections 116270,
+116275, 116350, 116360, 116365, 116375, 116385, 116390, 116400, 116525, 116527,
+116530, 116535, 116540, 116550, 116551, 116555, 116655 and 116735, Health and
+Safety Code.
+
+
+
+Adopt Section 64669.50 as follows:
+§ 64669.50. Chemical Control.
+Municipal wastewater used in a DPR project shall receive continuous treatment
+pursuant to this section prior to entering a water distribution system of a public water
+system.
+   (a)    A treatment train shall consist of no less than three separate treatment
+processes, using no less than three diverse treatment mechanisms, for chemical
+reduction. The treatment train shall include the following treatment processes:
+         (1)   An ozonation process immediately followed by biologically activated carbon
+(ozone/BAC), unless exempted pursuant to subsection (c), that meets the criteria set
+forth in this section;
+
+
+Regulation Text                            23 of 63
+                                                                            SBDDW-23-001
+                                                                       Direct Potable Reuse
+                                                                            October 4, 2023
+
+         (2)   A reverse osmosis membrane process that meets the criteria set forth in this
+section; and
+         (3)   An advanced oxidation process that meets the criteria set forth in this
+section.
+   (b)     The sequence of processes required by subsection (a) in the treatment train
+shall be ozone/BAC followed by reverse osmosis membrane followed by advanced
+oxidation.
+   (c)     A continuous blending process that provides a municipal wastewater
+contribution (WWC) less than or equal to 0.10, may be used to substitute for the
+treatment in subsection (a)(1). For a continuous blending process with an approved
+WWC greater than 0.10, a DiPRRA shall provide treatment pursuant to subsection
+(a)(1) for a percentage of the municipal wastewater flow equal to or greater than:
+
+
+
+
+   (d)     An ozone/BAC process shall be designed to provide no less than 1.0 log
+reduction of each of the following indicators: formaldehyde, acetone, carbamazepine,
+and sulfamethoxazole.
+         (1)   The ozonation process shall be designed to provide a ratio of the applied
+ozone dose to the design feed water total organic carbon (TOC) concentration greater
+than 1.0. A different design ratio may be used if it can be demonstrated that the ratio will
+achieve the reduction of the indicators set forth in subsection (d) carbamazepine and
+sulfamethoxazole at a pilot scale as part of the design of the ozonation process.
+         (2)   The BAC shall be designed with an empty bed contact time of at least 15
+minutes. A different empty-bed contact time may be used if it can be demonstrated to
+achieve the reduction of the indicators set forth in subsection (d)formaldehyde and
+acetone at a pilot scale as part of the design of the BAC process.
+   (e)     The ozonation process and the BAC shall be individually validated to ensure
+that an ozone/BAC process designed pursuant to subsection (d) can reliably achieve
+the reductions of indicators at full scale operation as follows.
+
+
+Regulation Text                            24 of 63
+                                                                            SBDDW-23-001
+                                                                       Direct Potable Reuse
+                                                                            October 4, 2023
+
+       (1)    The validation study shall demonstrate whether:
+             (A) An ozonation process will provide no less than 1.0 log reduction
+measured across the ozonation process for each of the following indicators:
+carbamazepine and sulfamethoxazole; and
+             (B) A BAC will provide no less than 1.0 log reduction measured across the
+BAC for each of the following indicators: formaldehyde and acetone.
+       (2)    A DiPRRA shall submit a validation study protocol for the ozone/BAC
+process that complies with this subsection to the State Board for review and written
+approval prior to conducting the validation study. The validation study protocol shall
+include challenge tests, using formaldehyde, acetone, carbamazepine, and
+sulfamethoxazole, to demonstrate that the proposed ozone/BAC process will reliably
+achieve the minimum 1.0 log reduction of each indicator under the proposed normal full-
+scale operating conditions of the ozone/BAC process. The validation study protocol
+shall include proposed surrogate and/or operational parameters to be used in the
+validation study. The ozone/BAC process shall be re-validated when the full-scale
+operating conditions or control strategy are inconsistent with the previous validation
+study conditions.
+       (3)    The DiPRRA shall submit a validation study report, including all results
+generated by the validation study, to the State Board as part of the engineering report
+prepared pursuant to section 64669.75. The validation study report shall identify the
+chemical control point(s) and the surrogate and/or operational parameter(s) and
+establish the critical limit(s) for the surrogate(s) and/or operational parameter(s) that
+indicate whether:
+             (A) For the ozonation process, the minimum 1.0 log carbamazepine and
+sulfamethoxazole reduction design criteria are being met during full-scale operation. At
+least one surrogate or operational parameter shall be capable of being monitored
+continuously and recorded and have associated alarms that indicate when the
+ozonation process is not operating as designed.
+             (B) For the BAC, the minimum 1.0 log formaldehyde and acetone reduction
+design criteria are being met during full-scale operation. At least one surrogate or
+
+
+
+Regulation Text                           25 of 63
+                                                                             SBDDW-23-001
+                                                                        Direct Potable Reuse
+                                                                             October 4, 2023
+
+operational parameter shall be capable of being monitored continuously and recorded
+and have associated alarms that indicate when the BAC is not operating as designed.
+   (f)    During full-scale operation of an ozone/BAC process designed pursuant to
+subsection (d) and validated pursuant to subsection (e), a DiPRRA shall continuously
+monitor and record the surrogate and/or operational parameters, record when the
+critical limits established pursuant to subsection (e)(34) are exceeded, and continuously
+monitor the ozonation process feedwater for nitrite, according to an approved
+operations plan pursuant to section 64669.80.
+   (g)    A reverse osmosis membrane selected for use shall meet the following
+requirements:
+         (1)    Each membrane element has achieved a minimum rejection of sodium
+chloride of no less than 99.0 percent and an average (nominal) rejection of sodium
+chloride of no less than 99.2 percent, as demonstrated through Method A of ASTM
+International’s method D4194-23 Standard Test Methods for Operating Characteristics
+of Reverse Osmosis and Nanofiltration Devices (2023), using the following substitute
+test conditions:
+               (A) A recovery of permeate of no less than 15 percent,
+               (B) Sodium chloride rejection is based on three or more successive
+measurements, after flushing and following at least 30 minutes of operation having
+demonstrated that rejection has stabilized,
+               (C) An influent pH no less than 6.5 and no greater than 8.0,
+               (D) An influent sodium chloride concentration of no greater than 2,000 mg/L,
+to be confirmed prior to the start of testing, and
+               (E) An applied pressure no greater than 225 pounds per square inch (psi);
+and
+         (2)    During the first twenty weeks of full-scale operation, the membrane
+produces a permeate with no more than five percent of the sample results having TOC
+concentrations greater than 0.25 mg/L (or an alternative surrogate parameter and
+corresponding limit approved by the State Board), as confirmed through monitoring no
+less frequent than weekly.
+
+
+
+Regulation Text                             26 of 63
+                                                                           SBDDW-23-001
+                                                                      Direct Potable Reuse
+                                                                           October 4, 2023
+
+   (h)    For the reverse osmosis treatment process, a DiPRRA shall propose as part of
+the engineering report prepared pursuant to section 64669.75 ongoing performance
+monitoring using at least one surrogate and/or operational parameter that is capable of
+being monitored continuously and recorded and have associated alarms that indicate
+when the integrity of the reverse osmosis membrane has been compromised. The
+proposal shall identify the chemical control point and the surrogate(s) and/or operational
+parameter(s) and establish the critical limit(s) for the surrogate(s) and/or operational
+parameter(s) that indicate when the integrity has been compromised.
+   (i)    During full-scale operation of the reverse osmosis treatment process, a
+DiPRRA shall continuously monitor and record the surrogate and/or operational
+parameter(s) that indicate when the integrity of the process has been compromised and
+record when the critical limits established pursuant to subsection (h) are exceeded,
+according to an approved operations plan pursuant to section 64669.80.
+   (j)    A DiPRRA shall track the TOC performance of the reverse osmosis
+membranes pursuant to subsections (j)(1) and (j)(2) and report findings to the State
+Board in the monthly compliance report prepared pursuant to section 64669.95.
+         (1)   If the combined reverse osmosis permeate TOC concentration exceeds
+0.15 mg/L continuously for more than 120 hours, a DiPRRA shall investigate the
+integrity of the reverse osmosis treatment, perform a conductivity profile to identify the
+underperforming reverse osmosis vessel or reverse osmosis element, and take
+corrective action.
+         (2)   If the combined reverse osmosis permeate TOC concentration exceeds 0.1
+mg/L continuously for more than 24 hours, a DiPRRA shall collect a grab sample of the
+reverse osmosis permeate and perform a 5-day total trihalomethane formation potential
+study.
+   (k)    An advanced oxidation process shall be designed to provide no less than 0.5
+log reduction of the indicator 1,4-dioxane. The advanced oxidation process shall be
+validated to demonstrate that the advanced oxidation process can reliably achieve no
+less than 0.5 log reduction of the indicator 1,4-dioxane.
+
+
+
+
+Regulation Text                           27 of 63
+                                                                            SBDDW-23-001
+                                                                       Direct Potable Reuse
+                                                                            October 4, 2023
+
+         (1)   The DiPRRA shall submit a validation study protocol that complies with this
+subsection to the State Board for review and written approval prior to conducting the
+validation study. The validation study protocol shall include challenge tests, using 1,4-
+dioxane, to demonstrate that the proposed advanced oxidation process will reliably
+achieve the minimum 0.5 log reduction under the proposed normal full-scale operating
+conditions of the advanced oxidation process. The validation study protocol shall
+include proposed surrogate and/or operational parameters to be used in the validation
+study. The advanced oxidation process shall be re-validated when the full-scale
+operating conditions or control strategy are inconsistent with the previous validation
+study conditions.
+         (2)   The DiPRRA shall submit a validation study report, including all results
+generated by the validation study, to the State Board as part of the submittal of the
+engineering report prepared pursuant to section 64669.75. The validation study report
+shall identify the chemical control point(s) and the surrogate(s) and/or operational
+parameter(s) and establish the critical limit(s) for the surrogate(s) and/or operational
+parameter(s) that indicate whether the minimum 0.5 log 1,4-dioxane reduction design
+criterion is being met. At least one surrogate and/or operational parameter shall be
+capable of being monitored continuously and recorded and have associated alarms that
+indicate when the advanced oxidation process is not operating as designed.
+   (l)    During full-scale operation of the advanced oxidation process designed and
+validated pursuant to subsection (k), the DiPRRA shall continuously monitor and record
+the surrogate and/or operational parameter(s) established pursuant to subsection (k)(2)
+and record when the critical limits established pursuant to subsection (k)(2) are
+exceeded, according to an approved operations plan pursuant to section 64669.80.
+   (m) The design and operation of the entire treatment train used to comply with the
+requirements in this Article and connected facilities such as storage tanks, detention
+basins, reservoirs, related pipelines, and water conveyance shall provide continuous
+mixing of the flow along the path of flow between the terminus of the wastewater
+collection system and the entry point to the drinking water distribution system sufficient
+to attenuate a one-hour elevated concentration of a contaminant in the municipal
+
+
+
+Regulation Text                            28 of 63
+                                                                            SBDDW-23-001
+                                                                       Direct Potable Reuse
+                                                                            October 4, 2023
+
+wastewater by a factor of ten. Mixing that occurs between the wastewater treatment
+plant inlet chamber and the DPR project finished water may be used to meet this
+requirement.
+   (n)     The DiPRRA shall establish a TOC chemical control point and a control point
+monitoring location that provides representative sampling of the advanced treated water
+prior to distribution. To determine compliance with subsections (n)(1) through (n)(43),
+TOC shall be monitored continuously and the TOC concentration shall be recorded no
+less than once every fifteen minutes. TOC of wastewater origin in excess of 0.5 mg/L
+shall be prevented from entering the distribution system. The TOC concentration at the
+TOC chemical control point shall not exceed the TOC critical limit as follows: T the TOC
+concentration shall not exceed a TOC critical limit equal to 0.5 mg/L in the advanced
+treated water prior to distribution, unless adjusted pursuant to subsections (n)(1) and/or
+(n)(2).
+          (1)   The TOC concentration at the TOC chemical control point shall not exceed
+the TOC critical limit as follows. When DPR project water is being blended prior to
+distribution with an untreated source of water previously approved by the State Board or
+a finished water previously approved by the State Board in accordance with sections
+116525 through 116550 of the Health and Safety Code, the TOC concentration in the
+advanced treated water prior to blending distribution shall not exceed a TOC critical limit
+equal to 0.5 mg/L divided by the WWC. When DPR project water is not blended and the
+WWC equals 1, the TOC concentration shall not exceed a TOC critical limit equal to 0.5
+mg/L in the advanced treated water prior to distribution. The TOC critical limit must
+always be based on the current WWC.
+          (2) Attenuation of elevated TOC concentration of limited duration with mixing in a
+reservoir downstream of the advanced treatment may be used to temporarily increase
+the TOC critical limit in section (n) and/or subsection (n)(1). The magnitude and duration
+of proposed alternative TOC critical limit must be justified by hydrodynamic modeling,
+tracer testing, and the diluent capacity of the reservoir, to demonstrate that the TOC of
+wastewater origin is no more than 0.5 mg/L in the water entering the distribution system.
+
+
+
+
+Regulation Text                            29 of 63
+                                                                              SBDDW-23-001
+                                                                         Direct Potable Reuse
+                                                                              October 4, 2023
+
+The proposed alternative TOC critical limit, hydrodynamic modeling, and tracer testing
+must be reviewed by an independent advisory panel pursuant to section 64669.120.
+         (32) If the TOC critical limit pursuant to section (n), subsection (n)(1) or
+subsection (n)(2) is not met, the DiPRRA shall take action to immediately discontinue
+delivery of non-compliant DPR project water to any distribution system. The DiPRRA
+shall notify the State Board and each public water system directly receiving DPR project
+water within 24 hours of knowledge of a failure to meet the TOC critical limit.
+         (43) If the TOC concentration exceeds one half the TOC critical limit pursuant to
+section (n), subsection (n)(1), or subsection (n)(2) continuously for more than 60
+minutes, a DiPRRA shall conduct an evaluation of the treatment system, initiate a
+source control investigation pursuant to the approved joint plan, collect samples for
+laboratory analysis to investigate the cause(s) of the elevated concentration, and
+include the results in the monthly compliance report submitted pursuant to section
+64669.95.
+   (o)    If for more than 10 percent of the time the treatment train was producing water
+in a calendar month there is any treatment process pursuant to subsections (a) and (b)
+that is not operating in compliance with its associated critical limits pursuant to
+subsections (e), (h), or (k), a DiPRRA shall:
+         (1)   Evaluate the cause(s) of the failure to achieve the critical limit(s) pursuant to
+this subsection;
+         (2)   Take corrective action; and
+         (3)   Summarize the evaluation and corrective actions taken in the monthly
+compliance report submitted pursuant to section 64669.95.
+   (p)    Within sixty (60) days after the first 12 months of full-scale operation, the
+DiPRRA shall submit a report to the State Board that complies with this subsection.
+         (1)   For the reverse osmosis process, the report shall describe the effectiveness
+of the treatment, process failures that occurred, and actions taken when membrane
+integrity monitoring conducted pursuant to subsection (i) indicated that process integrity
+was compromised; and
+
+
+
+
+Regulation Text                              30 of 63
+                                                                             SBDDW-23-001
+                                                                        Direct Potable Reuse
+                                                                             October 4, 2023
+
+         (2)    For the ozone/BAC and the advanced oxidation processes, the report shall
+include:
+               (A) Results of surrogate and/or operational parameter monitoring conducted
+pursuant to subsections (f) and (l);
+               (B) A description of the efficacy of the surrogate and operational parameters
+to reflect the reduction criteria for carbamazepine and sulfamethoxazole for the
+ozonation process, formaldehyde and acetone for the BAC, and 1,4-dioxane for the
+advanced oxidation process; and
+               (C) A description of actions taken, or yet to be taken, if the ozone/BAC
+process or advanced oxidation process were not operating in accordance with the
+operations plan pursuant to section 64669.80 during the first 12 months of operation.
+   (q)     A DiPRRA shall evaluate data collected on treatment byproduct precursors and
+treatment byproducts pursuant to sections 64669.60(b), 64669.65(b), and
+64669.75(c)(2), and options for optimizing operation to minimize production of treatment
+byproducts. The DiPRRA shall include a plan for optimization operation to minimize
+production of treatment byproducts in the operations plan prepared pursuant to section
+64669.80.
+   (r)     A DiPRRA may use an alternative to a treatment or treatment sequence
+requirement in subsections (a) through (l) and (o) if the DiPRRA:
+         (1)    Demonstrates to the State Board that the proposed alternative provides an
+equivalent or better level of performance with respect to the efficacy and reliability of the
+reduction of contaminants that pose a risk to public health, and assures an equivalent or
+better level of protection to public health;
+         (2)    Identifies the chemical control point(s) and the surrogate and/or operational
+parameter(s) and establish the critical limit(s) for the surrogate(s) and/or operational
+parameter(s); and
+         (3)    Receives written approval from the State Board prior to implementation of
+the alternative, with approval based on compliance with this subsection.
+
+
+
+
+Regulation Text                              31 of 63
+                                                                               SBDDW-23-001
+                                                                          Direct Potable Reuse
+                                                                               October 4, 2023
+
+   (s)    A demonstration pursuant to subsection (r)(1) shall include a review of the
+proposed alternative by an independent advisory panel pursuant to section 64669.120.
+The panel shall consider:
+         (1)   whether the level of public health protection being provided by an alternative
+to a treatment or treatment sequence is equivalent to or better than the public health
+protection from the required treatment or treatment sequence;
+         (2)   how the level of treatment performance and reliability for the proposed
+alternative will be measured;
+         (3)   how the alternative affects downstream treatment process(es) and
+distribution system water quality;
+         (4)   how the alternative affects the fate of wastewater contaminants and
+treatment byproducts through the treatment train; and
+         (5)   how the alternative affects treatment train reliability.
+   (t)    An alternative to a requirement in section (a) shall comply with the following:
+the treatment train with the alternative shall consist of no less than three separate
+treatment processes, using no less than three diverse treatment mechanisms, for
+chemical reduction.
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13520,
+13522, 13561, 13561.2, 13563, 13566 and 13567, Water Code; and Sections 116270,
+116275, 116350, 116360, 116365, 116375, 116385, 116390, 116400, 116525, 116527,
+116530, 116535, 116540, 116550, 116551, 116555, 116655 and 116735, Health and
+Safety Code.
+
+
+
+Adopt Section 64669.55 as follows:
+§ 64669.55. Water Safety Plan.
+   (a)    A DiPRRA shall develop a water safety plan as part of the engineering report
+prepared pursuant to section 64669.75 to determine whether all hazards from
+contaminants in the municipal wastewater source have been considered by the
+DiPRRA. The plan shall address risk assessment and risk management and shall:
+
+
+Regulation Text                              32 of 63
+                                                                              SBDDW-23-001
+                                                                         Direct Potable Reuse
+                                                                              October 4, 2023
+
+            (1)   Include a comprehensive hazard analysis that considers all steps in a
+drinking water supply chain from the municipal wastewater source to a consumer; and
+            (2)   Identify and describe the risk management control(s) in addition to the
+requirements in sections 64669.40, 64669.45, and 64669.50. The description of the risk
+management control(s) shall include treatment effectiveness, critical limits, monitoring,
+corrective action in case of a lapse of control, and an operations plan for the control(s).
+      (b)     A DiPRRA shall update the water safety plan at least every 5 years as part of
+the engineering report updates pursuant to section 64669.75. In water safety plan
+updates, the DiPRRA shall identify any new or additional hazard(s) and the proposed
+risk management control(s) pursuant to subsection (a)(2) to address the hazard(s). A
+DiPRRA shall submit the updated plan for review by an independent advisory panel
+established pursuant to section 64669.120. The DiPRRA shall consider the
+recommendations of the independent advisory panel in the revisions prior to finalization
+of the updated water safety plan.
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13520,
+13561, 13561.2, 13563, 13566 and 13567, Water Code; and Sections 116270, 116275,
+116350, 116360, 116365, 116375, 116385, 116390, 116400, 116525, 116527, 116530,
+116535, 116540, 116550, 116551, 116555, 116655 and 116735, Health and Safety
+Code.
+
+
+
+Adopt Section 64669.60 as follows:
+§ 64669.60. Regulated Chemicals and Physical Characteristics Control and
+Monitoring.
+      (a)    Once a month, samples shall be collected at sampling locations representative
+of:
+            (1)   municipal wastewater that feeds the DPR project at a location immediately
+after secondary wastewater treatment and prior to the treatment processes pursuant to
+section 64669.50, or at an alternate location approved by the State Board;
+
+
+
+
+Regulation Text                               33 of 63
+                                                                               SBDDW-23-001
+                                                                          Direct Potable Reuse
+                                                                               October 4, 2023
+
+         (2)   advanced treated water at a location immediately after the advanced
+oxidation process; and
+         (3)   finished water prior to an entry point to the distribution system.
+   (b)    Samples collected pursuant to subsection (a) shall be analyzed for chemicals
+with a primary maximum contaminant level (MCL), a secondary MCL, or an action level,
+and for physical characteristics listed in section 64449(b)(2).
+   (c)    Monitoring conducted at a location identified in subsection (a)(3) may be used
+to satisfy the monitoring requirement pursuant to subsection (a)(2) if the DiPRRA
+demonstrates to the State Board that the water sampled at locations identified in
+subsections (a)(2) and (a)(3) have the same or substantially similar water quality.
+   (d)    The State Board may require representative monitoring at additional locations
+not specified in subsection (a) based on the State Board’s review of the DPR project
+engineering report submitted pursuant to section 64669.75.
+   (e)    The monitoring frequency specified in subsection (a) may be increased for a
+chemical in subsection (b) based on the State Board’s review of the DPR project
+engineering report and evaluation of the treatment process used, the treatment
+effectiveness, and the concentration of the chemical found in the feed water source.
+   (f)    A representative sample shall be collected at least once a week at the location
+identified in subsection (a)(3) and analyzed for nitrate, nitrite, nitrate plus nitrite,
+perchlorate, and lead. A monthly sample collected pursuant to section (a) at this
+location may be used to satisfy a weekly sampling requirement when the sample date of
+the monthly sample and the sample date of the weekly sample coincide.
+   (g)    The nitrate and nitrite chemical control point shall be monitored continuously at
+the location identified in subsection (a)(3) or another location downstream of reverse
+osmosis treatment.
+         (1)   The critical limits established for the nitrate and nitrite chemical control point
+shall not be greater than the respective MCLs for nitrate, nitrite, or nitrate plus nitrite.
+         (2)   If monitoring conducted at the nitrate and nitrite chemical control point
+indicates that an MCL for nitrate, nitrite, or nitrate plus nitrite is exceeded, the DiPRRA
+shall immediately take the actions pursuant to subsection (i)(2)(A).
+
+
+
+Regulation Text                              34 of 63
+                                                                              SBDDW-23-001
+                                                                         Direct Potable Reuse
+                                                                              October 4, 2023
+
+   (h)    If a result of the monitoring at the location identified in subsection (a)(1)
+indicates a concentration of a chemical exceeding a primary MCL or action level, a
+confirmation sample shall be collected within 24 hours of notification of the result and
+analyzed for the chemical to confirm the initial result.
+         (1)   If the average of the initial and confirmation sample exceeds the chemical’s
+primary MCL or action level or if no confirmation sample is collected and analyzed
+pursuant to this subsection the DiPRRA shall notify the State Board within 24 hours of
+notification of the result, increase the monitoring frequency of the chemical to weekly at
+all locations identified in subsection (a), initiate an investigation of the source of the
+chemical, cause of the exceedance, and the efficacy of the treatment process to reduce
+the concentration of the chemical to below the MCL. The DiPRRA shall submit a report
+to the State Board summarizing the monitoring conducted and the results of the
+evaluation of the treatment system and of the source of contamination. The DiPRRA
+may apply to the State Board for written approval to resume monthly sampling pursuant
+to subsection (a) after submitting the report to the State Board, with approval based on
+compliance with this subsection.
+         (2)   If the initial sample or confirmation sample exceeds ten times the primary
+MCL or action level or a concentration that may exceed the capacity of the treatment
+system to reduce the concentration to below the primary MCL or action level, a DiPRRA
+shall take corrective action and notify the State Board within 24 hours of notification of
+the result.
+   (i)    If a result of the monitoring at the locations identified in subsection (a)(2) or
+(a)(3) indicates a concentration of a chemical exceeding a primary MCL or an action
+level, a confirmation sample shall be collected within 24 hours of notification of the
+result and analyzed for the chemical to confirm the initial result. The DiPRRA shall notify
+the State Board within 24 hours of notification of the initial result. If the average of the
+initial and confirmation sample exceeds a chemical’s primary MCL or action level, or if
+no confirmation sample is collected and analyzed pursuant to this subsection:
+         (1)   for a sample collected at the location identified in subsection (a)(2), the
+DiPRRA shall notify the State Board within 24 hours of notification of the result, take
+
+
+
+Regulation Text                             35 of 63
+                                                                               SBDDW-23-001
+                                                                          Direct Potable Reuse
+                                                                               October 4, 2023
+
+corrective action, increase the monitoring frequency of the chemical to weekly at all
+locations identified in subsection (a), initiate an investigation of the source of the
+chemical, cause of the exceedance, and the efficacy of the treatment process to reduce
+the concentration of the chemical to below the MCL. The DiPRRA shall submit a report
+to the State Board summarizing the monitoring conducted, corrective action(s) taken,
+and the results of the evaluation of the treatment system and of the source of
+contamination. The DiPRRA may apply to the State Board for written approval to
+resume monthly sampling for the chemical pursuant to subsection (a) after submitting
+the report to the State Board.
+         (2)    for a sample collected at the location identified in subsection (a)(3), the
+DiPRRA shall:
+               (A) notify the State Board within 24 hours of notification of the result and
+take action to immediately discontinue delivery of DPR project water to any distribution
+system.
+               (B) notify partner agency(ies) in the joint plan, all public water systems that
+directly receive DPR project water, the DiPRRA governing body, and the governing
+body of any local agency whose jurisdiction includes areas served by the DPR project
+within 30 days of notification of the result; and
+               (C) provide public notification to customers who are served by the DPR
+project pursuant to section 64669.125. The DiPRRA shall coordinate with a public water
+system in the public notification of customers served by the public water system.
+   (j)    If a result of the monitoring at locations identified in subsection (a)(2) or (a)(3)
+exceeds a chemical’s secondary MCL in Table 64449-A or the upper limit in Table
+64449-B, a DiPRRA shall conduct an evaluation of the treatment system, continue
+monthly monitoring, calculate the quarterly average pursuant to section 64449(c)
+(Secondary Maximum Contaminant Levels and Compliance), and report the
+exceedance in the monthly compliance report submitted pursuant to section 64669.95.
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13520,
+13522, 13561, 13561.2, 13563, 13566 and 13567, Water Code; and Sections 116270,
+
+
+Regulation Text                               36 of 63
+                                                                                 SBDDW-23-001
+                                                                            Direct Potable Reuse
+                                                                                 October 4, 2023
+
+116275, 116350, 116375, 116385, 116390, 116400, 116525, 116527, 116530, 116535,
+116540, 116550, 116551, 116555, 116655 and 116735, Health and Safety Code.
+
+
+
+Adopt Section 64669.65 as follows:
+§ 64669.65. Additional Chemical Monitoring.
+      (a)    Once a month, samples shall be collected at sampling locations representative
+of:
+            (1)   municipal wastewater that feeds the DPR project at a location immediately
+after secondary wastewater treatment and prior to the treatment processes pursuant to
+section 64669.50, or at an alternate location approved by the State Board;
+            (2)   advanced treated water at a location immediately after the advanced
+oxidation process; and
+            (3)   finished water prior to an entry point to the distribution system.
+      (b)    The samples collected pursuant to subsection (a) shall be analyzed for the
+following chemicals not monitored pursuant to section 64669.60, including:
+            (1)   Priority toxic pollutants (chemicals listed in 40 CFR section 131.38, dated
+July 1, 2003, “Establishment of numeric criteria for priority toxic pollutants for the State
+of California”) specified by the State Board, based on a review of the engineering report;
+            (2)   Chemicals with notification levels specified by the State Board, based on a
+review of the engineering report;
+            (3)   Chemicals specified by the State Board, based on a review of the DPR
+project engineering report submitted pursuant to section 64669.75 or from the
+wastewater source control program pursuant to section 64669.40(a)(3);
+            (4)   The following solvents: acetone; N,N-dimethylacetamide; methanol; and
+methyl ethyl ketone;
+            (5)   Treatment byproduct precursors and treatment byproducts specified by the
+State Board, based on a review of the engineering report;
+            (6)   Chemicals associated with business or household sources of hazardous
+substances, pharmaceuticals, and personal care products, based on published or
+otherwise available results of analyses of wastewater and environmental waters
+
+
+Regulation Text                                37 of 63
+                                                                             SBDDW-23-001
+                                                                        Direct Potable Reuse
+                                                                             October 4, 2023
+
+sampled locally from nearby watersheds or within nearby urban areas with similar
+demographics, specified by the State Board, based on a review of the DPR project
+engineering report submitted pursuant to section 64669.75; and
+         (7)   Any other chemicals specified by the State Board that may pose a human
+health risk, based on the State Board’s review of the monitoring conducted pursuant to
+subsections (g) and (h) or a review of wastewater source control program pursuant to
+section 64669.40(a)(3).
+   (c)    Monitoring conducted at a location identified in subsection (a)(3) may be used
+to satisfy the monitoring requirement pursuant to subsection (a)(2) if the DiPRRA
+demonstrates to the State Board that the water sampled at locations identified in
+subsections (a)(2) and (a)(3) have the same or substantially similar water quality.
+   (d)    The State Board may require representative monitoring at additional locations
+not specified in subsection (a) based on the State Board’s review of the DPR project
+engineering report submitted pursuant to section 64669.75.
+   (e)    If monitoring at a location identified in subsection (a) shows that a chemical with
+a notification level is detected, a confirmation sample shall be collected within 24 hours
+of notification of the result and analyzed for the chemical to confirm the initial result. If
+the average of the initial and confirmation sample confirms the chemical is detected or if
+no confirmation sample is collected, the DiPRRA shall increase the monitoring
+frequency of the chemical to weekly, conduct an evaluation of the treatment system,
+initiate a source control investigation pursuant to the approved joint plan, and include
+the results in the monthly compliance report submitted pursuant to section 64669.95.
+The DiPRRA may submit to the State Board a request to resume monthly sampling
+pursuant to subsection (a) after providing a report summarizing the treatment evaluation
+and source control investigation to the State Board.
+         (1)   If monitoring at the location identified in subsection (a)(1) shows a chemical
+with a notification level is detected and the DiPRRA has detected the chemical in the
+last two years of monitoring pursuant to subsection (a), the DiPRRA may submit to the
+State Board a request to waive the confirmation and increased sampling requirements
+pursuant to this subsection, if the DiPRRA demonstrates to the State Board that the
+
+
+
+Regulation Text                             38 of 63
+                                                                             SBDDW-23-001
+                                                                        Direct Potable Reuse
+                                                                             October 4, 2023
+
+detection is within the known concentration range of the chemical and the source of the
+chemical has been identified in previous source control investigations.
+       (2)    If monitoring at the location identified in subsection (a)(3) shows a chemical
+with a notification level is detected, the DiPRRA shall report the analytical results in the
+consumer confidence report prepared pursuant to section 64669.130.
+       (3)    If monitoring at the location identified in subsection (a)(2) or (a)(3) shows a
+chemical exceeding the notification level, a confirmation sample shall be collected within
+24 hours of notification of the result and analyzed for the chemical to confirm the initial
+result. The DiPRRA shall notify the State Board within 48 hours of notification of the
+result. If the average of the initial and confirmation sample exceeds the chemical’s
+notification level, or if no confirmation sample is collected and analyzed pursuant to this
+subsection, the DiPRRA shall:
+             (A) Within 24 hours notify the State Board, increase the monitoring
+frequency of the chemical to weekly at all locations identified in subsection (a), initiate
+an investigation of the source of the chemical, cause of the exceedance, and the
+efficacy of the treatment process to reduce the concentration of the chemical to below
+the notification level; and
+             (B) Notify partner agency(ies) in the joint plan, all public water systems that
+directly receive DPR project water, the DiPRRA governing body, and the governing
+body of any local agency whose jurisdiction includes areas served by the DPR project
+within 24 hours of notification of the result.
+       (4)    If the average of the initial and confirmation samples collected at a location
+identified in subsection (a)(3) pursuant to subsection (e)(3) exceeds a chemical’s
+response level, or if the initial sample exceeds a chemical’s response level and no
+confirmation sample is collected, the DiPRRA shall notify the State Board within 24
+hours of notification of the result and take action to immediately discontinue delivery of
+DPR project water to any distribution system. When a chemical’s response level is
+exceeded in the water delivered to the distribution system, the DiPRRA, its partner
+agency(ies), and all public water system(s) that directly receive DPR project water shall
+
+
+
+
+Regulation Text                            39 of 63
+                                                                           SBDDW-23-001
+                                                                      Direct Potable Reuse
+                                                                           October 4, 2023
+
+comply with notification requirements in Health and Safety Code sections 116455 and
+116378.
+   (f)    A DiPRRA may apply to the State Board for written approval to decrease the
+monitoring frequency at a location identified in subsection (a) for a chemical in
+subsection (b) as follows:
+         (1)   The monitoring frequency may be decreased from monthly to quarterly
+following State Board written approval, based on a review of no less than the most
+recent two years of monthly analytical results of the monitoring conducted pursuant to
+subsection (a) showing the chemical has not been detected;
+         (2)   The monitoring frequency may be decreased from quarterly to annually
+following State Board written approval, based on a review of no less than the most
+recent three years of quarterly analytical results pursuant to subsection (e)(1) showing
+the chemical has not been detected;
+         (3)   After at least three years of annual monitoring for a chemical have been
+completed pursuant to subsection (e)(2) showing the chemical has not been detected,
+the DiPRRA may apply to the State Board for a waiver from monitoring; and
+         (4)   A waiver for a chemical pursuant to subsection (f)(3) shall be renewed
+automatically, unless the State Board notifies the DiPRRA in writing that the waiver has
+been revoked and the reason for the revocation. The DiPRRA whose waiver has been
+revoked may re-apply for a waiver when it again meets the requirements for decreased
+monitoring set forth in this subsection. The State Board may revoke its written approval
+for decreased monitoring for a chemical pursuant to this section when there is indication
+that the chemical is present in the wastewater.
+   (g)    Each year, a DiPRRA, in consultation with the State Board, shall identify
+chemicals that may exceed levels at which no adverse human health effects from acute
+toxicity are anticipated to occur, with an adequate margin of safety, or exceed levels
+that do not pose any significant risk to human health from cancer or chronic disease;
+and that are likely to be present in wastewater used by the DPR project or likely to be
+produced within the DPR project treatment train and are not otherwise required to be
+
+
+
+
+Regulation Text                            40 of 63
+                                                                             SBDDW-23-001
+                                                                        Direct Potable Reuse
+                                                                             October 4, 2023
+
+monitored pursuant to subsections (b)(1) through (b)(6). The identification of the
+chemicals shall be based on reviews of the following:
+          (1)   The inventory of chemicals identified in section 64669.40(a)(3)(E);
+          (2)   Results of analyses of wastewater and environmental waters sampled
+locally, based on available data;
+          (3)   Reports from State Board advisory bodies or lists of chemicals that pose
+human health risks that have been developed by the State Board, or other California
+state agencies, or federal agencies;
+          (4)   Published scientific literature associated with business and household
+hazardous substances, pharmaceuticals, and personal care products found in
+wastewater or drinking water; and
+          (5)   Information on pharmaceuticals that are among the most often prescribed,
+based on readily available documentation, including results from Internet sites that track
+pharmaceutical use, and modified, if possible, to reflect local conditions.
+   (h)     Each year a DiPRRA shall submit to the State Board a plan for special
+monitoring that includes the proposed chemicals identified pursuant to subsection (g)
+and proposed method(s) of analysis pursuant to section 64669.70. The special
+monitoring plan shall comply with the following requirements.
+          (1)   Sampling shall be conducted from locations identified in subsection (a) on a
+quarterly basis for no less than two years.
+          (2)   If a chemical is detected, a confirmation sample shall be collected within 30
+days of notification of the result and analyzed for the chemical to confirm the initial
+result.
+          (3)   The DiPRRA shall provide results of the monitoring to partner agency(ies)
+engaged in public outreach pursuant to section 64669.40(a)(3)(D) to encourage a
+reduction in the release of business and household hazardous substances,
+pharmaceuticals, personal care products and other chemicals into the wastewater
+collection system.
+
+
+
+
+Regulation Text                             41 of 63
+                                                                           SBDDW-23-001
+                                                                      Direct Potable Reuse
+                                                                           October 4, 2023
+
+   (i)    Each year, a DiPRRA shall sample from the location identified in subsection
+(a)(2) for indicator compound(s) specified by the State Board, based on a review of the
+following:
+         (1)   The DPR project engineering report;
+         (2)   The information related to wastewater source control developed pursuant to
+section 64669.40;
+         (3)   Monitoring carried out pursuant to subsection (h);
+         (4)   An indicator compound’s ability to characterize the performance of the
+treatment processes for removal of chemicals; and
+         (5)   The availability of an analytical method for a chemical to be used as an
+indicator compound.
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13520,
+13561, 13561.2, 13563, 13566 and 13567, Water Code; and Sections 116270, 116275,
+116350, 116375, 116385, 116390, 116400, 116525, 116527, 116530, 116535, 116540,
+116550, 116555, 116655 and 116735, Health and Safety Code.
+
+
+
+Adopt Section 64669.70 as follows:
+§ 64669.70. Laboratory Analysis.
+   (a)    A laboratory performing analyses to comply with a requirement in this Article
+shall be accredited pursuant to division 101, part 1, chapter 4, article 3 of the Health and
+Safety Code (commencing with section 100825), known as the Environmental
+Laboratory Accreditation Act.
+   (b)    Methods used to analyze samples pursuant to this Article shall be identified and
+described in a monitoring plan prepared pursuant to section 64669.90.
+         (1)   Methods proposed to be used shall be approved by the US Environmental
+Protection Agency for use in compliance with the Safe Drinking Water Act as prescribed
+in 40 Code of Federal Regulations part 141 or 143, except as provided below.
+         (2)   For a sample collected at a location specified in subsections 64669.60(a)(1)
+and 64669.65(a)(1), methods proposed may be those approved by the US
+
+
+Regulation Text                            42 of 63
+                                                                              SBDDW-23-001
+                                                                         Direct Potable Reuse
+                                                                              October 4, 2023
+
+Environmental Protection Agency for use in compliance with the Clean Water Act as
+prescribed in 40 Code of Federal Regulations part 136.
+         (3)    For a chemical lacking a method in subsection (b)(1) or (b)(2), a DiPRRA
+shall propose a method in its monitoring plan pursuant to section 64669.90. Selection of
+a method for the chemical shall be based on the following, listed in the order of priority:
+               (A) A method approved for use in compliance with the Safe Drinking Water
+Act as prescribed in 40 Code of Federal Regulations part 141 or part 143 for the
+analysis of the chemical without modification to the method parameters, quality
+assurance, or quality control criteria, unless allowed by the method;
+               (B) A method for the chemical that has been developed and published by a
+state or federal governmental agency or by a non-governmental voluntary consensus
+standards body, including a method in the Standard Methods Committee’s Standard
+Methods for the Examination of Water and Wastewater, or the standards of ASTM
+International. The method shall be for analysis for the chemical without modification to
+the method parameters, quality assurance, or quality control criteria, unless allowed by
+the method; or
+               (C) If no method pursuant to subsection (b)(3)(A) or (b)(3)(B) is available for
+the chemical, a method developed by a laboratory, including modifications made to a
+method pursuant to subsection (b)(3)(A) or (b)(3)(B), may be proposed for use following
+submittal to the State Board of both the laboratory’s standard operating procedure and a
+method validation package. Prior to submittal of the method validation package, the
+laboratory shall submit to the State Board a method validation plan that conforms to the
+US Environmental Protection Agency’s Protocol for the Evaluation of Alternative Test
+Procedures for Organic and Inorganic Analytes in Drinking Water (EPA 815-R-15-007,
+February 2015), or Protocol for the Evaluation of Alternate Test Procedures for
+Analyzing Radioactive Contaminants in Drinking Water (EPA 815-R-15-008, February
+2015). A method that conforms to one of these protocols is acceptable to the State
+Board for use in a DPR project.
+   (c)    Sample collection and field tests shall be performed pursuant to subsection
+64415(b).
+
+
+
+Regulation Text                              43 of 63
+                                                                             SBDDW-23-001
+                                                                        Direct Potable Reuse
+                                                                             October 4, 2023
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13520,
+13561, 13561.2, 13563, 13566 and 13567, Water Code; and Sections 116270, 116275,
+116350, 116375, 116385, 116390, 116400, 116525, 116527, 116530, 116535, 116540,
+116550, 116551, 116555, 116655 and 116735, Health and Safety Code.
+
+
+
+Adopt Section 64669.75 as follows:
+§ 64669.75. Engineering Report.
+   (a)    A DiPRRA shall develop an engineering report for each DPR project and
+submit the engineering report to the State Board with the permit application prepared
+pursuant to section 64669.15.
+   (b)    The engineering report shall be prepared by an engineer licensed in California
+with at least five years of experience, as a licensed engineer, in drinking water and
+wastewater treatment evaluating treatment processes for pathogen and chemical
+control in a public water supply.
+   (c)    The engineering report shall contain the following information:
+         (1)    A description of how the DPR project intends to comply with each and every
+requirement in this Article and the applicable requirements in Chapter 17, including a
+description of all facilities, personnel, and support services necessary for the operation
+of the DPR project.
+         (2)    A characterization of the quality of the municipal wastewater that will be
+used and treated by the DPR project to produce drinking water. The characterization
+shall include the following components:
+               (A) Analytical results from samples collected on a monthly basis for no less
+than 24 consecutive months from monitoring location(s) representative of the feed
+water(s) to the DPR project for the following chemicals. All monitoring data generated
+for the characterization shall include detection limit information. For chemicals with
+drinking water standards, the detection limit for analysis shall be at or below those
+specified in sections 64432, 64445.1, 64442, 64443, 64533. All data used in the
+characterization shall be included in the engineering report.
+
+
+Regulation Text                              44 of 63
+                                                                             SBDDW-23-001
+                                                                        Direct Potable Reuse
+                                                                             October 4, 2023
+
+               1. Chemicals with a primary MCL, a secondary MCL, or an action level;
+               2. Priority toxic pollutants (chemicals listed in 40 CFR section 131.38,
+“Establishment of numeric criteria for priority toxic pollutants for the State of California”);
+               3. Chemicals with notification levels;
+               4. The following solvents: acetone; N,N-dimethylacetamide; methanol;
+and methyl ethyl ketone;
+               5. Treatment byproduct precursors and treatment byproducts;
+               6. Chemicals specified by the State Board, based on a review of the
+wastewater source control program pursuant to section 64669.40(a)(3);
+               7. Chemicals associated with business and household sources of
+hazardous substances, pharmaceuticals, and personal care products, and based on
+published or otherwise available results of analyses of wastewater and environmental
+waters sampled locally from nearby watersheds or within nearby urban areas with
+similar demographics; and
+               8. Other chemicals specified by the State Board that may pose a human
+health risk.
+           (B) An evaluation of the data collected pursuant to subsection (c)(2)(A) to
+assess the potential human health risks from detected chemicals.
+               1. The evaluation shall include a comparison of the maximum
+concentrations of chemicals in wastewater documented in subsection (c)(2)(A) with
+primary MCLs, action levels, and notification levels.
+               2. For chemicals without primary MCLs, action levels or notification
+levels, the evaluation shall include a comparison of the maximum concentration of the
+chemical in wastewater documented in subsection (c)(2)(A) with human health
+protective levels for drinking water. Human health protective levels include public health
+goals or the results of other human health risk assessments by the state Office of
+Environmental Health Hazard Assessment, or similar protective levels derived from
+human health risk assessments performed or compiled by California state agencies, the
+U.S. EPA, or State Board scientific advisory bodies, or other similar public health
+protective levels required by the State Board.
+
+
+
+Regulation Text                            45 of 63
+                                                                            SBDDW-23-001
+                                                                       Direct Potable Reuse
+                                                                            October 4, 2023
+
+                3. The evaluation, along with the cited document(s) that are the source of
+information of the health protective level of a chemical in drinking water, shall be
+presented in tables and an accompanying narrative discussion to identify chemicals that
+may pose a risk to public health in the wastewater, their potential to cause exceedances
+of MCLs or notification levels by the proposed DPR project, and their potential to be
+controlled by the use of local limits and other discharge control methods.
+                4. The narrative discussion shall also identify detected chemicals that
+lack available human health risk assessments, and identify analytical methods used that
+do not have the necessary sensitivity for a comparison to a human health protective
+level in drinking water.
+         (3)   Information regarding anticipated changes to wastewater characteristics,
+including anticipated effects due to climate change, and information regarding any
+existing or planned activities to optimize wastewater treatment operations, including
+influent flow and load equalization, enhancements to primary treatment, equalization
+and treatment of return flows, modification of biological treatment process operations,
+implementation of new biological treatment processes, and enhancements in process
+monitoring, effluent filtration, and effluent disinfection methods.
+   (d)    Every five years from the date of the initial approval of the engineering report, a
+DiPRRA shall update the engineering report and submit the updated engineering report
+to the State Board. The update shall include:
+         (1)   A description of the planned upgrades to the treatment train;
+         (2)   A description of capital improvements to DPR project facilities;
+         (3)   A summary of any updates to the joint plan;
+         (4)   A summary of any updates to the wastewater source control program;
+         (5)   An evaluation of treatment process optimization and treatment efficacy;
+         (6)   A summary of any updates to the water safety plan;
+         (7)   An assessment of operations, a summary of operator training, and a
+description of needed improvements; and
+         (8)   An update of the 5-year capital replacement cost and budget forecast.
+
+
+
+
+Regulation Text                            46 of 63
+                                                                               SBDDW-23-001
+                                                                          Direct Potable Reuse
+                                                                               October 4, 2023
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13520,
+13561, 13561.2, 13563, 13566 and 13567, Water Code; and Sections 116270, 116275,
+116350, 116360, 116365, 116375, 116385, 116390, 116400, 116525, 116527, 116530,
+116535, 116540, 116550, 116551, 116555, 116655 and 116735, Health and Safety
+Code.
+
+
+
+Adopt Section 64669.80 as follows:
+§ 64669.80. Operations Plan.
+   (a)    A DiPRRA shall develop an operations plan for each DPR project and submit
+the operations plan to the State Board with the permit application prepared pursuant to
+section 64669.15.
+   (b)    The DiPRRA shall operate the DPR project in accordance with an approved
+operations plan that complies with this section and a permit issued pursuant to section
+64669.15.
+   (c)    The operations plan shall include:
+         (1)    A description of how each treatment process is operated within the entire
+treatment train used to comply with the requirements in this Article and how the
+reliability features of the DPR project are implemented in the operation of the entire
+treatment train, including the standard operating procedures to be used.
+         (2)    A description of the treatment process performance monitoring pursuant to
+sections 64669.45, 64669.50, 64669.85, and 64669.110, including:
+               (A) Identification of each surrogate and operational parameter for each
+pathogen control point and chemical control point and a description of the equipment
+sampling and recording frequency for continuously monitored parameters;
+               (B) Identification of the monitoring location for each surrogate and
+operational parameter; and
+               (C) Identification of critical limit(s) associated with each surrogate and
+operational parameter;
+         (3)    Information demonstrating that the personnel operating and overseeing the
+DPR project operations have received training in the following:
+
+
+
+Regulation Text                               47 of 63
+                                                                             SBDDW-23-001
+                                                                        Direct Potable Reuse
+                                                                             October 4, 2023
+
+             (A) The proper operation of the treatment processes utilized;
+             (B) The California Safe Drinking Water Act and its implementing regulations,
+including the requirements of this Article;
+             (C) The potential adverse health effects associated with the consumption of
+drinking water that does not meet California drinking water standards; and
+             (D) Implementation of a wastewater source control program pursuant to
+section 64669.40.
+       (4)    A description of the type and level of operator certification for each water
+treatment plant that provides treatment pursuant to this Article, a continuing education
+program that includes the elements of the training required pursuant to subsection
+(c)(3), provisions for training of new personnel, and a description of the staffing level at
+each water treatment plant.
+       (5)    A description of the approach a DiPRRA will take to optimize the treatment
+processes to maximize reduction of the following:
+             (A) microbial contaminants identified in section 64669.45;
+             (B) regulated chemicals identified in section 64669.60;
+             (C) chemicals for which monitoring is required pursuant to section 64669.65;
+and
+             (D) disinfection byproduct precursors and treatment byproducts identified in
+section 64669.50(q).
+       (6)    A description of provisions to conduct re-validation or additional on-site re-
+evaluation whenever circumstances identified in section 64669.45(a)(4)(C)(10), section
+64669.45(e)(2), section 64669.50(e)(3), and section 64669.50(k)(1) are met.
+       (7)    A description of the SCADA system and how the SCADA system uses the
+data that it gathers to determine compliance with this Article. The plan shall describe
+how the SCADA system:
+             (A) acquires and uses monitoring data to inform operators, generate reports,
+and take autonomous action;
+             (B) identifies and responds to a failure of a control point to meet a critical
+limit and halt the flow of water if necessary;
+
+
+
+Regulation Text                             48 of 63
+                                                                             SBDDW-23-001
+                                                                        Direct Potable Reuse
+                                                                             October 4, 2023
+
+             (C) communicates and interoperates with the SCADA systems of all water
+treatment plants included in the DPR project that provide treatment pursuant to this
+Article;
+             (D) identifies the LRV performance status of each process for which an LRV
+has been credited and uses that status to determine compliance with the required
+pathogen log reductions pursuant to section 64669.45; and
+             (E) addresses the control system requirements pursuant to section
+64669.85(d).
+       (8)    A protocol to test the SCADA system to ensure the ability of the system to
+perform the functions identified pursuant to sections 64669.45 and section 64669.85(d)
+and identified in the engineering report prepared pursuant to section 64669.75, with a
+schedule for testing of the SCADA system.
+       (9)    A description of the process for investigating failures, taking corrective
+action, and remedying the cause of a failure.
+       (10) A description of the protocols for diversions or shut-off and for returning to
+normal operation after a diversion or shutoff.
+       (11) A description of the treatment process equipment inspection and
+maintenance program, including control point monitoring equipment inspection,
+maintenance, and calibration.
+       (12) A description of the records maintained to document the operations of the
+DPR project pursuant to section 64662.
+       (13) A proposed reporting template to be used in compliance reporting pursuant
+to section 64669.95.
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13520,
+13522, 13561, 13561.2, 13563, 13566 and 13567, Water Code; and Sections 116270,
+116275, 116350, 116360, 116365, 116375, 116385, 116390, 116400, 116525, 116527,
+116530, 116535, 116540, 116550, 116551, 116555, 116655 and 116735, Health and
+Safety Code.
+
+
+
+
+Regulation Text                            49 of 63
+                                                                               SBDDW-23-001
+                                                                          Direct Potable Reuse
+                                                                               October 4, 2023
+
+Adopt Section 64669.85 as follows:
+§ 64669.85. Pathogen and Chemical Control Point Monitoring and Response.
+   (a)    Pathogen control points and chemical control points shall be used to
+demonstrate control of acute and chronic exposure threats as follows. A DiPRRA shall
+utilize a SCADA system meeting the requirements in subsection (d) to manage
+information generated at the pathogen and chemical control points.
+         (1)    Pathogen and chemical control points shall be identified, and at least one
+critical limit shall be identified for each control point, pursuant to requirements in:
+               (A) subsections 64669.45(a)(5)(D) and 64669.45(e);
+               (B) subsections 64669.50(e)(3), 64669.50(h), 64669.50(k)(2), and
+64669.50(n)(1); and
+               (C) subsection 64669.60(g)(1).
+         (2)    Each pathogen and chemical control point shall be equipped with online
+monitoring sufficient to determine whether a critical limit is being met.
+         (3)    If the online monitoring required in subsection (a)(2) is unable to
+demonstrate compliance with a critical limit, regardless of the cause, the associated
+critical limit(s) shall be deemed to not have been met. Any pathogen control point
+surrogate and/or operational parameter that is not meeting the associated critical limit
+means the treatment process is not credited with the associated LRV pursuant to
+section 64669.45(a) and (d).
+   (b)    Water posing an acute exposure threat, as defined in subsection (b)(1), shall be
+prevented from entering the water distribution system of a public water system.
+         (1)    The following are considered acute exposure threats:
+               (A) Failure to provide 16 log reduction of enteric virus, 10 log reduction of
+Giardia lamblia cyst, and 11 log reduction of Cryptosporidium oocyst pursuant to section
+64669.45(b)(2);
+               (B) Failure to meet nitrate, nitrite, or nitrate plus nitrite MCLs, based on
+monitoring conducted pursuant to section 64669.60(g); and
+               (C) Failure to meet the TOC critical limit pursuant to section 64669.50(n).
+
+
+
+
+Regulation Text                               50 of 63
+                                                                                SBDDW-23-001
+                                                                           Direct Potable Reuse
+                                                                                October 4, 2023
+
+         (2)    The treatment train, storage facilities, related pipelines, and water
+conveyance facilities shall provide a path for water to flow from each pathogen and
+chemical control point to a point of diversion or shutoff that allows time for the
+identification and diversion or shutoff of water posing an acute exposure threat. The
+time required for the water to travel along the path of flow from each pathogen and
+chemical control point to a point of diversion or shutoff shall take into account the
+following:
+               (A) The maximum time between online measurements taken at each
+individual pathogen control point and chemical control point monitoring location;
+               (B) The maximum time it takes for online measurements to be accessed by
+the SCADA system, and an assessment made as to whether the critical limit is being
+met; and
+               (C) The maximum time it takes for the SCADA system to:
+                  1. determine if the 16 log reduction for enteric virus, 10 log reduction for
+Giardia lamblia cyst, and 11 log reduction for Cryptosporidium oocyst are being
+achieved; if the TOC concentration meets the TOC critical limit pursuant to subsection
+(n); and if the nitrate, nitrite, and nitrate plus nitrite concentrations comply with the MCLs
+for nitrate, nitrite, and nitrate plus nitrite, respectively;
+                  2. actuate a diversion or shutoff valve if 16 log reduction for enteric virus,
+10 log reduction for Giardia lamblia cyst, or 11 log reduction for Cryptosporidium oocyst
+are not achieved, if the TOC concentration exceeds the TOC critical limit pursuant to
+section 64669.50(n), or if the nitrate concentration exceeds the MCL; and
+                  3. divert or shut off flow to the distribution system.
+         (3)    The time it takes for the first ten percent of the water to flow along the flow
+path from each pathogen and chemical control point to the point of diversion or shutoff
+shall be no less than the time required for the identification and diversion or shutoff of
+inadequately treated water as determined in subsection (b)(2).
+   (c)    A chronic exposure threat is deemed to occur when the following occurs for
+more than two consecutive months: for more than 10 percent of the time the treatment
+train was producing water in a calendar month there is any treatment process pursuant
+
+
+
+Regulation Text                               51 of 63
+                                                                            SBDDW-23-001
+                                                                       Direct Potable Reuse
+                                                                            October 4, 2023
+
+to subsections (a) and (b) that is not operating in compliance with its associated critical
+limits pursuant to subsections (e), (h), or (k). Water posing a chronic exposure threat
+shall be prevented from entering the water distribution system of a public water system.
+   (d)     The SCADA systems of all water treatment plants included in the DPR project
+that provide treatment pursuant to this Article shall be designed and operated with the
+following features and capabilities. The SCADA system shall:
+         (1)   provide alarms that alert the operator when a pathogen or chemical control
+point is not operating as designed and halt the flow of water if necessary.
+         (2)   identify trending degradation and significant excursions of water quality or
+surrogate and/or operational parameters that indicate a need for treatment adjustment,
+maintenance, or other operator intervention; and alert the operator of the trending
+degradation or significant excursion incident and generate a record.
+         (3)   communicate and interoperate with the SCADA systems of all water
+treatment plants included in the DPR project that provide treatment pursuant to this
+Article.
+         (4)   be secured and protected, both physically and electronically, from
+unauthorized access and cyberattack.
+         (5)   be tested following the protocol in an approved operations plan pursuant to
+section 64669.80.
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13520,
+13522, 13561, 13561.2, 13563, 13566 and 13567, Water Code; and Sections 116270,
+116275, 116350, 116360, 116365, 116375, 116385, 116390, 116400, 116525, 116527,
+116530, 116535, 116540, 116550, 116551, 116555, 116655 and 116735, Health and
+Safety Code.
+
+
+
+Adopt Section 64669.90 as follows:
+§ 64669.90. Monitoring Plan.
+   (a)     A DiPRRA shall develop a monitoring plan that describes the monitoring
+conducted pursuant to sections 64669.60 and 64669.65 and submit the monitoring plan
+
+
+Regulation Text                             52 of 63
+                                                                               SBDDW-23-001
+                                                                          Direct Potable Reuse
+                                                                               October 4, 2023
+
+to the State Board prior to operation of a DPR project. The monitoring plan may be
+included in the operations plan pursuant to section 64669.80.
+   (b)    All monitoring shall be conducted in accordance with an approved monitoring
+plan. Monitoring may be conducted by the DiPRRA, partner agencies under the joint
+plan, or a regional monitoring consortium. When monitoring is conducted by a regional
+monitoring consortium to meet the requirements in sections 64669.60 and 64669.65,
+samples shall be analyzed individually and not commingled with other samples from
+other projects.
+   (c)    The monitoring plan shall include:
+         (1)   Identification of all entities who have roles and responsibilities in the
+monitoring, a description of roles and responsibilities, and contact information;
+         (2)   Monitoring locations, schedules, and procedures to track monitoring status
+and review of analytical results;
+         (3)   Laboratories used and anticipated laboratory turn-around times to receive
+analytical results;
+         (4)   Analytical methods used pursuant to section 64669.70 for each constituent
+monitored, and sample collection, handling and processing procedures;
+         (5)   Analytical detection limits and laboratory reporting levels for each
+constituent monitored;
+         (6)   A description of training and instruction provided to sample collectors,
+sample schedulers, sample handlers, water quality data reviewers, water quality data
+submitters, and other personnel associated with sampling and sample data quality
+assurance;
+         (7)   A description of procedures for keeping and maintaining records;
+         (8)   Procedures for communication and coordination among sample collectors,
+treatment operators, water quality data reviewers, and laboratory(ies); and
+         (9)   A description of the follow-up actions that will be taken when a laboratory
+analysis identifies a concentration above an MCL, action level, or notification level.
+
+
+
+
+Regulation Text                              53 of 63
+                                                                             SBDDW-23-001
+                                                                        Direct Potable Reuse
+                                                                             October 4, 2023
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13520,
+13561, 13561.2, 13563, 13566 and 13567, Water Code; and Sections 116270, 116275,
+116350, 116360, 116365, 116375, 116385, 116390, 116400, 116525, 116527, 116530,
+116535, 116540, 116550, 116551, 116555, 116655 and 116735, Health and Safety
+Code.
+
+
+
+Adopt Section 64669.95 as follows:
+§ 64669.95. Compliance Reporting.
+   (a)    For each calendar month, a DiPRRA shall submit a report to the State Board by
+the tenth day of the following month that includes a summary and results of the month’s
+entire treatment train performance and the month’s compliance monitoring conducted
+pursuant to section 64669.90. The report shall be signed by the DiPRRA’s chief
+operator. The report shall include:
+         (1)   A summary of overall treatment train pathogen LRV performance;
+         (2)   A summary of overall treatment train chemical control performance;
+         (3)   A summary of individual treatment process performance monitoring data;
+         (4)   The date, duration, and cause of each occurrence of LRV performance
+below 20 log for enteric virus, 14 log for Giardia lamblia cyst, and 15 log for
+Cryptosporidium oocyst;
+         (5)   A summary of control points that did not meet a critical limit established to
+assure proper ongoing performance of a treatment process pursuant to sections
+64669.45 and 64669.50, including dates and descriptions of failures of a critical limit,
+duration of failure, and description of corrective actions taken;
+         (6)   A summary of excursions of operational parameters outside approved
+operating envelopes;
+         (7)   Information pursuant to section 64664;
+         (8)   Descriptions of violation(s) of sections 64669.85(b) and (c);
+         (9)   Calibration records for instruments that monitor pathogen or chemical
+control points;
+
+
+
+
+Regulation Text                             54 of 63
+                                                                           SBDDW-23-001
+                                                                      Direct Potable Reuse
+                                                                           October 4, 2023
+
+         (10) Dates and descriptions of major equipment and process failures and
+corrective actions taken;
+         (11) Dates and summary of testing of the treatment control and alarm system
+consistent with the protocol in the operations plan;
+         (12) Investigation or incident reports required to be prepared pursuant to
+sections 64669.45, 64669.50, 64669.60, and 64669.65;
+         (13) A summary of activities of the wastewater source control program
+conducted pursuant to section 64669.40;
+         (14) A summary of chemicals detected as a result of monitoring conducted
+pursuant to sections 64669.60 and 64669.65;
+         (15) Investigation or incident reports regarding a cross-connection; and
+         (16) A summary of water quality complaints and reports of gastrointestinal illness
+received from customers.
+   (b)    Analytical results conducted pursuant to sections 64669.60 and 64669.65 shall
+be submitted to the State Board pursuant to subsections 64469(a), 64469(b), and
+64469(c). If analytical results for chemicals sampled pursuant to subsections
+64669.65(b) or subsection 64669.65(h) cannot be transmitted pursuant to subsection
+64469(c), the DiPRRA shall require that the analytical laboratory submit the analytical
+results by directly to the State Board.
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13520,
+13561, 13561.2, 13563, 13566 and 13567, Water Code; and Sections 116270, 116275,
+116350, 116360, 116365, 116375, 116385, 116390, 116400, 116525, 116527, 116530,
+116535, 116540, 116550, 116555, 116655 and 116735, Health and Safety Code.
+
+
+
+Adopt Section 64669.100 as follows:
+§ 64669.100. Annual Report.
+   (a)    No later than six months after the end of each calendar year, a DiPRRA shall
+provide an annual report to the State Board and to each public water system receiving
+DPR project water that contains the following:
+
+
+Regulation Text                           55 of 63
+                                                                           SBDDW-23-001
+                                                                      Direct Potable Reuse
+                                                                           October 4, 2023
+
+         (1)   A summary of the compliance status of the DPR project with the
+requirements of this Article and the permit issued pursuant to section 64669.15 during
+the previous calendar year, and a list of violation(s) and corrective action(s) taken;
+         (2)   A summary plant shutdown(s) and diversion(s) that occurred during the
+previous calendar year, and the corrective action(s) taken;
+         (3)   A description of the entire treatment train performance and operational
+challenges during the previous calendar year, and any proposed revisions to the
+operations plan;
+         (4)   A description of the wastewater source control program performance and
+any challenges during the previous calendar year, and any proposed program changes;
+         (5)   A description of the assessments and investigations and results of the
+assessments and investigations performed pursuant to section 64669.40(a), and a
+summary of local limits and other discharge control methods established pursuant to
+section 64669.40(b);
+         (6)   A description of anticipated treatment change(s), along with an evaluation of
+the expected impact of the change(s) on subsequent treatment process(es);
+         (7)   Any expected change(s) in quantity and quality of the municipal wastewater.
+   (b)    The DiPRRA shall post the Annual Report on the DiPRRA internet website.
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13561,
+13561.2, 13563, 13566 and 13567, Water Code; and Sections 116270, 116275,
+116350, 116375, 116470, 116525, 116527, 116530, 116535, 116540, 116550, 116555,
+116655 and 116735, Health and Safety Code.
+
+
+
+Adopt Section 64669.105 as follows:
+§ 64669.105. Cross-Connection Control.
+   (a)    A cross-connection control survey and hazard assessment of the water
+treatment plants and other facilities included in the DPR project that treat, store, convey,
+or distribute DPR project water shall be conducted to protect the DPR project water and
+facilities from contamination or pollution from on-site hazards. The initial survey and
+
+
+Regulation Text                            56 of 63
+                                                                             SBDDW-23-001
+                                                                        Direct Potable Reuse
+                                                                             October 4, 2023
+
+hazard assessment shall be completed within one year of the start of full-scale
+operation, and subsequent surveys and hazard assessments shall be completed
+annually thereafter.
+   (b)    A DiPRRA shall compile the reports of the cross-connection control surveys
+and hazard assessments for each DPR project facility and make the reports available to
+the State Board upon request.
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13520,
+13561, 13561.2, 13563, 13566 and 13567, Water Code; and Sections 116270, 116275,
+116350, 116360, 116365, 116375, 116385, 116390, 116400, 116525, 116527, 116530,
+116535, 116540, 116550, 116555, 116555.5, 116655 and 116735, Health and Safety
+Code.
+
+
+
+Adopt Section 64669.110 as follows:
+§ 64669.110. Corrosion Control and Stabilization.
+   (a)    In addition to the requirements pursuant to lead and copper control pursuant to
+Chapter 17.5, a DiPRRA shall provide water that is stabilized as set forth in an
+approved corrosion control and stabilization plan pursuant to subsection (b).
+   (b)    Prior to operation of a DPR project, a DiPRRA and a public water system
+receiving DPR project water shall jointly develop a corrosion control and stabilization
+plan and submit the plan to the State Board. The plan shall describe how the DPR
+project will be operated to:
+         (1)   Maintain chemical and microbial stability in a drinking water distribution
+system receiving DPR project water; and
+         (2)   Maintain treatment effectiveness of a water treatment plant receiving DPR
+project water as the source water quality changes.
+   (c)    A DiPRRA that delivers DPR project water to more than one public water
+system shall submit a corrosion control and stabilization plan pursuant to subsection (b)
+as follows: submit an individual corrosion control and stabilization plan with each public
+water system; or upon consensus from all the public water systems, submit a single
+
+
+Regulation Text                             57 of 63
+                                                                            SBDDW-23-001
+                                                                       Direct Potable Reuse
+                                                                            October 4, 2023
+
+combined corrosion control and stabilization plan that addresses all the public water
+systems and includes the minimum required information for each public water system.
+   (d)    A DiPRRA shall include the operations described in an approved corrosion
+control and stabilization plan in the operations plan prepared pursuant to section
+64669.80.
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13520,
+13561, 13561.2, 13563, 13566 and 13567, Water Code; and Sections 116270, 116275,
+116350, 116360, 116365, 116375, 116385, 116390, 116400, 116525, 116527, 116530,
+116535, 116540, 116550, 116555, 116655 and 116735, Health and Safety Code.
+
+
+
+Adopt Section 64669.120 as follows:
+§ 64669.120. Independent Advisory Panel.
+   (a)    A DiPRRA shall utilize an independent advisory panel approved by the State
+Board to conduct one or more of the following tasks:
+         (1)   Reviewing a proposed alternative pursuant to sections 64669.45(a)(3)(B) or
+64669.50(s);
+         (2)   Reviewing an updated water safety plan pursuant to section 64669.55;
+         (3)   Reviewing a hydraulic characterization of a reservoir, including tracer
+studies and hydraulic modeling pursuant to section 64669.45(d)(1) if a reservoir is
+involved, or section 64669.45(d)(2), or section 64669.50(n)(2);
+         (4)   Reviewing a groundwater model and tracer test related to section
+64669.45(d)(3) or reviewing a proposed alternative pursuant to section 64669.45(f) for
+virus reduction rate;
+         (5)   Reviewing effectiveness of a wastewater source control program, including
+use of local limits and outreach efforts, pursuant to section 64669.40;
+         (6)   Reviewing managerial and financial capacity pursuant to section 64669.30;
+and
+         (7)   Reviewing water quality data and results of water quality investigations and
+providing recommendations for monitoring pursuant 64669.65.
+
+
+Regulation Text                            58 of 63
+                                                                           SBDDW-23-001
+                                                                      Direct Potable Reuse
+                                                                           October 4, 2023
+
+   (b)   A panel convened for the purpose of complying with subsection (a)(1) or (a)(2)
+shall include at minimum panel members with the following qualifications: a toxicologist
+knowledgeable about risk assessment for drinking water regulations and statutes; an
+engineer licensed in California with at least five years of experience as a licensed
+engineer in water and wastewater treatment and public drinking water supply and
+drinking water regulations; a microbiologist; and a chemist.
+   (c)   A panel convened for the purpose of complying with subsection (a)(3) shall
+include at minimum panel members with the following qualifications: a limnologist with
+experience modeling the hydraulic characterization of surface water reservoirs; and a
+limnologist or an engineer licensed in California with at least five years of experience
+developing, applying, or running hydrodynamic models and conducting tracer tests of
+surface water reservoirs.
+   (d)   A panel convened for the purpose of complying with subsection (a)(4) shall
+include at minimum panel members with the following qualifications: a registered
+engineering geologist or hydrogeologist with at least five years of experience in the
+hydraulic characterization of a groundwater basin or aquifer, developing hydraulic
+models of a groundwater recharge operation, and interpreting groundwater tracer study
+results; an engineer licensed in California with at least five years of experience in
+applying and running groundwater models and conducting groundwater tracer studies;
+and a microbiologist experienced in the fate of viruses in the environment.
+   (e)   A panel convened for the purpose of complying with subsection (a)(5) shall
+include at minimum panel members with the following qualifications: a wastewater
+source control manager with knowledge of state and national industrial pretreatment
+and pollutant source control statutes and regulations and at least five years of
+experience in the management and operation of a wastewater source control program;
+an engineer licensed in California with at least five years of experience as a licensed
+engineer in wastewater source control, wastewater and water treatment, and public
+drinking water supply; and a chemist.
+   (f)   A panel convened for the purpose of complying with subsection (a)(6) shall
+include at minimum panel members with the following qualifications: a manager with
+
+
+
+Regulation Text                           59 of 63
+                                                                               SBDDW-23-001
+                                                                          Direct Potable Reuse
+                                                                               October 4, 2023
+
+public water system operations management experience and knowledge of water utility
+standards and best practices, and strategies and resources for managerial and financial
+capacity building.
+   (g)    A panel convened for the purpose of complying with subsection (a)(7) shall
+include at minimum panel members with the following qualifications: a toxicologist; an
+engineer licensed in California with at least five years of experience, as a licensed
+engineer, in water and wastewater treatment and public drinking water supply; a
+specialist in wastewater source control and monitoring; and a chemist with experience
+in drinking water and wastewater analytical methods.
+   (h)    A DiPRRA shall allow State Board representatives to observe all required
+independent advisory panel meetings and discussions. The DiPRRA shall provide the
+results of all reviews conducted by the independent advisory panel to the State Board.
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13520,
+13561, 13561.2, 13563, 13566 and 13567, Water Code; and Sections 116270, 116275,
+116350, 116360, 116365, 116375, 116525, 116527, 116530, 116535, 116540, 116550,
+116551, 116555, 116655 and 116735, Health and Safety Code.
+
+
+
+Adopt Section 64669.125 as follows:
+§ 64669.125. Public Notification.
+   (a)    Public notice pursuant to section 64463.1 shall be provided when water is
+distributed that fails to meet:
+         (1)   the minimum 16 log reduction for enteric virus, 10 log reduction for Giardia
+lamblia cyst, or 11 log reduction for Cryptosporidium oocyst pursuant to section
+64669.45;
+         (2)   the nitrate, nitrite, nitrate plus nitrite, or perchlorate MCL in section 64431, or
+the lead action level in section 64678(a); or
+         (3)   the TOC critical limit pursuant to section 64669.50(n).
+   (b)    Public notice pursuant to section 64463.4 shall be provided when water is
+distributed that:
+
+
+Regulation Text                              60 of 63
+                                                                             SBDDW-23-001
+                                                                        Direct Potable Reuse
+                                                                             October 4, 2023
+
+         (1)    Fails to meet an MCL or action level for the following chemicals, except for
+the chemicals in subsection (a)(2):
+               (A) Inorganic chemicals in section 64431,
+               (B) Radionuclide chemicals in sections 64442 and 64443,
+               (C) Organic chemicals in section 64444,
+               (D) Disinfection byproducts in section 64533, or
+               (E) Copper in section 64678;
+         (2)    Fails to meet the requirement pursuant to section 64669.85(c); or
+         (3)    Is not monitored pursuant to section 64669.60 or 64669.65.
+   (c)    The public notice shall include the following health effects information required
+pursuant to section 64465(a)(3). For a public notice provided pursuant to:
+         (1)    subsection (a)(1), the language from Appendix 64465-B;
+         (2)    subsection (a)(2), the language from Appendix 64465-D;
+         (3)    subsection (a)(3), the following language: “TOC above the TOC critical limit
+indicates the presence of organic compounds of wastewater origin that may contain
+chemicals of public health concern.”;
+         (4)    subsection (b)(1), the language from Appendix 64465-C, 64465-D, 64465-E,
+64465-F, and 64465-G; and
+         (5)    subsection (b)(2), the following language: “A failure of a chemical control
+treatment technique can result in the presence of chemical compounds in drinking water
+that may have health effects after many years of consumption.”
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13561,
+13561.2, 13563, 13566 and 13567, Water Code; and Sections 116270, 116275,
+116350, 116375, 116450, 116451, 116455, 116525, 116527, 116530, 116535, 116540,
+116550, 116555, 116655 and 116735, Health and Safety Code.
+
+
+
+
+Regulation Text                              61 of 63
+                                                                             SBDDW-23-001
+                                                                        Direct Potable Reuse
+                                                                             October 4, 2023
+
+Adopt Section 64669.130 as follows:
+§ 64669.130. Consumer Confidence Report.
+   (a)    A DiPRRA shall prepare a Consumer Confidence Report pursuant to Title 22,
+Division 4, Chapter 15, Article 20 and Health and Safety Code section 116470 that
+includes the following additional information related to the DPR project:
+         (1)    Identification of municipal wastewater as the type of water delivered and the
+wastewater treatment plant(s) and sewershed(s) providing the wastewater for the DPR
+project as the source of water pursuant to section 64481(a)(1);
+         (2)    Information on wastewater source control to satisfy the requirement in
+section 64481(a)(2);
+         (3)    A general description of the treatment train and the function of the treatment
+processes used in the DPR project;
+         (4)    In addition to the requirements in sections 64481(c) and (d), a table of
+chemicals detected in the finished water as a result of the sampling conducted during
+the previous calendar year pursuant to section 64669.65. The table shall include:
+               (A) The average and range at which the chemical was detected;
+               (B) In addition to the requirements in section 64481(d)(2)(C), information
+indicating whether there is a notification level applicable to the detected chemical;
+               (C) The likely source(s) of the detected chemical;
+         (5)    A summary of violations incurred over the previous calendar year pursuant
+to section 64669.85;
+         (6)    Information on how the DPR project is addressing impacts of climate
+change and impacts on the DPR project’s ability to provide drinking water, including
+steps taken or planned relative to the DPR project’s ability to adapt to alterations in
+water quantity and quality; and information on the actions taken or planned to be taken
+to reduce the DPR project’s release of greenhouse gases into the atmosphere; and
+         (7)    The location of the DiPRRA Internet website where the Annual Report
+prepared pursuant to section 64669.100 may be viewed.
+
+
+
+
+Regulation Text                              62 of 63
+                                                                         SBDDW-23-001
+                                                                    Direct Potable Reuse
+                                                                         October 4, 2023
+
+   (b)   Before April 1st of each year or on another date pursuant to section 64480(c), a
+DiPRRA shall deliver the information required in subsection (a) to all public water
+systems that distribute DPR project water to consumers.
+   (c)   All public water systems that distribute DPR project water to consumers shall
+include the information required in subsection (a) in their consumer confidence reports.
+
+
+
+NOTE: Authority cited: Sections 13521 and 13561.2, Water Code; and Sections
+116271, 116350 and 116375, Health and Safety Code. Reference: Sections 13561,
+13561.2, 13563, 13566 and 13567, Water Code; and Sections 116270, 116275,
+116350, 116375, 116470, 116525, 116527, 116530, 116535, 116540, 116550, 116555,
+116655 and 116735, Health and Safety Code.
+
+
+
+
+Regulation Text                          63 of 63
+

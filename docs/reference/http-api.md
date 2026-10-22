@@ -97,6 +97,3 @@ complete range. Related reads should use the same captured epoch. `value_mode` i
 `default` (the stream's declared kind), `numeric`, `text` or `coalesce` (every
 reading as a string); the Arrow `value` column is `float64` for numeric reads
 and `string` otherwise.
-
-Legacy SQL/logbook, Timescale, whole-stream replacement, class-based app
-registration, reprocessing, and app-check endpoints have been removed.
