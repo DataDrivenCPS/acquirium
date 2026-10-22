@@ -478,31 +478,37 @@ class DataObject:
             alias_units[alias] = to_unit
         return alias_units
 
-    def _materialize(self) -> None:
-        """Fetch all time-series data and populate _tall. Idempotent."""
-        if self._materialized:
-            return
+    def _empty_tall(self) -> pl.DataFrame:
+        schema: dict[str, Any] = {
+            "data_alias": pl.Utf8,
+            "point_uri": pl.Utf8,
+            "ref_uri": pl.Utf8,
+            "time": pl.Datetime(time_zone="UTC"),
+            "value_numeric": pl.Float64,
+            "value_text": pl.Utf8,
+        }
+        for ec in self._entity_columns:
+            schema[ec] = pl.Utf8
+        return pl.DataFrame(schema=schema)
 
+    def _fetch_tall(
+        self,
+        bindings: list[BindingInfo],
+        *,
+        start,
+        end,
+        limit: int | None,
+        order: str,
+    ) -> pl.DataFrame:
+        """Fetch ``bindings``' rows into a tall frame.
+
+        One request per binding, bounded by the given window. Values are
+        auto-converted from the external reference's unit to the annotated
+        unit, then the conversions recorded by ``convert_to()`` are applied.
+        The frame has one row per observation and entity context, in the
+        standard tall layout. Does not touch ``self``.
+        """
         cast_value = self._query_params.get("cast_value", "float")
-
-        if not self._bindings:
-            self._tall = pl.DataFrame(
-                schema={
-                    "data_alias": pl.Utf8,
-                    "point_uri": pl.Utf8,
-                    "ref_uri": pl.Utf8,
-                    "time": pl.Datetime(time_zone="UTC"),
-                    "value_numeric": pl.Float64,
-                    "value_text": pl.Utf8,
-                }
-            )
-            self._materialized = True
-            return
-
-        start = self._query_params.get("start")
-        end = self._query_params.get("end")
-        limit = self._query_params.get("limit")
-        order = self._query_params.get("order", "asc")
         value_mode = self._query_params.get("value_mode", "default")
 
         # Auto-conversion targets the annotated unit; conversions requested
@@ -519,7 +525,7 @@ class DataObject:
             return _factors_cache[key]
 
         frames: list[pl.DataFrame] = []
-        for binding in self._bindings:
+        for binding in bindings:
             df = self._client.timeseries_df(
                 binding.ref_uri,
                 start=start,
@@ -586,19 +592,7 @@ class DataObject:
                     frames.append(df_copy)
 
         if not frames:
-            schema: dict[str, Any] = {
-                "data_alias": pl.Utf8,
-                "point_uri": pl.Utf8,
-                "ref_uri": pl.Utf8,
-                "time": pl.Datetime(time_zone="UTC"),
-                "value_numeric": pl.Float64,
-                "value_text": pl.Utf8,
-            }
-            for ec in self._entity_columns:
-                schema[ec] = pl.Utf8
-            self._tall = pl.DataFrame(schema=schema)
-            self._materialized = True
-            return
+            return self._empty_tall()
 
         tall = pl.concat([_split_value_column(df) for df in frames], how="vertical")
 
@@ -624,6 +618,28 @@ class DataObject:
                     "DataObject: pending conversion failed %s -> %s for alias '%s'",
                     from_unit, to_unit, alias_pat,
                 )
+
+        # Reorder columns for consistency
+        base_cols = ["data_alias", "point_uri", "ref_uri"] + self._entity_columns + ["time", "value_numeric", "value_text"]
+        existing = [c for c in base_cols if c in tall.columns]
+        return tall.select(existing)
+
+    def _materialize(self) -> None:
+        """Fetch all time-series data and populate _tall. Idempotent."""
+        if self._materialized:
+            return
+        if not self._bindings:
+            self._tall = self._empty_tall()
+            self._materialized = True
+            return
+
+        self._tall = self._fetch_tall(
+            self._bindings,
+            start=self._query_params.get("start"),
+            end=self._query_params.get("end"),
+            limit=self._query_params.get("limit"),
+            order=self._query_params.get("order", "asc"),
+        )
         if self._pending_conversions:
             # Values are now in the requested units; record that on the
             # bindings so units() and later convert_to() calls start there.
@@ -632,11 +648,6 @@ class DataObject:
                 replace(b, property_unit=final_units[b.alias]) if b.alias in final_units else b
                 for b in self._bindings
             ]
-
-        # Reorder columns for consistency
-        base_cols = ["data_alias", "point_uri", "ref_uri"] + self._entity_columns + ["time", "value_numeric", "value_text"]
-        existing = [c for c in base_cols if c in tall.columns]
-        self._tall = tall.select(existing)
         self._materialized = True
 
     # ------------------------------------------------------------------
@@ -953,14 +964,49 @@ class DataObject:
         refs = sorted(set(b.ref_uri for b in self._bindings if b.alias == alias))
         return [(i, ref) for i, ref in enumerate(refs)]
 
-    def latest(self, alias: str) -> pl.DataFrame:
-        """Return the latest row(s) for a given alias."""
-        self._materialize()
-        subset = self._tall.filter(pl.col("data_alias") == alias)
-        if subset.is_empty():
-            return pl.DataFrame(schema={"time": pl.Datetime(time_zone="UTC"), "value": pl.Float64})
-        subset = _restore_single_value_column(subset)
-        return subset.sort("time", descending=True).head(1).select("time", "value")
+    def latest(self, alias: str | None = None) -> pl.DataFrame:
+        """Return the newest reading of each point.
+
+        Answers from its own fetch (one row per stream, newest first), so
+        the result does not depend on the ``limit``/``order`` the object was
+        built with, and the full window is never materialized. The object's
+        ``start``/``end`` bounds still apply: the newest reading inside them.
+        A point fed by several refs reports its newest row across them.
+
+        With ``alias`` the frame is ``[time, value]`` for a single point or
+        ``[time, value, point_uri]`` when the alias covers several, as with
+        ``__getitem__``. Without it every binding is reported as
+        ``[data_alias, point_uri, time, value]``.
+        """
+        if alias is not None:
+            if alias not in self.aliases:
+                raise KeyError(f"Data alias '{alias}' not found. Available: {self.aliases}")
+            bindings = [b for b in self._bindings if b.alias == alias]
+        else:
+            bindings = list(self._bindings)
+
+        if bindings and self._client is not None:
+            tall = self._fetch_tall(
+                bindings,
+                start=self._query_params.get("start"),
+                end=self._query_params.get("end"),
+                limit=1,
+                order="desc",
+            )
+        else:
+            tall = self._empty_tall()
+
+        newest = (
+            tall.sort("time", descending=True)
+            .unique(subset=["data_alias", "point_uri"], keep="first", maintain_order=True)
+        )
+        newest = _restore_single_value_column(newest)
+
+        if alias is None:
+            return newest.select("data_alias", "point_uri", "time", "value").sort("data_alias", "point_uri")
+        if len({b.point_uri for b in bindings}) <= 1:
+            return newest.select("time", "value")
+        return newest.select("time", "value", "point_uri").sort("point_uri")
 
     def is_empty(self) -> bool:
         """Whether any rows exist.

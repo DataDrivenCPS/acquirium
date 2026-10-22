@@ -137,17 +137,22 @@ def test_ref_info(acquirium_client_csv):
 # ---- latest() ----
 
 def test_latest(acquirium_client_csv):
-    """latest() should return the most recent row for an alias."""
+    """latest() should return the newest row of every point of an alias."""
     acq = acquirium_client_csv
     query = acq.find_all_data()
     data = query.data()
 
     alias = data.aliases[0]
+    points = {b.point_uri for b in data.bindings if b.alias == alias}
     latest = data.latest(alias)
-    assert not latest.is_empty()
-    assert latest.shape[0] == 1
+    assert latest.shape[0] == len(points)
     assert "time" in latest.columns
     assert "value" in latest.columns
+    assert ("point_uri" in latest.columns) == (len(points) > 1)
+
+    everything = data.latest()
+    assert everything.columns == ["data_alias", "point_uri", "time", "value"]
+    assert everything.shape[0] == len({(b.alias, b.point_uri) for b in data.bindings})
 
 
 # ---- Edge cases ----
