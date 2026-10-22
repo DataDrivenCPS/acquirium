@@ -1742,21 +1742,39 @@ class Query:
             pred_col = (index.get(attr_var(nid, name, pred=True)[1:])
                         if name in registry and is_list_attr(registry[name]) else None)
             leaves[index[var]] = (g.aliases_reverse.get(nid, f"v{nid}"), name, index[var], pred_col)
-        # a list's elements come one per row: rows that agree on everything
-        # else are one object, as they are one row of the table
+        from acquirium.Metadata import read_documents, select_document, drop_document_path
+        from acquirium.Client.explore.attributes import REGISTRY
+        subjects = {str(row[i]) for row in rows for _, i in nodes if row[i] is not None}
+        documents = read_documents(self.client, subjects, include_dependencies=include_dependencies) if subjects else {}
+        node_indices = dict(nodes)
         list_cols = {vi for _, _, vi, pi in leaves.values() if pi is not None}
         key_cols = [i for i, c in enumerate(cols)
                     if i not in list_cols and not c.startswith(("ext", "unit", "attrp"))]
+        user_columns = {vi: (alias, name.split(".", 1)[0])
+                        for alias, name, vi, _ in leaves.values()
+                        if name.split(".", 1)[0] not in REGISTRY}
+
+        def saved(row, alias, root):
+            subject = row[node_indices[alias]]
+            return subject is not None and root in documents.get(str(subject), {})
+
+        def group_key(row):
+            # Document projections can produce several SQL/SPARQL rows for one
+            # user value. Only pattern matches and unsaved attributes group it.
+            return tuple(None if i in user_columns and saved(row, *user_columns[i]) else row[i]
+                         for i in key_cols)
 
         def value_of(raw: Any, datatype: Optional[str]) -> Any:
-            # a URI stays a URI, like the id: the table is where CURIEs live
             return str(raw) if datatype == IRI else parse_cell(raw, datatype)
 
         groups: Dict[tuple, Dict[str, Any]] = {}
+        node_subjects = {}
         for r, d in zip(rows, datatypes):
-            record = groups.get(tuple(r[i] for i in key_cols))
+            key = group_key(r)
+            record = groups.get(key)
             if record is None:
-                record = groups[tuple(r[i] for i in key_cols)] = {}
+                record = groups[key] = {}
+                node_subjects[key] = {alias: str(r[i]) for alias, i in nodes if r[i] is not None}
                 for alias, i in nodes:
                     if r[i] is not None:
                         record.setdefault(alias, {})["id"] = str(r[i])
@@ -1764,23 +1782,16 @@ class Query:
                     if r[i] is not None:
                         record.setdefault(alias, {})["label"] = r[i]
             for alias, name, vi, pi in leaves.values():
-                if r[vi] is None:
+                if r[vi] is None or (vi in user_columns and saved(r, *user_columns[vi])):
                     continue
+                # Isolated fallback for raw RDF and fields without documents.
                 pred = str(r[pi]) if pi is not None and r[pi] is not None else ""
                 path = pred[len(ATTR_NS):] if pred.startswith(ATTR_NS) else name
                 _place(record.setdefault(alias, {}), path.split("."),
                        value_of(r[vi], d[vi] if vi < len(d) else None))
-        out = [{alias: _lists(obj) for alias, obj in record.items()} for record in groups.values()]
-
-        from acquirium.Metadata import read_documents, select_document, drop_document_path
-        from acquirium.Client.explore.attributes import REGISTRY
-        subjects = {str(row[i]) for row in rows for _, i in nodes if row[i] is not None}
-        documents = read_documents(self.client, subjects, include_dependencies=include_dependencies) if subjects else {}
-        node_subjects = {}
-        for row in rows:
-            key = tuple(row[i] for i in key_cols)
-            node_subjects.setdefault(key, {alias: str(row[i]) for alias, i in nodes if row[i] is not None})
-        for record, key in zip(out, groups):
+        out = []
+        for key, projected in groups.items():
+            record = {alias: _lists(obj) for alias, obj in projected.items()}
             for nid in g.nodes:
                 alias = g.aliases_reverse.get(nid, f"v{nid}")
                 if alias not in record or alias not in node_subjects[key]:
@@ -1790,14 +1801,11 @@ class Query:
                 if nid in g.object_all:
                     selected += [name for name in doc if name not in REGISTRY]
                 selected = [name for name in selected if name.split(".", 1)[0] not in REGISTRY]
-                # Replace whole projected roots: _place builds position-keyed
-                # dicts and cannot safely extend already reconstructed lists.
-                for root in {name.split(".", 1)[0] for name in selected} & doc.keys():
-                    record[alias].pop(root, None)
                 record[alias].update(select_document(doc, selected))
                 for snid, name in g.object_excluded:
                     if snid == nid:
                         drop_document_path(record[alias], name.split("."))
+            out.append(record)
 
         for nid, name, type_, strict in g.casts:
             alias = g.aliases_reverse.get(nid, f"v{nid}")

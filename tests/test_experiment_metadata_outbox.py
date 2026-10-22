@@ -25,7 +25,7 @@ def test_restart_replays_resolved_documents_without_sql_snapshots(materializatio
             ledger.sync_metadata_graph()
     assert pending(store) == 3
     restarted = ExperimentStore(store, tmp_path / "artifacts", graph_store=graph, resolve=lambda *args: None)
-    assert restarted.variables(study["template_id"])[0]["metadata"] == {"unit": "psi", "metadata": {"any.key": [None, {}, []]}}
+    assert restarted.variables(study["template_id"])[0]["metadata"] == variable["metadata"]
     assert restarted.run(run["run_id"])["metadata"] == {"tags": ["A", None, "B"]}
     assert (URIRef(variable["variable_id"]), HAS_UNIT, URIRef("urn:unit:PSI")) in graph.dataset
     assert pending(store) == 0
@@ -43,13 +43,14 @@ def test_graph_commit_before_failed_acknowledgment_is_replayable(materialization
     ledger.sync_metadata_graph()
     run = ledger.start(study["template_id"], {"scenario": "baseline"})
     ledger.finish(run["run_id"], "succeeded")
-    execute = ledger._execute
+    from acquirium import ExperimentMetadata as metadata_module
+    execute = metadata_module.execute
     def fail_ack(conn, statement, parameters=None):
         if statement.startswith("DELETE FROM experiment_metadata_outbox"):
             raise OSError("ack failed")
         return execute(conn, statement, parameters)
     with monkeypatch.context() as patch:
-        patch.setattr(ledger, "_execute", fail_ack)
+        patch.setattr(metadata_module, "execute", fail_ack)
         with pytest.raises(OSError, match="ack failed"):
             ledger.sync_metadata_graph()
     assert (URIRef(run_uri(run["run_id"])), RDF.type, EXPERIMENT.Run) in graph.dataset
@@ -62,7 +63,7 @@ def test_graph_commit_before_failed_acknowledgment_is_replayable(materialization
 
 def test_outbox_failure_rolls_back_lifecycle_write(materialization_store, tmp_path, monkeypatch):
     store = materialization_store
-    ledger = ExperimentStore(store, tmp_path / "artifacts")
+    ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
     study = ledger.define("rollback")
     ledger.sync_metadata_graph()
     queue = ledger._queue_metadata
@@ -136,8 +137,9 @@ def test_upgrade_moves_snapshots_to_resolved_outbox_and_preserves_recordings(mat
     ledger = ExperimentStore(store, tmp_path / "artifacts", graph_store=graph, resolve=lambda *args: None)
     assert pending(store) == 4
     values = ledger.variables("legacy-study")[0]["metadata"]
-    assert values == {"unit": ["psi", "PSI"], "tags": ["A", None, "B"], "type": "urn:example:Result",
-                      "_adapter_format": 2, "metadata": {"any.key": [None, {}, []]}}
+    assert values == {"unit": ["psi", "PSI"], "type": "urn:example:Result",
+                      "_declaration_format": 1, "metadata": {"any.key": [None, {}, []], "tags": ["A", None, "B"]},
+                      "_resolved_semantics": {"unit": "urn:unit:PSI", "type": "urn:example:Result"}}
     assert ledger.run("legacy-run")["metadata"] == {"tags": ["A", None, "B"]}
     assert ledger.stream_annotations(run_id="legacy-run")[0]["metadata"] == {"treatment": "old", "tags": [None, "A"]}
     assert ledger.observations("legacy-study")[0]["value"] == 12.5

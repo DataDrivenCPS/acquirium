@@ -86,6 +86,24 @@ Variable handles expose `variable_id`, `uri`, `label`, `role`, `kind`, `metadata
 and `created_at`. New IDs are reference URIs derived from the Study ID and label.
 Older UUID IDs remain unchanged; `uri` provides their absolute graph URI.
 
+Variable user metadata has the same meaning for hand and model declarations.
+For example, `study.output("cost").scalar(unit="USD", objective="minimize")`
+exposes `cost.unit == "USD"` and `cost.metadata == {"objective": "minimize"}`.
+An explicit `metadata={...}` accepts arbitrary string-keyed JSON; legacy
+extra descriptive keywords merge into that object. Equal duplicate values
+merge; conflicting values raise an error naming the fields to repair.
+
+| Legacy access or query | Current access or query |
+|---|---|
+| `cost.metadata["unit"]` | `cost.unit` |
+| `cost.metadata["observed"]` | `cost.observed` |
+| `study.variables.where(objective="minimize")` | `study.variables.where(**{"metadata.objective": "minimize"})` |
+| `study.variables.query().include("objective")` | `study.variables.query().include("metadata.objective")` |
+
+Run metadata keeps its existing contract, including `where(scenario=...)`.
+Exact `metadata={...}` run selection compares saved document fields; ordinary
+attribute expressions filter RDF projections. These are separate operations.
+
 ### Explicit model declarations
 
 `aq.adapters.define()` creates a general adapter builder. `aq.adapters.pyomo(model)`
@@ -155,9 +173,9 @@ read_at=None)` supports advanced explicitly keyed declarations: a keyed reader
 returns a mapping from key tuples to numeric values. The declaration's `keys`
 determines the expected shape. Ordinary single-stream readers return numbers.
 
-The earlier automatic Pyomo constructor options and `record_all()` raise
-migration errors directing callers to explicit declarations, `sample()`, and
-`record_values()`. See [Record a whole model](../how-to/record-a-whole-model.md).
+The prototype automatic Pyomo options, `record_all()`, and
+`declare_from(role=...)` have been removed. Use explicit declarations,
+`sample()`, `record_values()`, and the adapter input/output namespaces. See [Record a whole model](../how-to/record-a-whole-model.md).
 
 ### Keyed time series
 
@@ -178,12 +196,13 @@ The `observed` argument also accepts per-key mappings on hand declarations.
 
 ### Batch transport
 
-Both batch endpoints accept a JSON array and return results in request order:
+Batch endpoints accept a JSON array and return results in request order:
 
 | Endpoint | Item fields |
 |---|---|
 | `POST /experiments/templates/{template_id}/variables/batch` | `label`, `role`, `kind`, optional `metadata` |
-| `POST /experiments/runs/{run_id}/observations/batch` | `variable_id`, optional `value`, `occurred_at`, `ref_uri`, `start`, `end`, `key`, `artifact_digest`, `artifact` |
+| `POST /experiments/runs/{run_id}/record` | `variable_id`, `form`, and that form’s payload (below) |
+| `POST /experiments/runs/{run_id}/observations/batch` (compatibility) | `variable_id`, optional `value`, `occurred_at`, `ref_uri`, `start`, `end`, `key`, `artifact_digest`, `artifact` |
 
 Declarations and observations each commit in a single transaction using the
 same validation as individual writes. Unknown runs or observation variables
@@ -195,10 +214,29 @@ batch. Stream intervals require both `start` and `end` with `start <= end`.
 and scalar observations share one request. Alternatively reference an existing
 `artifact_digest`. Artifact variables cannot also carry `value` or `ref_uri`.
 
-`sample()` uses at most three requests per snapshot: one registration for
-new streams, one sample insertion, and one observation batch. Resolved units
-are cached during declaration. These requests do not share a transaction;
-samples written before an observation failure remain until deletion/clear.
+The recording endpoint accepts one form per entry:
+
+| `form` | Payload |
+|---|---|
+| `value` | `value`, optional `occurred_at` |
+| `artifact` | `artifact` with `filename`, optional `media_type`, base64 `data` |
+| `artifact_reference` | Existing `artifact_digest` |
+| `samples` | `samples`: timestamp/number pairs, optional typed `key` |
+| `reference` | `ref_uri`, optional `interval: [start, end]`, optional typed `key` |
+
+The server derives sample source and stream identities from the run, variable
+ID, and typed key. A nonempty `sample()` or `record_values()` uses one recording
+request, including first samples. Ordinary `record()` and convenience methods
+use the same execution path. Readers are all checked before sending; table
+bytes are prepared once. Invalid batches leave no new SQL samples, stream
+registrations, artifacts, observations, revisions, or outbox entries.
+
+SQL commits recording state and resolved graph intent together. Graph delivery
+and artifact files remain separate stores: graph failures retain replayable
+intent, and content-addressed orphan files are recovered by clearing experiments.
+Old orphan samples remain covered by deletion and clearing. A retried HTTP
+request can append another observation; receipts do not promise exactly-once
+HTTP retries. See [migration and recovery](storage-migrations.md).
 
 ## Recording
 
@@ -577,6 +615,7 @@ The HTTP API calls a Study a `template`. `template_id`, `variable_id`, and
 | `POST` | `/experiments/templates/{template_id}/observations/query` | Retrieve observations for graph-selected runs |
 | `POST` | `/experiments/metadata/sync` | Backfill or repair the experiment metadata graph |
 | `POST` | `/experiments/runs/{run_id}/variables/{variable_id}/observations` | Record a value or reference |
+| `POST` | `/experiments/runs/{run_id}/record` | Record values, samples, artifacts, and durable graph intent in one transaction; see [Batch transport](#batch-transport) |
 | `POST` | `/experiments/runs/{run_id}/observations/batch` | Record an ordered batch atomically, including inline artifacts; see [Batch transport](#batch-transport) |
 | `POST` | `/experiments/runs/{run_id}/stream-annotations` | Tag a stream interval |
 | `GET` | `/experiments/stream-annotations` | Find annotations by Study, run, stream, and overlapping time |

@@ -16,8 +16,8 @@ nulls and empty containers survive in the complete document. Semantic keys keep
 their predicates and resolved values, while the document retains the original
 spelling and ordering. Native query tables expose resolved values and shared
 schemas; saved experiment metadata reads complete documents directly through the
-same SPARQL seam. `metadata_objects()` restores selected user documents before
-applying requested casts.
+same SPARQL seam. `metadata_objects()` assembles selected user values directly from documents,
+using RDF only for unsaved fields and semantic attributes, then applies casts.
 
 Explicit edits in the reserved metadata source override complete user fields
 in the derived query view as well as document reads, preserving the original
@@ -30,7 +30,7 @@ Study identity, declaration identity/kind/role, run lifecycle, recorded values,
 observation ordering, stream references and intervals, and artifact ownership.
 There are no permanent SQL metadata snapshots, SQL resolution table, shape
 restoration fallback, or SQL metadata-filter implementation. The older
-`metadata={...}` filters use shared document queries for exact saved-field
+`metadata={...}` filters compare hydrated complete documents for exact saved-field
 matching, including ordered lists and nested objects. Ordinary attribute filters
 continue to use the shared query compiler.
 
@@ -47,8 +47,8 @@ Lifecycle transitions patch only their fields, preserving saved metadata.
 
 The next metadata read or general graph query delivers pending operations in
 version order. Delivery coalesces replacements and field patches into one update
-with at most three SPARQL operations, avoiding parser depth limits on large
-sweeps. Delivery is serialized across ledger instances sharing a graph. Stream
+per target graph while preserving source-clear barriers and operation order,
+avoiding parser depth limits on large sweeps. Delivery is serialized across ledger instances sharing a graph. Stream
 source deletions name the sources captured by their deletion transaction.
 
 Graph delivery and flushing source writes to disk precede SQL acknowledgment. A crash or failure before
@@ -76,7 +76,10 @@ After acknowledgment, the graph is the only durable copy of metadata. Backups
 and restoration must include both graph and SQL state. The outbox recovers
 pending writes; it is not an archive of already acknowledged documents.
 Standalone ledger callers use the same documents in a small persistent Oxigraph
-store beside their artifact directory when no server graph is supplied.
+store beside their artifact directory through the explicit `ExperimentStore.standalone()` factory. The ordinary
+constructor requires an injected backend. See the current
+[declaration and recording refinement](experiment-refinement.md) and
+[migration/recovery reference](../reference/storage-migrations.md).
 
 ## Validation
 

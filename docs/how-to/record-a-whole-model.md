@@ -141,8 +141,13 @@ an adapter for each new model instance and redeclare it on the study to reuse
 saved definitions with fresh readers. Declaring an empty adapter or selecting
 no components raises an explanatory error.
 
-Samples use up to three requests: register new streams, insert samples, and
-record observations. All readers and values are checked before these requests.
-Observations commit together, but requests do not share a transaction. Samples
-written before a rejected observation batch stay under the run's source and
-are removed when that run is deleted or experiments are cleared.
+Each nonempty `sample()` and `record_values()` call sends one recording request.
+All readers and values are checked first; a reader failure sends no recording
+request. Stream registration, revisioned samples, artifact ownership, ordered
+observations, and durable graph intent share one SQL transaction. A rejected
+batch leaves no new samples or observations. Graph delivery retries from the
+outbox after commit; HTTP retries can still append another observation.
+
+Hand declarations use the same user metadata namespace and semantic properties.
+See the [declaration conversion table](../reference/experiments.md#declaring-variables)
+and [storage boundary and recovery](../reference/storage-migrations.md).

@@ -24,13 +24,14 @@ PAYLOAD = {"a.b": {"arbitrary key": [None, {}, [], {"https://example.org/key": "
 @pytest.fixture
 def model_api(tmp_path, monkeypatch):
     store = DuckDBStore(tmp_path / "models.duckdb")
-    ledger = ExperimentStore(store, tmp_path / "artifacts")
+    ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
     module = import_module("acquirium.Server.app")
     monkeypatch.setattr(module.app.state, "manager", SimpleNamespace(experiments=ledger), raising=False)
     client = AcquiriumClient()
     client._http.close()
     client._http = TestClient(module.app)
     client.insert_timeseries_batch = Mock(return_value={"ok": True})
+    client.record_experiment_batch = Mock(wraps=client.record_experiment_batch)
     client.resolve = Mock(side_effect=lambda value, **kwargs: value)
     client.sync_experiment_metadata = Mock(return_value={"ok": True})
     ac = SimpleNamespace(client=client, register_streams=Mock())
@@ -77,7 +78,7 @@ def test_namespaces_declaration_filters_and_idempotency(model_api):
     with pytest.raises(HTTPStatusError) as caught:
         study.declare_from(conflict)
     assert "declared differently" in caught.value.response.json()["detail"]
-    with pytest.raises(TypeError, match="adapter.input"):
+    with pytest.raises(TypeError, match="role"):
         study.declare_from(adapter, role="input")
     with pytest.raises(ValueError, match="no adapter components"):
         study.declare_from(adapter, include="missing*")
@@ -97,19 +98,16 @@ def test_record_values_sample_and_role_views(model_api):
     state.reads.clear()
     assert len(variables.sample(at=T0)) == 3
     assert state.reads == ["level", "flow"]
-    assert ac.register_streams.call_count == client.insert_timeseries_batch.call_count == 1
-    registrations = ac.register_streams.call_args.args[0]
-    assert [item["ref_name"] for item in registrations] == [
-        _stream_name(variables["level"].variable_id, ()),
-        _stream_name(variables["flow"].variable_id, ("p1",)),
-        _stream_name(variables["flow"].variable_id, ("p2",)),
-    ]
-    assert registrations[1]["metadata"]["pump"] == "p1"
-    assert registrations[1]["metadata"]["observed"] == "urn:plant:p1"
-    assert client.insert_timeseries_batch.call_args.args[1][registrations[2]["ref_name"]] == [(T0, 7)]
+    assert client.record_experiment_batch.call_count == 2
+    entries = client.record_experiment_batch.call_args.args[1]
+    assert [entry["form"] for entry in entries] == ["samples"] * 3
+    assert entries[1]["key"] == ["p1"]
+    assert entries[2]["samples"] == [[T0.isoformat(), 7]]
+    ac.register_streams.assert_not_called()
+    client.insert_timeseries_batch.assert_not_called()
     assert [obs.key for obs in run.observations(variables["flow"]).all()] == [("p1",), ("p2",)]
     variables.sample(at=T0 + timedelta(hours=1))
-    assert ac.register_streams.call_count == 1
+    assert client.record_experiment_batch.call_count == 3
     assert len(variables.output.record_values()) == 3
     assert len(run.observations(variables["config"]).all()) == 1
     assert run.observations(variables["cost"]).latest().value == 4
@@ -118,9 +116,8 @@ def test_record_values_sample_and_role_views(model_api):
     run.finish()
     study.start()
     variables.sample(at=T0)
-    assert ac.register_streams.call_count == 2
-    with pytest.raises(TypeError, match="record_values"):
-        variables.record_all(at=T0)
+    assert client.record_experiment_batch.call_count == 5
+    assert not hasattr(variables, "record_all")
 
 
 def test_json_values_and_arbitrary_nested_metadata_survive_reopening(model_api):
@@ -146,6 +143,7 @@ def test_preview_is_local_and_matches_recording(model_api):
     assert preview["cost"] == 4
     assert preview["config"]["a.b"]["arbitrary key"][:3] == [None, {}, []]
     model_api.client.insert_timeseries_batch.assert_not_called()
+    model_api.client.record_experiment_batch.assert_not_called()
     model_api.ac.register_streams.assert_not_called()
     variables = model_api.study.declare_from(adapter)
     assert variables.output.preview()["level"] == preview["level"]
@@ -171,7 +169,8 @@ def test_model_time_is_forwarded_unchanged_and_timestamp_only_labels_sample(mode
     assert variables.preview(model_time=0) == {"indexed": 5, "current": 7}
 
 
-@pytest.mark.parametrize("bad", [None, float("nan"), float("inf"), "bad", [1]])
+@pytest.mark.parametrize("bad", [None, float("nan"), float("inf"), "bad", [1],
+                                 aq.Stream("urn:external").between(T0, T0)])
 def test_invalid_sample_records_nothing(model_api, bad):
     adapter = aq.adapters.define()
     adapter.timeseries("good", read=lambda: 1)
@@ -182,6 +181,7 @@ def test_invalid_sample_records_nothing(model_api, bad):
         variables.sample(at=T0)
     model_api.ac.register_streams.assert_not_called()
     model_api.client.insert_timeseries_batch.assert_not_called()
+    model_api.client.record_experiment_batch.assert_not_called()
     assert run.observations().all() == []
 
 
@@ -236,28 +236,37 @@ def test_builder_validation_and_explicit_json_metadata():
         adapter.json("bad", read=lambda: {}, metadata={"x": float("nan")})
 
 
-@pytest.mark.parametrize("failure", ["registration", "insertion", "observation"])
+@pytest.mark.parametrize("failure", ["registration", "insertion", "observation", "outbox"])
 def test_transport_retries_and_atomic_observation_batches(model_api, monkeypatch, failure):
-    adapter, state = fake_adapter()
-    variables = model_api.study.declare_from(adapter)
+    variables = model_api.study.declare_from(fake_adapter()[0])
     run = model_api.study.start()
-    if failure == "observation":
-        observe = model_api.ledger.observe_batch
-        def fail(run_id, observations):
-            return observe(run_id, [*observations, {"variable_id": "missing"}])
-        with monkeypatch.context() as patch:
-            patch.setattr(model_api.ledger, "observe_batch", fail)
-            with pytest.raises(HTTPStatusError):
-                variables.sample(at=T0)
-    else:
-        operation = model_api.ac.register_streams if failure == "registration" else model_api.client.insert_timeseries_batch
-        operation.side_effect = [RuntimeError("temporary"), None]
+    ledger = model_api.ledger
+    ledger.sync_metadata_graph()
+    execute = ledger._execute
+    with monkeypatch.context() as patch:
+        def fail(*args, **kwargs):
+            raise RuntimeError("temporary")
+        if failure == "registration":
+            patch.setattr(ledger.store, "_ensure_stream_refs", fail)
+        elif failure == "insertion":
+            patch.setattr(ledger.store, "_insert_frame", fail)
+        elif failure == "outbox":
+            patch.setattr(ledger.metadata, "enqueue", fail)
+        else:
+            def insert(conn, statement, parameters=None):
+                if statement.startswith("INSERT INTO experiment_observations"):
+                    raise RuntimeError("temporary")
+                return execute(conn, statement, parameters)
+            patch.setattr(ledger, "_execute", insert)
         with pytest.raises(RuntimeError, match="temporary"):
             variables.sample(at=T0)
     assert run.observations().all() == []
+    with ledger.store._own_conn() as conn:
+        assert conn.execute("SELECT count(*) FROM timeseries").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM streams").fetchone()[0] == 0
     variables.sample(at=T0)
     assert len(run.observations().all()) == 3
-    assert model_api.ac.register_streams.call_count == (2 if failure == "registration" else 1)
+    assert model_api.client.record_experiment_batch.call_count == 2
 
 
 def test_pyomo_explicit_sources_units_and_mutable_values(model_api):
@@ -291,14 +300,14 @@ def test_pyomo_explicit_sources_units_and_mutable_values(model_api):
     variables.sample(at=T0, model_time=2)
     variables.output.record_values()
     assert run.observations(variables["cost"]).latest().value == 7
-    assert model_api.client.insert_timeseries_batch.call_args.args[1][_stream_name(variables["pressure"].variable_id, ())] == [(T0, 12)]
+    assert run.observations(variables["pressure"]).latest().range_start == T0
     with pytest.raises(ValueError, match="explicit read"):
         adapter.scalar("bad", model.flow)
     with pytest.raises(TypeError, match="callable"):
         adapter.scalar("bad reader", model.cost, read=3)
     with pytest.raises(TypeError, match="callable"):
         adapter.timeseries("bad indexed reader", model.flow, read_at=3)
-    with pytest.raises(TypeError, match="declare components explicitly"):
+    with pytest.raises(TypeError, match="start"):
         aq.adapters.pyomo(model, start=T0)
 
 
@@ -325,8 +334,9 @@ def test_hand_declared_keyed_series_remain_supported(model_api):
     run = model_api.study.start()
     streams = flow.record({("p1", "a,b"): [(T0, np.float32(5))], (1, "x"): [(T0, 2)], ("1", "x"): [(T0, 3)]})
     assert set(streams) == {("p1", "a,b"), (1, "x"), ("1", "x")}
-    names = [item["ref_name"] for item in model_api.ac.register_streams.call_args.args[0]]
-    assert names == [_stream_name(flow.variable_id, key) for key in (("p1", "a,b"), (1, "x"), ("1", "x"))]
+    from acquirium.internals.models import compute_ref_uri
+    refs = [stream.ref_uri for stream in streams.values()]
+    assert refs == [str(compute_ref_uri(f"experiment/{run.run_id}", _stream_name(flow.variable_id, key))) for key in (("p1", "a,b"), (1, "x"), ("1", "x"))]
     assert len(run.observations().all()) == 3
     for value in ({"p1": [(T0, 5)]}, {("p1",): [(T0, 5)]}, {("p1", None): [(T0, 5)]}):
         with pytest.raises(ValueError, match="key"):
@@ -338,7 +348,9 @@ def test_keyed_registration_distinguishes_numeric_types(model_api):
     model_api.study.start()
     for key in (1, True, 1.0, 0.0, -0.0):
         flow.record({(key,): [(T0, 5)]})
-    assert model_api.ac.register_streams.call_count == 5
+    assert model_api.client.record_experiment_batch.call_count == 5
+    with model_api.ledger.store._own_conn() as conn:
+        assert conn.execute("SELECT count(*) FROM streams").fetchone()[0] == 5
 
 
 def test_importing_core_does_not_import_pyomo():
@@ -365,3 +377,42 @@ def test_declaration_does_not_evaluate_uninitialized_pyomo_values(model_api):
 def test_legacy_metadata_named_like_an_adapter_field_is_not_reinterpreted(model_api):
     variable = model_api.study.output("legacy").json(adapter_metadata="ordinary text")
     assert variable.metadata == {"adapter_metadata": "ordinary text"}
+
+
+def test_table_recording_serializes_once_and_preview_preserves_frame(model_api, monkeypatch):
+    import acquirium.ExperimentValues as values
+    adapter = aq.adapters.define()
+    frame = pl.DataFrame({"cost": [1, 2]})
+    adapter.table("table", read=lambda: frame)
+    assert adapter.preview()["table"] is frame
+    variables = model_api.study.declare_from(adapter)
+    model_api.study.start()
+    serialize = Mock(wraps=values.parquet)
+    monkeypatch.setattr(values, "parquet", serialize)
+    variables.record_values()
+    assert serialize.call_count == 1
+    assert variables["table"].observations().latest().dataframe().equals(frame)
+    assert model_api.client.record_experiment_batch.call_count == 1
+
+
+def test_custom_adapters_pass_through_shared_validation(model_api):
+    adapter = SimpleNamespace(components=lambda: [aq.Component("bad", "scalar", role="annotation")])
+    with pytest.raises(ValueError, match="inputs or outputs"):
+        model_api.study.declare_from(adapter)
+    assert model_api.ledger.variables(model_api.study.study_id) == []
+
+
+def test_hand_and_model_declarations_share_metadata_and_query_paths(model_api):
+    study = model_api.study
+    first = study.output("cost").scalar(unit="urn:unit:USD", objective="minimize",
+        metadata={"a.b": [None, {}, []]})
+    adapter = aq.adapters.define()
+    adapter.scalar("cost", read=lambda: 1, unit="urn:unit:USD",
+        metadata={"objective": "minimize", "a.b": [None, {}, []]})
+    assert study.declare_from(adapter)["cost"] is first
+    assert first.metadata == {"objective": "minimize", "a.b": [None, {}, []]}
+    assert first.unit == "urn:unit:USD"
+    assert "unit" not in first.metadata
+    # A separate namespaced value cannot silently replace a descriptive value.
+    with pytest.raises(ValueError, match="objective"):
+        study.output("conflict").scalar(objective="minimize", metadata={"objective": "maximize"})

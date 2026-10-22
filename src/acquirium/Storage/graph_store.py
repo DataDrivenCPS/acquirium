@@ -918,16 +918,15 @@ class OxigraphGraphStore:
 
     def metadata_documents(self, subjects):
         """Read authoritative documents from source quads, without inference."""
-        from acquirium.Metadata import DOCUMENT_NS, decode_document_rows
-
-        subjects = sorted(set(map(str, subjects)))
-        rows = []
+        from acquirium.Metadata import scan_documents
         with self._lock:
-            for subject in subjects:
-                for quad in self.source_dataset.store._inner.quads_for_pattern(NamedNode(subject), None, None, None):
-                    if quad.predicate.value.startswith(DOCUMENT_NS):
-                        rows.append((subject, quad.predicate.value, quad.object.value, quad.graph_name.value))
-        return decode_document_rows(subjects, rows)
+            return scan_documents(self.source_dataset.store._inner, subjects)
+
+    def metadata_triples(self, subjects, *, graph_uri):
+        """Read asserted declaration semantics without waiting for inference."""
+        from acquirium.Metadata import scan_subject_triples
+        with self._lock:
+            return scan_subject_triples(self.source_dataset.store._inner, subjects, graph_uri)
 
     def flush_metadata(self):
         """Persist source writes before the recording ledger acknowledges them."""

@@ -41,5 +41,39 @@ The next metadata read delivers the outbox. Entries are removed only after their
 graph update and source flush succeed; retries do not re-resolve saved units. Backups must retain
 both the SQL ledger and its authoritative graph. SQL alone can recover pending
 updates, but cannot reconstruct metadata whose updates were already acknowledged.
-Standalone ledger users without a server graph use an embedded Oxigraph store in
-`.experiment-metadata` beside the artifact directory.
+Direct ledger callers must supply a backend with document and asserted-term reads, graph writes,
+source clears, and durable flush. The constructor does not select a backend.
+Use `with ExperimentStore.standalone(store, artifact_dir, resolve=...) as ledger:`
+for an embedded Oxigraph graph in `.experiment-metadata` beside the artifacts.
+Exit or `ledger.close()` delivers pending metadata and releases the local graph
+handle; the caller owns and closes the SQL store afterward. Standalone mode
+explicitly permits unresolved legacy semantic spellings.
+
+Experiment schema version 3 adds a declaration format and scheduled delivery
+frontier to the existing outbox state. Before normalized reads, the metadata
+component checks the graph generation and drains older operations. It reads
+complete variable documents outside the SQL writer transaction, while holding
+the shared metadata delivery lock. Known semantic, index, and source fields
+stay explicit. Namespaced JSON is preserved; other descriptive fields move
+under `metadata`. Identical duplicates merge. Conflicting duplicates abort
+before scheduling any normalized mutation and identify fields requiring repair.
+For legacy SQL snapshots this check also precedes schema conversion, preserving
+the original data if repair is needed.
+
+Explicit metadata-source overrides are normalized in their own graph; semantic
+assertions remain in their original sources. Existing semantic RDF terms are reused without a resolver, and original or
+unresolved spellings remain in documents. Resolved projection changes and a
+scheduled frontier commit atomically in SQL. The format is marked delivered
+only after graph flush and acknowledgment reach that frontier. A restart
+replays pending changes before returning normalized declarations. Pending
+older outbox formats remain readable. Missing acknowledged graphs require
+restoring the matching graph backup; pending new updates cannot replace it.
+
+Experiment recordings use connection-scoped stream and revision primitives to
+commit samples, stream identities, artifacts, observations, and graph intent
+in one SQL transaction. Outbox events may target a run-owned source graph;
+older events retain the experiment graph as their default target. Source
+clears are ordering barriers. Delivery does not perform another SQL reference
+registration. Artifact files remain content-addressed, with ownership checked
+under the writer lock through file removal. Deletion and clearing retain
+recovery for artifacts and samples orphaned by older versions.

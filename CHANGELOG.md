@@ -11,6 +11,17 @@ change in any release.
 ## [Unreleased]
 
 ### Added
+- Experiment recordings now use one request and SQL transaction for stream
+  registration, revisioned samples, artifact ownership, observations, and durable
+  graph intent. Rejected batches leave no new recorded SQL state.
+- Hand and model variable declarations share normalization. `.metadata` contains
+  user JSON; semantic/source fields have explicit properties. Legacy descriptive
+  query paths move under `metadata`. Conflicting legacy duplicates require repair;
+  interrupted graph upgrades replay through the outbox delivery frontier.
+- Experiment metadata consistency has one component, with explicit backend
+  capabilities and a standalone factory. HTTP reads hydrate each batch once,
+  and object queries assemble saved user values directly from documents.
+
 - Shared lossless metadata documents retain arbitrary namespaced JSON, null
   positions, nested empty containers, dates, and original semantic values.
   Queryable attributes are written alongside their complete documents.

@@ -37,7 +37,7 @@ def test_metadata_sync_reports_old_servers_without_hiding_other_errors(status):
 def test_reusable_template_variables_are_isolated_and_timestamped(tmp_path):
     store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
     try:
-        experiments = ExperimentStore(store, tmp_path / "artifacts")
+        experiments = ExperimentStore.standalone(store, tmp_path / "artifacts")
         template = experiments.define("load-shift")
         variable = experiments.declare(template["template_id"], "configuration", "input", "json", {})
         first = experiments.start(template["template_id"], {"case": 1})
@@ -57,7 +57,7 @@ def test_reusable_template_variables_are_isolated_and_timestamped(tmp_path):
 def test_file_attachment_is_content_addressed(tmp_path):
     store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
     try:
-        experiments = ExperimentStore(store, tmp_path / "artifacts")
+        experiments = ExperimentStore.standalone(store, tmp_path / "artifacts")
         template = experiments.define("files")
         variable = experiments.declare(template["template_id"], "config", "input", "file", {})
         run = experiments.start(template["template_id"], {})
@@ -74,7 +74,7 @@ def test_file_attachment_is_content_addressed(tmp_path):
 def test_observation_rejects_unknown_or_foreign_variable(tmp_path, attachment, foreign):
     store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
     try:
-        ledger = ExperimentStore(store, tmp_path / "artifacts")
+        ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
         study = ledger.define("owner")
         other = ledger.define("other")
         variable = ledger.declare(other["template_id"], "result", "output", "file" if attachment else "scalar", {})
@@ -119,7 +119,7 @@ def _samples(store, ref):
 def test_delete_runs_removes_what_they_recorded_and_keeps_shared_files(tmp_path):
     store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
     try:
-        ledger = ExperimentStore(store, tmp_path / "artifacts")
+        ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
         study = ledger.define("tank")
         config = ledger.declare(study["template_id"], "config", "input", "file", {})
         level = ledger.declare(study["template_id"], "level", "output", "timeseries", {})
@@ -160,7 +160,7 @@ def test_delete_runs_removes_what_they_recorded_and_keeps_shared_files(tmp_path)
 def test_delete_keeps_streams_that_other_runs_reference(tmp_path):
     store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
     try:
-        ledger = ExperimentStore(store, tmp_path / "artifacts")
+        ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
         simulation, analysis = ledger.define("simulation"), ledger.define("analysis")
         level = ledger.declare(simulation["template_id"], "level", "output", "timeseries", {})
         used = ledger.declare(analysis["template_id"], "level", "input", "timeseries", {})
@@ -185,7 +185,7 @@ def test_delete_keeps_streams_that_other_runs_reference(tmp_path):
 def test_delete_study_clear_and_usage_cover_experiments_only(tmp_path):
     store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
     try:
-        ledger = ExperimentStore(store, tmp_path / "artifacts", resolve=lambda text, kind: "urn:unit:kW")
+        ledger = ExperimentStore.standalone(store, tmp_path / "artifacts", resolve=lambda text, kind: "urn:unit:kW")
         assert ledger._resolve("kW", "unit") == "urn:unit:kW"
         site = store.ensure_stream_ref("urn:site#level", "site", "level", value_kind="numeric")
         store.upsert_rows(site, [(T0, 1000.0)], value_kind="numeric")
@@ -247,7 +247,7 @@ def test_http_delete_routes_report_conflicts_and_require_confirmation(tmp_path, 
 
     store = DuckDBStore(tmp_path / "http.duckdb", recreate=True)
     try:
-        ledger = ExperimentStore(store, tmp_path / "artifacts")
+        ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
         module = import_module("acquirium.Server.app")
         monkeypatch.setattr(module.app.state, "manager", SimpleNamespace(experiments=ledger), raising=False)
         http = TestClient(module.app)
@@ -271,7 +271,7 @@ def test_http_delete_routes_report_conflicts_and_require_confirmation(tmp_path, 
 def test_ledger_enforces_what_each_kind_stores(tmp_path):
     store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
     try:
-        ledger = ExperimentStore(store, tmp_path / "artifacts")
+        ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
         study = ledger.define("kinds")
         declare = lambda label, kind: ledger.declare(study["template_id"], label, "output", kind, {})["variable_id"]
         with pytest.raises(ValueError, match="kind must be one of"):
@@ -303,7 +303,7 @@ def test_http_artifacts_download_with_their_saved_names(tmp_path, monkeypatch):
 
     store = DuckDBStore(tmp_path / "http.duckdb", recreate=True)
     try:
-        ledger = ExperimentStore(store, tmp_path / "artifacts")
+        ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
         module = import_module("acquirium.Server.app")
         monkeypatch.setattr(module.app.state, "manager", SimpleNamespace(experiments=ledger), raising=False)
         http = TestClient(module.app)
@@ -329,7 +329,7 @@ def test_http_artifacts_download_with_their_saved_names(tmp_path, monkeypatch):
 @pytest.fixture
 def study_api(tmp_path):
     store = DuckDBStore(tmp_path / "api.duckdb", recreate=True)
-    ledger = ExperimentStore(store, tmp_path / "artifacts")
+    ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
     client = Mock()
     client.define_experiment.side_effect = ledger.define
     client.declare_experiment_variable.side_effect = ledger.declare
@@ -350,6 +350,7 @@ def study_api(tmp_path):
             **body,
         )
     client.observe_experiment.side_effect = observe
+    client.record_experiment_batch.side_effect = ledger.record_batch
     client.finish_experiment.side_effect = lambda run_id, failed=False, error=None: ledger.finish(run_id, "failed" if failed else "succeeded", error)
     client.annotate_experiment_stream.side_effect = lambda run_id, ref_uri, *, start, end=None, metadata=None: ledger.annotate_stream(run_id, ref_uri, start, end, metadata)
     client.close_experiment_stream_annotation.side_effect = lambda annotation_id, *, end: ledger.close_stream_annotation(annotation_id, end)
@@ -365,7 +366,7 @@ def study_api(tmp_path):
     ac = Mock(client=client)
     item = ledger.define("study")
     try:
-        yield SimpleNamespace(study=Study(ac, item), ac=ac, client=client, item=item)
+        yield SimpleNamespace(study=Study(ac, item), ac=ac, client=client, item=item, ledger=ledger)
     finally:
         store.close()
 
@@ -412,7 +413,7 @@ def test_handles_print_what_they_hold_without_reading(study_api):
     calls = len(study_api.client.mock_calls)
     assert repr(study) == "<Study 'study': 1 input, 1 output, 1 log>"
     assert repr(run) == f"<Experiment {run.run_id} succeeded {{'scenario': 'baseline'}}>"
-    assert repr(cost) == "<ExperimentVariable output 'cost' scalar {'unit': 'USD'}>"
+    assert repr(cost) == "<ExperimentVariable output 'cost' scalar>"
     assert repr(log) == "<ExperimentVariable log 'events'>"
     assert repr(study.input) == "<VariableCollection input ['source']>"
     assert repr(study.experiments.where(status="succeeded")) == "<ExperimentCollection study='study' status='succeeded'>"
@@ -549,14 +550,11 @@ def test_reopened_study_hydrates_variables_and_reads_experiments(study_api):
     assert reopened.study_id == study.study_id
     assert reopened.variables["operating cost"].variable_id == cost.variable_id
     assert reopened.variables[power.variable_id].label == "electrical power"
-    assert reopened.variables["operating cost"].metadata == {
-        "objective": "minimize",
-        "unit": "USD",
-    }
-    assert reopened.output["electrical power"].metadata == {
-        "observed": "urn:plant:tank",
-        "unit": "kW",
-    }
+    assert reopened.variables["operating cost"].metadata == {"objective": "minimize"}
+    assert reopened.variables["operating cost"].unit == "USD"
+    assert reopened.output["electrical power"].metadata == {}
+    assert reopened.output["electrical power"].observed == "urn:plant:tank"
+    assert reopened.output["electrical power"].unit == "kW"
     assert reopened.variables.where(role="output").frame().select(
         "label", "role", "kind", "metadata"
     ).to_dicts() == [
@@ -564,13 +562,13 @@ def test_reopened_study_hydrates_variables_and_reads_experiments(study_api):
             "label": "operating cost",
             "role": "output",
             "kind": "scalar",
-            "metadata": {"objective": "minimize", "unit": "USD"},
+            "metadata": {"objective": "minimize"},
         },
         {
             "label": "electrical power",
             "role": "output",
             "kind": "timeseries",
-            "metadata": {"observed": "urn:plant:tank", "unit": "kW"},
+            "metadata": {},
         },
     ]
 
@@ -616,26 +614,10 @@ def test_variable_catalog_expands_metadata_and_omits_deleted_keys(study_api):
 
     frame = StudyService(study_api.ac).get("study").variables.frame()
 
-    assert frame.columns == [
-        "variable_id", "label", "role", "kind", "metadata", "created_at",
-        "category", "objective", "unit",
-    ]
-    assert frame.select("label", "category", "objective", "unit").to_dicts() == [
-        {
-            "label": "configuration",
-            "category": "simulation",
-            "objective": None,
-            "unit": None,
-        },
-        {
-            "label": "cost",
-            "category": None,
-            "objective": "minimize",
-            "unit": "USD",
-        },
-    ]
-    assert "only_null" not in frame["metadata"].to_list()[0]
-    assert frame["metadata"].to_list()[1]["objective"] == "minimize"
+    assert frame.columns == ["variable_id", "label", "role", "kind", "metadata", "created_at", "unit"]
+    assert frame["metadata"].to_list() == [
+        {"category": "simulation", "objective": None, "only_null": None}, {"objective": "minimize"}]
+    assert frame["unit"].to_list() == [None, "USD"]
     assert frame["created_at"].dtype.is_temporal()
 
 
@@ -687,7 +669,7 @@ def test_observations_refresh_variables_declared_in_another_session(study_api, a
     else:
         assert result.value == 2
     assert reader.output["known"] is known_handle
-    assert reader.output["added later"].metadata == {"unit": "kW"}
+    assert reader.output["added later"].unit == "kW"
     assert reader.output["added later"].created_at is not None
     reader.experiments.get(run.run_id).observations().all()
     study_api.client.list_experiment_variables.assert_called_once_with(reader.study_id)
@@ -724,15 +706,14 @@ def test_record_values_and_events_across_runs(study_api, kind, value):
     first = study.start()
     variable.record(value, occurred_at=when)
     variable.record(value)
-    assert client.observe_experiment.call_count == 2
-    assert client.observe_experiment.call_args_list[0].args == (first.run_id, variable.variable_id)
-    assert client.observe_experiment.call_args_list[0].kwargs == {"value": value, "occurred_at": when.isoformat()}
+    assert client.record_experiment_batch.call_count == 2
+    assert client.record_experiment_batch.call_args_list[0].args == (first.run_id, [{"form": "value", "variable_id": variable.variable_id, "value": value, "occurred_at": when.isoformat()}])
     first.finish()
     with pytest.raises(RuntimeError):
         variable.record(value)
     second = study.start()
     variable.record(value)
-    assert client.observe_experiment.call_args.args[0] == second.run_id
+    assert client.record_experiment_batch.call_args.args[0] == second.run_id
     assert first.run_id != second.run_id
 
 
@@ -749,20 +730,16 @@ def test_record_files_and_streams(study_api, tmp_path):
     when = datetime(2026, 1, 1, tzinfo=timezone.utc)
     ac.reference_uri.return_value = "urn:acquirium#recorded-volume"
     recorded = stream.record([(when.isoformat(), 10)])
-    ac.insert_timeseries.assert_called_once_with(f"experiment/{run.run_id}", _stream_name(stream.variable_id, ()), [(when, 10)])
-    registration = ac.register_streams.call_args.args[0][0]
-    assert registration["unit"] == "M3"
-    assert registration["value_kind"] == "numeric"
-    # The run gets its own point; the plant property is an attribute of it.
-    assert "point_uri" not in registration
-    assert registration["metadata"] == {
-        "study_id": study.study_id, "run_id": run.run_id, "variable_id": stream.variable_id, "observed": "urn:tank",
-    }
-    client.observe_experiment.assert_called_once_with(run.run_id, stream.variable_id, ref_uri=recorded.ref_uri, start=when.isoformat(), end=when.isoformat())
+    client.record_experiment_batch.assert_called_once_with(run.run_id, [{
+        "form": "samples", "variable_id": stream.variable_id, "key": None,
+        "samples": [[when.isoformat(), 10]],
+    }])
+    ac.register_streams.assert_not_called()
+    assert run.observations(stream).latest().ref_uri == recorded.ref_uri
     client.timeseries_df.return_value = _stream_frame(recorded.ref_uri, [(when, 10.0)])
     assert recorded.dataframe(limit=5).rows() == [(when, 10.0)]
     client.timeseries_df.assert_called_once_with(recorded.ref_uri, start=None, end=None, limit=5)
-    assert str(recorded) == recorded.ref_uri == "urn:acquirium#recorded-volume"
+    assert str(recorded) == recorded.ref_uri == str(compute_ref_uri(f"experiment/{run.run_id}", _stream_name(stream.variable_id, ())))
     for variable in (file, stream):
         with pytest.raises(TypeError, match="occurred_at"):
             variable.record(None, occurred_at=when)
@@ -776,11 +753,7 @@ def test_timeseries_result_does_not_require_plant_model(study_api):
     simulated_power = study.output("simulated power").timeseries(unit="kW")
     run = study.start()
     simulated_power.record([("2026-01-01T00:00:00Z", 42.0)])
-    registration = ac.register_streams.call_args.args[0][0]
-    assert "point_uri" not in registration
-    assert registration["metadata"] == {
-        "study_id": study.study_id, "run_id": run.run_id, "variable_id": simulated_power.variable_id,
-    }
+    ac.register_streams.assert_not_called()
     assert run.observations("simulated power").latest().ref_uri is not None
 
 
@@ -796,46 +769,40 @@ def test_timeseries_registration_is_reused_per_run_and_variable(study_api):
     recorded = power.record([("2026-01-01T00:00:00Z", 10)])
     appended = power.add([("2026-01-01T01:00:00Z", 20)])
 
-    ac.register_streams.assert_called_once()
-    assert ac.insert_timeseries.call_count == 2
+    ac.register_streams.assert_not_called()
+    assert study_api.client.record_experiment_batch.call_count == 2
     assert recorded.ref_uri == appended.ref_uri
     observations = first.observations(power).all()
     assert [item.sequence for item in observations] == [1, 2]
     assert [item.range_start.hour for item in observations] == [0, 1]
     volume.record([("2026-01-01T00:00:00Z", 30)])
     volume.record([("2026-01-01T01:00:00Z", 40)])
-    assert ac.register_streams.call_count == 2
-    assert ac.insert_timeseries.call_count == 4
+    assert study_api.client.record_experiment_batch.call_count == 4
 
     first.finish()
     second = study.start()
     new_recording = power.record([("2026-01-01T00:00:00Z", 50)])
     power.record([("2026-01-01T01:00:00Z", 60)])
-    assert ac.register_streams.call_count == 3
-    assert ac.insert_timeseries.call_count == 6
+    assert study_api.client.record_experiment_batch.call_count == 6
     assert new_recording.ref_uri != recorded.ref_uri
-    assert ac.register_streams.call_args.args[0][0]["source_id"] == f"experiment/{second.run_id}"
+    assert study_api.client.record_experiment_batch.call_args.args[0] == second.run_id
     assert len(second.observations(power).all()) == 2
 
 
-@pytest.mark.parametrize("failure_phase", ["registration", "insertion"])
-def test_timeseries_registration_cache_handles_retries(study_api, failure_phase):
-    study, ac = study_api.study, study_api.ac
+def test_timeseries_atomic_request_can_be_retried(study_api):
+    study, client = study_api.study, study_api.client
     power = study.output("power").timeseries(unit="kW")
-    ac.reference_uri.side_effect = compute_ref_uri
     run = study.start()
-    operation = ac.register_streams if failure_phase == "registration" else ac.insert_timeseries
-    operation.side_effect = [RuntimeError("temporary failure"), None, None]
+    operation = client.record_experiment_batch.side_effect
+    client.record_experiment_batch.side_effect = RuntimeError("temporary failure")
     rows = [("2026-01-01T00:00:00Z", 10)]
-
     with pytest.raises(RuntimeError, match="temporary failure"):
         power.record(rows)
     assert run.observations(power).all() == []
+    client.record_experiment_batch.side_effect = operation
     power.record(rows)
     power.record(rows)
-
-    assert ac.register_streams.call_count == (2 if failure_phase == "registration" else 1)
-    assert ac.insert_timeseries.call_count == (2 if failure_phase == "registration" else 3)
+    assert client.record_experiment_batch.call_count == 3
     assert len(run.observations(power).all()) == 2
 
 
@@ -852,7 +819,7 @@ def test_resumed_run_registers_stream_once_in_new_session(study_api):
     recorded = reopened.output["power"].record([("2026-01-01T01:00:00Z", 20)])
     reopened.output["power"].record([("2026-01-01T02:00:00Z", 30)])
 
-    ac.register_streams.assert_called_once()
+    ac.register_streams.assert_not_called()
     assert recorded.ref_uri == original.ref_uri
     assert [item.range_start.hour for item in resumed.observations("power").all()] == [0, 1, 2]
 
@@ -862,7 +829,7 @@ def test_http_routes_accept_reference_uri_variable_ids_and_stream_annotations(tm
 
     store = DuckDBStore(tmp_path / "http.duckdb", recreate=True)
     try:
-        ledger = ExperimentStore(store, tmp_path / "artifacts")
+        ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
         module = import_module("acquirium.Server.app")
         monkeypatch.setattr(module.app.state, "manager", SimpleNamespace(experiments=ledger), raising=False)
         http = TestClient(module.app)
@@ -962,12 +929,12 @@ def test_record_converts_values_and_checks_kinds_before_sending(study_api):
     events.record({"at": datetime(2026, 1, 1, 6), "step": np.int64(3)})
     values = [item.value for item in run.observations().all()]
     assert values == [0.5, True, {"levels": [1.0, 2.0], "window": [1, 2]}, {"at": "2026-01-01T06:00:00+00:00", "step": 3}]
-    calls = client.observe_experiment.call_count
+    calls = client.record_experiment_batch.call_count
     for variable, value, error in ((flow, "fast", TypeError), (flow, np.nan, ValueError), (note, 5, TypeError),
                                    (settings, {"x": float("nan")}, ValueError), (settings, {1: "a"}, TypeError)):
         with pytest.raises(error):
             variable.record(value)
-    assert client.observe_experiment.call_count == calls  # rejected before sending
+    assert client.record_experiment_batch.call_count == calls  # rejected before sending
 
 
 def test_value_handlers_extend_recording():
@@ -1084,26 +1051,26 @@ def test_time_series_record_a_reference_or_a_copy(study_api):
 
     # A range records a reference; no samples are written.
     biogas.record(window)
-    client.observe_experiment.assert_called_with(
-        run.run_id, biogas.variable_id, ref_uri="urn:site:biogas",
-        start=T0.isoformat(), end=T0.replace(hour=2).isoformat())
+    client.record_experiment_batch.assert_called_with(run.run_id, [{
+        "form": "reference", "variable_id": biogas.variable_id, "ref_uri": "urn:site:biogas",
+        "interval": [T0.isoformat(), T0.replace(hour=2).isoformat()]}])
     ac.insert_timeseries.assert_not_called()
 
     # Rows read from the range are stored with the run, under its own source.
     client.timeseries_df.return_value = _stream_frame("urn:site:biogas", [(T0, 1.0), (T0.replace(hour=1), 2.0)])
     ac.reference_uri.return_value = "urn:acquirium#copied"
     copied = biogas.record(window.dataframe())
-    ac.insert_timeseries.assert_called_once_with(f"experiment/{run.run_id}", _stream_name(biogas.variable_id, ()), [(T0, 1.0), (T0.replace(hour=1), 2.0)])
-    assert copied == Stream("urn:acquirium#copied")
+    assert client.record_experiment_batch.call_args.args[1][0]["samples"] == [[T0.isoformat(), 1.0], [T0.replace(hour=1).isoformat(), 2.0]]
+    assert copied == Stream(str(compute_ref_uri(f"experiment/{run.run_id}", _stream_name(biogas.variable_id, ()))))
 
     # Stream query frames use ts or time, and value or value_numeric.
     narrow = pl.DataFrame({"data_alias": ["flow"] * 2, "point_id": ["p"] * 2,
                            "time": [T0, T0.replace(hour=1)], "value_numeric": [3.0, 4.0], "value_text": [None, None]})
     trajectory.record(narrow)
-    assert ac.insert_timeseries.call_args.args[2] == [(T0, 3.0), (T0.replace(hour=1), 4.0)]
+    assert client.record_experiment_batch.call_args.args[1][0]["samples"] == [[T0.isoformat(), 3.0], [T0.replace(hour=1).isoformat(), 4.0]]
     # So do wide query frames with one stream column.
     trajectory.record(pl.DataFrame({"time": [T0], "biogas": [5.0]}))
-    assert ac.insert_timeseries.call_args.args[2] == [(T0, 5.0)]
+    assert client.record_experiment_batch.call_args.args[1][0]["samples"] == [[T0.isoformat(), 5.0]]
     for rows, message in ((narrow.with_columns(point_id=pl.Series(["p", "q"])), "several streams"),
                           (pl.DataFrame({"time": [T0], "value_numeric": [None]}, schema_overrides={"value_numeric": pl.Float64}), "numeric value"),
                           (pl.DataFrame({"time": [T0], "value": ["high"]}), "numeric value"),
@@ -1111,6 +1078,8 @@ def test_time_series_record_a_reference_or_a_copy(study_api):
                           (pl.DataFrame({"when": [T0], "value": [1.0]}), "time \\(or ts\\)")):
         with pytest.raises(ValueError, match=message):
             trajectory.record(rows)
+    with pytest.raises(TypeError, match="records rows"):
+        biogas.add(window)
     with pytest.raises(TypeError, match="between"):
         biogas.record(site)
     with pytest.raises(TypeError, match="only time-series"):
@@ -1124,7 +1093,7 @@ def test_time_series_record_a_reference_or_a_copy(study_api):
     assert copy.stream == copied
     second = study.start()
     biogas.record(copy.interval)
-    assert client.observe_experiment.call_args.kwargs["ref_uri"] == "urn:acquirium#copied"
+    assert client.record_experiment_batch.call_args.args[1][0]["ref_uri"] == copied.ref_uri
     second.finish()
 
 
@@ -1138,18 +1107,19 @@ def test_output_assignment_reuses_handles_and_preserves_run_boundary(study_api):
         first.output["cost"] = 13
     assert first.output["cost"] is cost
     assert dict(first.output) == {"cost": cost}
-    assert client.observe_experiment.call_count == 2
-    assert client.observe_experiment.call_args.args == (first.run_id, cost.variable_id)
-    assert study._metadata[cost.variable_id] == {"unit": "USD"}
+    assert client.record_experiment_batch.call_count == 2
+    assert client.record_experiment_batch.call_args.args[0] == first.run_id
+    assert client.record_experiment_batch.call_args.args[1][0]["variable_id"] == cost.variable_id
+    assert cost.unit == "USD" and cost.metadata == {}
     first.finish()
     second = study.start()
     for label in ("cost", "new"):
         with pytest.raises(RuntimeError, match="inactive experiment"):
             first.output[label] = 14
     assert "new" not in study.output
-    assert client.observe_experiment.call_count == 2
+    assert client.record_experiment_batch.call_count == 2
     second.output["cost"] = 15
-    assert client.observe_experiment.call_args.args == (second.run_id, cost.variable_id)
+    assert client.record_experiment_batch.call_args.args[0] == second.run_id
 
 
 @pytest.mark.parametrize("value,kind", [(1, "scalar"), (1.5, "scalar"), ("note", "text"), (True, "scalar"), (None, "json"), ([1, 2], "json"), ({"x": 1}, "json")])
@@ -1165,8 +1135,8 @@ def test_output_assignment_creates_exploratory_handle(study_api, value, kind):
         warnings.simplefilter("error")
         run.output["new"] = value
         handle.record(value)
-    assert client.observe_experiment.call_count == 3
-    assert client.observe_experiment.call_args.kwargs["value"] == value
+    assert client.record_experiment_batch.call_count == 3
+    assert client.record_experiment_batch.call_args.args[1][0]["value"] == value
 
 
 def test_output_assignment_rejects_unsupported_values_and_conflicts(study_api, tmp_path):
@@ -1179,4 +1149,4 @@ def test_output_assignment_rejects_unsupported_values_and_conflicts(study_api, t
     assert "unsupported" not in study.output
     with pytest.raises(ValueError, match="declared differently"):
         run.output["config"] = {}
-    client.observe_experiment.assert_not_called()
+    client.record_experiment_batch.assert_not_called()

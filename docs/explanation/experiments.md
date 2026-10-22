@@ -59,10 +59,14 @@ the inputs, outputs, and events produced by the calculation.
 
 Metadata keys follow the [shared metadata rules](../how-to/attach-metadata.md).
 Built-in keys such as `unit` have semantic meanings: `"kW"` and `"KiloW"`
-resolve to the same QUDT unit. Nulls and empty containers omit descriptive
-metadata; JSON and log observations retain those values as data.
+resolve to the same QUDT unit. Top-level nulls and empty containers omit run
+metadata fields. Variable user metadata, JSON observations, and log values
+retain nulls and empty containers.
 
-Saved `.metadata` objects keep their own fields and supplied unit strings.
+Variable `.metadata` contains its user JSON object for both hand and model
+declarations. Semantic fields have explicit properties such as `.unit`, which
+retains the supplied spelling. User query paths use `metadata.<field>`; run
+metadata keeps its existing paths.
 Graph metadata tables display resolved units as URIs and use a common struct
 schema across rows. A field missing from one row appears as null in that table.
 

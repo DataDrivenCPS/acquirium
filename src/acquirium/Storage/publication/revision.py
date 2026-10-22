@@ -26,9 +26,16 @@ class RevisionPublisher:
             raise ValueError("deletion is not supported by incremental materialization")
         writes = self._store._prepare_frame(frame)
         with self._store._lock, self._store._write_conn() as conn:
-            revision = self._store._next_revision(conn)
-            self._store._insert_frame(conn, writes, revision)
+            self.publish_frame(conn, writes)
         return PublicationReceipt(request.publication_id, ids.payload_hash(mutations), writes.height, {})
+
+    def publish_frame(self, conn, writes: pl.DataFrame) -> int | None:
+        """Publish prepared samples in an existing transaction without commit."""
+        if writes.is_empty():
+            return None
+        revision = self._store._next_revision(conn)
+        self._store._insert_frame(conn, writes, revision)
+        return revision
 
     def replace(self, request: PublicationRequest, ref_uri: str) -> PublicationReceipt:
         """Replace one stream, including empty requests, at one atomic revision."""

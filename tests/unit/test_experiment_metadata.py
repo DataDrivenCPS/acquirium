@@ -12,7 +12,7 @@ from rdflib.namespace import RDF
 
 from acquirium.Client.explore.attributes import ATTR_NS
 from acquirium.Client.explore.expr import AttrProxy
-from acquirium.ExperimentMetadata import EXPERIMENT, annotation_uri, run_uri, variable_uri
+from acquirium.ExperimentMetadata import EXPERIMENT, variable_record, annotation_uri, run_uri, variable_uri
 from acquirium.Experiments import ExperimentStore, StudyService
 from acquirium.Storage.duckdb_store import DuckDBStore
 from acquirium.Storage.graph_registry import source_graph_uri
@@ -68,6 +68,19 @@ class MemoryGraphStore:
         self.version += 1
         return len(targets)
 
+    def flush_metadata(self):
+        pass
+
+    def metadata_documents(self, subjects):
+        from acquirium.Metadata import read_documents
+        from types import SimpleNamespace
+        return read_documents(SimpleNamespace(sparql_query=self.sparql_query), subjects)
+
+    def metadata_triples(self, subjects, *, graph_uri):
+        graph = self.dataset.graph(URIRef(graph_uri))
+        return {str(subject): [[str(s), str(p), o.n3()] for s,p,o in graph.triples((URIRef(subject), None, None))]
+                for subject in subjects}
+
     def graph_status(self):
         return {"source_version": self.version}
 
@@ -100,6 +113,7 @@ def metadata_api(tmp_path):
     client.get_experiment.side_effect = ledger.run
     client.finish_experiment.side_effect = lambda run_id, failed=False, error=None: ledger.finish(run_id, "failed" if failed else "succeeded", error)
     client.observe_experiment.side_effect = ledger.observe
+    client.record_experiment_batch.side_effect = ledger.record_batch
     client.list_experiment_observations.side_effect = ledger.observations
     client.sync_experiment_metadata.side_effect = ledger.sync_metadata_graph
 
@@ -168,7 +182,7 @@ def test_scalar_variable_unit_strings_and_uris_share_semantic_filter(metadata_ap
 
     assert study.variables.where(unit="psi").all() == [pressure]
     assert study.variables.where(unit=URIRef(PSI)).all() == [pressure]
-    assert pressure.metadata["unit"] == "PSI"  # Saved objects retain their original shape and values.
+    assert pressure.unit == "PSI"  # Saved objects retain their original shape and values.
     assert (URIRef(pressure.variable_id), HAS_UNIT, URIRef(PSI)) in api.graph.dataset
     frame = study.variables.query().include("unit").metadata(include_dependencies=False)
     assert frame["variable.unit"].to_list() == [PSI]
@@ -200,8 +214,8 @@ def test_saved_metadata_reads_shared_objects_instead_of_sql_values(metadata_api,
     monkeypatch.setattr(shared, "read_documents", tracked)
     result = api.ledger.read_metadata(snapshots, EXPERIMENT.Variable, "variable_id")
     values = {item["variable_id"]: item["metadata"] for item in result}
-    assert values[first.variable_id] == {"unit": "PSI", "settings": {"mode": "baseline"}}
-    assert values[second.variable_id] == {"unit": PSI, "settings": {"duration": 60}}
+    assert values[first.variable_id] == first.declaration.document()
+    assert values[second.variable_id] == second.declaration.document()
     assert calls and all(set(subjects) == {first.variable_id, second.variable_id} for subjects in calls)
 
 
@@ -219,7 +233,7 @@ def test_run_annotation_and_observation_metadata_use_shared_objects(metadata_api
     assert result[1]["metadata"] == {"settings": {"mode": "trial", "duration": 60}}
     rows = api.ledger.read_observation_metadata(api.ledger.observations(study.study_id))
     assert [item["experiment_metadata"] for item in rows] == [result[0]["metadata"]] * 2
-    assert [item["variable_metadata"] for item in rows] == [{"note": "measured"}] * 2
+    assert [item["variable_metadata"] for item in rows] == [output.declaration.document()] * 2
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     annotation = api.ledger.annotate_stream(run.run_id, "urn:site:stream", now, metadata={"treatment": "A"})
     saved = api.ledger.read_metadata([annotation], EXPERIMENT.StreamAnnotation, "annotation_id")
@@ -260,8 +274,8 @@ def test_legacy_uuid_declarations_backfill_without_changing_observation_ids(meta
         conn.execute("UPDATE experiment_variables SET variable_id=? WHERE variable_id=?", [legacy_id, variable.variable_id])
         conn.execute("UPDATE experiment_observations SET variable_id=? WHERE variable_id=?", [legacy_id, variable.variable_id])
         from acquirium.Storage.metadata_outbox import enqueue
-        record = api.ledger._variable_record(study.study_id, dict(variable_id=legacy_id, label="pressure", role="output", kind="scalar", metadata={"unit": "PSI"}, created_at=datetime.now(timezone.utc)))
-        api.ledger._queue_metadata(conn, record)
+        record = variable_record(study.study_id, dict(variable_id=legacy_id, label="pressure", role="output", kind="scalar", metadata={"unit": "PSI"}, created_at=datetime.now(timezone.utc)))
+        api.ledger._queue_metadata(conn, api.ledger.metadata_graph.record_update(record))
         enqueue(conn, {"operation": "delete", "subject": variable.uri})
     reopened = api.service.get(study.study_id)
     pressure = reopened.variables["pressure"]
@@ -271,7 +285,7 @@ def test_legacy_uuid_declarations_backfill_without_changing_observation_ids(meta
     assert reopened.variables.where(unit="PSI").all() == [pressure]
     declarations = api.ledger.read_metadata(api.ledger.variables(study.study_id), EXPERIMENT.Variable, "variable_id")
     assert declarations[0]["variable_id"] == legacy_id
-    assert declarations[0]["metadata"] == {"unit": "PSI"}
+    assert declarations[0]["metadata"]["unit"] == "PSI"
     assert pressure.observations().latest().value == 12.5
     assert api.ledger.observations(study.study_id)[0]["variable_id"] == legacy_id
 
@@ -348,7 +362,7 @@ def test_http_reads_hydrate_saved_metadata_through_shared_objects(metadata_api, 
         run.finish()
         study.output("other").scalar(unit=PSI, settings={"duration": 60})
         reopened = ac.study.get("http objects")
-        assert reopened.variables["pressure"].metadata == {"unit": "PSI", "settings": {"mode": "baseline"}}
+        assert reopened.variables["pressure"].metadata == {"settings": {"mode": "baseline"}}
         assert reopened.experiments.get(run.run_id).metadata == {"scenario": "baseline"}
         assert reopened.experiments.all()[0].metadata == {"scenario": "baseline"}
         selected = ac.client.list_experiments(study.study_id, run_ids=[run.run_id])
@@ -357,7 +371,7 @@ def test_http_reads_hydrate_saved_metadata_through_shared_objects(metadata_api, 
         selected_observations = ac.client.list_experiment_observations(study.study_id, run_ids=[run.run_id])
         assert selected_observations == observations
         assert observations[0]["experiment_metadata"] == {"scenario": "baseline"}
-        assert observations[0]["variable_metadata"] == reopened.variables["pressure"].metadata
+        assert observations[0]["variable_metadata"] == reopened.variables["pressure"].declaration.document()
         assert reopened.stream_annotations()[0].metadata == {"treatment": "A"}
     finally:
         http.close()
@@ -369,7 +383,7 @@ def test_null_empty_metadata_is_removed_but_recorded_json_is_preserved(metadata_
     output = study.output("result").json(unit=None, tags=[], info={}, note="")
     run = study.start({"tags": [], "notes": None, "settings": {"flow": 10, "unused": {}}})
     output.record({"tags": [], "notes": None, "settings": {}})
-    assert output.metadata == {"note": ""}
+    assert output.metadata == {"note": "", "tags": [], "info": {}}
     assert run.metadata == {"settings": {"flow": 10, "unused": {}}}
     assert run.observations().latest().value == {"tags": [], "notes": None, "settings": {}}
 
@@ -407,6 +421,19 @@ def test_lifecycle_delivery_preserves_metadata_edits(metadata_api):
     assert api.ledger.run(run.run_id)["metadata"] == {"scenario": "edited"}
     assert len(study.experiments.where(scenario="edited", status="succeeded").all()) == 1
 
+
+def test_variable_descriptive_graph_edits_keep_the_user_namespace(metadata_api):
+    api = metadata_api
+    study = api.service.define("edited declaration")
+    variable = study.output("pressure").scalar(unit="PSI", metadata={"saved": [None, {}, []]})
+    api.ledger.sync_metadata_graph()
+    from acquirium.Client.metadata import plan_write, update_text
+    write = plan_write(variable.uri, {"category": "edited"}, role="data", resolve=api.ledger._resolve)
+    api.graph.sparql_update(update_text([write]), graph_uri=source_graph_uri("metadata"))
+    reopened = api.service.get("edited declaration").output["pressure"]
+    assert reopened.metadata == {"saved": [None, {}, []], "category": "edited"}
+    assert reopened.unit == "PSI"
+
 def test_backfill_annotations_and_restart_preserve_source_objects(metadata_api):
     api = metadata_api
     study = api.service.define("old")
@@ -426,7 +453,7 @@ def test_backfill_annotations_and_restart_preserve_source_objects(metadata_api):
 def test_invalid_metadata_fails_before_sql_insert_and_recording_avoids_graph_work(metadata_api):
     api = metadata_api
     study = api.service.define("validation")
-    with pytest.raises(ValueError, match="Could not resolve"):
+    with pytest.raises(ValueError, match="could not resolve"):
         study.output("pressure").scalar(unit="unknown")
     with pytest.raises(ValueError, match="reserved"):
         study.start({"status": "pretend"})
@@ -474,7 +501,7 @@ def test_restart_retains_resolved_units_without_a_resolver(metadata_api):
     run = study.start({"scenario": "baseline"})
     api.ledger.sync_metadata_graph()
     reopened = ExperimentStore(api.store, api.ledger.artifact_dir, graph_store=api.graph, resolve=lambda text, kind: None)
-    assert reopened.variables(study.study_id)[0]["metadata"] == {"unit": "psi"}
+    assert reopened.variables(study.study_id)[0]["metadata"] == pressure.declaration.document()
     reopened.finish(run.run_id, "succeeded")
     assert reopened.run(run.run_id)["metadata"] == {"scenario": "baseline"}
     assert (URIRef(pressure.variable_id), HAS_UNIT, URIRef(PSI)) in api.graph.dataset
@@ -636,3 +663,40 @@ def test_compatibility_metadata_filters_match_complete_saved_fields(metadata_api
     assert [item["run_id"] for item in api.ledger.runs(study.study_id, metadata={"tags": ["A", "B"]})] == [first.run_id]
     assert [item["run_id"] for item in api.ledger.runs(study.study_id, metadata={"settings": {"flow": 10}})] == [first.run_id]
     assert len(api.ledger.runs(study.study_id, metadata={"absent": None})) == 3
+
+
+def test_http_hydrates_each_result_batch_once(metadata_api, monkeypatch):
+    from importlib import import_module
+    from fastapi.testclient import TestClient
+    api = metadata_api
+    study = api.service.define("batch hydration")
+    output = study.output("result").scalar()
+    run = study.start({"scenario": "one"})
+    output.record(1)
+    api.ledger.sync_metadata_graph()
+    module = import_module("acquirium.Server.app")
+    monkeypatch.setattr(module.app.state, "manager", SimpleNamespace(experiments=api.ledger), raising=False)
+    read = Mock(wraps=api.graph.metadata_documents)
+    monkeypatch.setattr(api.graph, "metadata_documents", read)
+    http = TestClient(module.app)
+    try:
+        for path in (f"/experiments/templates/{study.study_id}/variables",
+                     f"/experiments/templates/{study.study_id}/runs",
+                     f"/experiments/runs/{run.run_id}",
+                     f"/experiments/templates/{study.study_id}/observations"):
+            read.reset_mock()
+            assert http.get(path).status_code == 200
+            assert read.call_count == 1
+    finally:
+        http.close()
+
+
+def test_variable_user_queries_use_namespace_and_semantics_keep_their_paths(metadata_api):
+    study = metadata_api.service.define("normalized query paths")
+    variable = study.output("pressure").scalar(unit="PSI", category="simulation")
+    assert variable.metadata == {"category": "simulation"}
+    assert variable.unit == "PSI"
+    assert study.variables.where(**{"metadata.category": "simulation"}).all() == [variable]
+    assert study.variables.where(unit="PSI").all() == [variable]
+    with pytest.raises(ValueError, match="category"):
+        study.variables.where(category="simulation").all()

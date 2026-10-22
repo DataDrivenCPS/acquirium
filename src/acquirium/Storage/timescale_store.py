@@ -455,41 +455,15 @@ class TimescaleStore(TimeseriesStore):
 
         Returns the ref URI.
         """
-        if ref_uri is None:
-            ref_uri = compute_ref_uri(source_id, ref_name)
-        value_kind = normalize_value_kind(value_kind)
-        # logger.debug(
-        #     "ensure_stream_ref source=%s ref_name=%s point_uri=%s kind=%s",
-        #     source_id, ref_name, point_uri, value_kind,
-        # )
-        with self.conn.cursor() as cur:
-            cur.execute(
-                f"""
-                INSERT INTO {STREAMS_TABLE} (ref_uri, point_uri, source_id, ref_name, value_kind)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (ref_uri) DO UPDATE
-                    SET
-                        point_uri = COALESCE(EXCLUDED.point_uri, {STREAMS_TABLE}.point_uri),
-                        source_id = EXCLUDED.source_id,
-                        ref_name = EXCLUDED.ref_name,
-                        value_kind = EXCLUDED.value_kind
-                """,
-                (str(ref_uri), point_uri, source_id, ref_name, value_kind),
-            )
-        return ref_uri
+        return URIRef(self.ensure_stream_refs([(point_uri, source_id, ref_name, str(ref_uri) if ref_uri is not None else None, value_kind)])[0])
 
-    def ensure_stream_refs(
-        self,
-        refs: Iterable[tuple[str | None, str, str, str | None, str]],
-    ) -> list[str]:
-        """Batch form of :meth:`ensure_stream_ref`.
+    def ensure_stream_refs(self, refs) -> list[str]:
+        """Register a batch using its own transaction."""
+        with self._lock, self._write_conn() as conn:
+            return self._ensure_stream_refs(conn, refs)
 
-        Each entry is ``(point_uri, source_id, ref_name, ref_uri, value_kind)``.
-
-        COPY into a staging table and upsert from it in one statement, rather
-        than a statement per row: COPY streams the whole batch over the wire in
-        a single command, which beats even a pipelined executemany.
-        """
+    def _ensure_stream_refs(self, conn, refs) -> list[str]:
+        """Register references in the caller's transaction; never commit it."""
         prepared: dict[str, tuple[Any, ...]] = {}
         for point_uri, source_id, ref_name, ref_uri, value_kind in refs:
             key = str(ref_uri if ref_uri is not None else compute_ref_uri(source_id, ref_name))
@@ -506,32 +480,31 @@ class TimescaleStore(TimeseriesStore):
         # staging table name is fixed, so concurrent graph synchronizations must
         # serialize just like timeseries writers; otherwise one request can
         # nest a transaction or collide with the other request's temp table.
-        with self._lock, timed_debug(logger, "ensure_stream_refs rows=%d", len(prepared)), self._write_conn() as conn:
-            with conn.cursor() as cur:
-                # A caller-controlled transaction can synchronize references
-                # more than once before commit; remove the prior staging table
-                # because ON COMMIT DROP has not fired yet.
-                cur.execute("DROP TABLE IF EXISTS _acquirium_incoming_refs")
-                cur.execute(
-                    f"CREATE TEMP TABLE _acquirium_incoming_refs "
-                    f"(LIKE {STREAMS_TABLE}) ON COMMIT DROP"
-                )
-                with cur.copy(f"COPY _acquirium_incoming_refs {cols} FROM STDIN") as copy:
-                    for row in prepared.values():
-                        copy.write_row(row)
-                cur.execute(
-                    f"""
-                    INSERT INTO {STREAMS_TABLE} {cols}
-                    SELECT ref_uri, point_uri, source_id, ref_name, value_kind
-                    FROM _acquirium_incoming_refs
-                    ON CONFLICT (ref_uri) DO UPDATE
-                        SET
-                            point_uri = COALESCE(EXCLUDED.point_uri, {STREAMS_TABLE}.point_uri),
-                            source_id = EXCLUDED.source_id,
-                            ref_name = EXCLUDED.ref_name,
-                            value_kind = EXCLUDED.value_kind
-                    """
-                )
+        with conn.cursor() as cur:
+            # A caller-controlled transaction can synchronize references
+            # more than once before commit; remove the prior staging table
+            # because ON COMMIT DROP has not fired yet.
+            cur.execute("DROP TABLE IF EXISTS _acquirium_incoming_refs")
+            cur.execute(
+                f"CREATE TEMP TABLE _acquirium_incoming_refs "
+                f"(LIKE {STREAMS_TABLE}) ON COMMIT DROP"
+            )
+            with cur.copy(f"COPY _acquirium_incoming_refs {cols} FROM STDIN") as copy:
+                for row in prepared.values():
+                    copy.write_row(row)
+            cur.execute(
+                f"""
+                INSERT INTO {STREAMS_TABLE} {cols}
+                SELECT ref_uri, point_uri, source_id, ref_name, value_kind
+                FROM _acquirium_incoming_refs
+                ON CONFLICT (ref_uri) DO UPDATE
+                    SET
+                        point_uri = COALESCE(EXCLUDED.point_uri, {STREAMS_TABLE}.point_uri),
+                        source_id = EXCLUDED.source_id,
+                        ref_name = EXCLUDED.ref_name,
+                        value_kind = EXCLUDED.value_kind
+                """
+            )
         return list(prepared.keys())
 
     def resolve_storage_key(self, point_uri: str) -> str:

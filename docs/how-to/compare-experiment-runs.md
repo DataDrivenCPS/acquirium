@@ -38,7 +38,7 @@ Each column holds numbers in its variable's declared unit. Check the units
 before combining variables:
 
 ```python
-study.variables["operating cost"].metadata["unit"]  # "USD"
+study.variables["operating cost"].unit  # "USD"
 ```
 
 ## Use a Python function

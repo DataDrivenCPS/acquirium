@@ -1,38 +1,15 @@
 """Explicit declarations and readers for models from any Python library."""
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Protocol
 
-from acquirium.ExperimentValues import check_kind, to_json
+from acquirium.ExperimentValues import parquet, json_value, sampled_values
 
+from acquirium.ExperimentDeclarations import Declaration as Component, validate_declaration
 UNSET = object()
-# An encoded JSON object keeps arbitrary keys/nulls/empty containers separate
-# from the graph writer's attribute names and deletion semantics.
-ADAPTER_FORMAT = "_adapter_format"
-
-
-def metadata_fields(value: Mapping[str, Any]) -> dict[str, Any]:
-    """Namespace arbitrary JSON; the shared metadata backend preserves it."""
-    return {ADAPTER_FORMAT: 2, "metadata": deepcopy(value)}
-
-
-@dataclass(frozen=True)
-class Component:
-    """One stable experiment declaration; readers live separately."""
-    label: str
-    kind: str
-    unit: str | None = None
-    keys: tuple[str, ...] = ()
-    observed: Mapping[tuple, str] | str | None = None
-    metadata: Mapping[str, Any] = field(default_factory=dict)
-    role: str = "output"
-    quantity_kind: str | None = None
-    source_path: str | None = None
-    description: str | None = None
-    source_unit: str | None = None
 
 
 class ModelAdapter(Protocol):
@@ -41,35 +18,16 @@ class ModelAdapter(Protocol):
     def sample(self, component: Component, *, model_time: Any = UNSET) -> Any: ...
 
 
-def validate_value(component: Component, value: Any) -> Any:
-    """Normalize and validate a reader result without writing anything."""
-    if component.kind == "table":
-        from acquirium.Experiments import _parquet
-        _parquet(value)
-        return value
-    if component.kind == "timeseries":
-        from acquirium.Experiments import _stream_key
-        if component.keys:
-            if not isinstance(value, Mapping):
-                raise TypeError("a keyed time-series reader must return a key-to-number mapping")
-            return {_stream_key(key, component.keys): _number(item) for key, item in value.items()}
-        return _number(value)
-    value = to_json(value)
-    check_kind(component.kind, value, label=repr(component.label))
-    return value
-
-
-def _number(value):
-    value = to_json(value)
-    check_kind("scalar", value)
-    return value
-
-
-def read_component(adapter: ModelAdapter, component: Component, *, sampling=False, model_time=UNSET):
+def read_component(adapter: ModelAdapter, component: Component, *, sampling=False, model_time=UNSET, prepare=None):
     """Use one labeled error and validation path for preview and recording."""
     try:
         value = adapter.sample(component, model_time=model_time) if sampling else adapter.read(component)
-        return validate_value(component, value)
+        if prepare is not None:
+            return prepare(value)
+        if component.kind == "table":
+            parquet(value)
+            return value
+        return sampled_values(component, value) if sampling else json_value(component.kind, value, label=repr(component.label))
     except Exception as error:
         details = f", source={component.source_path!r}" if component.source_path else ""
         if model_time is not UNSET:
@@ -128,29 +86,17 @@ class AdapterDefinition(_Declarations):
 
     def add(self, component: Component, *, read=None, read_at=None) -> Component:
         """Low-level registration, also supporting explicitly keyed components."""
-        from acquirium.Experiments import _stream_keys
         if self._frozen:
             raise RuntimeError("this declared adapter is frozen; build a new adapter to change declarations")
-        if not isinstance(component.label, str) or not component.label.strip():
-            raise ValueError("a non-empty label is required")
+        component = validate_declaration(component, model=True)
         if component.label in self._bindings:
             raise ValueError(f"duplicate component label {component.label!r}")
-        if component.role not in {"input", "output"}:
-            raise ValueError("adapter declarations must be inputs or outputs")
-        if component.kind not in {"scalar", "text", "json", "table", "timeseries"}:
-            raise ValueError(f"unsupported model component kind {component.kind!r}")
-        _stream_keys(component.kind, {"keys": component.keys})
         if (read is None) == (read_at is None):
             raise ValueError("supply exactly one of read or read_at")
         if read_at is not None and component.kind != "timeseries":
             raise ValueError("read_at is only valid for time-series declarations")
         if not callable(read if read is not None else read_at):
             raise TypeError("readers must be callable")
-        payload = to_json(component.metadata, path=f"{component.label}.metadata")
-        if not isinstance(payload, dict):
-            raise TypeError("metadata must be a string-keyed JSON object")
-        from dataclasses import replace
-        component = replace(component, metadata=payload, keys=tuple(component.keys))
         self._bindings[component.label] = _ReaderBinding(deepcopy(component), read, read_at)
         return deepcopy(component)
 

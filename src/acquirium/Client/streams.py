@@ -2,17 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
-from dateutil import parser as dtparser
+from acquirium.ExperimentValues import timestamp as _utc
 import polars as pl
-
-
-def _utc(value: datetime | str) -> datetime:
-    """Parse an ISO timestamp, treating a timezone-less value as UTC."""
-    parsed = dtparser.isoparse(value) if isinstance(value, str) else value
-    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
 
 
 def samples_frame(frame: pl.DataFrame) -> pl.DataFrame:

@@ -65,8 +65,10 @@ allows one active run. Finished and failed runs reject further variable writes.
 
 Descriptive metadata uses the same attributes as plant queries. Unit strings
 such as `"USD"` or `"kW"` must resolve to known units; full unit URIs also work.
-Use simple metadata key names such as `scenario` or `settings`. Nulls and empty
-containers omit metadata values. Values passed to `.json().record()` or a log's
+Run metadata uses simple key names such as `scenario` or `settings`; top-level
+nulls and empty containers omit run fields. Variable user metadata is a JSON
+object under `metadata`, preserving arbitrary keys, nulls, and empty containers.
+Semantic fields such as units have explicit variable properties. Values passed to `.json().record()` or a log's
 `record()` remain data, including their nulls and empty containers.
 
 ## Choose what to record

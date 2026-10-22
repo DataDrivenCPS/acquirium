@@ -16,7 +16,13 @@ returns them as columns, `options()` and `facets()` count them, and
 This page uses two pumps, `swro:P1` and `swro:P2`, each with one outlet
 pressure point.
 
-Experiment declarations and run metadata use these same attribute rules.
+Run metadata uses these attribute rules. Variable declarations keep semantic
+and source fields explicit and store all user JSON under `metadata`, whether
+created by hand or through a model adapter. For example, a legacy variable
+`category="simulation"` is queried as `metadata.category` after upgrade;
+`variable.metadata` contains `{"category": "simulation"}`. Units remain
+available as `variable.unit` and the semantic query attribute `unit`.
+See [experiment declaration conversion](../reference/experiments.md#declaring-variables).
 Create them through the [experiment interface](record-experiments.md), which
 creates their nodes and handles their lifecycle.
 
@@ -187,7 +193,8 @@ or include the leaf next to the struct, `include("product_info", "product_info.y
 `where()` filters leaves, not parent keys.
 
 For code that wants plain Python values rather than a frame,
-`metadata_objects()` returns the same rows as dicts, each node's attributes
+`metadata_objects()` assembles saved user values directly from complete documents
+and uses RDF results for matches, relationships, and semantic values. It returns rows as dicts, each node's attributes
 in the shape they were saved and holding only what was saved on that node:
 
 ```python

@@ -48,8 +48,8 @@ def test_model_sweep_roundtrip_request_budget_and_keyed_deletion(tmp_path, monke
                         return request(method, url, **kwargs)
                     patch.setattr(ac.client._http, "request", track)
                     variables.sample(at=start + timedelta(hours=step), model_time=step)
-                assert len(calls) == (3 if step == 0 else 2), calls
-                assert calls[-1][1].endswith("/observations/batch")
+                assert len(calls) == 1, calls
+                assert calls[-1][1].endswith("/record")
             calls = []
             request = ac.client._http.request
             with monkeypatch.context() as patch:
@@ -84,19 +84,18 @@ def test_model_sweep_roundtrip_request_budget_and_keyed_deletion(tmp_path, monke
         assert runs[0].delete()["samples"] == 9
         assert ac.query().measurement(variable_id=variables["flow"].variable_id, pump="p1").dataframe(shape="narrow").height == 6
 
-        # A rejected observation batch leaves samples under the run's source;
-        # deleting that run must sweep these unreferenced streams as well.
+        # Rejected recordings leave neither observations nor newly written samples.
         orphan = study.start()
-        observe = ac.client.observe_experiment_batch
+        observe = ac.client.record_experiment_batch
         with monkeypatch.context() as patch:
             def reject(run_id, observations):
-                return observe(run_id, [*observations, {"variable_id": variables["cost"].variable_id, "value": "bad"}])
-            patch.setattr(ac.client, "observe_experiment_batch", reject)
+                return observe(run_id, [*observations, {"form": "value", "variable_id": variables["cost"].variable_id, "value": "bad"}])
+            patch.setattr(ac.client, "record_experiment_batch", reject)
             with pytest.raises(HTTPError):
                 variables.sample(at=start, model_time=0)
         assert orphan.observations().all() == []
         orphan.finish()
-        assert orphan.delete()["samples"] == 3
+        assert orphan.delete()["samples"] == 0
         aq.shutdown()
         ac = aq.init(data_dir=tmp_path / "local-server")
         assert ac.study.get("model sweep").variables["config"].metadata == to_json(payload)

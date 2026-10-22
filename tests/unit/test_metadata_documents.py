@@ -7,7 +7,7 @@ from rdflib import Graph, Literal, RDF, URIRef
 from acquirium.Metadata import dumps, loads, read_documents, document_predicate
 from acquirium.Client.metadata import plan_write, update_text
 from acquirium.Client.explore.core import Query
-from acquirium.ExperimentMetadata import _GraphQueryClient
+from tests.graph_query_client import _GraphQueryClient
 from acquirium.Storage.graph_registry import source_graph_uri
 from tests.unit.test_experiment_metadata import MemoryGraphStore
 
@@ -157,7 +157,7 @@ def test_indexed_object_selection_applies_casts_at_the_original_position():
 
 
 def test_standalone_graph_uses_document_precedence_for_queries(tmp_path):
-    from acquirium.Storage.metadata_outbox import LocalMetadataGraph
+    from tests.graph_query_client import QueryableLocalMetadataGraph as LocalMetadataGraph
 
     graph = LocalMetadataGraph(tmp_path / "standalone")
     uri, cls = "urn:example:node", "urn:example:Class"
@@ -228,7 +228,7 @@ def test_metadata_edits_wait_for_pending_initialization_acknowledgment():
     manager = object.__new__(Manager)
     manager.graph_store = Mock()
     manager.experiments = Mock()
-    manager.experiments.sync_metadata_graph.side_effect = OSError("ack failed")
+    manager.experiments.metadata.edit.side_effect = OSError("ack failed")
     with pytest.raises(OSError, match="ack failed"):
         manager.sparql_update("INSERT DATA {}", source_id="metadata")
     manager.graph_store.sparql_update.assert_not_called()

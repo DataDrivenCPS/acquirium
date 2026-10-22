@@ -10,7 +10,7 @@ from acquirium.Storage.timescale_store import TimescaleStore
 @pytest.mark.parametrize("recreate", [False, True])
 def test_backend_reopen_preserves_or_resets_experiment_ledger(materialization_store, tmp_path, recreate):
     store = materialization_store
-    ledger = ExperimentStore(store, tmp_path / "artifacts")
+    ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
     study = ledger.define("experiment reset contract")
     variable = ledger.declare(study["template_id"], "input", "input", "file", {})
     run = ledger.start(study["template_id"], {})
@@ -23,7 +23,7 @@ def test_backend_reopen_preserves_or_resets_experiment_ledger(materialization_st
         # The fixture's DSN scopes both connections to a disposable schema.
         reopened = TimescaleStore(dsn=store.dsn, recreate=recreate)
     try:
-        ledger = ExperimentStore(reopened, tmp_path / "artifacts")
+        ledger = ExperimentStore.standalone(reopened, tmp_path / "artifacts")
         if recreate:
             assert ledger.studies() == []
             assert ledger.stream_annotations() == []
@@ -50,7 +50,7 @@ def test_backend_deletes_runs_studies_and_clears_experiments(materialization_sto
     from datetime import datetime, timezone
 
     store = materialization_store
-    ledger = ExperimentStore(store, tmp_path / "artifacts")
+    ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
     when = datetime(2026, 1, 1, tzinfo=timezone.utc)
     site = store.ensure_stream_ref("urn:contract:site", "site", "level", value_kind="numeric")
     store.upsert_rows(site, [(when, 1000.0)], value_kind="numeric")
@@ -86,7 +86,7 @@ def test_batch_declarations_and_observations_are_ordered_and_atomic(materializat
     from types import SimpleNamespace
     from fastapi.testclient import TestClient
 
-    ledger = ExperimentStore(materialization_store, tmp_path / "batch-artifacts")
+    ledger = ExperimentStore.standalone(materialization_store, tmp_path / "batch-artifacts")
     module = import_module("acquirium.Server.app")
     monkeypatch.setattr(module.app.state, "manager", SimpleNamespace(experiments=ledger), raising=False)
     http = TestClient(module.app)
@@ -153,7 +153,7 @@ def test_batch_declarations_and_observations_are_ordered_and_atomic(materializat
 
 def test_key_column_migrates_existing_ledger(materialization_store, tmp_path):
     store = materialization_store
-    ledger = ExperimentStore(store, tmp_path / "migration-artifacts")
+    ledger = ExperimentStore.standalone(store, tmp_path / "migration-artifacts")
     study = ledger.define("old ledger")
     variable = ledger.declare(study["template_id"], "cost", "output", "scalar", {})
     run = ledger.start(study["template_id"], {})
@@ -166,7 +166,7 @@ def test_key_column_migrates_existing_ledger(materialization_store, tmp_path):
         ledger._execute(conn, "DELETE FROM schema_migrations WHERE component='experiments' AND version=1")
         ledger._execute(conn, "CREATE INDEX experiment_observations_variable_idx ON experiment_observations(variable_id, run_id, sequence)")
         ledger._execute(conn, "CREATE INDEX experiment_observations_ref_idx ON experiment_observations(ref_uri, range_start, range_end)")
-    migrated = ExperimentStore(store, tmp_path / "migration-artifacts")
+    migrated = ExperimentStore.standalone(store, tmp_path / "migration-artifacts")
     observations = migrated.observations(study["template_id"])
     assert observations[0]["value"] == 2
     assert observations[0]["key"] is None
@@ -188,7 +188,7 @@ def test_table_artifact_batch_validation_and_atomicity(materialization_store, tm
     import io
     import polars as pl
 
-    ledger = ExperimentStore(materialization_store, tmp_path / "table-artifacts")
+    ledger = ExperimentStore.standalone(materialization_store, tmp_path / "table-artifacts")
     study = ledger.define("table batch")
     scalar = ledger.declare(study["template_id"], "scalar", "output", "scalar", {})
     table = ledger.declare(study["template_id"], "table", "output", "table", {})
@@ -221,7 +221,7 @@ def test_cleanup_preserves_artifact_reattached_after_delete_commit(materializati
     import threading
 
     store = materialization_store
-    ledger = ExperimentStore(store, tmp_path / "race-artifacts")
+    ledger = ExperimentStore.standalone(store, tmp_path / "race-artifacts")
     study = ledger.define("artifact race")
     variable = ledger.declare(study["template_id"], "file", "input", "file", {})
     old = ledger.start(study["template_id"], {})
@@ -231,7 +231,7 @@ def test_cleanup_preserves_artifact_reattached_after_delete_commit(materializati
     # Separate ledger instances represent concurrent callers sharing a store.
     # Metadata transactions share delivery serialization; attaching bytes to an
     # already running experiment only needs the writer lock.
-    other = ExperimentStore(store, ledger.artifact_dir)
+    other = ExperimentStore.standalone(store, ledger.artifact_dir)
     active = None
     if not sweep:
         active = other.start(study["template_id"], {})

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -540,13 +541,15 @@ class Manager:
 
         try:
             with timed_debug(logger, "insert_graph format=%s replace=%s", format, replace):
-                graph_uri = self.graph_store.source_graph_uri(source_id)
-                self.graph_store.insert_graph(
-                    rdf_graph,
-                    format=format,
-                    replace=replace,
-                    graph_uri=graph_uri,
-                )
+                owned_metadata = source_id in {METADATA_SOURCE_ID, "experiments"} or source_id.startswith("experiment/")
+                with self.experiments.metadata.edit() if owned_metadata else nullcontext():
+                    graph_uri = self.graph_store.source_graph_uri(source_id)
+                    self.graph_store.insert_graph(
+                        rdf_graph,
+                        format=format,
+                        replace=replace,
+                        graph_uri=graph_uri,
+                    )
             logging.info("acquirium: inserted graph into store")
             with timed_debug(logger, "insert_graph: _sync_stream_refs_from_graph"):
                 self._sync_stream_refs_from_graph()
@@ -925,12 +928,10 @@ class Manager:
         It lets a component remove exactly the triples it registered without
         granting updates to ontology graphs.
         """
-        if source_id == METADATA_SOURCE_ID:
-            # Do not accept an edit that a still-unacknowledged initialization
-            # could overwrite on replay.
-            self.experiments.sync_metadata_graph()
-        graph_uri = self.graph_store.source_graph_uri(source_id)
-        result = self.graph_store.sparql_update(update, graph_uri=graph_uri)
+        owned_metadata = source_id in {METADATA_SOURCE_ID, "experiments"} or source_id.startswith("experiment/")
+        with self.experiments.metadata.edit() if owned_metadata else nullcontext():
+            graph_uri = self.graph_store.source_graph_uri(source_id)
+            result = self.graph_store.sparql_update(update, graph_uri=graph_uri)
         self._sync_stream_refs_from_graph()
         self._record_materialization_graph_revision()
         return result

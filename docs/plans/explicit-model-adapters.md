@@ -114,13 +114,10 @@ User metadata is separate from semantic fields such as unit, quantity kind,
 role, and source path. `variable.metadata` exposes the exact user object after
 reopening; semantic fields have their own properties.
 
-The existing graph metadata writer restricts attribute names and treats null
-and empty values as deletions. Adapter metadata is therefore also stored as a
-canonical JSON string under an internal declaration field, using the existing
-SQL ledger and graph literal storage. This is the authoritative payload.
-A projection under `metadata` exposes valid graph attribute paths on variables
-and stream points. Keys that cannot be projected still survive in the exact
-JSON object. No new database columns or endpoints are required.
+Declarations use complete graph-owned documents with a projection under
+`metadata` on variables and stream points. Arbitrary unprojectable keys remain
+in the document. See the current [storage boundary](experiment-metadata-integration.md#storage-boundary)
+and [migration/recovery reference](../reference/storage-migrations.md).
 
 ## Pyomo wrapper
 
@@ -155,23 +152,19 @@ shape; no reader-result shape is used to infer recording mode.
 - Tests cover generic readers, Pyomo helpers, both clock roles, binding lifecycle,
   invalid values, namespaces, JSON round trips, querying, and batch failures.
 
-Unit and quantity-kind identifiers are resolved during declaration. Samples use
-at most three requests: register new streams, insert samples, and record the
-observation batch. Final value/table recording uses one observation batch.
-The requests do not share a transaction; samples written before an observation
-failure remain under the run's source until deletion or clearing.
+Unit and quantity-kind identifiers are resolved during declaration and carried
+with the normalized declaration. Samples and final values each use one recording
+request. Registration, samples, artifact ownership, observations, and durable
+graph intent commit in one SQL transaction.
 
 ## Migration and compatibility
 
-The automatic Pyomo constructor's old options raise a migration error.
-`record_all()` directs callers to `record_values()` or
-`sample(at=..., model_time=...)`. `declare_from(role=...)` directs callers to
-input/output declaration namespaces.
-
-Saved observations remain readable. Existing declarations still enforce
-idempotency: changing kind, role, unit, or metadata requires new labels or a
-new study. Legacy hand-declared variables and their metadata behavior remain
-supported.
+Prototype automatic options, `record_all()`, and `declare_from(role=...)` were
+removed. Use explicit input/output declarations and recording methods. Saved
+identifiers and observations remain readable. All variables expose user JSON
+through `.metadata` and semantic/source fields through explicit properties.
+Legacy descriptive fields move under `metadata`; conflicting duplicates require
+repair. See the [conversion table](../reference/experiments.md#declaring-variables).
 
 ## Verification
 

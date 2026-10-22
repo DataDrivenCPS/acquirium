@@ -59,13 +59,17 @@ class TestExperimentTransport:
     def test_file_upload_uses_session_and_preserves_bytes(self, client, http, tmp_path, media_type):
         source = tmp_path / "input.json"
         source.write_bytes(b'{"power": 42}')
-        http.post.return_value = _get_resp({"digest": "saved"})
+        import base64
+        from hashlib import sha256
+        http.post.return_value = _get_resp([{"sequence": 1}])
         with patch("requests.post", side_effect=AssertionError("use the client session")):
-            assert client.attach_experiment_file("run", "urn:acquirium#variable", source, media_type) == {"digest": "saved"}
+            assert client.attach_experiment_file("run", "urn:acquirium#variable", source, media_type) == {
+                "digest": sha256(source.read_bytes()).hexdigest(), "filename": source.name, "byte_length": 13}
         http.post.assert_called_once_with(
-            "http://localhost:8000/experiments/runs/run/variables/urn%3Aacquirium%23variable/file",
-            data=b'{"power": 42}',
-            headers={"X-Filename": "input.json", "Content-Type": media_type or "application/octet-stream"},
+            "http://localhost:8000/experiments/runs/run/record",
+            json=[{"form": "artifact", "variable_id": "urn:acquirium#variable", "artifact": {
+                "filename": source.name, "media_type": media_type,
+                "data": base64.b64encode(source.read_bytes()).decode("ascii")}}],
         )
 
     @pytest.mark.parametrize("upload", [False, True])

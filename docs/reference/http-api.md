@@ -556,13 +556,20 @@ Time-series observations contain stream references and recorded intervals.
 Fetch the sample values through `/timeseries`; they are not embedded in the
 observation response.
 
+`POST /experiments/runs/{run_id}/record` accepts a JSON array of discriminated
+entries for values, artifact bytes or digests, sample rows, and existing stream
+intervals. It returns ordered observation receipts and owned sample stream URIs.
+Registration, samples, revisions, artifact ownership, observations, and resolved
+graph intent commit together. Invalid entries reject the whole SQL batch.
+See [batch recording forms](experiments.md#batch-transport).
+
 `POST /experiments/metadata/sync` takes `{}` and returns
-`{"ok": true, "unpublished": [...]}` after backfilling or repairing the
-experiment graph view from the SQL ledger. `unpublished` lists records whose
-saved metadata the graph cannot hold, each with its `kind`, `id`, `study_id`
-and `error`; reads of those records fail with that error, and other records
-read normally. The Python interface calls it automatically; applications need
-not create nodes or synchronize the graph themselves.
+`{"ok": true, "unpublished": []}` after delivering the durable outbox and
+completing scheduled declaration upgrades. `unpublished` is an always-empty
+compatibility field. Delivery and document-read failures propagate; the server
+does not rebuild acknowledged metadata from SQL. Restore missing authoritative
+graphs with their matching backup. The Python interface synchronizes
+automatically. See [storage migration and recovery](storage-migrations.md).
 
 ## Apps
 

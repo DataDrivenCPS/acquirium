@@ -11,7 +11,7 @@ import sys
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any, Iterator, Optional
+from typing import Annotated, Any, Iterator, Optional, Literal
 
 # When the server is launched via `uv run`, Ray's uv hook would give every
 # worker a fresh env resolved from pyproject.toml — dropping optional extras
@@ -30,7 +30,6 @@ from datetime import datetime
 
 from acquirium.Server.config import load_active_config
 from acquirium.Server.manager import Manager
-from acquirium.ExperimentMetadata import EXPERIMENT
 from acquirium.Materialization import App as MaterializationApp
 from acquirium.Materialization.planner import Deployment
 
@@ -87,6 +86,38 @@ class ExperimentBatchObservationRequest(ExperimentObservationRequest):
     variable_id: str
     artifact: ExperimentArtifactRequest | None = None
     artifact_digest: str | None = None
+class ExperimentRecordingEntry(BaseModel):
+    model_config = {"extra": "forbid"}
+    variable_id: str
+    key: list[Any] | None = None
+
+class ExperimentValueEntry(ExperimentRecordingEntry):
+    form: Literal["value"]
+    value: Any
+    occurred_at: datetime | None = None
+
+class ExperimentArtifactEntry(ExperimentRecordingEntry):
+    form: Literal["artifact"]
+    artifact: ExperimentArtifactRequest
+
+class ExperimentArtifactReferenceEntry(ExperimentRecordingEntry):
+    form: Literal["artifact_reference"]
+    artifact_digest: str
+
+class ExperimentSampleEntry(ExperimentRecordingEntry):
+    form: Literal["samples"]
+    samples: list[tuple[datetime, Any]]
+
+class ExperimentReferenceEntry(ExperimentRecordingEntry):
+    form: Literal["reference"]
+    ref_uri: str
+    interval: tuple[datetime, datetime] | None = None
+
+ExperimentRecordEntry = Annotated[
+    ExperimentValueEntry | ExperimentArtifactEntry | ExperimentArtifactReferenceEntry | ExperimentSampleEntry | ExperimentReferenceEntry,
+    Field(discriminator="form"),
+]
+
 class ExperimentFinishRequest(BaseModel):
     error: Any = None
 class ExperimentStreamAnnotationRequest(BaseModel):
@@ -140,7 +171,7 @@ def get_experiment_study(identifier: str):
 def list_experiment_variables(template_id: str):
     try:
         ledger = app.state.manager.experiments
-        return ledger.read_metadata(ledger.variables(template_id), EXPERIMENT.Variable, "variable_id")
+        return ledger.variables(template_id)
     except KeyError: raise HTTPException(status_code=404, detail="unknown study")
 
 def _experiment_metadata_filter(value: str | None) -> dict[str, Any] | None:
@@ -174,14 +205,14 @@ def list_experiments(
             started_before=started_before,
             metadata=_experiment_metadata_filter(metadata),
         )
-        return ledger.read_metadata(items, EXPERIMENT.Run, "run_id")
+        return items
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
 
 def get_experiment(run_id: str):
     try:
         ledger = app.state.manager.experiments
-        return ledger.read_metadata([ledger.run(run_id)], EXPERIMENT.Run, "run_id")[0]
+        return ledger.run(run_id)
     except KeyError: raise HTTPException(status_code=404, detail="unknown experiment")
 
 def query_experiments(template_id: str, request: ExperimentSelectionRequest):
@@ -190,7 +221,7 @@ def query_experiments(template_id: str, request: ExperimentSelectionRequest):
         filters["metadata"] = _experiment_metadata_filter(filters["metadata"])
     try:
         ledger = app.state.manager.experiments
-        return ledger.read_metadata(ledger.runs(template_id, **filters), EXPERIMENT.Run, "run_id")
+        return ledger.runs(template_id, **filters)
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
 
 def query_experiment_observations(template_id: str, request: ExperimentObservationSelectionRequest):
@@ -199,7 +230,7 @@ def query_experiment_observations(template_id: str, request: ExperimentObservati
         filters["metadata"] = _experiment_metadata_filter(filters["metadata"])
     try:
         ledger = app.state.manager.experiments
-        return ledger.read_observation_metadata(ledger.observations(template_id, **filters))
+        return ledger.observations(template_id, **filters)
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
 
 def list_experiment_observations(
@@ -224,7 +255,7 @@ def list_experiment_observations(
             started_before=started_before,
             metadata=_experiment_metadata_filter(metadata),
         )
-        return ledger.read_observation_metadata(items)
+        return items
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
 
@@ -251,6 +282,14 @@ def observe_experiment_batch(run_id: str, request: list[ExperimentBatchObservati
     except KeyError: raise HTTPException(status_code=404, detail="unknown experiment run or variable")
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
 
+def record_experiment_batch(run_id: str, request: list[ExperimentRecordEntry]):
+    try:
+        return app.state.manager.experiments.record_batch(run_id, [item.model_dump(exclude_unset=True) for item in request])
+    except KeyError:
+        raise HTTPException(status_code=404, detail="unknown experiment run or variable")
+    except (TypeError, ValueError) as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
 def annotate_experiment_stream(run_id: str, request: ExperimentStreamAnnotationRequest):
     try:
         return app.state.manager.experiments.annotate_stream(
@@ -271,7 +310,7 @@ def list_experiment_stream_annotations(
         ledger = app.state.manager.experiments
         items = ledger.stream_annotations(
             run_id=run_id, template_id=template_id, ref_uri=ref_uri, start=start, end=end)
-        return ledger.read_metadata(items, EXPERIMENT.StreamAnnotation, "annotation_id")
+        return items
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
 
 async def attach_experiment_file(run_id: str, variable_id: str, request: Request):
@@ -694,6 +733,7 @@ app.post("/experiments/templates/{template_id}/observations/query")(query_experi
 app.get("/experiments/runs/{run_id}")(get_experiment)
 app.post("/experiments/runs/{run_id}/variables/{variable_id}/observations")(observe_experiment_variable)
 app.post("/experiments/runs/{run_id}/observations/batch")(observe_experiment_batch)
+app.post("/experiments/runs/{run_id}/record")(record_experiment_batch)
 app.post("/experiments/runs/{run_id}/stream-annotations")(annotate_experiment_stream)
 app.get("/experiments/stream-annotations")(list_experiment_stream_annotations)
 app.post("/experiments/stream-annotations/{annotation_id}/close")(close_experiment_stream_annotation)
@@ -950,12 +990,11 @@ def list_drivers() -> dict[str, Any]:
 @app.post("/metadata/documents")
 def metadata_documents(subjects: Annotated[list[str], Body()]) -> dict[str, str]:
     """Read complete typed source metadata, independently of inference."""
-    from acquirium.Metadata import dumps, read_documents
+    from acquirium.Metadata import dumps
 
     manager = app.state.manager
     try:
-        manager.experiments.sync_metadata_graph()
-        return {uri: dumps(value) for uri, value in read_documents(manager.graph_store, subjects).items()}
+        return {uri: dumps(value) for uri, value in manager.experiments.metadata.documents(subjects).items()}
     except (TypeError, ValueError, RuntimeError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 

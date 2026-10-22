@@ -88,6 +88,25 @@ def read_documents(client, subjects, *, include_dependencies=False):
     return decode_document_rows(subjects, rows)
 
 
+def scan_documents(store, subjects):
+    """Read authoritative documents directly from a native Oxigraph store."""
+    from pyoxigraph import NamedNode
+    subjects = sorted(set(map(str, subjects)))
+    rows = [(subject, quad.predicate.value, quad.object.value, quad.graph_name.value)
+            for subject in subjects
+            for quad in store.quads_for_pattern(NamedNode(subject), None, None, None)
+            if quad.predicate.value.startswith(DOCUMENT_NS)]
+    return decode_document_rows(subjects, rows)
+
+
+def scan_subject_triples(store, subjects, graph_uri):
+    """Read asserted RDF terms for a batch from one explicit source graph."""
+    from pyoxigraph import NamedNode
+    return {str(subject): [[str(subject), quad.predicate.value, str(quad.object)]
+                          for quad in store.quads_for_pattern(NamedNode(str(subject)), None, None, NamedNode(str(graph_uri)))]
+            for subject in subjects}
+
+
 def decode_document_rows(subjects, rows):
     from acquirium.Storage.graph_registry import source_graph_uri, METADATA_SOURCE_ID
 
@@ -233,8 +252,8 @@ def batch_update(operations):
                 nodes.setdefault(subject, {}).pop(predicate, None)
                 if subject not in replacements:
                     predicates.add((subject, predicate))
-        for _, predicate, value in operation.get("triples", []):
-            nodes.setdefault(subject, {}).setdefault(predicate, set()).add(value)
+        for triple_subject, predicate, value in operation.get("triples", []):
+            nodes.setdefault(triple_subject, {}).setdefault(predicate, set()).add(value)
     updates = []
     if replacements:
         values = " ".join(URIRef(subject).n3() for subject in sorted(replacements))

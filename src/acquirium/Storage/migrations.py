@@ -107,3 +107,8 @@ EXPERIMENT_MIGRATIONS = (
 # Imported last: the migration imports experiment records only when it runs.
 from acquirium.Storage.metadata_outbox import migrate_documents
 EXPERIMENT_MIGRATIONS += (Migration(2, "graph_metadata_outbox", migrate_documents),)
+
+EXPERIMENT_MIGRATIONS += (Migration(3, "declaration_upgrade_frontier", (
+    "ALTER TABLE experiment_metadata_state ADD COLUMN declaration_format INTEGER DEFAULT 0",
+    "ALTER TABLE experiment_metadata_state ADD COLUMN declaration_upgrade_version BIGINT",
+)),)
