@@ -13,10 +13,10 @@ import json
 import logging
 
 import polars as pl
-from rdflib import Literal, Namespace, URIRef
+from rdflib import Namespace, URIRef
 from rdflib.namespace import RDF
 
-from acquirium.Client.explore.attributes import ATTR_NS, REGISTRY, Attr, Registry, raw_predicate
+from acquirium.Client.explore.attributes import ATTR_NS, REGISTRY, Attr, Registry
 from acquirium.Client.explore.core import Query
 from acquirium.Client.explore.typed import coerce, column_dtype
 from acquirium.Client.metadata import flatten, plan_write, is_uri
@@ -94,24 +94,10 @@ class ExperimentMetadataGraph:
 
     def validate(self, uri, values, *, variable=False):
         # Scalar declarations carry units without pretending to be live streams.
-        if not self.strict:
-            def resolved(key, value):
-                attr = REGISTRY.get(key)
-                if attr is None or attr.literal:
-                    return True
-                items = value if isinstance(value, (list, tuple)) else [value]
-                return all(item is None or is_uri(item) or self.resolve(str(item), attr.kind) is not None for item in items)
-            values = {key: value for key, value in values.items() if resolved(key, value)}
-        projection = {**values, **values.get("_resolved_semantics", {})}
-        projection.pop("_resolved_semantics", None)
-        projection.pop("_declaration_format", None)
-        write = plan_write(uri, projection, role="data" if variable else "entity", resolve=self.resolve)
-        for field in values.get("_resolved_semantics", {}):
-            original = values.get(field)
-            for item in original if isinstance(original, (list, tuple)) else [original]:
-                if item is not None and not is_uri(item):
-                    write.triples.append((URIRef(uri), URIRef(raw_predicate(field)), Literal(str(item))))
-        return write
+        projection = {key: value for key, value in {**values.get("_resolved_semantics", {}), **values}.items()
+                      if key not in {"_resolved_semantics", "_declaration_format"}}
+        return plan_write(uri, projection, role="data" if variable else "entity", resolve=self.resolve,
+                          resolved=values.get("_resolved_semantics"), strict=self.strict)
 
     def triples(self, record, *, prepared=None):
         uri, cls, fields, metadata = record
@@ -137,12 +123,6 @@ class ExperimentMetadataGraph:
         return {"operation": "patch", "subject": uri,
                 "predicates": [*write.replace_forward, *(ATTR_NS + key for key in write.replace_keys)],
                 "triples": [[str(s), str(p), o.n3()] for s, p, o in write.triples]}
-
-    def read(self, cls, id_field, identifiers):
-        subjects = {node_uri(cls, identifier): identifier for identifier in set(identifiers)}
-        documents = read_documents(self.graph_store, subjects)
-        return {subjects[uri]: {key: value for key, value in values.items() if key not in RESERVED_METADATA_KEYS}
-                for uri, values in documents.items() if id_field in values}
 
 
 class _ExperimentRegistry(Registry):
@@ -350,14 +330,24 @@ class ExperimentMetadata:
         except Exception:
             logging.getLogger(__name__).exception("Experiment graph update deferred; durable outbox retained")
 
-    def read(self, kind, identifiers):
+    def _hydrate(self, requests):
+        """Load distinct (kind, ID) requests at one strict freshness boundary."""
+        subjects = {key: node_uri(*key) for key in requests}
+        if not subjects:
+            return {}
         with self.lock:
             self.sync()
-            result = self.writer.read(kind, self._ID_FIELDS[kind], identifiers)
-            missing = set(identifiers) - result.keys()
+            documents = read_documents(self.writer.graph_store, subjects.values())
+            missing = [identifier for (kind, identifier), uri in subjects.items()
+                       if self._ID_FIELDS[kind] not in documents[uri]]
             if missing:
                 raise RuntimeError(f"experiment metadata graph has no document for {sorted(missing)!r}")
-            return result
+            return {key: {k: v for k, v in documents[uri].items() if k not in RESERVED_METADATA_KEYS}
+                    for key, uri in subjects.items()}
+
+    def read(self, kind, identifiers):
+        return {identifier: values for (_, identifier), values in
+                self._hydrate((kind, identifier) for identifier in identifiers).items()}
 
     def read_metadata(self, items, cls, id_field):
         if not items:
@@ -366,22 +356,10 @@ class ExperimentMetadata:
         return [{**item, "metadata": values[item[id_field]]} for item in items]
 
     def read_observation_metadata(self, items):
-        with self.lock:
-            if not items:
-                return items
-            runs = {item["experiment_id"] for item in items}
-            variables = {item["variable_id"] for item in items}
-            self.sync()
-            subjects = [*(run_uri(i) for i in runs), *(variable_uri(i) for i in variables)]
-            documents = read_documents(self.writer.graph_store, subjects)
-            for cls, identifiers in ((EXPERIMENT.Run, runs), (EXPERIMENT.Variable, variables)):
-                for identifier in identifiers:
-                    if self._ID_FIELDS[cls] not in documents[node_uri(cls, identifier)]:
-                        raise RuntimeError(f"experiment metadata graph has no document for {identifier!r}")
-            def values(uri):
-                return {k: v for k, v in documents[uri].items() if k not in RESERVED_METADATA_KEYS}
-            return [{**item, "experiment_metadata": values(run_uri(item["experiment_id"])),
-                     "variable_metadata": values(variable_uri(item["variable_id"]))} for item in items]
+        values = self._hydrate(key for item in items for key in (
+            (EXPERIMENT.Run, item["experiment_id"]), (EXPERIMENT.Variable, item["variable_id"])))
+        return [{**item, "experiment_metadata": values[EXPERIMENT.Run, item["experiment_id"]],
+                 "variable_metadata": values[EXPERIMENT.Variable, item["variable_id"]]} for item in items]
 
     def _upgrade_declarations(self):
         """Schedule normalized graph documents once, then await their frontier.

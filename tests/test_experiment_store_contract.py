@@ -80,6 +80,49 @@ def test_backend_deletes_runs_studies_and_clears_experiments(materialization_sto
     assert store.timeseries_info(site).row_count == 1
 
 
+def test_batch_deletion_rolls_back_resets_with_ledger_and_outbox(materialization_store, tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from acquirium.Storage.metadata_outbox import execute
+    from acquirium.Storage.publication.revision import RevisionPublisher
+    from tests.test_timeseries_store_contract import _snapshot
+
+    store = materialization_store
+    ledger = ExperimentStore.standalone(store, tmp_path / "reset-artifacts")
+    study = ledger.define("batch reset")
+    variable = ledger.declare(study["template_id"], "level", "output", "timeseries", {})
+    runs, refs = [], []
+    stamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    for _ in range(2):
+        run = ledger.start(study["template_id"], {})
+        ref = str(store.ensure_stream_ref(None, f"experiment/{run['run_id']}", "level", value_kind="numeric"))
+        store.upsert_rows(ref, [(stamp, 1.0)], value_kind="numeric")
+        ledger.observe(run["run_id"], variable["variable_id"], ref_uri=ref, interval=(stamp, stamp))
+        ledger.finish(run["run_id"], "succeeded")
+        runs.append(run["run_id"])
+        refs.append(ref)
+    with store._lock, store._write_conn() as conn:
+        execute(conn, "UPDATE timeseries SET deleted=TRUE WHERE ref_id=(SELECT ref_id FROM ref_ids WHERE ref_uri=?)", [refs[1]])
+    before = _snapshot(store)
+    reset = RevisionPublisher.reset
+    def fail_after_reset(*args):
+        reset(*args)
+        raise RuntimeError("reset failure")
+    with monkeypatch.context() as patch:
+        patch.setattr(RevisionPublisher, "reset", fail_after_reset)
+        with pytest.raises(RuntimeError, match="reset failure"):
+            ledger.delete_runs(runs)
+    assert _snapshot(store) == before
+    assert {run["run_id"] for run in ledger.runs(study["template_id"])} == set(runs)
+    with store._own_conn() as conn:
+        assert execute(conn, "SELECT count(*) FROM experiment_observations").fetchone()[0] == 2
+        assert execute(conn, "SELECT count(*) FROM experiment_metadata_outbox").fetchone()[0] == 0
+    assert ledger.delete_runs(runs) == {"runs": 2, "observations": 2, "annotations": 0, "samples": 1, "files": 0}
+    revision, rows, resets = _snapshot(store)
+    assert revision == before[0] + 1
+    assert rows == []
+    assert resets == sorted((ref, revision) for ref in refs)
+
+
 def test_batch_declarations_and_observations_are_ordered_and_atomic(materialization_store, tmp_path, monkeypatch):
     """Both HTTP batches use the same single-item checks on both backends."""
     from importlib import import_module

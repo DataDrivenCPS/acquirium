@@ -128,20 +128,13 @@ class Declaration:
 
     def resolve(self, resolve):
         from acquirium.Client.explore.attributes import REGISTRY
-        from acquirium.Client.metadata import is_uri
+        from acquirium.Client.metadata import resolve_values
         resolved = dict(self.resolved)
         for name, value in {**self.semantic_fields, **{name: getattr(self, name) for name in _PROPERTIES}}.items():
             attr = REGISTRY.get(name)
             if attr is None or attr.literal or value is None or value == [] or value == {}:
                 continue
-            def term(item):
-                if item is None:
-                    return None
-                uri = str(item) if is_uri(item) else resolve(str(item), attr.kind)
-                if uri is None:
-                    raise ValueError(f"could not resolve {name} {item!r}")
-                return str(uri)
-            resolved[name] = [term(v) for v in value] if isinstance(value, (list, tuple)) else term(value)
+            resolved[name] = resolve_values(name, value, resolve)[0]
         return replace(self, resolved=resolved)
 
 

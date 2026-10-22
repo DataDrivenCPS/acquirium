@@ -141,6 +141,11 @@ def materialization_store(request, tmp_path):
         # TimescaleStore qualifies the extension function it needs from public.
         isolated_dsn = make_conninfo(dsn, options=f"-c search_path={schema}")
         store = TimescaleStore(dsn=isolated_dsn, recreate=True)
+        # Historical contract samples must not race automatic chunk compression
+        # while exercising transaction rollback. Only this test schema is affected.
+        store.conn.execute("SELECT public.alter_job(job_id, scheduled => false) "
+                           "FROM timescaledb_information.jobs WHERE hypertable_schema = %s "
+                           "AND proc_name = 'policy_compression'", [schema])
     try:
         yield store
     finally:

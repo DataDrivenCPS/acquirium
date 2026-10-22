@@ -138,18 +138,48 @@ def _builtin_predicate(attr: Attr, role: str) -> str:
     return attr.predicates[0]
 
 
+def resolve_values(key, value, resolve, *, strict=True, raw_value=...):
+    """Return shape-preserving terms and raw spellings, or omit an unresolved field.
+
+    ``value`` may contain saved canonical terms; ``raw_value`` retains the user's
+    spelling without resolving it again. Null positions survive in saved terms.
+    """
+    attr = REGISTRY[key]
+    items = value if isinstance(value, (list, tuple)) else [value]
+    terms = []
+    for item in items:
+        if isinstance(item, (Mapping, list, tuple)):
+            raise ValueError(f"attribute {key!r} takes scalar values, got {item!r}")
+        term = item
+        if item is not None and not attr.literal:
+            term = str(item) if is_uri(item) else resolve(str(item), attr.kind)
+            if term is None:
+                if not strict:
+                    return None
+                raise ValueError(f"Could not resolve {item!r} as {attr.kind} for attribute {key!r}")
+            term = str(term)
+        terms.append(term)
+    raw_value = value if raw_value is ... else raw_value
+    raw = raw_value if isinstance(raw_value, (list, tuple)) else [raw_value]
+    raw = [str(item) for item in raw if item is not None and not is_uri(item)] if not attr.literal else []
+    return (terms if isinstance(value, (list, tuple)) else terms[0]), raw
+
+
 def plan_write(
     subject: str,
     values: Mapping[str, Any],
     *,
     role: str,
     resolve: Callable[[str, str], Optional[str]],
+    resolved: Mapping[str, Any] | None = None,
+    strict: bool = True,
 ) -> Write:
     """Build the :class:`Write` for one node.
 
     ``role`` is ``"data"`` or ``"entity"`` (which predicate a built-in
     takes, and whether it applies). ``resolve(text, kind)`` turns text on a
-    URI-valued built-in into a URI, or ``None``.
+    URI-valued built-in into a URI, or ``None``. Saved ``resolved`` terms
+    bypass resolution; non-strict projection omits unresolved whole fields.
     """
     w = Write(subject=URIRef(subject))
     leaves, removed = flatten(values)
@@ -175,25 +205,22 @@ def plan_write(
                 # also replaces the text a previous value was resolved from
                 # (attr:<key>.raw), even when the new value is a URI
                 w.replace_keys.append(key)
-            if value is None:
+            if value is None and key not in (resolved or {}):
                 continue
-            items = value if isinstance(value, (list, tuple)) else [value]
-            for v in items:
+            result = resolve_values(key, (resolved or {}).get(key, value), resolve,
+                                    strict=strict, raw_value=value)
+            if result is None:
+                continue
+            terms, raw = result
+            for text in raw:
+                w.triples.append((w.subject, URIRef(raw_predicate(key)), Literal(text)))
+            for v in terms if isinstance(terms, (list, tuple)) else [terms]:
                 if v is None:
                     continue
-                if isinstance(v, (Mapping, list, tuple)):
-                    raise ValueError(f"attribute {key!r} takes scalar values, got {v!r}")
                 if attr.literal:
                     term = Literal(v) if not isinstance(v, URIRef) else v
-                elif is_uri(v):
-                    term = URIRef(str(v))
                 else:
-                    uri = resolve(str(v), attr.kind)
-                    if uri is None:
-                        raise ValueError(f"Could not resolve {v!r} as {attr.kind} for attribute {key!r}")
-                    term = URIRef(uri)
-                    # keep the text the resolver matched; include("<key>.raw") reads it
-                    w.triples.append((w.subject, URIRef(raw_predicate(key)), Literal(str(v))))
+                    term = URIRef(v)
                 w.triples.append((w.subject, URIRef(pred), term))
         else:
             w.replace_keys.append(key)

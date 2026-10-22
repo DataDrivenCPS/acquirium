@@ -453,7 +453,7 @@ def test_backfill_annotations_and_restart_preserve_source_objects(metadata_api):
 def test_invalid_metadata_fails_before_sql_insert_and_recording_avoids_graph_work(metadata_api):
     api = metadata_api
     study = api.service.define("validation")
-    with pytest.raises(ValueError, match="could not resolve"):
+    with pytest.raises(ValueError, match="[Cc]ould not resolve"):
         study.output("pressure").scalar(unit="unknown")
     with pytest.raises(ValueError, match="reserved"):
         study.start({"status": "pretend"})
@@ -493,6 +493,54 @@ def test_missing_authoritative_document_fails_without_sql_fallback(metadata_api)
         api.ledger.run(run.run_id)
     with api.store._own_conn() as conn:
         assert conn.execute("SELECT status FROM experiment_runs WHERE run_id=?", [run.run_id]).fetchone() == ("running",)
+
+
+@pytest.mark.parametrize("missing_kind", [EXPERIMENT.Run, EXPERIMENT.Variable])
+def test_observation_hydration_requires_both_authoritative_documents(metadata_api, missing_kind):
+    from acquirium.ExperimentMetadata import node_uri
+    from acquirium.Metadata import document_predicate
+    api = metadata_api
+    study = api.service.define("missing observation metadata")
+    variable = study.output("result").scalar()
+    run = study.start()
+    api.ledger.sync_metadata_graph()
+    identifier, field = ((run.run_id, "run_id") if missing_kind == EXPERIMENT.Run
+                         else (variable.variable_id, "variable_id"))
+    api.graph.dataset.remove((URIRef(node_uri(missing_kind, identifier)), document_predicate(field), None))
+    with pytest.raises(RuntimeError, match="no document"):
+        api.ledger.metadata.read_observation_metadata([
+            {"experiment_id": run.run_id, "variable_id": variable.variable_id}])
+
+
+def test_hydration_batches_kinds_legacy_ids_and_duplicate_rows(metadata_api, monkeypatch):
+    from acquirium.Metadata import document_triples
+    api = metadata_api
+    study = api.service.define("mixed hydration")
+    variable = study.output("pressure").scalar(unit="psi")
+    run = study.start({"metadata": {"exact.key": [None, {}, []]}})
+    api.ledger.sync_metadata_graph()
+    # A legacy variable's bare UUID can equal a run ID; they remain distinct nodes.
+    legacy = {"unit": "PSI", "metadata": {"legacy": [None, {}, []]}}
+    graph = api.graph.dataset.graph(source_graph_uri("experiments"))
+    for triple in document_triples(variable_uri(run.run_id), {"variable_id": run.run_id, **legacy}):
+        graph.add(triple)
+    read = Mock(wraps=api.graph.metadata_documents)
+    monkeypatch.setattr(api.graph, "metadata_documents", read)
+    rows = [{"experiment_id": run.run_id, "variable_id": identifier, "value": index}
+            for index, identifier in enumerate([run.run_id, variable.variable_id, run.run_id])]
+    result = api.ledger.metadata.read_observation_metadata(rows)
+    assert [item["value"] for item in result] == [0, 1, 2]
+    assert [item["variable_metadata"] for item in result] == [legacy, variable.declaration.document(), legacy]
+    assert all(item["experiment_metadata"] == {"metadata": {"exact.key": [None, {}, []]}} for item in result)
+    read.assert_called_once()
+    assert set(read.call_args.args[0]) == {run.uri, variable.uri, variable_uri(run.run_id)}
+    assert api.ledger.metadata.read(EXPERIMENT.Variable, [run.run_id, run.run_id]) == {run.run_id: legacy}
+    read.reset_mock()
+    assert api.ledger.metadata.read(EXPERIMENT.Variable, []) == {}
+    assert api.ledger.metadata.read_observation_metadata([]) == []
+    assert api.ledger.metadata.read_metadata([], EXPERIMENT.Run, "run_id") == []
+    read.assert_not_called()
+
 
 def test_restart_retains_resolved_units_without_a_resolver(metadata_api):
     api = metadata_api

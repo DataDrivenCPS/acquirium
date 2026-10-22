@@ -16,6 +16,7 @@ import pyarrow as pa
 import polars as pl
 from rdflib import URIRef
 from acquirium.Storage.migrations import TIMESERIES_MIGRATIONS, migrate
+from acquirium.Storage.publication.revision import RevisionPublisher
 from acquirium.Storage.values import (
     normalize_value_kind,
     normalize_value_mode,
@@ -313,18 +314,8 @@ class TimescaleStore(TimeseriesStore):
     def _replace_frame(self, ref_uri: str, frame: pl.DataFrame) -> int:
         """Physically replace a stream and record its latest reset atomically."""
         with self._lock, self._write_conn() as conn:
-            revision = self._next_revision(conn)
-            conn.execute(
-                f"""DELETE FROM {TIMESERIES_TABLE}
-                WHERE ref_id = (SELECT ref_id FROM {REF_IDS_TABLE} WHERE ref_uri = %s)""",
-                [ref_uri],
-            )
+            revision = RevisionPublisher(self).reset(conn, [ref_uri])
             self._insert_frame(conn, frame, revision)
-            conn.execute(
-                "INSERT INTO stream_resets (ref_uri, last_revision) VALUES (%s, %s) "
-                "ON CONFLICT (ref_uri) DO UPDATE SET last_revision=EXCLUDED.last_revision",
-                [ref_uri, revision],
-            )
         return frame.height
 
     def bulk_insert_polars(self, df: pl.DataFrame) -> int:

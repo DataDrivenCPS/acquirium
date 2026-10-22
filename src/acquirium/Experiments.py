@@ -23,6 +23,7 @@ import polars as pl
 from acquirium.internals.models import compute_ref_uri
 from acquirium.Storage.migrations import EXPERIMENT_MIGRATIONS, migrate
 from acquirium.Storage.metadata_outbox import LocalMetadataGraph, enqueue, execute
+from acquirium.Storage.publication.revision import RevisionPublisher
 from acquirium.Client.streams import Stream, StreamInterval
 from acquirium.ExperimentValues import ARTIFACT_KINDS, TABLE_MEDIA_TYPE, check_kind, to_json, timestamp, parquet as _parquet, sample_rows as _sample_rows, value_entry, recording_entries, artifact_entry
 from acquirium.ModelAdapters import (
@@ -402,7 +403,6 @@ class ExperimentStore:
 
     def _write_recording(self, run_id, batch):
         """Commit prepared data with authoritative SQL state checks and one revision."""
-        from acquirium.Storage.publication.revision import RevisionPublisher
         results = []
         with self.store._lock, self.store._write_conn() as conn:
             self._recording_variables(conn, run_id, (item.variable_id for item in batch.observations))
@@ -817,13 +817,7 @@ class ExperimentStore:
                 SELECT count(*) FROM timeseries
                 WHERE ref_id IN (SELECT ref_id FROM ref_ids WHERE ref_uri IN ({ref_marks})) AND NOT deleted
                 """, refs).fetchone()[0])
-            # Remove samples the way a stream replacement does: physically,
-            # with a reset marker, so materializers rebuild anything derived.
-            revision = self.store._next_revision(conn)
-            self._execute(conn, f"DELETE FROM timeseries WHERE ref_id IN (SELECT ref_id FROM ref_ids WHERE ref_uri IN ({ref_marks}))", refs)
-            for ref in refs:
-                self._execute(conn, "INSERT INTO stream_resets (ref_uri, last_revision) VALUES (?, ?) "
-                              "ON CONFLICT (ref_uri) DO UPDATE SET last_revision=EXCLUDED.last_revision", [ref, revision])
+            RevisionPublisher(self.store).reset(conn, refs)
             self._execute(conn, f"DELETE FROM streams WHERE ref_uri IN ({ref_marks})", refs)
         files = []
         if digests:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import polars as pl
 
+from acquirium.Storage.metadata_outbox import execute
 from acquirium.Storage.publication import ids
 from acquirium.Storage.publication.types import PublicationReceipt, PublicationRequest
 
@@ -53,3 +54,22 @@ class RevisionPublisher:
         writes = self._store._prepare_frame(pl.from_arrow(mutations))
         row_count = self._store._replace_frame(ref_uri, writes)
         return PublicationReceipt(request.publication_id, ids.payload_hash(mutations), row_count, {})
+
+    def reset(self, conn, refs, *, revision=None) -> int | None:
+        """Physically clear streams at one revision in the caller's transaction.
+
+        The caller owns the writer lock and connection, commits or rolls back,
+        and retains responsibility for registrations and other domain records.
+        Empty batches do nothing; empty streams still receive reset markers.
+        Pass an existing revision to join other writes at the same frontier.
+        """
+        refs = list(dict.fromkeys(refs))
+        if not refs:
+            return None
+        revision = self._store._next_revision(conn) if revision is None else revision
+        marks = ",".join("?" for _ in refs)
+        execute(conn, f"DELETE FROM timeseries WHERE ref_id IN (SELECT ref_id FROM ref_ids WHERE ref_uri IN ({marks}))", refs)
+        for ref in refs:
+            execute(conn, "INSERT INTO stream_resets (ref_uri, last_revision) VALUES (?, ?) "
+                    "ON CONFLICT (ref_uri) DO UPDATE SET last_revision=EXCLUDED.last_revision", [ref, revision])
+        return revision

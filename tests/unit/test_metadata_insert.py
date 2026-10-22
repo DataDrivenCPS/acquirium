@@ -110,6 +110,44 @@ class TestPlanWrite:
         with pytest.raises(ValueError, match="Could not resolve"):
             plan({"unit": "furlongs"})
 
+    def test_semantic_lists_share_declaration_resolution_and_preserve_nulls(self):
+        from acquirium.ExperimentDeclarations import Declaration
+        values = ["mg/L", None, UNIT, "mg/L"]
+        resolve = MagicMock(side_effect=noop_resolve)
+        declaration = Declaration("concentration", "scalar", unit=values).resolve(resolve)
+        assert declaration.resolved == {"unit": [UNIT, None, UNIT, UNIT]}
+        assert resolve.call_count == 2
+        resolve.reset_mock()
+        write = plan_write(NODE, {"unit": values}, role="data", resolve=resolve,
+                           resolved=declaration.resolved)
+        resolve.assert_not_called()
+        assert [str(o) for _, p, o in write.triples if p == HAS_UNIT] == [UNIT] * 3
+        assert [str(o) for _, p, o in write.triples if str(p) == ATTR_NS + "unit.raw"] == ["mg/L"] * 2
+
+    def test_non_strict_projection_resolves_once_and_omits_whole_unresolved_field(self):
+        from acquirium.ExperimentMetadata import ExperimentMetadataGraph
+        resolve = MagicMock(side_effect=noop_resolve)
+        writer = ExperimentMetadataGraph(None, resolve, strict=False)
+        write = writer.validate(NODE, {"unit": ["mg/L", None, UNIT]}, variable=True)
+        resolve.assert_called_once_with("mg/L", "unit")
+        assert [str(o) for _, p, o in write.triples if p == HAS_UNIT] == [UNIT, UNIT]
+        write = writer.validate(NODE, {"unit": ["mg/L", "unknown"]}, variable=True)
+        assert not any(p == HAS_UNIT or str(p) == ATTR_NS + "unit.raw" for _, p, _ in write.triples)
+        # Complete documents retain the unresolved spelling for later repair.
+        from acquirium.Metadata import document_triples
+        assert set(document_triples(NODE, {"unit": ["mg/L", "unknown"]})) <= set(write.triples)
+
+    @pytest.mark.parametrize("original", [{}, {"unit": None}, {"unit": "old spelling"}])
+    def test_pinned_terms_project_without_raw_fields_or_a_live_resolver(self, original):
+        from acquirium.ExperimentMetadata import ExperimentMetadataGraph
+        resolve = MagicMock(return_value=None)
+        write = ExperimentMetadataGraph(None, resolve, strict=False).validate(
+            NODE, {**original, "_resolved_semantics": {"unit": UNIT}}, variable=True)
+        resolve.assert_not_called()
+        assert (URIRef(NODE), HAS_UNIT, URIRef(UNIT)) in write.triples
+        raw = [str(o) for _, p, o in write.triples if str(p) == ATTR_NS + "unit.raw"]
+        assert raw == ([original["unit"]] if original.get("unit") else [])
+
     def test_medium_predicate_follows_role(self):
         assert plan({"medium": "urn:w#Water"}, role="data").triples[0][1] == OF_MEDIUM
         assert plan({"medium": "urn:w#Water"}, role="entity").triples[0][1] == HAS_MEDIUM
