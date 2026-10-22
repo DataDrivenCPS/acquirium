@@ -287,6 +287,22 @@ class BindingInfo:
     point_label: str | None = None      # rdfs:label on the property (display name)
 
 
+def _graph_data_aliases(qg: QueryGraph | None) -> list[str]:
+    """Aliases of the query graph's data nodes, as ``_from_query`` names them."""
+    data_nodes = getattr(qg, "data_nodes", None) or {}
+    return sorted({qg.aliases_reverse.get(nid, str(nid)) for nid in data_nodes})
+
+
+def _graph_entity_columns(qg: QueryGraph | None) -> list[str]:
+    """``entity__<alias>`` for each non-data node of the query graph."""
+    nodes = getattr(qg, "nodes", None) or {}
+    data_nodes = getattr(qg, "data_nodes", None) or {}
+    return sorted(
+        f"entity__{qg.aliases_reverse.get(nid, str(nid))}"
+        for nid in nodes if nid not in data_nodes
+    )
+
+
 @dataclass
 class DataObject:
     """Lazy, alias-driven structured access to sensor data.
@@ -328,23 +344,17 @@ class DataObject:
     @classmethod
     def _empty(cls, qg: QueryGraph, *, cast_value: str | None = "float",
                client: "AcquiriumClient | None" = None) -> DataObject:
-        return cls(
+        # No rows to derive the entity columns from, so take them from the
+        # query graph: the empty result keeps the shape of a non-empty one.
+        obj = cls(
             _bindings=[],
-            _entity_columns=[],
+            _entity_columns=_graph_entity_columns(qg),
             _query_graph=qg,
             _client=client,
-            _tall=pl.DataFrame(
-                schema={
-                    "data_alias": pl.Utf8,
-                    "point_uri": pl.Utf8,
-                    "ref_uri": pl.Utf8,
-                    "time": pl.Datetime(time_zone="UTC"),
-                    "value_numeric": pl.Float64,
-                    "value_text": pl.Utf8,
-                }
-            ),
             _materialized=True,
         )
+        obj._tall = obj._empty_tall()
+        return obj
 
     @classmethod
     def _from_query(
@@ -479,16 +489,19 @@ class DataObject:
         return unit
 
     def _empty_tall(self) -> pl.DataFrame:
+        """A zero-row tall frame in the same column order as a fetched one."""
         schema: dict[str, Any] = {
             "data_alias": pl.Utf8,
             "point_uri": pl.Utf8,
             "ref_uri": pl.Utf8,
-            "time": pl.Datetime(time_zone="UTC"),
-            "value_numeric": pl.Float64,
-            "value_text": pl.Utf8,
         }
         for ec in self._entity_columns:
             schema[ec] = pl.Utf8
+        schema.update({
+            "time": pl.Datetime(time_zone="UTC"),
+            "value_numeric": pl.Float64,
+            "value_text": pl.Utf8,
+        })
         return pl.DataFrame(schema=schema)
 
     def _fetch_tall(
@@ -962,10 +975,14 @@ class DataObject:
 
     @property
     def aliases(self) -> list[str]:
-        """List of data aliases present in this DataObject."""
-        if not self._bindings:
-            return []
-        return sorted(set(b.alias for b in self._bindings))
+        """List of data aliases present in this DataObject.
+
+        An empty result has no bindings, so its aliases come from the query
+        graph's data nodes.
+        """
+        if self._bindings:
+            return sorted(set(b.alias for b in self._bindings))
+        return _graph_data_aliases(self._query_graph)
 
     @property
     def entity_aliases(self) -> list[str]:
