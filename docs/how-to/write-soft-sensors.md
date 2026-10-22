@@ -86,12 +86,17 @@ def bucket_mean(frame, context):
     return {"mean": emit(context, frame["value"].mean())}
 ```
 
-Inputs have `role`, `stream`, `event_time_ns`, `sample_key`, `value`, `quality`,
-and JSON `context` columns. `context["window_ns"]` is the event timestamp, bucket
-start, or rolling grid point in UTC nanoseconds. `context["parameters"]` holds the
-operator's parameters, and `context["operator"]` its declaration, including
-`context["operator"]["window"]`. Context also lists the declared inputs, including
-inputs with no readings in this window.
+Inputs have `role`, `stream`, `event_time_ns`, `sample_key`, `value`, `text`,
+`quality`, and JSON `context` columns. Each row sets exactly one of `value` (a
+number) and `text`. `context["window_ns"]` is the event timestamp, bucket start,
+or rolling grid point in UTC nanoseconds. `context["window_start_ns"]` and
+`context["window_end_ns"]` give the window's extent. `context["parameters"]`
+holds the operator's parameters, and `context["operator"]` its declaration,
+including `context["operator"]["window"]`. Context also lists the declared
+inputs, including inputs with no readings in this window. Each input carries
+`span_start_ns` and `span_end_ns`: the part of the window it covers. An input
+whose span starts or ends inside the window covers only part of it. All extents
+are half-open.
 
 Return every declared port with the output columns of `escapement.SCHEMA`:
 `event_time_ns: Int64`, `sample_key: Int64`, `value: Float64`, `quality: UInt32`,
