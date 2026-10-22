@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterator, TYPE_CHECKING
 import polars as pl
 import logging
+import warnings
 
 if TYPE_CHECKING:
     from acquirium.Client.explore.core import Query
@@ -166,13 +167,45 @@ def _deduplicate_contexts(contexts: list[dict[str, str]]) -> list[dict[str, str]
 def _is_numeric_dtype(dtype: pl.DataType) -> bool:
     return bool(getattr(dtype, "is_numeric", lambda: False)())
 
-def _split_value_column(df: pl.DataFrame) -> pl.DataFrame:
+_CAST_VALUES = ("float", "int", "str", None)
+
+
+def _validate_cast_value(cast_value: str | None) -> str | None:
+    if cast_value not in _CAST_VALUES:
+        raise ValueError(f"cast_value must be 'float', 'int', 'str' or None, got {cast_value!r}")
+    return cast_value
+
+
+def _split_value_column(df: pl.DataFrame, cast_value: str | None = None) -> pl.DataFrame:
+    """Split the server's ``value`` column into ``value_numeric``/``value_text``.
+
+    A numeric column goes to ``value_numeric`` and a text column to
+    ``value_text``. ``cast_value`` changes that: ``"float"``/``"int"`` send
+    every text value that reads as a number to ``value_numeric`` and only the
+    rest stays text, so a status stream carrying ``"12.5"`` next to ``"ON"``
+    keeps both; ``"str"`` sends every value to ``value_text``. Both are
+    vectorized polars casts, not per-row Python.
+    """
     if "value" not in df.columns:
         return df
+    if cast_value == "str":
+        return df.with_columns([
+            pl.lit(None, dtype=pl.Float64).alias("value_numeric"),
+            pl.col("value").cast(pl.Utf8).alias("value_text"),
+        ]).drop("value")
     if _is_numeric_dtype(df.schema["value"]):
         return df.with_columns([
             pl.col("value").cast(pl.Float64).alias("value_numeric"),
             pl.lit(None, dtype=pl.Utf8).alias("value_text"),
+        ]).drop("value")
+    if cast_value in ("float", "int"):
+        parsed = pl.col("value").cast(pl.Utf8).str.strip_chars().cast(pl.Float64, strict=False)
+        return df.with_columns([
+            parsed.alias("value_numeric"),
+            pl.when(parsed.is_null())
+            .then(pl.col("value").cast(pl.Utf8))
+            .otherwise(pl.lit(None, dtype=pl.Utf8))
+            .alias("value_text"),
         ]).drop("value")
     return df.with_columns([
         pl.lit(None, dtype=pl.Float64).alias("value_numeric"),
@@ -366,10 +399,11 @@ class DataObject:
         limit: int | None = None,
         order: str = "asc",
         include_dependencies: bool = True,
-        cast_value: str | None = "float",
+        cast_value: str | None = None,
         value_mode: str = "default",
     ) -> DataObject:
         qg = query.query_graph
+        _validate_cast_value(cast_value)
 
         if not getattr(qg, "data_nodes", None):
             return cls._empty(qg, cast_value=cast_value, client=query.client)
@@ -521,7 +555,7 @@ class DataObject:
         The frame has one row per observation and entity context, in the
         standard tall layout. Does not touch ``self``.
         """
-        cast_value = self._query_params.get("cast_value", "float")
+        cast_value = self._query_params.get("cast_value")
         value_mode = self._query_params.get("value_mode", "default")
 
         # Cache conversion factors to avoid repeated server calls
@@ -547,16 +581,6 @@ class DataObject:
                 continue
 
             df = df.rename({"ts": "time", "uri": "ref_uri"})
-            if cast_value == "float" and "value" in df.columns:
-                try:
-                    df = df.with_columns(pl.col("value").cast(pl.Float64, strict=True))
-                except Exception:
-                    logger.warning("DataObject: casting value to float failed for ref %s", binding.ref_uri)
-            elif cast_value == "int" and "value" in df.columns:
-                try:
-                    df = df.with_columns(pl.col("value").cast(pl.Int64, strict=True))
-                except Exception:
-                    logger.warning("DataObject: casting value to int failed for ref %s", binding.ref_uri)
             df = df.with_columns(
                 pl.lit(binding.alias).alias("data_alias"),
                 pl.lit(binding.point_uri).alias("point_uri"),
@@ -604,7 +628,7 @@ class DataObject:
         if not frames:
             return self._empty_tall()
 
-        tall = pl.concat([_split_value_column(df) for df in frames], how="vertical")
+        tall = pl.concat([_split_value_column(df, cast_value) for df in frames], how="vertical")
 
         # Apply pending conversions (from convert_to() on a lazy DataObject)
         for key, from_unit, to_unit in self._pending_conversions:
@@ -656,6 +680,33 @@ class DataObject:
             ]
         self._materialized = True
 
+    def _cast_output(self, df: pl.DataFrame, columns: list[str] | None = None) -> pl.DataFrame:
+        """Apply ``cast_value="int"`` to the numeric columns of a result frame.
+
+        Values are kept as ``Float64`` internally; a result asked for as
+        ``int`` is cast here. The cast truncates toward zero and turns
+        non-finite values into nulls, and a column where that loses
+        information raises a ``UserWarning`` naming the column and one of
+        the affected values.
+        """
+        if self._query_params.get("cast_value") != "int":
+            return df
+        candidates = columns if columns is not None else df.columns
+        for col in candidates:
+            if col not in df.columns or df.schema[col] != pl.Float64:
+                continue
+            s = df[col]
+            lossy = s.filter(s.is_not_null() & (~s.is_finite() | (s != s.round(0))))
+            if lossy.len():
+                warnings.warn(
+                    f"cast_value='int' truncates {lossy.len()} non-integer value(s) in "
+                    f"column {col!r}, such as {lossy[0]!r}; use cast_value='float' to keep them",
+                    UserWarning,
+                    stacklevel=3,
+                )
+            df = df.with_columns(pl.col(col).cast(pl.Int64, strict=False))
+        return df
+
     # ------------------------------------------------------------------
     # Alias-based access (triggers materialization)
     # ------------------------------------------------------------------
@@ -697,6 +748,7 @@ class DataObject:
         # polars picks an arbitrary duplicate and shuffles the surviving rows.
         subset = subset.unique(subset=["point_uri", "time"], keep="first", maintain_order=True)
         subset = _restore_single_value_column(subset)
+        subset = self._cast_output(subset, ["value"])
         n_points = subset["point_uri"].n_unique()
         if n_points <= 1:
             return subset.select("time", "value").sort("time")
@@ -809,7 +861,16 @@ class DataObject:
         ``compact=False`` returns the raw layout: narrow is the internal
         tall frame (every ``(data_alias, point_uri, ref_uri, time)`` row
         preserved with entity columns), wide keeps alias/URI column names.
+
+        With ``cast_value="int"`` on the query the value columns come back as
+        ``Int64``; a column whose values lose their fraction raises a
+        ``UserWarning``.
         """
+        frame = self._build_dataframe(shape, start=start, end=end, limit=limit, order=order,
+                                      include_ref=include_ref, compact=compact)
+        return self._cast_output(frame)
+
+    def _build_dataframe(self, shape, *, start, end, limit, order, include_ref, compact) -> pl.DataFrame:
         self._materialize()
 
         descending = order == "desc"
@@ -1030,7 +1091,7 @@ class DataObject:
             tall.sort("time", descending=True)
             .unique(subset=["data_alias", "point_uri"], keep="first", maintain_order=True)
         )
-        newest = _restore_single_value_column(newest)
+        newest = self._cast_output(_restore_single_value_column(newest), ["value"])
 
         if alias is None:
             return newest.select("data_alias", "point_uri", "time", "value").sort("data_alias", "point_uri")
@@ -1120,6 +1181,8 @@ class DataObject:
             ValueError: If ``from_unit`` is None and a point has no unit
                 annotation, or if the units are incompatible.
         """
+        if self._query_params.get("cast_value") == "str":
+            raise ValueError("convert_to() needs numeric values; this object was built with cast_value='str'")
         if self._client is None:
             raise ValueError("Cannot convert units without a client connection")
         if alias is not None and alias not in self.aliases:

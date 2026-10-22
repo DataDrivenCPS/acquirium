@@ -1109,7 +1109,7 @@ class Query:
         limit: int | None = None,
         order: str = "asc",
         include_dependencies: bool = True,
-        cast_value: str | None = "float",
+        cast_value: str | None = None,
         value_mode: str = "default",
     ) -> "DataObject":
         """Return a lazy DataObject with alias-driven access to the matched streams."""
@@ -1134,7 +1134,7 @@ class Query:
         limit: int | None = None,
         order: str = "asc",
         include_dependencies: bool = True,
-        cast_value: str | None = "str",
+        cast_value: str | None = None,
         value_mode: str = "default",
         include_ref: bool = False,
         compact: bool = True,

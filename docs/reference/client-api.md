@@ -137,8 +137,8 @@ keywords: `type`, `process`, `cp_type`, `medium`, `substance`,
 | method | description |
 |---|---|
 | `metadata(*, include_internals=False, include_dependencies=True) -> pl.DataFrame` | The pattern matches, one column per node plus `alias.attr` and `alias.label` columns. |
-| `data(*, start=None, end=None, limit=None, order="asc", include_dependencies=True, cast_value="float", value_mode="default") -> DataObject` | A lazy `DataObject` over the matched streams. |
-| `dataframe(shape="wide", *, start=None, end=None, limit=None, order="asc", include_dependencies=True, cast_value="str", value_mode="default", include_ref=False, compact=True) -> pl.DataFrame` | `data(...).dataframe(...)` in one call. |
+| `data(*, start=None, end=None, limit=None, order="asc", include_dependencies=True, cast_value=None, value_mode="default") -> DataObject` | A lazy `DataObject` over the matched streams. |
+| `dataframe(shape="wide", *, start=None, end=None, limit=None, order="asc", include_dependencies=True, cast_value=None, value_mode="default", include_ref=False, compact=True) -> pl.DataFrame` | `data(...).dataframe(...)` in one call. |
 | `options(attr_name, *, of=None, include_dependencies=True) -> pl.DataFrame` | Distinct values of one attribute across the matches, with counts. |
 | `facets(*, of=None, include_dependencies=True) -> FacetSummary` | Value counts for every attribute that applies to a node; prints compactly, indexes like a dict, `attrs()` lists the attributes. |
 | `resolved_nodes(*, alias=None, only_data_nodes=False, include_dependencies=True) -> list[str]` | The URIs the pattern currently matches. |
@@ -189,7 +189,7 @@ See the [data tutorial](../tutorials/data.md).
 | `shape` | `"wide"` (one column per point) or `"narrow"` (one row per reading) |
 | `compact` | `True` renders URIs as CURIEs and identifies points by `point_id`; `False` returns raw `point_uri` and `ref_uri` columns |
 | `include_ref` | add the reference URI column in the compact layout |
-| `cast_value` | client-side cast: `"float"`, `"int"`, anything else leaves values as sent (`Query` only) |
+| `cast_value` | client-side cast (`Query` only): `"float"` parses numeric text into `value_numeric`; `"int"` also returns `Int64` columns and warns when it truncates fractional values; `"str"` puts every value in `value_text`; `None` (default) leaves values as sent; anything else is a `ValueError` |
 | `value_mode` | `"default"`, `"numeric"`, `"text"` or `"coalesce"` (`Query` only) |
 | `include_dependencies` | query the ontology and shape triples alongside the plant data (`Query` only) |
 

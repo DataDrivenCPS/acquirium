@@ -217,17 +217,19 @@ def test_dataframe_cast_float_is_per_frame(acquirium_client_csv):
     assert text["value_text"].null_count() < len(text)
 
 
-def test_dataframe_cast_int_per_frame_does_not_raise(acquirium_client_csv):
-    """cast_value='int' on mixed numeric/text data returns data for both kinds.
-
-    A frame whose values cannot be cast to int is skipped (logged), not fatal.
-    """
+def test_dataframe_cast_int_warns_when_truncating(acquirium_client_csv):
+    """cast_value='int' truncates the fractional values of points 5-8 and says so."""
     acq = acquirium_client_csv
-    df = acq.find_all_data().dataframe(shape="narrow", cast_value="int", limit=5)
+    with pytest.warns(UserWarning, match="cast_value='int' truncates"):
+        df = acq.find_all_data().dataframe(shape="narrow", cast_value="int", limit=5)
+    assert df["value_numeric"].dtype == pl.Int64
+    assert acq.client.compact_uri("urn:ex/point_9") in set(df["point_id"].to_list())   # text point still present
 
-    point_ids = set(df["point_id"].to_list())
-    assert acq.client.compact_uri("urn:ex/point_1") in point_ids   # numeric point present
-    assert acq.client.compact_uri("urn:ex/point_9") in point_ids   # text point still present
+
+def test_dataframe_cast_value_is_validated(acquirium_client_csv):
+    acq = acquirium_client_csv
+    with pytest.raises(ValueError, match="cast_value must be"):
+        acq.find_all_data().data(cast_value="double")
 
 
 ##### Find data tests #####
