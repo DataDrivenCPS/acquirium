@@ -266,6 +266,19 @@ def _apply_window(
     return tall
 
 
+def _with_mapped_column(tall: pl.DataFrame, keys: list[str], fn, name: str) -> pl.DataFrame:
+    """Add column ``name`` = ``fn(*key values)``.
+
+    ``fn`` runs once per distinct key, not once per row: a frame of a million
+    readings over ten points costs ten calls. The result is joined back, so
+    the row order of ``tall`` is kept.
+    """
+    distinct = tall.select(keys).unique()
+    values = [fn(*row) for row in distinct.iter_rows()]
+    mapping = distinct.with_columns(pl.Series(name, values, dtype=pl.Utf8))
+    return tall.join(mapping, on=keys, how="left")
+
+
 def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
     parts: list[pl.DataFrame] = []
     numeric_rows = tall.filter(pl.col("value_numeric").is_not_null())
@@ -926,15 +939,7 @@ class DataObject:
                 # we shouldn't come here
                 return f"{alias}__{point_uri}"
 
-
-        tall = tall.with_columns(
-            pl.struct(["data_alias", "point_uri"])
-            .map_elements(
-                lambda s: _pivot_key(s["data_alias"], s["point_uri"]),
-                return_dtype=pl.Utf8,
-            )
-            .alias("_pivot_key")
-        )
+        tall = _with_mapped_column(tall, ["data_alias", "point_uri"], _pivot_key, "_pivot_key")
 
         wide = _pivot_split_values(tall, "_pivot_key")
         return wide.sort("time", descending=True) if descending else wide
@@ -976,25 +981,14 @@ class DataObject:
                 return f"{alias}__{labels.get(point_uri) or _compact(point_uri)}"
             return alias
 
-        tall = tall.with_columns(
-            pl.struct(["data_alias", "point_uri"])
-            .map_elements(
-                lambda s: _label(s["data_alias"], s["point_uri"]),
-                return_dtype=pl.Utf8,
-            )
-            .alias("_label")
-        )
+        tall = _with_mapped_column(tall, ["data_alias", "point_uri"], _label, "_label")
 
         if shape == "narrow":
-            out = tall.with_columns(
-                pl.col("_label").alias("data_alias"),
-                pl.col("point_uri").map_elements(_compact, return_dtype=pl.Utf8).alias("point_id"),
-            )
+            out = _with_mapped_column(tall, ["point_uri"], _compact, "point_id")
+            out = out.with_columns(pl.col("_label").alias("data_alias"))
             cols = ["data_alias", "point_id", "time", "value_numeric", "value_text"]
             if include_ref:
-                out = out.with_columns(
-                    pl.col("ref_uri").map_elements(_compact, return_dtype=pl.Utf8).alias("ref")
-                )
+                out = _with_mapped_column(out, ["ref_uri"], _compact, "ref")
                 cols.insert(2, "ref")
             return out.select(cols).sort("time", descending=descending)
 
