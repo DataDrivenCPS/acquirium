@@ -100,6 +100,12 @@ change in any release.
   experiments and comparing runs, and the `examples/pump-tank` example.
 - Currency codes such as `USD` resolve as units (`unit:CCY_USD`).
 
+### Fixed
+- Recording a narrow query frame rejects multiple point or reference URIs,
+  preventing samples from different streams from being merged silently.
+- Single-observation HTTP requests use the batch range validation and reject
+  a start without an end, or an end without a start, before recording anything.
+
 ### Changed
 - A SPARQL update no longer forces the ontology closure to be recomputed
   unless it changed the graph's `owl:imports` or `owl:Ontology` triples.

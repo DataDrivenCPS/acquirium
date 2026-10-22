@@ -135,7 +135,7 @@ def sample_rows(rows: Any) -> list[tuple[datetime, Any]]:
             value = next(name for name in rows.columns if name != time)
         if time is None or value is None:
             raise ValueError("time-series tables need a time (or ts) column and a value (or value_numeric) column")
-        for column in ("data_alias", "point_id", "ref", "uri"):
+        for column in ("data_alias", "point_uri", "ref_uri", "point_id", "ref", "uri"):
             if column in rows.columns and rows[column].n_unique() > 1:
                 raise ValueError("these rows come from several streams; record one stream at a time")
         rows = zip(rows[time].to_list(), rows[value].to_list())

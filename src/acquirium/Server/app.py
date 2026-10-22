@@ -260,13 +260,8 @@ def list_experiment_observations(
         raise HTTPException(status_code=400, detail=str(error))
 
 def observe_experiment_variable(run_id: str, variable_id: str, request: ExperimentObservationRequest):
-    try:
-        # A range accompanies a stream attachment. Scalar and log observations
-        # leave it null, so one append-only ledger covers every variable kind.
-        interval = (request.start, request.end) if request.start and request.end else None
-        return app.state.manager.experiments.observe(run_id, variable_id, value=request.value, occurred_at=request.occurred_at, ref_uri=request.ref_uri, interval=interval, key=request.key)
-    except KeyError: raise HTTPException(status_code=404, detail="unknown experiment run or variable")
-    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+    observation = ExperimentBatchObservationRequest(variable_id=variable_id, **request.model_dump())
+    return observe_experiment_batch(run_id, [observation])[0]
 
 def observe_experiment_batch(run_id: str, request: list[ExperimentBatchObservationRequest]):
     try:

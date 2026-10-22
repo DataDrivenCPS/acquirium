@@ -912,6 +912,41 @@ def test_handles_delete_their_records_and_clear_needs_confirmation(study_api):
     assert service.clear(confirm=True)["studies"] == 0
 
 
+@pytest.mark.parametrize("batch", [False, True])
+def test_http_observation_ranges_require_both_bounds(study_api, monkeypatch, batch):
+    from fastapi.testclient import TestClient
+
+    study, ledger = study_api.study, study_api.ledger
+    variable = study.input("flow").timeseries()
+    run = study.start()
+    module = import_module("acquirium.Server.app")
+    monkeypatch.setattr(module.app.state, "manager", SimpleNamespace(experiments=ledger), raising=False)
+    http = TestClient(module.app)
+    path = (f"/experiments/runs/{run.run_id}/observations/batch" if batch else
+            f"/experiments/runs/{run.run_id}/variables/{quote(variable.variable_id, safe='')}/observations")
+    start, end = T0.isoformat(), T0.replace(hour=1).isoformat()
+    def record(bounds):
+        body = {"ref_uri": "urn:site:flow", **bounds}
+        return http.post(path, json=[{"variable_id": variable.variable_id, **body}] if batch else body)
+    try:
+        for bounds in ({"start": start}, {"end": end},
+                       {"start": start, "end": None}, {"start": None, "end": end}):
+            response = record(bounds)
+            assert response.status_code == 400, response.text
+            assert response.json()["detail"] == "stream ranges require both start and end"
+        assert ledger.observations(study.study_id) == []
+        for bounds in ({}, {"start": None, "end": None}, {"start": start, "end": end}):
+            response = record(bounds)
+            assert response.status_code == 200, response.text
+            receipt = response.json()[0] if batch else response.json()
+            assert receipt["sequence"] == len(ledger.observations(study.study_id))
+        observations = ledger.observations(study.study_id)
+        assert [(item["range_start"], item["range_end"]) for item in observations] == [
+            (None, None), (None, None), (T0, T0.replace(hour=1))]
+    finally:
+        http.close()
+
+
 def test_record_converts_values_and_checks_kinds_before_sending(study_api):
     from datetime import date
     np = pytest.importorskip("numpy")
@@ -1064,14 +1099,15 @@ def test_time_series_record_a_reference_or_a_copy(study_api):
     assert copied == Stream(str(compute_ref_uri(f"experiment/{run.run_id}", _stream_name(biogas.variable_id, ()))))
 
     # Stream query frames use ts or time, and value or value_numeric.
-    narrow = pl.DataFrame({"data_alias": ["flow"] * 2, "point_id": ["p"] * 2,
+    narrow = pl.DataFrame({"data_alias": ["flow"] * 2, "point_uri": ["urn:p"] * 2, "ref_uri": ["urn:ref"] * 2,
                            "time": [T0, T0.replace(hour=1)], "value_numeric": [3.0, 4.0], "value_text": [None, None]})
-    trajectory.record(narrow)
-    assert client.record_experiment_batch.call_args.args[1][0]["samples"] == [[T0.isoformat(), 3.0], [T0.replace(hour=1).isoformat(), 4.0]]
+    for rows in (narrow, narrow.to_arrow()):
+        trajectory.record(rows)
+        assert client.record_experiment_batch.call_args.args[1][0]["samples"] == [[T0.isoformat(), 3.0], [T0.replace(hour=1).isoformat(), 4.0]]
     # So do wide query frames with one stream column.
     trajectory.record(pl.DataFrame({"time": [T0], "biogas": [5.0]}))
     assert client.record_experiment_batch.call_args.args[1][0]["samples"] == [[T0.isoformat(), 5.0]]
-    for rows, message in ((narrow.with_columns(point_id=pl.Series(["p", "q"])), "several streams"),
+    for rows, message in ((narrow.with_columns(point_uri=pl.Series(["urn:p", "urn:q"])), "several streams"),
                           (pl.DataFrame({"time": [T0], "value_numeric": [None]}, schema_overrides={"value_numeric": pl.Float64}), "numeric value"),
                           (pl.DataFrame({"time": [T0], "value": ["high"]}), "numeric value"),
                           (pl.DataFrame({"time": [T0], "a": [1.0], "b": [2.0]}), "time \\(or ts\\)"),
@@ -1095,6 +1131,22 @@ def test_time_series_record_a_reference_or_a_copy(study_api):
     biogas.record(copy.interval)
     assert client.record_experiment_batch.call_args.args[1][0]["ref_uri"] == copied.ref_uri
     second.finish()
+
+
+@pytest.mark.parametrize("arrow", [False, True])
+@pytest.mark.parametrize("identifier", ["point_uri", "ref_uri"])
+def test_time_series_record_rejects_multiple_query_streams_before_sending(study_api, arrow, identifier):
+    study, client = study_api.study, study_api.client
+    variable = study.output("flow").timeseries()
+    study.start()
+    # Query frames can use one alias for several streams at the same timestamp.
+    frame = pl.DataFrame({"data_alias": ["data"] * 2, "point_uri": ["urn:point"] * 2,
+                          "ref_uri": ["urn:ref"] * 2, "time": [T0] * 2,
+                          "value_numeric": [1.0, 2.0], "value_text": [None, None]})
+    frame = frame.with_columns(pl.Series(identifier, ["urn:first", "urn:second"]))
+    with pytest.raises(ValueError, match="several streams"):
+        variable.record(frame.to_arrow() if arrow else frame)
+    client.record_experiment_batch.assert_not_called()
 
 
 def test_output_assignment_reuses_handles_and_preserves_run_boundary(study_api):
