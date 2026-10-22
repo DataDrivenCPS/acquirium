@@ -1204,7 +1204,11 @@ class DataObject:
     def __repr__(self) -> str:
         aliases = self.aliases
         if self._materialized:
-            n_rows = len(self._tall) if self._tall is not None else 0
+            # The tall frame holds one copy of a reading per entity context;
+            # count readings, as the lazy estimate and dataframe() do.
+            n_rows = 0
+            if self._tall is not None and not self._tall.is_empty():
+                n_rows = self._tall.select(["data_alias", "point_uri", "ref_uri", "time"]).n_unique()
             return f"DataObject({n_rows} rows, aliases={aliases}, entities={self.entity_aliases})"
 
         total = self.total_rows
