@@ -1202,15 +1202,7 @@ class Query:
                     keep.append(lbl)
             pl_table = pl_table.select(keep)
             pl_table = pl_table.with_columns([
-                pl.col(c)
-                .map_elements(
-                    lambda x: self._compact_uri_safe(x) if isinstance(x, str)
-                    else (None if x is None else str(x)),
-                    return_dtype=pl.String,
-                    skip_nulls=False,
-                )
-                .alias(c)
-                for c in pl_table.columns
+                self._compact_column(pl_table[c]) for c in pl_table.columns
             ]).unique()
             self.cache[cache_key] = pl_table
         return self.cache[cache_key]
@@ -1312,6 +1304,21 @@ class Query:
             return self.client.compact_uri(uri)
         except Exception:
             return str(uri)
+
+    def _compact_column(self, col: pl.Series) -> pl.Series:
+        """Render a metadata column as text with URIs as CURIEs.
+
+        The compactor runs once per distinct value, not once per cell; a
+        column of ten thousand matches over fifty points costs fifty calls.
+        Literal columns are rendered as text unchanged.
+        """
+        if col.dtype == pl.Boolean:
+            return col.replace_strict({True: "True", False: "False"}, default=None, return_dtype=pl.String)
+        if col.dtype != pl.String:
+            return col.cast(pl.String)
+        distinct = [v for v in col.unique().to_list() if v is not None]
+        mapping = {v: self._compact_uri_safe(v) for v in distinct}
+        return col.replace_strict(mapping, default=None, return_dtype=pl.String)
 
 
 # Append the attribute registry (single source of truth) to every method

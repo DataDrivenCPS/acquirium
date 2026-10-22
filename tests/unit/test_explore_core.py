@@ -370,3 +370,28 @@ class TestMeasurementUri:
         assert isinstance(acq.find_all_data(), Query)
         assert acq.find_all_data().to_sparql() == acq.query().measurement().to_sparql()
         assert "VALUES ?v0 { <urn:ex/p1> }" in acq.find_all_data(uri="urn:ex/p1").to_sparql()
+
+
+class TestMetadataCompaction:
+    def test_curies_computed_once_per_distinct_value(self):
+        from unittest.mock import MagicMock
+        client = MagicMock()
+        client.sparql_query.return_value = {
+            "columns": ["v0", "v1"],
+            "rows": [["urn:t#a1", "urn:t#p1"], ["urn:t#a1", "urn:t#p2"],
+                     ["urn:t#a2", "urn:t#p1"], ["urn:t#a2", None]],
+        }
+        client.compact_uri.side_effect = lambda u: "t:" + str(u).rsplit("#", 1)[-1]
+        meta = Query(client=client).entity(CLS_A, alias="a").measurement(alias="m").metadata()
+        assert meta.columns == ["a", "m"]
+        assert sorted(meta["a"].to_list()) == ["t:a1", "t:a1", "t:a2", "t:a2"]
+        assert meta["m"].null_count() == 1
+        assert client.compact_uri.call_count == 4          # a1, a2, p1, p2, not 8 cells
+
+    def test_literal_columns_render_as_text(self):
+        from unittest.mock import MagicMock
+        client = MagicMock()
+        client.sparql_query.return_value = {"columns": ["v0", "attr0_label"], "rows": [["urn:t#a1", 7]]}
+        client.compact_uri.side_effect = lambda u: "t:" + str(u).rsplit("#", 1)[-1]
+        meta = Query(client=client).entity(CLS_A, alias="a").include("label").metadata()
+        assert meta.row(0) == ("t:a1", "7")
