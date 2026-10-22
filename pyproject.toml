@@ -34,7 +34,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "escapement-db @ git+ssh://git@github.com/gtfierro/escapement.git@45065ebc4963caaa7f2d5f2cd4c6faaf25dc9e12",
+    "escapement-db @ git+ssh://git@github.com/gtfierro/escapement.git@cb027ad46c8db17e31d8f0f3b704c1029cc1732c",
     "typer>=0.12.0",
     "fastembed>=0.4.0",
     "filelock>=3.15",
