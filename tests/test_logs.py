@@ -182,7 +182,7 @@ def test_log_3(acquirium_client_nodata):
     assert result["ok"] is True
     result = acquirium_client_nodata.client.delete_logs(point_uri="urn:ex/Pump1-in")
     assert result["ok"] is True
-    q = acquirium_client_nodata.find_entity(_class = WATR.Pump, alias= "pumps")
+    q = Q(client=acquirium_client_nodata.client).find_entity(_class = WATR.Pump, alias= "pumps")
 
     q.insert_log(
         message="Pump started successfully."
@@ -223,7 +223,7 @@ def test_log_4(acquirium_client_nodata):
     Multiple entities, observation period specified
     '''
 
-    q = acquirium_client_nodata.find_entity(_class = WATR.Pump, alias= "pumps")
+    q = Q(client=acquirium_client_nodata.client).find_entity(_class = WATR.Pump, alias= "pumps")
     q.insert_log(
         message="Pump started successfully. - t2"
     )

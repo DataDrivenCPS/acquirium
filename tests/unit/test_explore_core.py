@@ -455,3 +455,23 @@ class TestDrop:
     def test_empty_query_errors(self):
         with pytest.raises(ValueError, match="no current node"):
             q().drop()
+
+
+class TestMeasurementUri:
+    def test_root_measurement_pinned_to_one_point(self):
+        q = Query(client=None).measurement(alias="m", uri="urn:ex/p1")
+        assert "VALUES ?v0 { <urn:ex/p1> }" in q.to_sparql()
+
+    def test_anchored_measurement_pinned_to_one_point(self):
+        q = (Query(client=None).entity(CLS_A, alias="a")
+             .measurement(alias="m", uri="urn:ex/p1"))
+        sparql = q.to_sparql()
+        assert "VALUES ?v1 { <urn:ex/p1> }" in sparql
+        assert q.query_graph.current_pointer == 1
+
+    def test_find_all_data_is_the_root_measurement(self):
+        from acquirium import Acquirium
+        acq = Acquirium(health_timeout=None)
+        assert isinstance(acq.find_all_data(), Query)
+        assert acq.find_all_data().to_sparql() == acq.query().measurement().to_sparql()
+        assert "VALUES ?v0 { <urn:ex/p1> }" in acq.find_all_data(uri="urn:ex/p1").to_sparql()

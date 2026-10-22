@@ -51,6 +51,7 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 |---|---|
 | `query() -> Query` | Create a new empty `Query` bound to this instance. |
 | `explore() -> Query` | Alias of `query()`. |
+| `find_all_data(*, _class=None, uri=None) -> Query` | Every registered measurement point: `query().measurement(type=_class, uri=uri)`. |
 
 ### Graph
 
@@ -101,8 +102,6 @@ See the [app reference](apps.md) for the transformation class contract.
 
 | method | description |
 |---|---|
-| `find_entity(*, _class=None, alias=None, uri=None) -> Q` | The previous query builder; see [Coming from the old interface](#coming-from-the-old-interface). |
-| `find_all_data(*, _class=None, uri=None) -> Q` | The previous query builder |
 | `generate_grafana_dashboard(grafana_server, api_key)` | Build a Grafana dashboard from the plant model. |
 
 ## Query
@@ -119,7 +118,7 @@ See the [querying tutorial](../tutorials/querying.md) and
 |---|---|
 | `entity(cls=None, *, uri=None, alias=None, **attrs) -> Query` | Add an entity node for a class (URI or free text) or one instance (`uri=`, CURIEs accepted); keyword attributes filter inline. |
 | `related(cls=None, *, uri=None, alias=None, frm=None, via="any", direction=None, max_depth=None, nearest=None, **attrs) -> Query` | Add an entity connected to `frm` (default: the current node); `via=` restricts predicates, `direction=` walks the piping topology; `max_depth` defaults to 3 (1 for predicate lists), `nearest` to `True` for plain `via="any"`. |
-| `measurement(*, frm=None, alias=None, direction=None, max_depth=3, nearest=None, include_connection_points=True, **attrs) -> Query` | Attach the measurement points of `frm` (default: the current node; `"*"` for every entity, or a list of aliases); on an empty query, every registered stream. With `direction=`, `nearest` defaults to `True` and each source keeps the first place along the flow (own connection points, pipe, next entity with its connection points, ...) holding a match; `nearest=False` returns everything within `max_depth`. |
+| `measurement(*, frm=None, alias=None, direction=None, max_depth=3, nearest=None, include_connection_points=True, uri=None, **attrs) -> Query` | Attach the measurement points of `frm` (default: the current node; `"*"` for every entity, or a list of aliases); on an empty query, every registered stream. With `direction=`, `nearest` defaults to `True` and each source keeps the first place along the flow (own connection points, pipe, next entity with its connection points, ...) holding a match; `nearest=False` returns everything within `max_depth`. `uri=` pins the node to one point. |
 | `context(cls=None, *, uri=None, alias=None, frm=None, via="entity", **attrs) -> Query` | From a measurement node, add the entity it is about and point at it; `via=` names a relation (`"entity"`, `"upstream"`, `"downstream"`, or one registered with `register_relation`) or gives explicit predicates or step chains. One fixed step, compiled to SPARQL. |
 | `where(target=None, **attrs) -> Query` | Filter a node (`target=` by alias, default the current node) by attribute; values are URIs, free text, lists (OR) or `Not(value)`. |
 | `include(*names, of=None, required=False) -> Query` | Add `alias.attr` columns for a node, or un-drop a node; `required=True` drops rows lacking the attribute. `"all"` adds the node's attributes except `type` and `cp_type`, and on measurements `app` and `label`. |
@@ -277,8 +276,9 @@ and are listed once above.
 Optional. Skip this unless you have queries written against the previous
 `find_*` methods.
 
-Those methods still exist, reachable through `acq.find_entity()` and
-`acq.find_all_data()`, but they are deprecated and will not gain features.
+The old builder still exists as `acquirium.Q(client=acq.client)`, but it is
+deprecated and will not gain features. `acq.find_all_data()` is now a
+shorthand for `acq.query().measurement()`.
 The rewrite is usually mechanical: one verb per old method, one `where()` in
 place of the `filter_by_*` family.
 

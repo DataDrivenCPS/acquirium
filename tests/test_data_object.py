@@ -1,5 +1,6 @@
 import pytest
 from acquirium.Client.data_object import DataObject
+from acquirium.Client.query import Q
 from acquirium.internals.internals_namespaces import *
 
 
@@ -38,7 +39,7 @@ def test_getitem_nonexistent_alias_returns_empty(acquirium_client_csv):
 def test_by_grouping(acquirium_client_csv):
     """by() should yield entity-scoped sub-DataObjects."""
     acq = acquirium_client_csv
-    entity_B = acq.find_entity(_class=ACQUIRIUM_NS.B, alias="b")
+    entity_B = Q(client=acq.client).find_entity(_class=ACQUIRIUM_NS.B, alias="b")
     entity_BE = entity_B.find_related(_class=ACQUIRIUM_NS.E, alias="e")
     query = entity_BE.find_all_data()
 
@@ -160,7 +161,7 @@ def test_latest(acquirium_client_csv):
 def test_empty_data_object(acquirium_client_csv):
     """A query with no data nodes should produce an empty DataObject."""
     acq = acquirium_client_csv
-    query = acq.find_entity(_class=ACQUIRIUM_NS.B, alias="b")
+    query = Q(client=acq.client).find_entity(_class=ACQUIRIUM_NS.B, alias="b")
     # No data nodes — just an entity query
     data = query.data()
 
@@ -185,7 +186,7 @@ def test_single_data_node_no_entity(acquirium_client_csv):
 def test_data_with_entity_context(acquirium_client_csv):
     """Query with entity + data should produce entity columns."""
     acq = acquirium_client_csv
-    entity_B = acq.find_entity(_class=ACQUIRIUM_NS.B, alias="b")
+    entity_B = Q(client=acq.client).find_entity(_class=ACQUIRIUM_NS.B, alias="b")
     data_query = entity_B.find_data(alias="b_data")
     data = data_query.data(limit=5)
 

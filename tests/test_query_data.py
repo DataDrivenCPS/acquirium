@@ -12,7 +12,7 @@ from conftest import ACQUIRIUM_TEST_SERVER_HOST, ACQUIRIUM_TEST_SERVER_PORT, _CS
 
 def test_find_all_data_1(acquirium_client_csv):
     acq = acquirium_client_csv
-    query = acq.find_all_data()
+    query = Q(client=acq.client).find_all_data()
 
     assert len(query.query_graph.data_nodes) == 1
     assert len(query.query_graph.nodes) == 1
@@ -39,7 +39,7 @@ def test_find_all_data_1(acquirium_client_csv):
 
 def test_find_all_data_2(acquirium_client_csv):
     acq = acquirium_client_csv
-    entity_B = acq.find_entity(_class=ACQUIRIUM_NS.B, alias="b")
+    entity_B = Q(client=acq.client).find_entity(_class=ACQUIRIUM_NS.B, alias="b")
     entity_BE = entity_B.find_entity(_class=ACQUIRIUM_NS.E, alias="e")
 
     assert entity_BE is not None
@@ -64,7 +64,7 @@ def test_find_all_data_2(acquirium_client_csv):
 #### Test Filters
 def test_data_filters(acquirium_client_csv):
     acq = acquirium_client_csv
-    query = acq.find_all_data()
+    query = Q(client=acq.client).find_all_data()
 
     filt_medium_1 = query.filter_by_medium(ACQUIRIUM_NS.Medium4)
     meta_1 = filt_medium_1.metadata()
@@ -161,7 +161,7 @@ def test_expand_uri_requires_bound_curie(acquirium_client_csv):
 def test_metadata_renders_compact_curie(acquirium_client_csv):
     """metadata() renders point ids as CURIEs (prefix:local), not bare local names."""
     acq = acquirium_client_csv
-    ids = acq.find_all_data().metadata()["0"].to_list()
+    ids = Q(client=acq.client).find_all_data().metadata()["0"].to_list()
 
     assert all(":" in pid for pid in ids)
     assert any(pid.endswith(":point_1") for pid in ids)
@@ -170,7 +170,7 @@ def test_metadata_renders_compact_curie(acquirium_client_csv):
 def test_normalize_instance_uri(acquirium_client_csv):
     """find_entity(uri=...) accepts full URIs and bound CURIEs, rejects everything else."""
     acq = acquirium_client_csv
-    query = acq.find_all_data()
+    query = Q(client=acq.client).find_all_data()
 
     # Full URI string and URIRef pass through unchanged; None stays None.
     assert query._normalize_instance_uri("urn:ex/point_1") == "urn:ex/point_1"
@@ -236,7 +236,7 @@ def test_dataframe_cast_value_is_validated(acquirium_client_csv):
 
 def test_find_data_1(acquirium_client_csv):
     acq = acquirium_client_csv
-    entity_B = acq.find_entity(_class=ACQUIRIUM_NS.B, alias="b")
+    entity_B = Q(client=acq.client).find_entity(_class=ACQUIRIUM_NS.B, alias="b")
     entity_BE = entity_B.find_entity(_class=ACQUIRIUM_NS.E, alias="e")
 
     entity_BE_data1 = entity_BE.find_data()

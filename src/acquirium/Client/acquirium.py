@@ -17,7 +17,6 @@ from rdflib import URIRef
 import warnings
 
 from acquirium.Client.explore.core import Query
-from acquirium.Client.query import Q
 from acquirium.Materialization.api import App
 from acquirium.Materialization.planner import Deployment
 
@@ -169,19 +168,15 @@ class Acquirium:
         """Alias of :meth:`query`."""
         return self.query()
 
-    def find_entity(
-        self,
-        *,
-        _class: Optional[str] = None,
-        alias: Optional[str] = None,
-        uri: str | URIRef | None = None,
-    ) -> "Q":
-        q = Q(client=self.client).find_entity(_class=_class, alias=alias, uri=uri)
-        return q
+    def find_all_data(self, *, _class: Optional[str] = None, uri: str | URIRef | None = None) -> Query:
+        """Every registered measurement point, as a :class:`Query`.
 
-    def find_all_data(self, *, _class: Optional[str] = None, uri: str | URIRef | None = None) -> "Q":
-        q = Q(client=self.client).find_all_data(_class=_class, uri=uri)
-        return q
+        Shorthand for ``acq.query().measurement(type=_class, uri=uri)``:
+        ``_class`` restricts the points to a class (URI or free text) and
+        ``uri`` pins the query to one point.
+        """
+        attrs = {"type": _class} if _class is not None else {}
+        return self.query().measurement(uri=uri, **attrs)
 
     # ------------------------------------------------------------------
     # TIMESERIES API
