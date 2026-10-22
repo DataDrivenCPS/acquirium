@@ -173,7 +173,7 @@ See the [data tutorial](../tutorials/data.md).
 | `convert_to(to_unit, *, from_unit=None, alias=None) -> DataObject` | A new object with values converted to `to_unit`; `from_unit=` for points with no unit, `alias=` to convert one alias. |
 | `by(entity_alias) -> Iterator[tuple[str, DataObject]]` | A sub-object per entity. |
 | `latest(alias) -> pl.DataFrame` | The newest row of an alias (fetches the window first). |
-| `is_empty() -> bool` | Whether any rows exist. |
+| `is_empty() -> bool` | Whether any rows exist; from stream statistics (ignoring the window) until the values are fetched. |
 | `ref_info(alias) -> list[tuple[int, str]]` | `(index, ref_uri)` per stream behind an alias. |
 | `aliases`, `entity_aliases` | Properties: the data and entity aliases present. |
 | `total_rows`, `time_range` | Properties: row count and `(earliest, latest)` from stream statistics, without fetching. |

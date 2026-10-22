@@ -907,6 +907,9 @@ class DataObject:
         """Return a DataFrame of unique ``(data_alias, point_label,
         point_uri, entity__*)`` tuples.
 
+        Built from the query's bindings, so the answer is the same before
+        and after the values are fetched and lists every matched point,
+        including those with no rows in the requested window.
         ``point_label`` is the point's ``rdfs:label`` (null when it has
         none). By default the UUID ``ref_uri`` column is hidden — multiple
         ref_uris sharing the same point are folded into one row. Pass
@@ -914,26 +917,7 @@ class DataObject:
         per-ref filtering and debugging).
         """
         ref_col = ["ref_uri"] if include_ref_uris else []
-        label_map = {b.point_uri: b.point_label for b in self._bindings if b.point_label}
-
-        if self._materialized and self._tall is not None:
-            meta_cols = ["data_alias", "point_uri"] + ref_col + self._entity_columns
-            existing = [c for c in meta_cols if c in self._tall.columns]
-            out_cols = existing[:1] + ["point_label"] + existing[1:]
-            if self._tall.is_empty():
-                return pl.DataFrame(schema={c: pl.Utf8 for c in out_cols})
-            return (
-                self._tall.select(existing).unique()
-                .with_columns(
-                    pl.col("point_uri")
-                    .map_elements(lambda u: label_map.get(u), return_dtype=pl.Utf8, skip_nulls=False)
-                    .alias("point_label")
-                )
-                .select(out_cols)
-                .sort("data_alias")
-            )
-
-        # Build from bindings without materializing
+        cols = ["data_alias", "point_label", "point_uri"] + ref_col + self._entity_columns
         rows: list[dict[str, str | None]] = []
         for b in self._bindings:
             for ctx in (b.entity_contexts or [{}]):
@@ -947,10 +931,10 @@ class DataObject:
                 for ec in self._entity_columns:
                     row[ec] = ctx.get(ec)
                 rows.append(row)
-        cols = ["data_alias", "point_label", "point_uri"] + ref_col + self._entity_columns
+        schema = {c: pl.Utf8 for c in cols}
         if not rows:
-            return pl.DataFrame(schema={c: pl.Utf8 for c in cols})
-        return pl.DataFrame(rows).unique().sort("data_alias")
+            return pl.DataFrame(schema=schema)
+        return pl.DataFrame(rows, schema=schema).unique().sort(cols)
 
     @property
     def aliases(self) -> list[str]:
@@ -979,7 +963,12 @@ class DataObject:
         return subset.sort("time", descending=True).head(1).select("time", "value")
 
     def is_empty(self) -> bool:
-        """Check if there is any data."""
+        """Whether any rows exist.
+
+        Before the values are fetched this answers from stream statistics,
+        i.e. whether the matched streams hold any rows at all, regardless of
+        the requested window. After a fetch it reports the fetched window.
+        """
         if self._materialized:
             return self._tall.is_empty()
         return all(b.row_count == 0 for b in self._bindings)
