@@ -14,6 +14,10 @@ change in any release.
 - Shared lossless metadata documents retain arbitrary namespaced JSON, null
   positions, nested empty containers, dates, and original semantic values.
   Queryable attributes are written alongside their complete documents.
+- Experiment metadata is graph-authoritative. A versioned migration moves old
+  SQL snapshots and pinned resolutions into a transactional outbox, removing
+  permanent SQL metadata copies. Resolved writes replay after interruption;
+  lifecycle updates preserve descriptive metadata. Backups include SQL and graph.
 - Explicit model adapters declare scalar, text, JSON, table, and time-series
   values with reader functions. `input`/`output` namespaces choose roles;
   `sample(at=..., model_time=...)` records time series and `record_values()`

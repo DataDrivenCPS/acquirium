@@ -169,12 +169,19 @@ site stream supplies example data; use your driver's stream at a real site.
 
 ## Limits
 
-`.metadata_objects()` returns each node's metadata in the shape it was saved;
-table output keeps a shared schema. Three cases still use their SQL snapshots:
-`None` positions in lists, a top-level `type` key, and lists on semantic
-attributes such as `unit`. The
-[integration plan](../plans/experiment-metadata-integration.md) tracks these
-remaining differences and later cleanup.
+Complete metadata documents live in the graph alongside their queryable
+attributes. Saved experiment metadata preserves null positions, nested empty
+containers, original semantic strings, and ordered semantic lists. Native query
+tables retain their shared schemas and resolved semantic values.
+
+SQL owns lifecycle transitions, observation ordering, recorded values, intervals,
+and artifact ownership. Its transactional outbox carries pending, already-resolved
+graph writes. Delivery is idempotent: a crash before acknowledgment replays the
+write, and successful acknowledgment removes the pending payload. Lifecycle
+updates patch their own fields without replacing descriptive metadata. Backup
+and restore must include the authoritative graph as well as the SQL ledger.
+The [integration plan](../plans/experiment-metadata-integration.md) describes the
+implemented boundary and recovery behavior.
 
 Stream annotations and stream ranges read live data. Record a range's rows for
 a fixed copy; an annotation has no copy form.

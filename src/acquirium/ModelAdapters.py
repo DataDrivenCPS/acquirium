@@ -4,7 +4,6 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
-import json
 from typing import Any, Protocol
 
 from acquirium.ExperimentValues import check_kind, to_json
@@ -12,22 +11,12 @@ from acquirium.ExperimentValues import check_kind, to_json
 UNSET = object()
 # An encoded JSON object keeps arbitrary keys/nulls/empty containers separate
 # from the graph writer's attribute names and deletion semantics.
-JSON_METADATA = "adapter_metadata"
 ADAPTER_FORMAT = "_adapter_format"
 
 
 def metadata_fields(value: Mapping[str, Any]) -> dict[str, Any]:
-    """Preserve JSON exactly, with a queryable projection of valid paths."""
-    from acquirium.Client.explore.attributes import KEY_PATTERN
-
-    def project(child):
-        if isinstance(child, dict):
-            return {key: project(item) for key, item in child.items() if KEY_PATTERN.fullmatch(key)}
-        if isinstance(child, list):
-            return [project(item) for item in child]
-        return child
-    return {ADAPTER_FORMAT: 1, JSON_METADATA: json.dumps(value, sort_keys=True, allow_nan=False),
-            "metadata": project(value)}
+    """Namespace arbitrary JSON; the shared metadata backend preserves it."""
+    return {ADAPTER_FORMAT: 2, "metadata": deepcopy(value)}
 
 
 @dataclass(frozen=True)

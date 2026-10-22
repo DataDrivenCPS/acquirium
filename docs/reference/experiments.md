@@ -423,10 +423,20 @@ resolved value and supplied text separately: `unit="unit:PSI"` and
 Collection `.frame()` methods keep saved metadata dictionaries in `Object` columns;
 variable frames also expose descriptive metadata keys as columns.
 
-Saved metadata reads use the shared object API, with lifecycle fields removed
-and supplied strings restored from `.raw`. SQL snapshots cover recovery and
-shapes the shared reader cannot yet reproduce. See the
-[integration plan](../plans/experiment-metadata-integration.md).
+Saved metadata comes from complete documents in the graph, preserving supplied
+semantic strings, list order, null positions, and nested empty containers.
+Queryable attributes are written alongside each document. Lifecycle and recorded
+values remain in SQL; metadata writes enter a durable outbox in the same SQL
+transaction. Reads deliver pending updates before returning metadata. Successful
+graph writes are acknowledged by removing their outbox entries, and interrupted
+delivery is safely replayed after restart. There are no permanent SQL metadata
+snapshots or field-level SQL fallbacks.
+
+Opening an existing ledger migrates its metadata snapshots and pinned resolutions
+to resolved outbox writes before removing the old columns. See
+[Storage migrations](storage-migrations.md). Backups must include both SQL and the
+graph: the outbox recovers pending writes, while acknowledged metadata is owned by
+the graph. A missing authoritative graph raises an error requiring restoration.
 
 ### Metadata rules
 
@@ -436,8 +446,11 @@ nulls, and empty containers as described in [Explicit model declarations](#expli
 
 Keys contain letters, digits, underscores, and hyphens, starting with a letter
 or underscore. Nested objects and lists use dotted paths and list indices.
-`None`, `[]`, and `{}` remove metadata; an empty string is retained. Recorded
-JSON and log data retain nulls and empty containers.
+At the top level, `None`, `[]`, and `{}` remove ordinary descriptive keys;
+an empty string is retained. Nested nulls and empty containers are preserved in
+saved documents. An explicit `metadata` namespace preserves its complete JSON
+value, including arbitrary string keys, nulls, and empty containers. Recorded
+JSON and log data also retain those values.
 
 Built-in keys such as `unit`, `quantity_kind`, and `type` have semantic meanings.
 Relation keys such as `entity` and `upstream` are rejected. These lifecycle keys

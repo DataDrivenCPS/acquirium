@@ -163,7 +163,7 @@ def test_key_column_migrates_existing_ledger(materialization_store, tmp_path):
         ledger._execute(conn, "DROP INDEX experiment_observations_variable_idx")
         ledger._execute(conn, "DROP INDEX experiment_observations_ref_idx")
         ledger._execute(conn, "ALTER TABLE experiment_observations DROP COLUMN key_json")
-        ledger._execute(conn, "DELETE FROM schema_migrations WHERE component='experiments'")
+        ledger._execute(conn, "DELETE FROM schema_migrations WHERE component='experiments' AND version=1")
         ledger._execute(conn, "CREATE INDEX experiment_observations_variable_idx ON experiment_observations(variable_id, run_id, sequence)")
         ledger._execute(conn, "CREATE INDEX experiment_observations_ref_idx ON experiment_observations(ref_uri, range_start, range_end)")
     migrated = ExperimentStore(store, tmp_path / "migration-artifacts")
@@ -217,7 +217,8 @@ def test_table_artifact_batch_validation_and_atomicity(materialization_store, tm
 @pytest.mark.parametrize("batch", [False, True])
 def test_cleanup_preserves_artifact_reattached_after_delete_commit(materialization_store, tmp_path, monkeypatch, sweep, batch):
     import base64
-    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+    import threading
 
     store = materialization_store
     ledger = ExperimentStore(store, tmp_path / "race-artifacts")
@@ -228,15 +229,20 @@ def test_cleanup_preserves_artifact_reattached_after_delete_commit(materializati
     saved = ledger.attach_file(old["run_id"], variable["variable_id"], "old.txt", "text/plain", data)
     ledger.finish(old["run_id"], "succeeded")
     # Separate ledger instances represent concurrent callers sharing a store.
-    # They share the writer lock, without sharing the metadata publication lock.
+    # Metadata transactions share delivery serialization; attaching bytes to an
+    # already running experiment only needs the writer lock.
     other = ExperimentStore(store, ledger.artifact_dir)
     active = None
     if not sweep:
         active = other.start(study["template_id"], {})
     after_delete = ledger._after_delete
+    started = threading.Event()
+    future = None
     def interleave(result, **kwargs):
+        nonlocal future
         def attach():
             nonlocal active, variable
+            started.set()
             if sweep:
                 new_study = other.define("new study")
                 variable = other.declare(new_study["template_id"], "file", "input", "file", {})
@@ -247,11 +253,20 @@ def test_cleanup_preserves_artifact_reattached_after_delete_commit(materializati
             else:
                 other.attach_file(active["run_id"], variable["variable_id"], "new.txt", "text/plain", data)
         # SQL deletion has committed; cleanup has not yet checked the file.
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            executor.submit(attach).result(timeout=10)
+        future = executor.submit(attach)
+        assert started.wait(5)
+        if sweep:
+            # Creating a new study waits for clear's metadata transaction.
+            # It proceeds after clear returns, then recreates its shared bytes.
+            with pytest.raises(TimeoutError):
+                future.result(timeout=.1)
+        else:
+            future.result(timeout=10)
         return after_delete(result, **kwargs)
     monkeypatch.setattr(ledger, "_after_delete", interleave)
-    removed = ledger.clear() if sweep else ledger.delete_runs([old["run_id"]])
-    assert removed["files"] == 0
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        removed = ledger.clear() if sweep else ledger.delete_runs([old["run_id"]])
+        future.result(timeout=10)
+    assert removed["files"] == int(sweep)
     assert other.artifact(saved["digest"])["data"] == data
     assert other.observations(active["template_id"], run_id=active["run_id"])[0]["artifact_digest"] == saved["digest"]

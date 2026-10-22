@@ -234,7 +234,7 @@ def test_delete_study_clear_and_usage_cover_experiments_only(tmp_path):
         assert list(ledger.artifact_dir.iterdir()) == []
         assert (_samples(store, orphan), _samples(store, site)) == (0, 1)
         with store._own_conn() as conn:
-            assert conn.execute("SELECT count(*) FROM experiment_metadata_resolutions").fetchone()[0] == 0
+            assert conn.execute("SELECT count(*) FROM experiment_metadata_outbox").fetchone()[0] == 0
         assert ledger._resolutions == {}
         fresh = ledger.define("first")
         assert ledger.variables(fresh["template_id"]) == []

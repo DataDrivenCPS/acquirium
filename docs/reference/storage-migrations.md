@@ -29,3 +29,17 @@ For DuckDB, adding the constrained publication columns to a populated table
 requires rebuilding that table inside the migration transaction. Existing
 samples and reference IDs are retained; allow space for the replacement table
 when upgrading a large database. Subsequent openings skip this migration.
+
+Experiment schema version 2 moves variable, run, and annotation metadata to the
+graph. It first converts existing SQL snapshots and pinned resolutions into
+resolved outbox operations in the schema transaction, then removes the snapshot
+columns, annotation metadata payloads, and the resolution table. A failed
+conversion rolls back the migration. Existing observations, IDs, sample ranges,
+and artifact associations are retained.
+
+The next metadata read delivers the outbox. Entries are removed only after their
+graph update and source flush succeed; retries do not re-resolve saved units. Backups must retain
+both the SQL ledger and its authoritative graph. SQL alone can recover pending
+updates, but cannot reconstruct metadata whose updates were already acknowledged.
+Standalone ledger users without a server graph use an embedded Oxigraph store in
+`.experiment-metadata` beside the artifact directory.

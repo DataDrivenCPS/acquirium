@@ -11,7 +11,12 @@ from acquirium.Server.manager import Manager
 def test_manager_recreation_resets_experiments_in_external_duckdb(tmp_path, monkeypatch, recreate):
     # Exercise the real storage/reset path without loading ontology indexes.
     module = import_module("acquirium.Server.manager")
-    monkeypatch.setattr(module, "OxigraphGraphStore", Mock())
+    from tests.unit.test_experiment_metadata import MemoryGraphStore
+    source = MemoryGraphStore()
+    graph = Mock()
+    for name in ("sparql_query", "sparql_update", "source_graph_uri", "clear_graphs", "graph_status"):
+        setattr(graph, name, getattr(source, name))
+    monkeypatch.setattr(module, "OxigraphGraphStore", Mock(return_value=graph))
     monkeypatch.setattr(Manager, "_build_embedding_indexes", lambda self: None)
     data_dir = tmp_path / "server-data"
     db_path = tmp_path / "external-storage" / "data.duckdb"

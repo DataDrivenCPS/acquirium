@@ -103,3 +103,7 @@ EXPERIMENT_MIGRATIONS = (
         "ALTER TABLE experiment_observations ADD COLUMN IF NOT EXISTS key_json VARCHAR",
     )),
 )
+
+# Imported last: the migration imports experiment records only when it runs.
+from acquirium.Storage.metadata_outbox import migrate_documents
+EXPERIMENT_MIGRATIONS += (Migration(2, "graph_metadata_outbox", migrate_documents),)

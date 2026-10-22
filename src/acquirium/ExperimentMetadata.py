@@ -1,7 +1,7 @@
 """Experiment adapters for PR #120's metadata writer and query builder.
 
-Saved metadata reads use the shared graph object API. SQL snapshots remain
-the recovery source for rebuilding the graph after an interrupted write.
+Metadata documents live in the graph. A transactional SQL outbox retries
+resolved writes after an interruption without retaining metadata snapshots.
 """
 from __future__ import annotations
 
@@ -9,13 +9,14 @@ from collections.abc import Mapping
 from typing import Any
 
 import polars as pl
-from rdflib import Graph, Literal, Namespace, URIRef
-from rdflib.namespace import RDF, RDFS
+from rdflib import Literal, Namespace, URIRef
+from rdflib.namespace import RDF
 
 from acquirium.Client.explore.attributes import ATTR_NS, REGISTRY, Attr, Registry
 from acquirium.Client.explore.core import Query
 from acquirium.Client.explore.typed import coerce, column_dtype
-from acquirium.Client.metadata import flatten, plan_write
+from acquirium.Client.metadata import flatten, plan_write, is_uri
+from acquirium.Metadata import document_triples, read_documents
 
 EXPERIMENT = Namespace("urn:acquirium:experiment:")
 EXPERIMENT_SOURCE = "experiments"
@@ -63,22 +64,8 @@ def metadata_values(values: Mapping[str, Any] | None) -> dict[str, Any]:
     if conflicts:
         raise ValueError(f"reserved experiment metadata keys: {sorted(conflicts)}")
 
-    def clean(value):
-        if isinstance(value, Mapping):
-            result = {}
-            for key, child in value.items():
-                child = clean(child)
-                if child is not None:
-                    result[key] = child
-            return result or None
-        if isinstance(value, (list, tuple)):
-            # Keep index positions: upstream skips null leaves, but tags.2
-            # must not become tags.1 after a restart/backfill.
-            result = [clean(child) for child in value]
-            return result if any(child is not None for child in result) else None
-        return value
-
-    return clean(values) or {}
+    return {key: value for key, value in values.items()
+            if key == "metadata" or value is not None and value != [] and value != {}}
 
 
 def records_frame(items: list[dict[str, Any]]) -> pl.DataFrame:
@@ -93,128 +80,68 @@ def records_frame(items: list[dict[str, Any]]) -> pl.DataFrame:
     return pl.DataFrame(columns)
 
 
-def saved_metadata(values, snapshot):
-    """Restore the fields the shared object reader cannot return as saved.
-
-    This is a field-level compatibility path, not a fallback on graph errors.
-    Upstream treats None as removal, so a list keeps its order but loses a
-    None position; `type` is the node's RDF class; and a list on a semantic
-    attribute such as `unit` comes back as one row per value.
-    """
-    def has_gap(value):
-        if isinstance(value, dict):
-            return any(has_gap(child) for child in value.values())
-        if isinstance(value, list):
-            return any(child is None or has_gap(child) for child in value)
-        return False
-
-    result = dict(values)
-    for key, value in snapshot.items():
-        attr = REGISTRY.get(key)
-        if (key == "type" or has_gap(value)
-                or isinstance(value, list) and attr is not None and not attr.literal):
-            result[key] = value
-    return result
-
-
 class ExperimentMetadataGraph:
     """Publish ledger-owned nodes using the same writer as insert_metadata()."""
 
-    def __init__(self, graph_store, resolve):
+    def __init__(self, graph_store, resolve, *, strict=True):
+        self.strict = strict
         self.graph_store = graph_store
         self.resolve = resolve
-        self.client = _GraphQueryClient(graph_store)
+        self.client = _GraphQueryClient(graph_store, resolve)
 
     def validate(self, uri, values, *, variable=False):
         # Scalar declarations carry units without pretending to be live streams.
+        if not self.strict:
+            def resolved(key, value):
+                attr = REGISTRY.get(key)
+                if attr is None or attr.literal:
+                    return True
+                items = value if isinstance(value, (list, tuple)) else [value]
+                return all(item is None or is_uri(item) or self.resolve(str(item), attr.kind) is not None for item in items)
+            values = {key: value for key, value in values.items() if resolved(key, value)}
         return plan_write(uri, values, role="data" if variable else "entity", resolve=self.resolve)
 
     def triples(self, record):
         uri, cls, fields, metadata = record
         values = {**metadata_values(metadata), **fields}
         write = self.validate(uri, values, variable=cls == EXPERIMENT.Variable)
-        return [(URIRef(uri), RDF.type, cls), *write.triples]
+        # Complete values are authoritative; attributes are a query projection.
+        return list(set([(URIRef(uri), RDF.type, cls), *write.triples,
+                         *document_triples(uri, metadata_values(metadata))]))
 
-    def graph(self, records):
-        graph = Graph()
-        for cls in (EXPERIMENT.Study, EXPERIMENT.Run, EXPERIMENT.Variable, EXPERIMENT.StreamAnnotation):
-            graph.add((cls, RDF.type, RDFS.Class))
-        for record in records:
-            for triple in self.triples(record):
-                graph.add(triple)
-        return graph
+    def record_update(self, record):
+        return {"operation": "replace", "subject": record[0],
+                "triples": [[str(s), str(p), o.n3()] for s, p, o in self.triples(record)]}
 
-    def replace(self, records):
-        """Replace the graph with every record that converts; return the rest.
-
-        The result maps each left-out record's URI to its error, so one
-        invalid record cannot keep every other record out of the graph.
-        """
-        graph, failures = self.graph([]), {}
-        for record in records:
-            try:
-                triples = self.triples(record)
-            except Exception as error:
-                failures[record[0]] = error
-                continue
-            for triple in triples:
-                graph.add(triple)
-        self.graph_store.insert_graph(
-            graph, replace=True,
-            graph_uri=self.graph_store.source_graph_uri(EXPERIMENT_SOURCE),
-        )
-        return failures
-
-    def update(self, subjects, triples):
-        """Replace the given nodes with ``triples`` in one SPARQL update."""
-        if not subjects and not triples:
-            return
-        operations = [f"DELETE WHERE {{ {URIRef(subject).n3()} ?p ?o }}" for subject in subjects]
-        if triples:
-            graph = self.graph([])
-            for triple in triples:
-                graph.add(triple)
-            data = "\n".join(f"{s.n3()} {p.n3()} {o.n3()} ." for s, p, o in graph)
-            operations.append(f"INSERT DATA {{ {data} }}")
-        self.graph_store.sparql_update(
-            "; ".join(operations), graph_uri=self.graph_store.source_graph_uri(EXPERIMENT_SOURCE),
-        )
+    def fields_update(self, uri, fields):
+        write = plan_write(uri, fields, role="entity", resolve=self.resolve)
+        return {"operation": "patch", "subject": uri,
+                "predicates": [*write.replace_forward, *(ATTR_NS + key for key in write.replace_keys)],
+                "triples": [[str(s), str(p), o.n3()] for s, p, o in write.triples]}
 
     def read(self, cls, id_field, identifiers):
-        """Read selected objects in batches through PR #120's object terminal."""
-        identifiers = sorted(set(identifiers))
-        result = {}
-        for offset in range(0, len(identifiers), 500):
-            query = ExperimentQuery(self.client).entity(cls, alias="object")
-            query = query.where(**{id_field: identifiers[offset:offset + 500]})
-            for row in query.include("all").metadata_objects(include_dependencies=False):
-                item = row["object"]
-                identifier = item[id_field]
-                values = {
-                    key: value for key, value in item.items()
-                    if key != "id" and key not in RESERVED_METADATA_KEYS
-                }
-                # `id` is the saved id, or else the node URI; keep only a saved one.
-                if item.get("id") != node_uri(cls, identifier):
-                    values["id"] = item["id"]
-                # The experiment API keeps the caller's spelling. Native query
-                # output exposes the resolved value and <key>.raw separately.
-                for key in list(values):
-                    if key.endswith(".raw"):
-                        values[key[:-4]] = values.pop(key)
-                result[identifier] = values
-        return result
+        subjects = {node_uri(cls, identifier): identifier for identifier in set(identifiers)}
+        documents = read_documents(self.client, subjects)
+        return {subjects[uri]: {key: value for key, value in values.items() if key not in RESERVED_METADATA_KEYS}
+                for uri, values in documents.items() if id_field in values}
 
 
 class _GraphQueryClient:
     """Run the shared query builder against the local graph, without HTTP."""
 
-    def __init__(self, graph_store):
+    def __init__(self, graph_store, resolve=None):
         self.graph_store = graph_store
+        self._resolve = resolve
         self.base_url = f"experiment-graph:{id(graph_store)}"
+
+    def resolve(self, text, kind=None, min_score=.4):
+        return self._resolve(text, kind) if self._resolve is not None else None
 
     def graph_version(self):
         return self.graph_store.graph_status()["source_version"]
+
+    def metadata_documents(self, subjects):
+        return read_documents(self.graph_store, subjects)
 
     @staticmethod
     def compact_uri(uri):
@@ -255,6 +182,9 @@ class _ExperimentClient:
 
     def __getattr__(self, name):
         return getattr(self.client, name)
+
+    def metadata_documents(self, subjects):
+        return read_documents(self.client, subjects)
 
     def sparql_query(self, query, include_dependencies=False, **kwargs):
         kwargs.setdefault("wait_for_fresh", True)

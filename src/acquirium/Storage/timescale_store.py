@@ -72,6 +72,8 @@ class TimescaleStore(TimeseriesStore):
             with self.conn.cursor() as cur:
                 cur.execute(sql.SQL("DROP VIEW IF EXISTS {} CASCADE").format(sql.Identifier(TIMESERIES_STREAMS_VIEW)))
                 for table in (
+                    "experiment_metadata_outbox",
+                    "experiment_metadata_state",
                     "experiment_observations",
                     "experiment_artifacts",
                     "experiment_runs",

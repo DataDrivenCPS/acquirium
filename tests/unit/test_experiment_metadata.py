@@ -189,20 +189,20 @@ def test_saved_metadata_reads_shared_objects_instead_of_sql_values(metadata_api,
     for item in snapshots:
         item["metadata"] = {"stale_sql_value": True}
 
-    from acquirium.Client.explore.core import Query
-    original = Query.metadata_objects
+    import acquirium.ExperimentMetadata as shared
+    original = shared.read_documents
     calls = []
 
-    def tracked(query, **kwargs):
-        calls.append(query)
-        return original(query, **kwargs)
+    def tracked(client, subjects, **kwargs):
+        calls.append(subjects)
+        return original(client, subjects, **kwargs)
 
-    monkeypatch.setattr(Query, "metadata_objects", tracked)
+    monkeypatch.setattr(shared, "read_documents", tracked)
     result = api.ledger.read_metadata(snapshots, EXPERIMENT.Variable, "variable_id")
     values = {item["variable_id"]: item["metadata"] for item in result}
     assert values[first.variable_id] == {"unit": "PSI", "settings": {"mode": "baseline"}}
     assert values[second.variable_id] == {"unit": PSI, "settings": {"duration": 60}}
-    assert len(calls) == 1
+    assert calls and all(set(subjects) == {first.variable_id, second.variable_id} for subjects in calls)
 
 
 def test_run_annotation_and_observation_metadata_use_shared_objects(metadata_api):
@@ -259,7 +259,10 @@ def test_legacy_uuid_declarations_backfill_without_changing_observation_ids(meta
     with api.store._lock, api.store._write_conn() as conn:
         conn.execute("UPDATE experiment_variables SET variable_id=? WHERE variable_id=?", [legacy_id, variable.variable_id])
         conn.execute("UPDATE experiment_observations SET variable_id=? WHERE variable_id=?", [legacy_id, variable.variable_id])
-    api.ledger._graph_dirty = True
+        from acquirium.Storage.metadata_outbox import enqueue
+        record = api.ledger._variable_record(study.study_id, dict(variable_id=legacy_id, label="pressure", role="output", kind="scalar", metadata={"unit": "PSI"}, created_at=datetime.now(timezone.utc)))
+        api.ledger._queue_metadata(conn, record)
+        enqueue(conn, {"operation": "delete", "subject": variable.uri})
     reopened = api.service.get(study.study_id)
     pressure = reopened.variables["pressure"]
     assert pressure.variable_id == legacy_id
@@ -278,13 +281,15 @@ def test_object_reads_repair_failed_publication_and_do_not_hide_read_errors(meta
     study = api.service.define("read recovery")
     run = study.start({"scenario": "baseline"})
     with monkeypatch.context() as patch:
-        patch.setattr(api.ledger.metadata_graph, "update", Mock(side_effect=OSError("graph unavailable")))
+        patch.setattr(api.graph, "sparql_update", Mock(side_effect=OSError("graph unavailable")))
         with pytest.raises(OSError, match="graph unavailable"):
             api.ledger.read_metadata([api.ledger.run(run.run_id)], EXPERIMENT.Run, "run_id")
-    assert api.ledger._graph_dirty
+    with api.store._own_conn() as conn:
+        assert conn.execute("SELECT count(*) FROM experiment_metadata_outbox").fetchone()[0] > 0
     result = api.ledger.read_metadata([api.ledger.run(run.run_id)], EXPERIMENT.Run, "run_id")
     assert result[0]["metadata"] == {"scenario": "baseline"}
-    assert not api.ledger._graph_dirty
+    with api.store._own_conn() as conn:
+        assert conn.execute("SELECT count(*) FROM experiment_metadata_outbox").fetchone()[0] == 0
     monkeypatch.setattr(api.graph, "sparql_query", Mock(side_effect=OSError("read failed")))
     with pytest.raises(OSError, match="read failed"):
         api.ledger.read_metadata([api.ledger.run(run.run_id)], EXPERIMENT.Run, "run_id")
@@ -365,7 +370,7 @@ def test_null_empty_metadata_is_removed_but_recorded_json_is_preserved(metadata_
     run = study.start({"tags": [], "notes": None, "settings": {"flow": 10, "unused": {}}})
     output.record({"tags": [], "notes": None, "settings": {}})
     assert output.metadata == {"note": ""}
-    assert run.metadata == {"settings": {"flow": 10}}
+    assert run.metadata == {"settings": {"flow": 10, "unused": {}}}
     assert run.observations().latest().value == {"tags": [], "notes": None, "settings": {}}
 
 
@@ -378,27 +383,29 @@ def test_lazy_selection_refreshes_after_writes_and_graph_failure(metadata_api, m
     publisher = api.ledger.metadata_graph
     saved = study.start({"scenario": "trial"})
     with monkeypatch.context() as patch:
-        patch.setattr(publisher, "update", Mock(side_effect=OSError("graph unavailable")))
+        patch.setattr(api.graph, "sparql_update", Mock(side_effect=OSError("graph unavailable")))
         with pytest.raises(OSError, match="graph unavailable"):
             selected.all()
-    assert api.ledger._graph_dirty
+    with api.store._own_conn() as conn:
+        assert conn.execute("SELECT count(*) FROM experiment_metadata_outbox").fetchone()[0] > 0
     assert [run.run_id for run in selected.all()] == [saved.run_id]
-    assert not api.ledger._graph_dirty
+    with api.store._own_conn() as conn:
+        assert conn.execute("SELECT count(*) FROM experiment_metadata_outbox").fetchone()[0] == 0
     saved.finish()
     assert study.experiments.where(status="succeeded", scenario="trial").all()[0].run_id == saved.run_id
 
 
-def test_stale_lifecycle_publication_cannot_revert_completed_run(metadata_api):
+def test_lifecycle_delivery_preserves_metadata_edits(metadata_api):
     api = metadata_api
     study = api.service.define("concurrent lifecycle")
     run = study.start({"scenario": "baseline"})
-    stale = api.ledger._run_record(api.ledger.run(run.run_id))
+    api.ledger.sync_metadata_graph()
+    from acquirium.Client.metadata import plan_write, update_text
+    write = plan_write(run.uri, {"scenario": "edited"}, role="entity", resolve=api.ledger._resolve)
+    api.graph.sparql_update(update_text([write]), graph_uri=source_graph_uri("experiments"))
     run.finish()
-    api.ledger._publish_metadata(stale)
-    assert len(study.experiments.where(scenario="baseline", status="succeeded").all()) == 1
-    query = study.experiments.query().include("status")
-    assert query.metadata()["experiment.status"].to_list() == ["succeeded"]
-
+    assert api.ledger.run(run.run_id)["metadata"] == {"scenario": "edited"}
+    assert len(study.experiments.where(scenario="edited", status="succeeded").all()) == 1
 
 def test_backfill_annotations_and_restart_preserve_source_objects(metadata_api):
     api = metadata_api
@@ -407,7 +414,8 @@ def test_backfill_annotations_and_restart_preserve_source_objects(metadata_api):
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     item = api.ledger.annotate_stream(saved.run_id, "urn:site:stream", now, metadata={"treatment": "A"})
     api.ledger.close_stream_annotation(item["annotation_id"], now)
-    graph = MemoryGraphStore()
+    api.ledger.sync_metadata_graph()
+    graph = api.graph
     reopened = ExperimentStore(api.store, api.ledger.artifact_dir, graph_store=graph, resolve=api.ledger.metadata_graph.resolve)
     reopened.sync_metadata_graph()
     assert (URIRef(saved.uri), RDF.type, EXPERIMENT.Run) in graph.dataset
@@ -447,81 +455,57 @@ def test_empty_study_native_queries_and_lifecycle_filter_override(metadata_api):
     assert [item.run_id for item in selected.where(status="succeeded").all()] == [run.run_id]
 
 
-def test_invalid_legacy_record_is_left_out_without_blocking_other_reads(metadata_api):
+def test_missing_authoritative_document_fails_without_sql_fallback(metadata_api):
     api = metadata_api
-    study = api.service.define("legacy")
-    run = study.start()
-    run.finish()
-    healthy = study.start({"scenario": "baseline"})
-    other = api.service.define("unrelated")
-    unrelated = other.start({"scenario": "baseline"})
-    with api.store._lock, api.store._write_conn() as conn:
-        conn.execute("UPDATE experiment_runs SET metadata_json=? WHERE run_id=?",
-                     [json.dumps({"solver.options": 1}), run.run_id])
-    api.ledger._graph_dirty = True
-    status = api.ledger.sync_metadata_graph()
-    assert [(item["id"], item["study_id"]) for item in status["unpublished"]] == [(run.run_id, study.study_id)]
-    assert api.ledger.run(run.run_id)["metadata"] == {"solver.options": 1}
-    # The bad record's own reads and its Study's graph queries still fail loudly.
-    with pytest.raises(ValueError, match="invalid metadata key"):
-        api.ledger.read_metadata([api.ledger.run(run.run_id)], EXPERIMENT.Run, "run_id")
-    with pytest.raises(ValueError, match="invalid metadata key"):
-        study.experiments.where(scenario="baseline").all()
-    # Everything else reads, including the same Study's other runs.
-    assert api.ledger.read_metadata([api.ledger.run(healthy.run_id)], EXPERIMENT.Run, "run_id")[0]["metadata"] == {"scenario": "baseline"}
-    assert [item.run_id for item in other.experiments.where(scenario="baseline").all()] == [unrelated.run_id]
-    # Repairing the SQL row publishes it on the next read.
-    with api.store._lock, api.store._write_conn() as conn:
-        conn.execute("UPDATE experiment_runs SET metadata_json=? WHERE run_id=?",
-                     [json.dumps({"solver": {"options": 1}}), run.run_id])
-    assert api.ledger.read_metadata([api.ledger.run(run.run_id)], EXPERIMENT.Run, "run_id")[0]["metadata"] == {"solver": {"options": 1}}
-    assert api.ledger.sync_metadata_graph()["unpublished"] == []
+    study = api.service.define("authoritative")
+    run = study.start({"scenario": "baseline"})
+    api.ledger.sync_metadata_graph()
+    from acquirium.Metadata import document_predicate
+    api.graph.dataset.remove((URIRef(run.uri), document_predicate("run_id"), None))
+    with pytest.raises(RuntimeError, match="no document"):
+        api.ledger.run(run.run_id)
+    with api.store._own_conn() as conn:
+        assert conn.execute("SELECT status FROM experiment_runs WHERE run_id=?", [run.run_id]).fetchone() == ("running",)
 
-
-def test_rebuild_reuses_first_unit_resolution(metadata_api):
+def test_restart_retains_resolved_units_without_a_resolver(metadata_api):
     api = metadata_api
     study = api.service.define("pinned units")
     pressure = study.output("pressure").scalar(unit="psi")
-    run = api.service.define("unrelated").start({"scenario": "baseline"})
-    # The resolver forgets "psi", e.g. while its index reloads after a restart.
-    api.ledger._live_resolve = lambda text, kind: None
-    graph = MemoryGraphStore()
-    reopened = ExperimentStore(api.store, api.ledger.artifact_dir, graph_store=graph, resolve=lambda text, kind: None)
-    assert reopened.sync_metadata_graph()["unpublished"] == []
-    assert (URIRef(pressure.variable_id), HAS_UNIT, URIRef(PSI)) in graph.dataset
-    assert reopened.read_metadata([reopened.run(run.run_id)], EXPERIMENT.Run, "run_id")[0]["metadata"] == {"scenario": "baseline"}
+    run = study.start({"scenario": "baseline"})
+    api.ledger.sync_metadata_graph()
+    reopened = ExperimentStore(api.store, api.ledger.artifact_dir, graph_store=api.graph, resolve=lambda text, kind: None)
+    assert reopened.variables(study.study_id)[0]["metadata"] == {"unit": "psi"}
+    reopened.finish(run.run_id, "succeeded")
+    assert reopened.run(run.run_id)["metadata"] == {"scenario": "baseline"}
+    assert (URIRef(pressure.variable_id), HAS_UNIT, URIRef(PSI)) in api.graph.dataset
+    missing = ExperimentStore(api.store, api.ledger.artifact_dir, graph_store=MemoryGraphStore())
+    with pytest.raises(RuntimeError, match="restore its graph backup"):
+        missing.run(run.run_id)
 
-
-def test_reads_wait_for_a_committed_record_to_reach_the_graph(metadata_api):
+def test_reads_wait_for_durable_graph_delivery(metadata_api, monkeypatch):
     api = metadata_api
-    ledger = api.ledger
-    study = ledger.define("publication race")
-    committed, release = threading.Event(), threading.Event()
-    publish = ledger._publish_metadata
-
-    def slow_publish(record):
-        # Pause between the SQL commit and graph publication.
-        if record[1] == EXPERIMENT.Run:
-            committed.set()
-            assert release.wait(5)
-        return publish(record)
-
-    ledger._publish_metadata = slow_publish
-    writer = threading.Thread(target=ledger.start, args=(study["template_id"], {"scenario": "a"}))
-    writer.start()
-    assert committed.wait(5)
-    items = ledger.runs(study["template_id"])
-    assert len(items) == 1  # SQL has the run; its graph node is not written yet
-    result = []
-    reader = threading.Thread(target=lambda: result.extend(ledger.read_metadata(items, EXPERIMENT.Run, "run_id")))
-    reader.start()
-    reader.join(0.2)
-    assert reader.is_alive()  # the read waits rather than missing the node
+    study = api.service.define("publication race")
+    run = study.start({"scenario": "a"})
+    entered, release = threading.Event(), threading.Event()
+    update = api.graph.sparql_update
+    def slow_update(*args, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        return update(*args, **kwargs)
+    monkeypatch.setattr(api.graph, "sparql_update", slow_update)
+    results = []
+    first = threading.Thread(target=lambda: results.append(api.ledger.run(run.run_id)))
+    first.start()
+    assert entered.wait(5)
+    second = threading.Thread(target=lambda: results.append(api.ledger.run(run.run_id)))
+    second.start()
+    second.join(.1)
+    assert second.is_alive()
     release.set()
-    writer.join(5)
-    reader.join(5)
-    assert result[0]["metadata"] == {"scenario": "a"}
-
+    first.join(5)
+    second.join(5)
+    assert len(results) == 2
+    assert all(item["metadata"] == {"scenario": "a"} for item in results)
 
 def test_writes_between_reads_publish_in_one_graph_update(metadata_api):
     api = metadata_api
@@ -549,9 +533,11 @@ def test_general_graph_queries_see_queued_writes(metadata_api):
     study = api.service.define("discovery")
     api.ledger.sync_metadata_graph()
     run = study.start({"operator": "ana"})
-    assert api.ledger._pending
+    with api.store._own_conn() as conn:
+        assert conn.execute("SELECT count(*) FROM experiment_metadata_outbox").fetchone()[0] > 0
     api.ledger.publish_queued_metadata()
-    assert not api.ledger._pending
+    with api.store._own_conn() as conn:
+        assert conn.execute("SELECT count(*) FROM experiment_metadata_outbox").fetchone()[0] == 0
     assert (URIRef(run.uri), URIRef(ATTR_NS + "operator"), Literal("ana")) in api.graph.dataset
 
 
@@ -605,7 +591,7 @@ def test_deleted_records_leave_the_metadata_graph(metadata_api):
 
     api.ledger.delete_study(study.study_id)
     classes = {str(cls) for cls in (EXPERIMENT.Study, EXPERIMENT.Run, EXPERIMENT.Variable, EXPERIMENT.StreamAnnotation)}
-    assert {str(subject) for subject in ledger_graph.subjects()} <= classes
+    assert {str(subject) for subject in ledger_graph.subjects()} <= classes | {"urn:acquirium:experiments:store"}
     assert len(run_graphs[1]) == 0
 
     other = api.service.define("other")
@@ -613,7 +599,7 @@ def test_deleted_records_leave_the_metadata_graph(metadata_api):
     other_graph = api.graph.dataset.graph(source_graph_uri(f"experiment/{other.experiments.all()[0].run_id}"))
     other_graph.add((URIRef("urn:point:other"), RDF.type, URIRef("urn:w#Point")))
     api.ledger.clear()
-    assert {str(subject) for subject in ledger_graph.subjects()} <= classes
+    assert {str(subject) for subject in ledger_graph.subjects()} <= classes | {"urn:acquirium:experiments:store"}
     assert len(other_graph) == 0
     assert api.service.all() == []
 
@@ -628,3 +614,25 @@ def test_scalars_follow_attribute_selections(metadata_api):
         run.finish()
     high_flow = study.experiments.where(api.ac.attr.settings.flow >= 15)
     assert high_flow.scalars(metadata=["settings.flow"]).select("settings.flow", "cost").rows() == [(20, 30.0), (30, 45.0)]
+
+
+def test_native_experiment_objects_use_shared_lossless_documents(metadata_api):
+    api = metadata_api
+    study = api.service.define("native documents")
+    run = study.start({"tags": ["A", None, "B"], "metadata": {"any.key": [None, {}, []]}})
+    obj = study.experiments.query().include("tags", "metadata").metadata_objects()[0]["experiment"]
+    assert obj["tags"] == ["A", None, "B"]
+    assert obj["metadata"] == {"any.key": [None, {}, []]}
+    assert api.ledger.run(run.run_id)["metadata"]["tags"] == obj["tags"]
+
+
+def test_compatibility_metadata_filters_match_complete_saved_fields(metadata_api):
+    api = metadata_api
+    study = api.service.define("exact metadata")
+    first = study.start({"tags": ["A", "B"], "settings": {"flow": 10}})
+    first.finish()
+    study.start({"tags": ["B", "A"], "settings": {"flow": 10, "mode": "trial"}}).finish()
+    study.start({"tags": ["A", None, "B"]}).finish()
+    assert [item["run_id"] for item in api.ledger.runs(study.study_id, metadata={"tags": ["A", "B"]})] == [first.run_id]
+    assert [item["run_id"] for item in api.ledger.runs(study.study_id, metadata={"settings": {"flow": 10}})] == [first.run_id]
+    assert len(api.ledger.runs(study.study_id, metadata={"absent": None})) == 3
