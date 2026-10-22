@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,8 +18,10 @@ from acquirium.Storage import (
     create_timeseries_store,
 )
 from acquirium.Storage.graph_store import select_values
+from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
 from acquirium.Storage.publication.types import PublicationReceipt, PublicationRequest, PublicationStore
 from acquirium.Storage.values import normalize_value_kind
+from acquirium.Experiments import ExperimentStore
 from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.Server.config import OntologySource
 from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, compute_ref_uri
@@ -152,6 +155,12 @@ class Manager:
         self.timescale = timeseries_store
         self.graph_store = graph
         self.publication = publication
+        # Artifact bytes live under the server data directory; DuckDB stores
+        # their digest and experiment provenance, not a second blob copy.
+        self.experiments = ExperimentStore(
+            timeseries_store, base / "experiment_artifacts",
+            graph_store=graph, resolve=self._resolve_experiment_metadata,
+        )
         from acquirium.Materialization.runtime import Materializer
         self.materializer = Materializer(timeseries_store, graph,
             query_resolver=self.resolve_text, record_resolver=self.resolve_record,
@@ -413,6 +422,10 @@ class Manager:
             self._update_embedding_status("qudt", state="error", error=str(exc))
             logger.warning("Failed to build QUDT embedding index", exc_info=True)
 
+    def _resolve_experiment_metadata(self, text: str, kind: str) -> str | None:
+        hits = self.resolve_text(text, kind=kind, top_k=1, min_score=0.4)
+        return hits[0]["uri"] if hits else None
+
     def resolve_text(
         self,
         text: str,
@@ -478,10 +491,16 @@ class Manager:
 
     def graph_version(self) -> int:
         """Return the store-owned source-data generation."""
-        return int(self.graph_store.graph_status()["source_version"])
+        return int(self.graph_status()["source_version"])
 
     def graph_status(self) -> dict[str, int | bool]:
-        """Return source and derived-query generation status."""
+        """Return source and derived-query generation status.
+
+        Queued experiment writes are published first, so the version covers
+        every committed write. Clients cache attribute discovery by version;
+        a version that missed queued runs would keep their new keys unknown.
+        """
+        self.experiments.publish_queued_metadata()
         return self.graph_store.graph_status()
 
     def insert_graph(
@@ -522,13 +541,15 @@ class Manager:
 
         try:
             with timed_debug(logger, "insert_graph format=%s replace=%s", format, replace):
-                graph_uri = self.graph_store.source_graph_uri(source_id)
-                self.graph_store.insert_graph(
-                    rdf_graph,
-                    format=format,
-                    replace=replace,
-                    graph_uri=graph_uri,
-                )
+                owned_metadata = source_id in {METADATA_SOURCE_ID, "experiments"} or source_id.startswith("experiment/")
+                with self.experiments.metadata.edit() if owned_metadata else nullcontext():
+                    graph_uri = self.graph_store.source_graph_uri(source_id)
+                    self.graph_store.insert_graph(
+                        rdf_graph,
+                        format=format,
+                        replace=replace,
+                        graph_uri=graph_uri,
+                    )
             logging.info("acquirium: inserted graph into store")
             with timed_debug(logger, "insert_graph: _sync_stream_refs_from_graph"):
                 self._sync_stream_refs_from_graph()
@@ -907,8 +928,10 @@ class Manager:
         It lets a component remove exactly the triples it registered without
         granting updates to ontology graphs.
         """
-        graph_uri = self.graph_store.source_graph_uri(source_id)
-        result = self.graph_store.sparql_update(update, graph_uri=graph_uri)
+        owned_metadata = source_id in {METADATA_SOURCE_ID, "experiments"} or source_id.startswith("experiment/")
+        with self.experiments.metadata.edit() if owned_metadata else nullcontext():
+            graph_uri = self.graph_store.source_graph_uri(source_id)
+            result = self.graph_store.sparql_update(update, graph_uri=graph_uri)
         self._sync_stream_refs_from_graph()
         self._record_materialization_graph_revision()
         return result
@@ -940,6 +963,7 @@ class Manager:
             {"cols": [...], "rows": [...]}
         """
         logger.debug("sparql_dict dependencies=%s len=%d", include_dependencies, len(query))
+        self.experiments.publish_queued_metadata()
         return self.graph_store.sparql_query(
             query,
             include_dependencies=include_dependencies,
@@ -955,6 +979,7 @@ class Manager:
     ) -> bytes | None:
         """Return native SPARQL JSON for SELECT queries when available."""
         logger.debug("sparql_json dependencies=%s len=%d", include_dependencies, len(query))
+        self.experiments.publish_queued_metadata()
         return self.graph_store.sparql_query_json(
             query,
             include_dependencies=include_dependencies,
@@ -971,6 +996,7 @@ class Manager:
         graph_format: ox.RdfFormat,
     ) -> tuple[bytes, str]:
         """Return a SPARQL Protocol response body from the derived query view."""
+        self.experiments.publish_queued_metadata()
         return self.graph_store.sparql_query_serialized(
             query,
             include_dependencies=include_dependencies,

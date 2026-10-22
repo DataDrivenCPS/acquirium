@@ -8,8 +8,8 @@ The Python client covers all of these; use the raw endpoints when scripting
 against the server directly.
 
 Timestamps are ISO 8601 strings (e.g. `2026-01-01T00:00:00Z`). Errors return
-HTTP 400 with a JSON body `{"detail": "<message>"}`. Unknown drivers and apps
-return 404.
+HTTP 400 with a JSON body `{"detail": "<message>"}`. Unknown drivers, apps,
+and experiment runs return 404.
 
 ---
 
@@ -161,7 +161,9 @@ Term types: `uri`, `literal`, `bnode`. Literals may include `"xml:lang"` or `"da
 
 ### `GET /sparql_json`
 
-Legacy endpoint. Executes a SPARQL SELECT query and returns results in an internal `{columns, rows}` format. Prefer `/sparql` for new code.
+Legacy endpoint. Executes a SPARQL SELECT query and returns results in an internal `{columns, rows, datatypes}` format. Prefer `/sparql` for new code.
+
+`rows` holds every cell as text. `datatypes` is a matrix of the same shape naming what each cell is: `"iri"` for a node, the XSD datatype IRI of a typed literal (`http://www.w3.org/2001/XMLSchema#integer`, `...#date`, ...), `null` for a plain string or an unbound cell. The Python client's `metadata()` parses typed values from it.
 
 | Parameter | Default | Description |
 | --- | --- | --- |
@@ -189,7 +191,9 @@ Execute a SPARQL UPDATE against one owned data graph. `/sparql` is read-only; th
 | `update` | yes | SPARQL UPDATE (`INSERT`/`DELETE`) statement |
 | `source_id` | yes | Owner of the data graph to update; use the reserved `plant` for the shared plant model |
 
-The update is scoped to that owner's graph, so it cannot touch the plant model or another source's triples unless `source_id` names it. Drivers and apps use their own `sparql_update()` helper, which supplies the owner for them.
+The update is scoped to that owner's graph, so it cannot touch the plant model or another source's triples unless `source_id` names it. Drivers and apps use their own `sparql_update()` helper, which supplies the owner for them. The client's `insert_metadata()` is one such update, sent with the reserved `metadata` source; there is no separate endpoint for it.
+
+The server compares the graph's `owl:imports` and `owl:Ontology` triples before and after the update and recomputes the ontology closure only when they changed. After the update it removes, from the `metadata` source graph, every triple whose subject or URI object no longer appears in any other graph.
 
 **Response** `{"ok": true, ...}`
 
@@ -516,6 +520,57 @@ List the drivers running on this server. Takes no parameters.
 
 ---
 
+## Experiments
+
+The experiment endpoints create Studies, declare variables, start runs, and
+record values or stream references. The HTTP API calls a Study a `template`.
+See the [experiment endpoint table](experiments.md#http-api) for the full list
+and the [recording guide](../how-to/record-experiments.md) for Python examples.
+
+`GET /experiments/templates/{template_id}/runs` and
+`GET /experiments/templates/{template_id}/observations` accept `status`,
+`started_after`, `started_before`, and a legacy `metadata` filter encoded as a
+JSON object string. Observation reads also accept `run_id` and `variable_id`.
+
+The shared query builder selects graph nodes first. The Python client passes
+the selected run IDs to these endpoints:
+
+- `POST /experiments/templates/{template_id}/runs/query`
+- `POST /experiments/templates/{template_id}/observations/query`
+
+Example request body:
+
+```json
+{
+  "run_ids": ["saved-run-id"],
+  "status": "succeeded"
+}
+```
+
+Both accept the same lifecycle and legacy metadata filters as their GET forms.
+Observation selection bodies can also include `run_id` and `variable_id`.
+Responses are the corresponding lists of run or observation objects. An empty
+ID list returns an empty list. IDs are scoped to the specified Study.
+
+Time-series observations contain stream references and recorded intervals.
+Fetch the sample values through `/timeseries`; they are not embedded in the
+observation response.
+
+`POST /experiments/runs/{run_id}/record` accepts a JSON array of discriminated
+entries for values, artifact bytes or digests, sample rows, and existing stream
+intervals. It returns ordered observation receipts and owned sample stream URIs.
+Registration, samples, revisions, artifact ownership, observations, and resolved
+graph intent commit together. Invalid entries reject the whole SQL batch.
+See [batch recording forms](experiments.md#batch-transport).
+
+`POST /experiments/metadata/sync` takes `{}` and returns
+`{"ok": true, "unpublished": []}` after delivering the durable outbox and
+completing scheduled declaration upgrades. `unpublished` is an always-empty
+compatibility field. Delivery and document-read failures propagate; the server
+does not rebuild acknowledged metadata from SQL. Restore missing authoritative
+graphs with their matching backup. The Python interface synchronizes
+automatically. See [storage migration and recovery](storage-migrations.md).
+
 ## Apps
 
 An app definition is the JSON built by `Deployment.from_class`: its name,
@@ -580,3 +635,14 @@ returns 400.
 
 Return the active materialization graph as nodes and links, including the
 dependencies between bindings and their current execution state.
+
+
+## Complete metadata documents
+
+`POST /metadata/documents` accepts a JSON array of full subject URIs and returns
+an object mapping each URI to its complete document in the internal typed JSON
+encoding. `AcquiriumClient.metadata_documents(subjects)` decodes it to ordinary
+Python values, preserving dates, null positions, and empty containers. User JSON
+inside the `metadata` namespace retains arbitrary string keys. This endpoint
+reads asserted source documents independently of inference and delivers pending
+experiment metadata writes first. Unknown subjects have empty documents.

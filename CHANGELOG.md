@@ -11,12 +11,100 @@ change in any release.
 ## [Unreleased]
 
 ### Added
+- Experiment recordings now use one request and SQL transaction for stream
+  registration, revisioned samples, artifact ownership, observations, and durable
+  graph intent. Rejected batches leave no new recorded SQL state.
+- Hand and model variable declarations share normalization. `.metadata` contains
+  user JSON; semantic/source fields have explicit properties. Legacy descriptive
+  query paths move under `metadata`. Conflicting legacy duplicates require repair;
+  interrupted graph upgrades replay through the outbox delivery frontier.
+- Experiment metadata consistency has one component, with explicit backend
+  capabilities and a standalone factory. HTTP reads hydrate each batch once,
+  and object queries assemble saved user values directly from documents.
+
+- Shared lossless metadata documents retain arbitrary namespaced JSON, null
+  positions, nested empty containers, dates, and original semantic values.
+  Queryable attributes are written alongside their complete documents.
+- Experiment metadata is graph-authoritative. A versioned migration moves old
+  SQL snapshots and pinned resolutions into a transactional outbox, removing
+  permanent SQL metadata copies. Resolved writes replay after interruption;
+  lifecycle updates preserve descriptive metadata. Backups include SQL and graph.
+- Explicit model adapters declare scalar, text, JSON, table, and time-series
+  values with reader functions. `input`/`output` namespaces choose roles;
+  `sample(at=..., model_time=...)` records time series and `record_values()`
+  records other values. Builders support local inspection and preview.
+  The optional Pyomo wrapper extracts units and descriptions from selected
+  components and rejects unit overrides requiring conversion. Arbitrary nested
+  JSON metadata is preserved across graph reads and reopening, separately from
+  semantic fields. Declarations and observations use atomic batch endpoints;
+  advanced keyed time series expose observation keys.
+- `insert_metadata()` attaches a value map to a node: on `Acquirium` for one
+  node, on a `Query` for every matched node, and as the `metadata` key of a
+  stream in `register_streams()`. Built-in keys write their own predicate
+  after text resolution, and any other key becomes a user attribute under
+  `urn:acquirium:attr#`, nested values and lists flattened to one predicate
+  per leaf path. Writing a key replaces it; `None` removes it. The update
+  runs in the reserved `metadata` source graph, which the server prunes of
+  triples about nodes no other graph mentions.
+- User attributes are discovered from the graph and accepted wherever an
+  attribute name is: `where()`, `include()` (including `"all"`), `options()`
+  and `facets()`, by key or dotted path (`product_info.year`).
+- `acq.attr` builds attribute expressions for `where()`: the six comparison
+  operators, `.is_in()` and `.exists()` on a path, combined with `&`, `|`
+  and `~`. Bound to the server, so `dir(acq.attr)` lists the attributes and
+  an unknown name raises where it is written.
+- `hide()` and `unhide()` accept a namespace (a string ending in `#` or `/`);
+  `urn:acquirium:attr#` is hidden from `via="any"` traversal by default.
 - Text resolution has a `role` kind: the s223 role enumeration, the NAWI roles
   that extend it, and whatever a loaded model uses with `s223:hasRole`. A role
   is found by its bare name, so `resolve_text("backwash", kind="role")` returns
   `nawi:Role-Backwash`.
+- Studies and Experiments record a calculation's inputs, results, and events.
+  `ac.study.define(name)` declares a reusable Study. `study.input(label)`,
+  `study.output(label)`, and `study.log(label)` declare variables whose type
+  selects storage: `.scalar(unit=...)`, `.text()`, `.json()`, `.file()`,
+  `.table()` (Parquet, read back as Polars), and `.timeseries(observed=...)`.
+  `study.start(metadata)` starts a run, `variable.record(value)` writes to it,
+  and `finish()`, `fail(error)`, and `study.resume(run_id)` manage it. Records
+  live in a SQL ledger beside the time-series storage. Studies, variables,
+  runs, and annotations also get graph nodes, so `study.experiments.where()`
+  and `study.variables.where()` take the same filters and `acq.attr`
+  expressions as plant queries.
+- `record()` converts NumPy values, tuples, and dates to JSON and rejects NaN.
+  `aq.register_value_handler(cls, handler)` adds other types. Each variable
+  type accepts one kind of value, such as a finite number or boolean for a
+  scalar and a string for text; the client and the server both check.
+- Each run's time-series output is a stream under source `experiment/<run_id>`
+  with its own point carrying `study_id`, `run_id`, and `variable_id`, so
+  `ac.query().measurement(run_id=...)` finds it. A declared `observed`
+  property is an attribute of that point; plant queries on the property
+  return site data only.
+- `ac.stream(source_id, name)` and `ac.stream(ref_uri)` return a `Stream`
+  handle, and `stream.between(start, end)` selects a range. Recording a range
+  to a time-series variable stores a reference whose reads see later data;
+  recording its `.dataframe()` stores a copy with the run.
+- `.frame()` lists declarations, runs, or observations. `runs.scalars()`
+  returns one row per run and one column per scalar variable.
+  `observation.dataframe()` reads samples or a table, and
+  `observation.read_bytes()` a file.
+- `run.annotate_stream(ref_uri, start=..., end=None)` associates an existing
+  stream interval with a run, open-ended if needed, and
+  `ac.study.stream_annotations()` finds annotations by stream and overlapping
+  time.
+- `run.delete()`, `runs.delete()`, and `study.delete()` remove runs with
+  their observations, samples, and unshared files. `ac.study.clear(confirm=True)`
+  removes every Study and nothing else. Running runs, and runs whose streams
+  another run uses, are refused. `usage()` reports counts and estimated bytes.
+- HTTP endpoints for experiments under `/experiments/`.
+- Docs: the "Your first experiment" tutorial, how-to guides for recording
+  experiments and comparing runs, and the `examples/pump-tank` example.
+- Currency codes such as `USD` resolve as units (`unit:CCY_USD`).
 
 ### Changed
+- A SPARQL update no longer forces the ontology closure to be recomputed
+  unless it changed the graph's `owl:imports` or `owl:Ontology` triples.
+- The query compiler renders `int`, `float`, `bool`, `date` and `datetime`
+  filter values as typed literals, so a numeric attribute compares as a number.
 - Roles are no longer part of `kind="class"`. `resolve_text("condenser",
   kind="class")` returns the equipment class only; the role needs
   `kind="role"`.
@@ -85,6 +173,19 @@ change in any release.
   model download grows from 66 MB to 133 MB.
 
 ### Fixed
+- Explicit user metadata edits use the same values in graph filters, tables,
+  and document reads while preserving source assertions. Object selections and
+  exclusions handle list paths without shifting positions or restoring dropped
+  fields.
+- Existing DuckDB and TimescaleDB databases upgrade in place through a shared,
+  versioned migration ledger before dependent views and indexes are created.
+- Published timestamps retain their instants with non-UTC PostgreSQL sessions.
+- Experiment stream identities derive from variable IDs and typed keys through
+  the reference URI helper, preventing collisions with literal variable labels.
+  Earlier observations retain their original references.
+- Artifact cleanup rechecks ownership under the writer lock, preserving files
+  attached by another experiment after deletion commits. File registration and
+  its observation now commit together.
 - CURIEs such as `watr:UltrafiltrationUnit` or `quantitykind:Pressure` given as
   a class, relation or attribute value are expanded with the server's prefix
   table, in `client.resolve()` as well. They were sent to text matching

@@ -93,6 +93,23 @@ class TestBuildSurfaces:
 
 
 class TestExtractConcepts:
+    def test_currency_code_is_an_exact_unit_spelling(self):
+        from rdflib import Graph
+
+        graph = Graph().parse(data='''
+            @prefix qudt: <http://qudt.org/schema/qudt/> .
+            @prefix unit: <http://qudt.org/vocab/unit/> .
+            @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+            unit:CCY_USD a qudt:Unit ; rdfs:label "US Dollar" ;
+                qudt:currencyCode "USD" ; qudt:symbol "$" .
+        ''', format="turtle")
+        rdf_type = "http://qudt.org/schema/qudt/Unit"
+        rows = graph.query(QUDTStore.concept_query(rdf_type))
+        values = [tuple(None if cell is None else str(cell) for cell in row) for row in rows]
+        concept = QUDTStore.extract_concepts(values, rdf_type)[0]
+        assert "USD" in concept["exact_surfaces"]
+        assert "USD" not in concept["surfaces"]
+
     def _graph(self):
         from rdflib import Graph
 

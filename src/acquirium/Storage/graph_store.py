@@ -30,7 +30,7 @@ from acquirium._ontologies import (
     rename_ontology_iri,
 )
 from acquirium.Server.config import OntologySource
-from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI, SOURCE_GRAPH_PREFIX
+from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI, METADATA_SOURCE_ID, SOURCE_GRAPH_PREFIX
 from acquirium.Storage.graph_registry import source_graph_uri as _compute_source_graph_uri
 
 _logger = logging.getLogger("acquirium.graph_store")
@@ -81,6 +81,31 @@ def _graph_affects_closure(graph: Graph) -> bool:
     """Return True if *graph* can change owl:imports-driven closure."""
     return any(graph.triples((None, OWL.imports, None))) or any(
         graph.triples((None, RDF.type, OWL.Ontology))
+    )
+
+
+def _closure_triples(graph: Graph) -> frozenset:
+    """The triples of *graph* that drive the import closure."""
+    return frozenset(graph.triples((None, OWL.imports, None))) | frozenset(
+        graph.triples((None, RDF.type, OWL.Ontology))
+    )
+
+
+def prune_orphan_metadata(dataset: Dataset, metadata_graph_uri: URIRef) -> None:
+    """Drop metadata about nodes no other graph mentions any more.
+
+    A metadata triple stays while its subject appears (as subject or
+    object) in some graph other than the metadata graph. Only the subject
+    is checked: a URI value is a value, and may point anywhere, inside the
+    graph or not. Run after a write that removed triples from a source
+    graph, so metadata never outlives the node it describes.
+    """
+    m = f"<{metadata_graph_uri}>"
+    dataset.update(
+        f"DELETE {{ GRAPH {m} {{ ?s ?p ?o }} }}\n"
+        f"WHERE {{\n  GRAPH {m} {{ ?s ?p ?o }}\n"
+        f"  FILTER NOT EXISTS {{ GRAPH ?g {{ {{ ?s ?a ?b }} UNION {{ ?c ?d ?s }} }} FILTER(?g != {m}) }}\n"
+        f"}}"
     )
 
 
@@ -880,9 +905,64 @@ class OxigraphGraphStore:
     def sparql_update(self, update: str, *, graph_uri: URIRef | None = None) -> dict:
         _logger.debug("sparql_update: %s", update.replace("\n", " ")[:200])
         with self._lock, timed_debug(_logger, "sparql_update"):
-            self._registered_data_graph(graph_uri).update(update)
-            self._finalize_source_write(affects_closure=True)
+            target = self._registered_data_graph(graph_uri)
+            # Update text does not say what it touches; compare the triples
+            # that drive the closure instead, so an instance-data update does
+            # not force the ontology closure to be recomputed.
+            before = _closure_triples(target)
+            target.update(update)
+            affects_closure = _closure_triples(target) != before
+            self._prune_orphan_metadata()
+            self._finalize_source_write(affects_closure=affects_closure)
         return {"message": "update applied", "changed": True}
+
+    def metadata_documents(self, subjects):
+        """Read authoritative documents from source quads, without inference."""
+        from acquirium.Metadata import scan_documents
+        with self._lock:
+            return scan_documents(self.source_dataset.store._inner, subjects)
+
+    def metadata_triples(self, subjects, *, graph_uri):
+        """Read asserted declaration semantics without waiting for inference."""
+        from acquirium.Metadata import scan_subject_triples
+        with self._lock:
+            return scan_subject_triples(self.source_dataset.store._inner, subjects, graph_uri)
+
+    def flush_metadata(self):
+        """Persist source writes before the recording ledger acknowledges them."""
+        with self._lock:
+            self.source_dataset.store._inner.flush()
+
+    def clear_graphs(self, graph_uris: Iterable[URIRef | str] = (), *, prefix: str | None = None) -> int:
+        """Empty data graphs in one write: the given ones and, with ``prefix``,
+        every registered data graph whose URI starts with it. Returns how many
+        graphs held triples."""
+        with self._lock:
+            targets = {URIRef(uri) for uri in graph_uris}
+            if prefix is not None:
+                targets.update(
+                    context.identifier for context in self.source_dataset.graphs()
+                    if str(context.identifier).startswith(prefix)
+                )
+            cleared, affects_closure = 0, False
+            for uri in targets:
+                target = self._registered_data_graph(uri)
+                if not len(target):
+                    continue
+                affects_closure = affects_closure or bool(_closure_triples(target))
+                target.remove((None, None, None))
+                cleared += 1
+            if cleared:
+                self._prune_orphan_metadata()
+                self._finalize_source_write(affects_closure=affects_closure)
+        return cleared
+
+    def _prune_orphan_metadata(self) -> None:
+        """Cascade: metadata lives as long as the node it describes."""
+        try:
+            prune_orphan_metadata(self.source_dataset, self.source_graph_uri(METADATA_SOURCE_ID))
+        except Exception:
+            _logger.warning("metadata pruning failed", exc_info=True)
 
     def validate(self) -> dict[str, str | bool]:
         """Validate the full data union against the ontology shape closure.
@@ -952,6 +1032,8 @@ class OxigraphGraphStore:
                 self._apply_graph_write(
                     incoming, target=target, replace=replace,
                 )
+                if replace:
+                    self._prune_orphan_metadata()
                 self._finalize_source_write(affects_closure=affects_closure)
         return {
             "replaced": replace,
@@ -967,11 +1049,14 @@ class OxigraphGraphStore:
         return _compute_source_graph_uri(source_id, plant_graph_uri=str(self.main_graph_uri))
 
     def _source_data_graph(self) -> Graph:
-        """Materialize the union of registered deployment data graphs only."""
+        """Materialize deployment data with explicit user metadata overrides."""
+        from acquirium.Metadata import overlay_documents
+
         merged = Graph()
         for context in self.source_dataset.graphs():
             if self._is_registered_data_graph_uri(context.identifier):
                 merged += context
+        overlay_documents(merged, self.source_dataset.graph(self.source_graph_uri(METADATA_SOURCE_ID)))
         return merged
 
     @staticmethod

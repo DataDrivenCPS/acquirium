@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timezone
+from requests import HTTPError
 
 from acquirium.Client.client import AcquiriumClient
 
@@ -39,6 +40,51 @@ class TestClientInit:
     def test_custom_port(self):
         c = AcquiriumClient(server_url="myhost", server_port=9999)
         assert c.base_url == "http://myhost:9999"
+
+
+class TestExperimentTransport:
+    def test_observations_and_finish_reuse_client_session(self, client, http):
+        http.post.return_value = _get_resp({"ok": True})
+        with patch("requests.post", side_effect=AssertionError("use the client session")):
+            assert client.observe_experiment("run", "urn:acquirium#variable", value=12.5) == {"ok": True}
+            assert client.finish_experiment("run") == {"ok": True}
+        assert http.post.call_count == 2
+        first, second = http.post.call_args_list
+        assert first.args == ("http://localhost:8000/experiments/runs/run/variables/urn%3Aacquirium%23variable/observations",)
+        assert first.kwargs == {"json": {"value": 12.5}}
+        assert second.args == ("http://localhost:8000/experiments/runs/run/finish",)
+        assert second.kwargs == {"json": {"error": None}}
+
+    @pytest.mark.parametrize("media_type", [None, "application/json"])
+    def test_file_upload_uses_session_and_preserves_bytes(self, client, http, tmp_path, media_type):
+        source = tmp_path / "input.json"
+        source.write_bytes(b'{"power": 42}')
+        import base64
+        from hashlib import sha256
+        http.post.return_value = _get_resp([{"sequence": 1}])
+        with patch("requests.post", side_effect=AssertionError("use the client session")):
+            assert client.attach_experiment_file("run", "urn:acquirium#variable", source, media_type) == {
+                "digest": sha256(source.read_bytes()).hexdigest(), "filename": source.name, "byte_length": 13}
+        http.post.assert_called_once_with(
+            "http://localhost:8000/experiments/runs/run/record",
+            json=[{"form": "artifact", "variable_id": "urn:acquirium#variable", "artifact": {
+                "filename": source.name, "media_type": media_type,
+                "data": base64.b64encode(source.read_bytes()).decode("ascii")}}],
+        )
+
+    @pytest.mark.parametrize("upload", [False, True])
+    def test_session_errors_keep_server_details(self, client, http, tmp_path, upload):
+        response = _get_resp({"detail": "variable belongs to a different study"})
+        response.raise_for_status.side_effect = HTTPError("400 Bad Request")
+        http.post.return_value = response
+        source = tmp_path / "input.txt"
+        source.write_text("input")
+        with patch("requests.post", side_effect=AssertionError("use the client session")):
+            with pytest.raises(HTTPError, match="variable belongs to a different study"):
+                if upload:
+                    client.attach_experiment_file("run", "foreign", source)
+                else:
+                    client.observe_experiment("run", "foreign", value=42)
 
 
 class TestInsertGraph:

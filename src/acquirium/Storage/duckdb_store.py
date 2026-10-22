@@ -51,6 +51,8 @@ from acquirium.internals.models import (
     TimeseriesInfo,
     compute_ref_uri,
 )
+from acquirium.Storage.migrations import DUCKDB_TIMESERIES_MIGRATIONS, migrate
+from acquirium.Storage.publication.revision import RevisionPublisher
 from acquirium.Storage.values import (
     normalize_value_kind,
     normalize_value_mode,
@@ -106,9 +108,18 @@ class DuckDBStore:
             with self._lock, self._own_conn() as conn:
                 conn.execute(f"DROP VIEW IF EXISTS {TIMESERIES_STREAMS_VIEW}")
                 for tbl in (
+                    "experiment_metadata_outbox",
+                    "experiment_metadata_state",
+                    "experiment_observations",
+                    "experiment_artifacts",
+                    "experiment_runs",
+                    "experiment_variables",
+                    "experiment_templates",
+                    "experiment_metadata_resolutions",
                     "materialization_work",
                     "materialization_lineage",
                     "materialization_deployments",
+                    "schema_migrations",
                     "stream_resets",
                     BINDING_PROGRESS_TABLE,
                     SYSTEM_STATE_TABLE,
@@ -205,6 +216,8 @@ class DuckDBStore:
                 UNIQUE (ref_id, ts)
             )
             """,
+        ]
+        dependent_stmts = [
             f"""
             CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
                 ref_uri   VARCHAR PRIMARY KEY,
@@ -255,6 +268,11 @@ class DuckDBStore:
         with self._lock, timed_debug(logger, "ensure_table"), self._own_conn() as conn:
             for stmt in stmts:
                 conn.execute(stmt)
+            with self._write_conn() as migration_conn:
+                migrate(migration_conn, backend="duckdb", component="timeseries",
+                        migrations=DUCKDB_TIMESERIES_MIGRATIONS)
+            for stmt in dependent_stmts:
+                conn.execute(stmt)
         return "ok"
 
     # ---- timeseries mutations ----
@@ -300,18 +318,8 @@ class DuckDBStore:
     def _replace_frame(self, ref_uri: str, frame: pl.DataFrame) -> int:
         """Physically replace a stream and record its latest reset atomically."""
         with self._lock, self._write_conn() as conn:
-            revision = self._next_revision(conn)
-            conn.execute(
-                f"""DELETE FROM {TIMESERIES_TABLE}
-                WHERE ref_id = (SELECT ref_id FROM {REF_IDS_TABLE} WHERE ref_uri = ?)""",
-                [ref_uri],
-            )
+            revision = RevisionPublisher(self).reset(conn, [ref_uri])
             self._insert_frame(conn, frame, revision)
-            conn.execute(
-                "INSERT INTO stream_resets (ref_uri, last_revision) VALUES (?, ?) "
-                "ON CONFLICT (ref_uri) DO UPDATE SET last_revision=EXCLUDED.last_revision",
-                [ref_uri, revision],
-            )
         return frame.height
 
     def bulk_insert_polars(self, df: pl.DataFrame) -> int:
@@ -397,40 +405,15 @@ class DuckDBStore:
         value_kind: str = "text",
     ) -> str:
         """Register a stream reference and return its canonical ref URI."""
-        if ref_uri is None:
-            ref_uri = compute_ref_uri(source_id, ref_name)
-        ref_uri_str = str(ref_uri)
-        value_kind = normalize_value_kind(value_kind)
-        # logger.debug(
-        #     "ensure_stream_ref source=%s ref_name=%s point_uri=%s kind=%s",
-        #     source_id, ref_name, point_uri, value_kind,
-        # )
+        return self.ensure_stream_refs([(point_uri, source_id, ref_name, ref_uri, value_kind)])[0]
+
+    def ensure_stream_refs(self, refs) -> list[str]:
+        """Register a batch using its own transaction."""
         with self._lock, self._write_conn() as conn:
-            conn.execute(
-                f"""
-                INSERT INTO {STREAMS_TABLE} (ref_uri, point_uri, source_id, ref_name, value_kind)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT (ref_uri) DO UPDATE SET
-                    source_id = excluded.source_id,
-                    ref_name  = excluded.ref_name,
-                    point_uri = COALESCE(excluded.point_uri, {STREAMS_TABLE}.point_uri),
-                    value_kind = excluded.value_kind
-                """,
-                [ref_uri_str, point_uri, source_id, ref_name, value_kind],
-            )
-        return ref_uri_str
+            return self._ensure_stream_refs(conn, refs)
 
-    def ensure_stream_refs(
-        self,
-        refs: Iterable[tuple[str | None, str, str, str | None, str]],
-    ) -> list[str]:
-        """Batch form of :meth:`ensure_stream_ref`: one statement for the lot.
-
-        Each entry is ``(point_uri, source_id, ref_name, ref_uri, value_kind)``.
-        Upserting from a registered frame rather than one statement per row is
-        what makes this worth having: 1000 refs take ~16ms this way versus ~3.6s
-        row-by-row.
-        """
+    def _ensure_stream_refs(self, conn, refs) -> list[str]:
+        """Register references in the caller's transaction; never commit it."""
         prepared: dict[str, list[Any]] = {}
         for point_uri, source_id, ref_name, ref_uri, value_kind in refs:
             key = str(ref_uri if ref_uri is not None else compute_ref_uri(source_id, ref_name))
@@ -445,23 +428,22 @@ class DuckDBStore:
             schema=["ref_uri", "point_uri", "source_id", "ref_name", "value_kind"],
             orient="row",
         )
-        with self._lock, timed_debug(logger, "ensure_stream_refs rows=%d", len(df)), self._write_conn() as conn:
-            conn.register("_acquirium_incoming_refs", df)
-            try:
-                conn.execute(
-                    f"""
-                    INSERT INTO {STREAMS_TABLE} (ref_uri, point_uri, source_id, ref_name, value_kind)
-                    SELECT ref_uri, point_uri, source_id, ref_name, value_kind
-                    FROM _acquirium_incoming_refs
-                    ON CONFLICT (ref_uri) DO UPDATE SET
-                        source_id  = excluded.source_id,
-                        ref_name   = excluded.ref_name,
-                        point_uri  = COALESCE(excluded.point_uri, {STREAMS_TABLE}.point_uri),
-                        value_kind = excluded.value_kind
-                    """
-                )
-            finally:
-                conn.unregister("_acquirium_incoming_refs")
+        conn.register("_acquirium_incoming_refs", df)
+        try:
+            conn.execute(
+                f"""
+                INSERT INTO {STREAMS_TABLE} (ref_uri, point_uri, source_id, ref_name, value_kind)
+                SELECT ref_uri, point_uri, source_id, ref_name, value_kind
+                FROM _acquirium_incoming_refs
+                ON CONFLICT (ref_uri) DO UPDATE SET
+                    source_id  = excluded.source_id,
+                    ref_name   = excluded.ref_name,
+                    point_uri  = COALESCE(excluded.point_uri, {STREAMS_TABLE}.point_uri),
+                    value_kind = excluded.value_kind
+                """
+            )
+        finally:
+            conn.unregister("_acquirium_incoming_refs")
         return list(prepared.keys())
 
     def resolve_storage_key(self, point_uri: str) -> str:

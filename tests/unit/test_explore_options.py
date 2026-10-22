@@ -23,7 +23,7 @@ def make_client(pattern_rows, lookup_rows):
     """Pattern query -> [v0, v1, ext1, ...]; lookup -> [v, opt]."""
     client = MagicMock()
 
-    def respond(sparql, include_dependencies=True):
+    def respond(sparql, include_dependencies=True, wait_for_fresh=False):
         if sparql.startswith("SELECT ?v ?opt"):
             return {"columns": ["v", "opt"], "rows": lookup_rows}
         return {"columns": ["v0", "v1", "ext1", "unit1", "extunit1"],
@@ -124,8 +124,7 @@ class TestOptionsErrors:
     def test_role_mismatch(self):
         with pytest.raises(ValueError, match="does not apply to data"):
             base(make_client([], [])).options("process")
-        with pytest.raises(ValueError, match="does not apply to entity"):
-            base(make_client([], [])).options("quantity_kind", of="ro")
+        base(make_client([], [])).options("quantity_kind", of="ro")   # entity nodes are not gated
 
 
 def test_metadata_types_sparse_column_from_all_rows():

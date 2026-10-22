@@ -11,7 +11,7 @@ import sys
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any, Iterator, Optional
+from typing import Annotated, Any, Iterator, Optional, Literal
 
 # When the server is launched via `uv run`, Ray's uv hook would give every
 # worker a fresh env resolved from pyproject.toml — dropping optional extras
@@ -21,6 +21,7 @@ os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
 import ray
 import pyoxigraph as ox
 
+from urllib.parse import quote, unquote
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse, Response
 from dateutil import parser as dtparser
@@ -53,17 +54,326 @@ from acquirium.Drivers.supervisor import DriverSupervisor
 log = logging.getLogger("acquirium.api")
 
 
+def _cell_datatype(cell: dict[str, Any] | None) -> str | None:
+    """``"iri"`` for a node, the XSD IRI of a typed literal, else ``None``."""
+    if not cell:
+        return None
+    if cell.get("type") == "uri":
+        return "iri"
+    return cell.get("datatype")
+class ExperimentTemplateRequest(BaseModel):
+    """Transport names retain template/run wording; the Python API says Study."""
+    name: str
+class ExperimentVariableRequest(BaseModel):
+    label: str
+    role: str
+    kind: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+class ExperimentStartRequest(BaseModel):
+    metadata: dict[str, Any] = Field(default_factory=dict)
+class ExperimentObservationRequest(BaseModel):
+    value: Any = None
+    occurred_at: datetime | None = None
+    ref_uri: str | None = None
+    start: datetime | None = None
+    end: datetime | None = None
+    key: list[Any] | None = None
+class ExperimentArtifactRequest(BaseModel):
+    filename: str
+    media_type: str | None = None
+    data: str  # base64 bytes; lets table snapshots use the observation batch
+class ExperimentBatchObservationRequest(ExperimentObservationRequest):
+    variable_id: str
+    artifact: ExperimentArtifactRequest | None = None
+    artifact_digest: str | None = None
+class ExperimentRecordingEntry(BaseModel):
+    model_config = {"extra": "forbid"}
+    variable_id: str
+    key: list[Any] | None = None
+
+class ExperimentValueEntry(ExperimentRecordingEntry):
+    form: Literal["value"]
+    value: Any
+    occurred_at: datetime | None = None
+
+class ExperimentArtifactEntry(ExperimentRecordingEntry):
+    form: Literal["artifact"]
+    artifact: ExperimentArtifactRequest
+
+class ExperimentArtifactReferenceEntry(ExperimentRecordingEntry):
+    form: Literal["artifact_reference"]
+    artifact_digest: str
+
+class ExperimentSampleEntry(ExperimentRecordingEntry):
+    form: Literal["samples"]
+    samples: list[tuple[datetime, Any]]
+
+class ExperimentReferenceEntry(ExperimentRecordingEntry):
+    form: Literal["reference"]
+    ref_uri: str
+    interval: tuple[datetime, datetime] | None = None
+
+ExperimentRecordEntry = Annotated[
+    ExperimentValueEntry | ExperimentArtifactEntry | ExperimentArtifactReferenceEntry | ExperimentSampleEntry | ExperimentReferenceEntry,
+    Field(discriminator="form"),
+]
+
+class ExperimentFinishRequest(BaseModel):
+    error: Any = None
+class ExperimentStreamAnnotationRequest(BaseModel):
+    ref_uri: str
+    start: datetime
+    end: datetime | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+class ExperimentStreamAnnotationCloseRequest(BaseModel):
+    end: datetime
+class ExperimentSelectionRequest(BaseModel):
+    run_ids: list[str]
+    status: str | None = None
+    started_after: datetime | None = None
+    started_before: datetime | None = None
+    metadata: str | None = None
+class ExperimentObservationSelectionRequest(ExperimentSelectionRequest):
+    run_id: str | None = None
+    variable_id: str | None = None
+    kind: str | None = None
+class ExperimentDeleteRequest(BaseModel):
+    run_ids: list[str]
+class ExperimentClearRequest(BaseModel):
+    confirm: bool = False
+class ExperimentUsageRequest(BaseModel):
+    template_id: str | None = None
+    run_ids: list[str] | None = None
+
+def define_experiment(request: ExperimentTemplateRequest):
+    try: return app.state.manager.experiments.define(request.name)
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def sync_experiment_metadata():
+    try: return app.state.manager.experiments.sync_metadata_graph()
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def declare_experiment_variable(template_id: str, request: ExperimentVariableRequest):
+    try: return app.state.manager.experiments.declare(template_id, request.label, request.role, request.kind, request.metadata)
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def declare_experiment_variables(template_id: str, request: list[ExperimentVariableRequest]):
+    try: return app.state.manager.experiments.declare_batch(template_id, [item.model_dump() for item in request])
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def list_experiment_studies(name: str | None = None):
+    return app.state.manager.experiments.studies(name=name)
+
+def get_experiment_study(identifier: str):
+    try: return app.state.manager.experiments.study(identifier)
+    except KeyError: raise HTTPException(status_code=404, detail="unknown study")
+
+def list_experiment_variables(template_id: str):
+    try:
+        ledger = app.state.manager.experiments
+        return ledger.variables(template_id)
+    except KeyError: raise HTTPException(status_code=404, detail="unknown study")
+
+def _experiment_metadata_filter(value: str | None) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as error:
+        raise HTTPException(status_code=400, detail="metadata must be a JSON object") from error
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=400, detail="metadata must be a JSON object")
+    return parsed
+
+def start_experiment(template_id: str, request: ExperimentStartRequest):
+    try: return app.state.manager.experiments.start(template_id, request.metadata)
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def list_experiments(
+    template_id: str,
+    status: str | None = None,
+    started_after: datetime | None = None,
+    started_before: datetime | None = None,
+    metadata: str | None = None,
+):
+    try:
+        ledger = app.state.manager.experiments
+        items = ledger.runs(
+            template_id,
+            status=status,
+            started_after=started_after,
+            started_before=started_before,
+            metadata=_experiment_metadata_filter(metadata),
+        )
+        return items
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+def get_experiment(run_id: str):
+    try:
+        ledger = app.state.manager.experiments
+        return ledger.run(run_id)
+    except KeyError: raise HTTPException(status_code=404, detail="unknown experiment")
+
+def query_experiments(template_id: str, request: ExperimentSelectionRequest):
+    filters = request.model_dump(exclude_none=True)
+    if "metadata" in filters:
+        filters["metadata"] = _experiment_metadata_filter(filters["metadata"])
+    try:
+        ledger = app.state.manager.experiments
+        return ledger.runs(template_id, **filters)
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def query_experiment_observations(template_id: str, request: ExperimentObservationSelectionRequest):
+    filters = request.model_dump(exclude_none=True)
+    if "metadata" in filters:
+        filters["metadata"] = _experiment_metadata_filter(filters["metadata"])
+    try:
+        ledger = app.state.manager.experiments
+        return ledger.observations(template_id, **filters)
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def list_experiment_observations(
+    template_id: str,
+    run_id: str | None = None,
+    variable_id: str | None = None,
+    status: str | None = None,
+    started_after: datetime | None = None,
+    started_before: datetime | None = None,
+    metadata: str | None = None,
+    kind: str | None = None,
+):
+    try:
+        ledger = app.state.manager.experiments
+        items = ledger.observations(
+            template_id,
+            run_id=run_id,
+            variable_id=variable_id,
+            kind=kind,
+            status=status,
+            started_after=started_after,
+            started_before=started_before,
+            metadata=_experiment_metadata_filter(metadata),
+        )
+        return items
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+def observe_experiment_variable(run_id: str, variable_id: str, request: ExperimentObservationRequest):
+    try:
+        # A range accompanies a stream attachment. Scalar and log observations
+        # leave it null, so one append-only ledger covers every variable kind.
+        interval = (request.start, request.end) if request.start and request.end else None
+        return app.state.manager.experiments.observe(run_id, variable_id, value=request.value, occurred_at=request.occurred_at, ref_uri=request.ref_uri, interval=interval, key=request.key)
+    except KeyError: raise HTTPException(status_code=404, detail="unknown experiment run or variable")
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def observe_experiment_batch(run_id: str, request: list[ExperimentBatchObservationRequest]):
+    try:
+        items = []
+        for observation in request:
+            item = observation.model_dump()
+            start, end = item.pop("start"), item.pop("end")
+            if (start is None) != (end is None):
+                raise ValueError("stream ranges require both start and end")
+            item["interval"] = (start, end) if start is not None else None
+            items.append(item)
+        return app.state.manager.experiments.observe_batch(run_id, items)
+    except KeyError: raise HTTPException(status_code=404, detail="unknown experiment run or variable")
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def record_experiment_batch(run_id: str, request: list[ExperimentRecordEntry]):
+    try:
+        return app.state.manager.experiments.record_batch(run_id, [item.model_dump(exclude_unset=True) for item in request])
+    except KeyError:
+        raise HTTPException(status_code=404, detail="unknown experiment run or variable")
+    except (TypeError, ValueError) as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+def annotate_experiment_stream(run_id: str, request: ExperimentStreamAnnotationRequest):
+    try:
+        return app.state.manager.experiments.annotate_stream(
+            run_id, request.ref_uri, request.start, request.end, request.metadata)
+    except KeyError: raise HTTPException(status_code=404, detail="unknown experiment run")
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def close_experiment_stream_annotation(annotation_id: str, request: ExperimentStreamAnnotationCloseRequest):
+    try: return app.state.manager.experiments.close_stream_annotation(annotation_id, request.end)
+    except KeyError: raise HTTPException(status_code=404, detail="unknown stream annotation")
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def list_experiment_stream_annotations(
+    run_id: str | None = None, template_id: str | None = None, ref_uri: str | None = None,
+    start: datetime | None = None, end: datetime | None = None,
+):
+    try:
+        ledger = app.state.manager.experiments
+        items = ledger.stream_annotations(
+            run_id=run_id, template_id=template_id, ref_uri=ref_uri, start=start, end=end)
+        return items
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+async def attach_experiment_file(run_id: str, variable_id: str, request: Request):
+    try:
+        # The body is raw file bytes to avoid forcing script users through a
+        # multipart/form-data API for a single artifact.
+        return app.state.manager.experiments.attach_file(run_id, variable_id, unquote(request.headers.get("X-Filename", "attachment")), request.headers.get("Content-Type"), await request.body())
+    except KeyError: raise HTTPException(status_code=404, detail="unknown experiment run or variable")
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def get_experiment_artifact(digest: str):
+    try: artifact = app.state.manager.experiments.artifact(digest)
+    except (KeyError, FileNotFoundError): raise HTTPException(status_code=404, detail="unknown artifact")
+    filename = quote(artifact["filename"], safe="")
+    return Response(content=artifact["data"], media_type=artifact["media_type"] or "application/octet-stream",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"})
+
+def finish_experiment(run_id: str, request: ExperimentFinishRequest):
+    try: return app.state.manager.experiments.finish(run_id, "succeeded")
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def fail_experiment(run_id: str, request: ExperimentFinishRequest):
+    try: return app.state.manager.experiments.finish(run_id, "failed", request.error)
+    except Exception as error: raise HTTPException(status_code=400, detail=str(error))
+
+def delete_experiments(request: ExperimentDeleteRequest):
+    try: return app.state.manager.experiments.delete_runs(request.run_ids)
+    except KeyError as error: raise HTTPException(status_code=404, detail=f"unknown experiment {error.args[0]}")
+    except ValueError as error: raise HTTPException(status_code=409, detail=str(error))
+
+def delete_experiment_study(template_id: str):
+    try: return app.state.manager.experiments.delete_study(template_id)
+    except KeyError: raise HTTPException(status_code=404, detail="unknown study")
+    except ValueError as error: raise HTTPException(status_code=409, detail=str(error))
+
+def clear_experiments(request: ExperimentClearRequest):
+    # The flag is checked here too, so no client can clear by omission.
+    if not request.confirm:
+        raise HTTPException(status_code=400, detail="clearing experiments requires confirm=true")
+    try: return app.state.manager.experiments.clear()
+    except ValueError as error: raise HTTPException(status_code=409, detail=str(error))
+
+def experiment_usage(request: ExperimentUsageRequest):
+    try: return app.state.manager.experiments.usage(template_id=request.template_id, run_ids=request.run_ids)
+    except KeyError: raise HTTPException(status_code=404, detail="unknown study")
+
+
 def _sparql_results_to_rows(serialized: bytes) -> dict[str, Any]:
-    """Preserve Acquirium's SPARQL response contract without RDFLib terms."""
+    """Preserve Acquirium's SPARQL response contract without RDFLib terms.
+
+    ``rows`` holds every cell as text, as it always has. ``datatypes`` is a
+    matrix of the same shape saying what each cell is: ``"iri"`` for a node,
+    the XSD datatype IRI of a typed literal, ``None`` for a plain string or
+    an unbound cell. The client parses typed values back from it.
+    """
     payload = json.loads(serialized)
     if "boolean" in payload:
         return {"columns": [], "rows": [[bool(payload["boolean"])]]}
     columns = payload["head"].get("vars", [])
-    rows = [
-        [binding.get(column, {}).get("value") for column in columns]
-        for binding in payload["results"].get("bindings", [])
-    ]
-    return {"columns": columns, "rows": rows}
+    bindings = payload["results"].get("bindings", [])
+    rows = [[binding.get(column, {}).get("value") for column in columns] for binding in bindings]
+    datatypes = [[_cell_datatype(binding.get(column)) for column in columns] for binding in bindings]
+    return {"columns": columns, "rows": rows, "datatypes": datatypes}
 
 
 _SPARQL_RESULT_FORMATS = {
@@ -406,6 +716,36 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Acquirium API", version="0.1", lifespan=lifespan)
 
+# The client facade owns the pleasant Study/Experiment vocabulary. These
+# stable endpoint names stay deliberately storage-oriented and small.
+app.post("/experiments/templates")(define_experiment)
+app.post("/experiments/metadata/sync")(sync_experiment_metadata)
+app.get("/experiments/templates")(list_experiment_studies)
+app.get("/experiments/templates/lookup")(get_experiment_study)
+app.post("/experiments/templates/{template_id}/variables")(declare_experiment_variable)
+app.post("/experiments/templates/{template_id}/variables/batch")(declare_experiment_variables)
+app.get("/experiments/templates/{template_id}/variables")(list_experiment_variables)
+app.post("/experiments/templates/{template_id}/runs")(start_experiment)
+app.get("/experiments/templates/{template_id}/runs")(list_experiments)
+app.post("/experiments/templates/{template_id}/runs/query")(query_experiments)
+app.get("/experiments/templates/{template_id}/observations")(list_experiment_observations)
+app.post("/experiments/templates/{template_id}/observations/query")(query_experiment_observations)
+app.get("/experiments/runs/{run_id}")(get_experiment)
+app.post("/experiments/runs/{run_id}/variables/{variable_id}/observations")(observe_experiment_variable)
+app.post("/experiments/runs/{run_id}/observations/batch")(observe_experiment_batch)
+app.post("/experiments/runs/{run_id}/record")(record_experiment_batch)
+app.post("/experiments/runs/{run_id}/stream-annotations")(annotate_experiment_stream)
+app.get("/experiments/stream-annotations")(list_experiment_stream_annotations)
+app.post("/experiments/stream-annotations/{annotation_id}/close")(close_experiment_stream_annotation)
+app.post("/experiments/runs/{run_id}/variables/{variable_id}/file")(attach_experiment_file)
+app.get("/experiments/artifacts/{digest}")(get_experiment_artifact)
+app.post("/experiments/runs/{run_id}/finish")(finish_experiment)
+app.post("/experiments/runs/{run_id}/fail")(fail_experiment)
+app.post("/experiments/runs/delete")(delete_experiments)
+app.post("/experiments/templates/{template_id}/delete")(delete_experiment_study)
+app.post("/experiments/clear")(clear_experiments)
+app.post("/experiments/usage")(experiment_usage)
+
 
 @app.middleware("http")
 async def _debug_log_requests(request: Request, call_next):
@@ -645,6 +985,18 @@ def list_drivers() -> dict[str, Any]:
 
 
 ##### TIMESERIES INGESTION API ENDPOINTS ####
+
+
+@app.post("/metadata/documents")
+def metadata_documents(subjects: Annotated[list[str], Body()]) -> dict[str, str]:
+    """Read complete typed source metadata, independently of inference."""
+    from acquirium.Metadata import dumps
+
+    manager = app.state.manager
+    try:
+        return {uri: dumps(value) for uri, value in manager.experiments.metadata.documents(subjects).items()}
+    except (TypeError, ValueError, RuntimeError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @app.post("/register_datasource")
