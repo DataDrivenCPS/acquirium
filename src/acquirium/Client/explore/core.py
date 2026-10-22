@@ -1,6 +1,6 @@
 """Core immutable query builder for the explore layer.
 
-``Query`` is the clean replacement for the legacy builder (now ``Q``): short verbs
+``Query`` is the query builder: short verbs
 (``entity`` / ``related`` / ``measurement`` / ``where`` / ``include`` /
 ``alias`` / ``drop`` / ``refocus``) build an immutable :class:`QueryGraph`, and terminals
 (``metadata`` / ``data`` / ``dataframe`` / ``execute`` / ``to_sparql``) run
@@ -19,7 +19,7 @@ be kept side by side::
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 import polars as pl
@@ -46,6 +46,10 @@ def _is_uri(text: Any) -> bool:
     return isinstance(text, str) and (
         text.startswith("urn:") or text.startswith("http://") or text.startswith("https://")
     )
+
+
+def _iso(v: "datetime | str | None") -> "str | None":
+    return v.isoformat() if isinstance(v, datetime) else v
 
 
 @dataclass(frozen=True)
@@ -467,7 +471,7 @@ class Query:
 
         if frm is None and not g.nodes:
             # Root form: every measurement point in the plant, no entity
-            # anchor (the legacy find_all_data). A standalone data node —
+            # anchor (what ``Acquirium.find_all_data()`` builds). A standalone data node —
             # still bounded by the external-reference requirement.
             new_id = self._next_id()
             if alias is not None:
@@ -1035,6 +1039,91 @@ class Query:
                 for nid, info in g.data_nodes.items()
             ],
         }
+
+    # ---------- logbook ----------
+
+    def _log_targets(self, alias: Optional[str], *, verb: str) -> List[str]:
+        """URIs a logbook call addresses: the current node's matches, one
+        alias's matches, or every node's with ``alias="*"``."""
+        g = self.query_graph
+        if alias == "*":
+            return self.resolved_nodes()
+        if alias is None:
+            if g.current_pointer is None:
+                raise ValueError(
+                    f"{verb}: the query has no nodes; pass alias= or use "
+                    "Acquirium.insert_log()/read_logs() for plant-level notes"
+                )
+            alias = g.aliases_reverse.get(g.current_pointer, str(g.current_pointer))
+        if g.resolve_alias(alias) is None:
+            raise KeyError(f"{verb}: alias {alias!r} not in query; available: {sorted(g.aliases)}")
+        return self.resolved_nodes(alias=alias)
+
+    def insert_log(
+        self,
+        message: str,
+        *,
+        alias: Optional[str] = None,
+        observation_start: "datetime | str | None" = None,
+        observation_end: "datetime | str | None" = None,
+    ) -> List[str]:
+        """Write a logbook note on every entity the query matches.
+
+        The note goes to the current node's matches, to ``alias``'s, or to
+        every node's with ``alias="*"``. Returns the URIs written to; a
+        query that matches nothing raises ``ValueError`` rather than
+        logging to no one.
+        """
+        uris = self._log_targets(alias, verb="insert_log")
+        if not uris:
+            raise ValueError("insert_log: the query matches no entities")
+        now = datetime.now(timezone.utc).isoformat()
+        for uri in uris:
+            self.client.insert_log(
+                point_uri=uri,
+                log_message=message,
+                log_time=now,
+                observation_start=_iso(observation_start),
+                observation_end=_iso(observation_end),
+            )
+        return uris
+
+    def read_logs(
+        self,
+        *,
+        alias: Optional[str] = None,
+        log_time_start: "datetime | str | None" = None,
+        log_time_end: "datetime | str | None" = None,
+        observation_start: "datetime | str | None" = None,
+        observation_end: "datetime | str | None" = None,
+    ) -> pl.DataFrame:
+        """Read the logbook notes of every entity the query matches.
+
+        Same targeting as :meth:`insert_log`. Returns a frame with
+        ``point_uri``, ``message``, ``log_time``, ``observation_start`` and
+        ``observation_end``, oldest first.
+        """
+        schema = {
+            "point_uri": pl.Utf8,
+            "message": pl.Utf8,
+            "log_time": pl.Datetime(time_zone="UTC"),
+            "observation_start": pl.Datetime(time_zone="UTC"),
+            "observation_end": pl.Datetime(time_zone="UTC"),
+        }
+        rows: list[dict] = []
+        for uri in self._log_targets(alias, verb="read_logs"):
+            for entry in self.client.query_logs(
+                point_uri=uri,
+                log_time_start=_iso(log_time_start),
+                log_time_end=_iso(log_time_end),
+                observation_start=_iso(observation_start),
+                observation_end=_iso(observation_end),
+            ):
+                rows.append(entry.to_dict())
+        if not rows:
+            return pl.DataFrame(schema=schema)
+        return (pl.concat([pl.DataFrame(r, schema=schema) for r in rows], how="vertical")
+                .select(list(schema)).sort("log_time"))
 
     def resolved_nodes(
         self,

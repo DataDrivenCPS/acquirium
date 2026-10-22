@@ -1,14 +1,12 @@
 """Pure SPARQL compiler for the explore query layer.
 
 ``compile_sparql(graph)`` turns a :class:`QueryGraph` into a SELECT query.
-Ported from ``Query.to_sparql`` / ``_edge_pattern`` / ``_direction_edge_pattern``
-(``Client/query.py``) as free functions with no client or builder state, so it
-can be unit-tested and reused without a running deployment. Output parity with
-the legacy builder is asserted in ``tests/unit/test_explore_compile.py``.
+Free functions with no client or builder state, so the compiler can be
+unit-tested and reused without a running deployment
+(``tests/unit/test_explore_compile.py``).
 
 Negation in data-node filters is expressed with the public
-:class:`~acquirium.Client.explore.attributes.Not` marker (the legacy builder
-used a private ``_Exclude`` wrapper with identical SPARQL output).
+:class:`~acquirium.Client.explore.attributes.Not` marker.
 """
 from __future__ import annotations
 
@@ -591,7 +589,7 @@ def compile_parts(graph: QueryGraph) -> tuple:
                 continue
 
             # Registry-attribute keys expand via the attribute definition;
-            # anything else is a raw predicate URI (legacy-shaped filters).
+            # anything else is a raw predicate URI.
             if isinstance(pred, str) and pred in REGISTRY:
                 where_clauses.extend(_attr_clauses(v, REGISTRY[pred], val))
                 continue

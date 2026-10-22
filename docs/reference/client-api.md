@@ -98,12 +98,6 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 
 See the [app reference](apps.md) for the transformation class contract.
 
-### Deprecated
-
-| method | description |
-|---|---|
-| `generate_grafana_dashboard(grafana_server, api_key)` | Build a Grafana dashboard from the plant model. |
-
 ## Query
 
 `Query` is immutable: every verb returns a new query and leaves the old one
@@ -144,6 +138,8 @@ keywords: `type`, `process`, `cp_type`, `medium`, `substance`,
 | `execute(include_dependencies=True) -> dict` | Run the compiled SPARQL and return raw `{"columns", "rows"}`. |
 | `to_sparql() -> str` | The SPARQL the query compiles to, without running it. |
 | `to_dict() -> dict` | A JSON-serializable form of the query graph. |
+| `insert_log(message, *, alias=None, observation_start=None, observation_end=None) -> list[str]` | Write a logbook note on every entity the current node matches (`alias=` for another node, `"*"` for every node); returns the URIs written to. |
+| `read_logs(*, alias=None, log_time_start=None, log_time_end=None, observation_start=None, observation_end=None) -> pl.DataFrame` | The logbook notes of the entities the current node (or `alias`) matches, oldest first. |
 
 ### Helpers
 
@@ -266,19 +262,13 @@ and are listed once above.
 | `reprocess_app(name: str, start: datetime, end: datetime) -> dict` | Schedule retained output repair. |
 | `materialization_dag() -> dict` | Return the server's raw binding-DAG payload. |
 
-### Grafana
-
-`generate_grafana_dashboard(server, api_key)`, `add_gauge_panel(prop_dict)`,
-`add_time_series_panel(title, prop_dicts)`.
-
 ## Coming from the old interface
 
 Optional. Skip this unless you have queries written against the previous
 `find_*` methods.
 
-The old builder still exists as `acquirium.Q(client=acq.client)`, but it is
-deprecated and will not gain features. `acq.find_all_data()` is now a
-shorthand for `acq.query().measurement()`.
+The old builder (`acquirium.Q`, `acq.find_entity()`) has been removed.
+`acq.find_all_data()` remains as a shorthand for `acq.query().measurement()`.
 The rewrite is usually mechanical: one verb per old method, one `where()` in
 place of the `filter_by_*` family.
 
@@ -290,7 +280,9 @@ place of the `filter_by_*` family.
 | `find_related(direction=)` | `related(direction=)` |
 | `find_data(_from=, alias=, filters_dict=)` | `measurement(frm=, alias=, **attrs)` |
 | `find_all_data()` | `measurement(frm="*")`, or `measurement()` on an empty query |
+| `find_all_data(uri=)` | `measurement(uri=)` |
 | `find_related_data(...)` | `related(...).measurement(...)` |
+| `relate_to(other, _from=, hops=)` | `related(cls, frm=, max_depth=)` |
 | `filter_by_unit(v)` | `where(unit=v)` |
 | `filter_by_medium(v)` | `where(medium=v)` |
 | `filter_by_substance(v)` | `where(substance=v)` |
@@ -303,7 +295,9 @@ place of the `filter_by_*` family.
 Keyword names changed with them: `_class` is `cls`, `_from` is `frm`, `hops`
 is `max_depth`, and `predicates` is `via`.
 `metadata()`, `data()`, `dataframe()`, `execute()`, `to_sparql()`,
-`insert_log()` and `read_logs()` kept their names and behave the same.
+`insert_log()` and `read_logs()` kept their names and behave the same, except
+that `read_logs()` and `insert_log()` raise `KeyError` for an alias the query
+does not have instead of falling back to the plant.
 
 Two behavior differences matter when porting.
 

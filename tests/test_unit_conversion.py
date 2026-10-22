@@ -193,20 +193,10 @@ class TestDataObjectUnits:
     def test_convert_to_case2(self, acquirium_client):
         """Case 2: property has unit, user provides only to_unit."""
         acq = acquirium_client
-        query = acq.find_all_data()
-        data = query.data()
+        data = acq.query().measurement(alias="flow", unit="http://qudt.org/vocab/unit/MilliL-PER-MIN").data()
+        assert data.units() == {"flow": ["http://qudt.org/vocab/unit/MilliL-PER-MIN"]}
 
-        units = data.units()
-        # Find an alias that has a unit
-        alias_with_unit = None
-        for alias, unit_uris in units.items():
-            if any(u and "MilliL-PER-MIN" in u for u in unit_uris):
-                alias_with_unit = alias
-                break
-
-        if alias_with_unit is None:
-            pytest.skip("No alias with MilliL-PER-MIN unit in test model")
-
+        alias_with_unit = "flow"
         original = data[alias_with_unit]
         converted = data.convert_to("L-PER-MIN", alias=alias_with_unit)
         converted_df = converted[alias_with_unit]
@@ -240,8 +230,8 @@ class TestDataObjectUnits:
         if alias_no_unit is None:
             pytest.skip("All aliases have units in test model")
 
-        # Should raise without from_unit
-        with pytest.raises(ValueError, match="No unit annotation"):
+        # Should raise without from_unit, naming the point
+        with pytest.raises(ValueError, match="No unit annotation.*temp_no_unit"):
             data.convert_to("L", alias=alias_no_unit)
 
         # Should work with from_unit
@@ -251,18 +241,8 @@ class TestDataObjectUnits:
     def test_convert_to_returns_new_object(self, acquirium_client):
         """convert_to() should return a new DataObject, not mutate the original."""
         acq = acquirium_client
-        query = acq.find_all_data()
-        data = query.data()
-        units = data.units()
-
-        alias_with_unit = None
-        for alias, unit_uris in units.items():
-            if any(u is not None for u in unit_uris):
-                alias_with_unit = alias
-                break
-
-        if alias_with_unit is None:
-            pytest.skip("No alias with unit in test model")
+        data = acq.query().measurement(alias="flow", unit="http://qudt.org/vocab/unit/MilliL-PER-MIN").data()
+        alias_with_unit = "flow"
 
         original_df = data[alias_with_unit].clone()
         converted = data.convert_to("L-PER-MIN", alias=alias_with_unit)

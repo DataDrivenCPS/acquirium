@@ -18,7 +18,6 @@ from acquirium.internals.models import (
 )
 from acquirium.internals.internals_namespaces import *
 from acquirium.Storage.values import normalize_value_kind
-from acquirium.Grafana.grafana_dashboard_creator import GrafanaDashboardCreator
 from rdflib import Graph, URIRef, Literal
 from rdflib.namespace import NamespaceManager, RDF, RDFS
 import logging
@@ -231,10 +230,6 @@ class AcquiriumClient:
         # Bare requests.get/post open a new connection per call, which paid the
         # connect cost (and the ::1 miss above) on every request.
         self._http = requests.Session()
-        self.grafana = GrafanaDashboardCreator(
-            title="Acquirium Grafana Dashboard",
-            tags=["acquirium"],
-        )
         self._namespaces_cache: dict[str, str] | None = None
 
     @property
@@ -1043,14 +1038,3 @@ class AcquiriumClient:
         response.raise_for_status()
         return response.json()
 
-
-    ### Grafana dashboard related methods
-    def add_gauge_panel(self, prop_dict: dict) -> None:
-        self.grafana.add_gauge(prop_dict)
-
-    def add_time_series_panel(self, title: str, prop_dicts: list[dict]) -> None:
-        self.grafana.add_time_series(title, prop_dicts)
-
-    def generate_grafana_dashboard(self, server: str, api_key: str) -> None:
-        self.grafana.generate_dashboard()
-        self.grafana.upload_dashboard(server, api_key)

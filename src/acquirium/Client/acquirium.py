@@ -14,8 +14,6 @@ if TYPE_CHECKING:
 
 from rdflib import URIRef
 
-import warnings
-
 from acquirium.Client.explore.core import Query
 from acquirium.Materialization.api import App
 from acquirium.Materialization.planner import Deployment
@@ -48,7 +46,6 @@ class Acquirium:
             server_url: str = "127.0.0.1",
             server_port: int = 8000,
             use_ssl: bool = False,
-            lexicon_path: Optional[Path] = None,
             insert_batch_rows: int = 50_000,
             health_timeout: float | None = 60.0,
         ):
@@ -59,13 +56,6 @@ class Acquirium:
         raises ``ConnectionError`` if it never does. Pass
         ``health_timeout=None`` (or 0) to skip the check.
         """
-        if lexicon_path is not None:
-            warnings.warn(
-                "lexicon_path is deprecated and ignored. "
-                "Text resolution now uses server-side embeddings via /resolve_text.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         self.client = AcquiriumClient(
             server_url=server_url,
             server_port=server_port,
@@ -444,9 +434,6 @@ class Acquirium:
             else:
                 graph.add_edge(source, target, ref_uris=[edge["ref_uri"]])
         return graph
-
-    def generate_grafana_dashboard(self, grafana_server, api_key):
-        return self.client.generate_grafana_dashboard(grafana_server, api_key)
 
     # ------------------------------------------------------------------
     # LOGGING API (plant-level convenience methods)

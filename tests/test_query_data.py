@@ -2,8 +2,6 @@ import pytest
 import polars as pl
 from acquirium import Acquirium
 from acquirium.internals.internals_namespaces import *
-from acquirium.internals.models import compute_ref_uri
-from acquirium.Client.query import Q
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from conftest import ACQUIRIUM_TEST_SERVER_HOST, ACQUIRIUM_TEST_SERVER_PORT, _CSV_SOURCE_ID
@@ -12,7 +10,7 @@ from conftest import ACQUIRIUM_TEST_SERVER_HOST, ACQUIRIUM_TEST_SERVER_PORT, _CS
 
 def test_find_all_data_1(acquirium_client_csv):
     acq = acquirium_client_csv
-    query = Q(client=acq.client).find_all_data()
+    query = acq.find_all_data()
 
     assert len(query.query_graph.data_nodes) == 1
     assert len(query.query_graph.nodes) == 1
@@ -39,19 +37,19 @@ def test_find_all_data_1(acquirium_client_csv):
 
 def test_find_all_data_2(acquirium_client_csv):
     acq = acquirium_client_csv
-    entity_B = Q(client=acq.client).find_entity(_class=ACQUIRIUM_NS.B, alias="b")
-    entity_BE = entity_B.find_entity(_class=ACQUIRIUM_NS.E, alias="e")
-
-    assert entity_BE is not None
-    all_data_query = entity_BE.find_all_data()
+    entity_BE = acq.query().entity(ACQUIRIUM_NS.B, alias="b").entity(ACQUIRIUM_NS.E, alias="e")
+    all_data_query = entity_BE.measurement(frm="*")
 
     assert len(all_data_query.query_graph.data_nodes) == 2
     assert len(all_data_query.query_graph.nodes) == 4
 
     meta = all_data_query.metadata()
 
-    assert len(meta) == 8
+    # two measurement nodes are UNION branches, not a cross product: each row
+    # carries either b_data or e_data
+    assert len(meta) == 12
     assert len(meta.columns) == 4
+    assert meta["b_data"].null_count() + meta["e_data"].null_count() == 12
 
     meta_full = all_data_query.metadata(include_internals=True)
     assert len(meta_full.columns) == 10
@@ -64,42 +62,36 @@ def test_find_all_data_2(acquirium_client_csv):
 #### Test Filters
 def test_data_filters(acquirium_client_csv):
     acq = acquirium_client_csv
-    query = Q(client=acq.client).find_all_data()
+    query = acq.find_all_data()
+    point = lambda n: acq.client.compact_uri(f"urn:ex/point_{n}")   # prefix is environment-dependent
 
-    filt_medium_1 = query.filter_by_medium(ACQUIRIUM_NS.Medium4)
-    meta_1 = filt_medium_1.metadata()
+    meta_1 = query.where(medium=ACQUIRIUM_NS.Medium4).metadata()
     assert len(meta_1) == 2
-    assert "ex1:point_9" in meta_1["0"].to_list()
+    assert point(9) in meta_1["data"].to_list()
 
-    filt_medium_2 = query.filter_by_medium(ACQUIRIUM_NS.Medium1)
-    meta_2 = filt_medium_2.metadata()
+    meta_2 = query.where(medium=ACQUIRIUM_NS.Medium1).metadata()
     assert len(meta_2) == 2
-    assert "ex1:point_2" in meta_2["0"].to_list()
+    assert point(2) in meta_2["data"].to_list()
 
-    filt_substance_1 = query.filter_by_substance(ACQUIRIUM_NS.Substance2)
-    meta_3 = filt_substance_1.metadata()
+    meta_3 = query.where(substance=ACQUIRIUM_NS.Substance2).metadata()
     assert len(meta_3) == 3
-    assert "ex1:point_3" in meta_3["0"].to_list()
+    assert point(3) in meta_3["data"].to_list()
 
-    filt_unit_1 = query.filter_by_unit(ACQUIRIUM_NS.Unit0)
-    meta_4 = filt_unit_1.metadata()
+    meta_4 = query.where(unit=ACQUIRIUM_NS.Unit0).metadata()
     assert len(meta_4) == 3
-    assert "ex1:point_3" in meta_4["0"].to_list()
+    assert point(3) in meta_4["data"].to_list()
 
-    filt_quantity_kind_1 = query.filter_by_quantity_kind(ACQUIRIUM_NS.QuantityKind2)
-    meta_5 = filt_quantity_kind_1.metadata()
+    meta_5 = query.where(quantity_kind=ACQUIRIUM_NS.QuantityKind2).metadata()
     assert len(meta_5) == 3
-    assert "ex1:point_8" in meta_5["0"].to_list()
+    assert point(8) in meta_5["data"].to_list()
 
-    filt_enumeration_kind_1 = query.filter_by_enumeration_kind(ACQUIRIUM_NS.EnumerationKind1)
-    meta_6 = filt_enumeration_kind_1.metadata()
+    meta_6 = query.where(enumeration_kind=ACQUIRIUM_NS.EnumerationKind1).metadata()
     assert len(meta_6) == 2
-    assert "ex1:point_10" in meta_6["0"].to_list()
+    assert point(10) in meta_6["data"].to_list()
 
-    filt_random = query.filter_data_nodes(predicate=HAS_EXTERNAL_REFERENCE, value=str(compute_ref_uri(_CSV_SOURCE_ID, "point_10")))
-    meta_7 = filt_random.metadata()
+    meta_7 = acq.find_all_data(uri="urn:ex/point_10").metadata()
     assert len(meta_7) == 1
-    assert "ex1:point_10" in meta_7["0"].to_list()
+    assert meta_7["data"].to_list() == [point(10)]
 
 
 ##### Namespace transfer + CURIE helper tests #####
@@ -161,16 +153,16 @@ def test_expand_uri_requires_bound_curie(acquirium_client_csv):
 def test_metadata_renders_compact_curie(acquirium_client_csv):
     """metadata() renders point ids as CURIEs (prefix:local), not bare local names."""
     acq = acquirium_client_csv
-    ids = Q(client=acq.client).find_all_data().metadata()["0"].to_list()
+    ids = acq.find_all_data().metadata()["data"].to_list()
 
     assert all(":" in pid for pid in ids)
     assert any(pid.endswith(":point_1") for pid in ids)
 
 
 def test_normalize_instance_uri(acquirium_client_csv):
-    """find_entity(uri=...) accepts full URIs and bound CURIEs, rejects everything else."""
+    """uri= accepts full URIs and bound CURIEs, rejects everything else."""
     acq = acquirium_client_csv
-    query = Q(client=acq.client).find_all_data()
+    query = acq.find_all_data()
 
     # Full URI string and URIRef pass through unchanged; None stays None.
     assert query._normalize_instance_uri("urn:ex/point_1") == "urn:ex/point_1"
@@ -236,10 +228,9 @@ def test_dataframe_cast_value_is_validated(acquirium_client_csv):
 
 def test_find_data_1(acquirium_client_csv):
     acq = acquirium_client_csv
-    entity_B = Q(client=acq.client).find_entity(_class=ACQUIRIUM_NS.B, alias="b")
-    entity_BE = entity_B.find_entity(_class=ACQUIRIUM_NS.E, alias="e")
+    entity_BE = acq.query().entity(ACQUIRIUM_NS.B, alias="b").entity(ACQUIRIUM_NS.E, alias="e")
 
-    entity_BE_data1 = entity_BE.find_data()
+    entity_BE_data1 = entity_BE.measurement()
 
     assert len(entity_BE_data1.query_graph.data_nodes) == 1
     assert len(entity_BE_data1.query_graph.nodes) == 3
@@ -248,7 +239,7 @@ def test_find_data_1(acquirium_client_csv):
     assert len(meta) == 4
     assert "e_data" in meta.columns
 
-    entity_BE_data2 = entity_BE.find_data(_from ="b", alias = "data_of_b")
+    entity_BE_data2 = entity_BE.measurement(frm="b", alias="data_of_b")
 
     assert len(entity_BE_data2.query_graph.data_nodes) == 1
     assert len(entity_BE_data2.query_graph.nodes) == 3
