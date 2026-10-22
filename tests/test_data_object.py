@@ -101,25 +101,6 @@ def test_dataframe_narrow(acquirium_client_csv):
     assert "point_uri" not in df_compact.columns
 
 
-# ---- iter() ----
-
-def test_iter_yields_per_point(acquirium_client_csv):
-    """iter() should yield (point_uri, DataFrame) pairs for each unique point."""
-    acq = acquirium_client_csv
-    query = acq.find_all_data()
-    data = query.data()
-
-    alias = data.aliases[0]
-    count = 0
-    for point_uri, df in data.iter(alias):
-        assert isinstance(point_uri, str)
-        assert "time" in df.columns
-        assert "value" in df.columns
-        assert not df.is_empty()
-        count += 1
-    assert count >= 1
-
-
 # ---- metadata() ----
 
 def test_metadata(acquirium_client_csv):

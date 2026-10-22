@@ -266,16 +266,15 @@ shape: (3, 3)
 └────────────────────────────────┴───────────────┴──────────────────────────────┘
 ```
 
-`iter(alias)` walks those points one at a time.
-This is useful when each point is its own series.
+To work on the points one at a time, split that frame on `point_uri`.
 
 ```python
-for point_uri, df in d.iter("m"):
+for (point_uri,), df in d["m"].partition_by("point_uri", as_dict=True).items():
     print(point_uri, df.shape)
 ```
 ```text
-urn:swro/P1-mechanical-power (5892, 2)
-urn:swro/P2-mechanical-power (5892, 2)
+urn:swro/P1-mechanical-power (5892, 3)
+urn:swro/P2-mechanical-power (5892, 3)
 ```
 
 `by(entity_alias)` groups by the entity instead of the point, and returns a

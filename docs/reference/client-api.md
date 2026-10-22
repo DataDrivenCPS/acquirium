@@ -171,7 +171,6 @@ See the [data tutorial](../tutorials/data.md).
 | `metadata(*, include_ref_uris=False) -> pl.DataFrame` | Unique `(data_alias, point_label, point_uri, entity__*)` rows. |
 | `units() -> dict[str, str \| None]` | The effective unit URI per alias. |
 | `convert_to(to_unit, *, from_unit=None, alias=None) -> DataObject` | A new object with values converted to `to_unit`; `from_unit=` for points with no unit, `alias=` to convert one alias. |
-| `iter(alias) -> Iterator[tuple[str, pl.DataFrame]]` | `(point_uri, frame)` per point of an alias. |
 | `by(entity_alias) -> Iterator[tuple[str, DataObject]]` | A sub-object per entity. |
 | `latest(alias) -> pl.DataFrame` | The newest row of an alias (fetches the window first). |
 | `is_empty() -> bool` | Whether any rows exist. |

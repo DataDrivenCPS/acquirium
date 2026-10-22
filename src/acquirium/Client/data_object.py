@@ -293,8 +293,8 @@ class DataObject:
 
     On construction only SPARQL metadata and per-series stats (row count,
     time range) are fetched.  The actual time-series data is materialized
-    on demand when ``__getitem__``, ``dataframe()``, ``iter()``, or
-    ``latest()`` are called.
+    on demand when ``__getitem__``, ``dataframe()``, or ``latest()`` are
+    called.
 
     Lightweight operations such as ``aliases``, ``metadata()``,
     ``is_empty()``, ``total_rows``, ``time_range``, and ``by()`` all work
@@ -898,19 +898,6 @@ class DataObject:
         # wide
         wide = _pivot_split_values(tall, "_label")
         return wide.sort("time", descending=True) if descending else wide
-
-    # ------------------------------------------------------------------
-    # Iteration (triggers materialization)
-    # ------------------------------------------------------------------
-
-    def iter(self, alias: str) -> Iterator[tuple[str, pl.DataFrame]]:
-        """Iterate ``(point_uri, DataFrame[time, value])`` pairs for a data alias."""
-        self._materialize()
-        subset = self._tall.filter(pl.col("data_alias") == alias)
-        for point_uri in subset["point_uri"].unique().sort().to_list():
-            point_df = subset.filter(pl.col("point_uri") == point_uri)
-            point_df = _restore_single_value_column(point_df)
-            yield point_uri, point_df.select("time", "value").sort("time")
 
     # ------------------------------------------------------------------
     # Metadata & introspection (no materialization needed)
