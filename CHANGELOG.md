@@ -11,6 +11,9 @@ change in any release.
 ## [Unreleased]
 
 ### Added
+- Shared lossless metadata documents retain arbitrary namespaced JSON, null
+  positions, nested empty containers, dates, and original semantic values.
+  Queryable attributes are written alongside their complete documents.
 - Explicit model adapters declare scalar, text, JSON, table, and time-series
   values with reader functions. `input`/`output` namespaces choose roles;
   `sample(at=..., model_time=...)` records time series and `record_values()`

@@ -83,6 +83,9 @@ class QueryGraph:
     selects: tuple = ()
     # Casts asked for with include(type=...): (node_id, attr_name, type, strict).
     casts: tuple = ()
+    # Original object selections retain document-only fields for include(all).
+    object_all: tuple = ()
+    object_excluded: tuple = ()
 
     def with_data_node(self, info: DataNodeInfo) -> "QueryGraph":
         dn = dict(self.data_nodes)
@@ -96,6 +99,8 @@ class QueryGraph:
             data_nodes=dn,
             selects=self.selects,
             casts=self.casts,
+            object_all=self.object_all,
+            object_excluded=self.object_excluded,
         )
 
     def with_node(self, node: QueryNode) -> "QueryGraph":
@@ -121,6 +126,8 @@ class QueryGraph:
             data_nodes=dict(self.data_nodes),
             selects=self.selects,
             casts=self.casts,
+            object_all=self.object_all,
+            object_excluded=self.object_excluded,
         )
 
     def with_edge(self, edge: QueryEdge, *, new_pointer: Optional[int] = None) -> "QueryGraph":
@@ -136,6 +143,8 @@ class QueryGraph:
             data_nodes=dict(self.data_nodes),
             selects=self.selects,
             casts=self.casts,
+            object_all=self.object_all,
+            object_excluded=self.object_excluded,
         )
 
     def with_select(self, node_id: int, attr_name: str, required: bool = False, *,
@@ -167,6 +176,8 @@ class QueryGraph:
             data_nodes=dict(self.data_nodes),
             selects=selects,
             casts=casts,
+            object_all=self.object_all,
+            object_excluded=self.object_excluded,
         )
 
     def resolve_alias(self, alias_or_none: Optional[str]) -> Optional[int]:

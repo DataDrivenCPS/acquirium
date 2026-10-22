@@ -250,8 +250,10 @@ Writing a key replaces it: the node's triples under that key, and under
 `key.` for a nested value, are deleted and the new leaves are inserted, in
 one SPARQL update.
 Keys not mentioned stay.
-`None`, an empty list or an empty dict removes a key; nothing empty is ever
-stored, and `include` of a removed key shows `null`.
+At the top level, `None`, an empty list or an empty dict removes an ordinary
+key. Nested nulls and empty containers remain in the saved document and are
+returned by `metadata_objects()`. An explicit `metadata` namespace preserves
+its full JSON value, including arbitrary string keys and empty containers.
 Every node named must already exist in a data graph, or the call raises
 before writing; a node is treated as a measurement when it carries an
 external reference.
@@ -286,6 +288,12 @@ from acquirium.Client.explore import (
     REGISTRY, Registry,                      # built-in attributes; built-ins plus discovered
 )
 ```
+
+The low-level `AcquiriumClient.metadata_documents(subjects)` returns complete,
+typed metadata documents keyed by full subject URI. It reads asserted source
+metadata independently of inference; `metadata_objects()` uses this internally.
+Ordinary metadata edits in the reserved metadata source take precedence over
+source-owned documents for the same key.
 
 ## Data
 

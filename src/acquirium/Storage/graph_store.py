@@ -916,6 +916,24 @@ class OxigraphGraphStore:
             self._finalize_source_write(affects_closure=affects_closure)
         return {"message": "update applied", "changed": True}
 
+    def metadata_documents(self, subjects):
+        """Read authoritative documents from source quads, without inference."""
+        from acquirium.Metadata import DOCUMENT_NS, decode_document_rows
+
+        subjects = sorted(set(map(str, subjects)))
+        rows = []
+        with self._lock:
+            for subject in subjects:
+                for quad in self.source_dataset.store._inner.quads_for_pattern(NamedNode(subject), None, None, None):
+                    if quad.predicate.value.startswith(DOCUMENT_NS):
+                        rows.append((subject, quad.predicate.value, quad.object.value, quad.graph_name.value))
+        return decode_document_rows(subjects, rows)
+
+    def flush_metadata(self):
+        """Persist source writes before the recording ledger acknowledges them."""
+        with self._lock:
+            self.source_dataset.store._inner.flush()
+
     def clear_graphs(self, graph_uris: Iterable[URIRef | str] = (), *, prefix: str | None = None) -> int:
         """Empty data graphs in one write: the given ones and, with ``prefix``,
         every registered data graph whose URI starts with it. Returns how many

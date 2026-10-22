@@ -32,6 +32,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from rdflib import Literal, URIRef
 from rdflib.namespace import RDF, RDFS
 from acquirium.internals.models import looks_like_uri
+from acquirium.Metadata import document_predicate, document_triples, projected_values
 
 from acquirium.Client.explore.attributes import (
     ATTR_NS,
@@ -86,9 +87,9 @@ def flatten(values: Mapping[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
 
     Keys are validated with :func:`~explore.attributes.check_key`; list
     indices are 0-based. A ``None``, an empty dict or an empty list at top
-    level removes the key: nothing empty is ever stored, and a later
-    ``include`` of that key shows ``null``. A nested ``None`` or empty
-    container is skipped (the key is still replaced as a whole).
+    level removes an ordinary key. Nested nulls and empty containers have
+    no scalar projection; their exact shape lives in the shared document.
+    The explicit metadata namespace allows arbitrary nested JSON keys.
     """
     leaves: Dict[str, Any] = {}
     removed: List[str] = []
@@ -110,7 +111,7 @@ def flatten(values: Mapping[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
         if value is None or (isinstance(value, (Mapping, list, tuple)) and len(value) == 0):
             removed.append(key)
             continue
-        walk(key, value)
+        walk(key, projected_values(value) if key == "metadata" else value)
     return leaves, removed
 
 
@@ -152,6 +153,10 @@ def plan_write(
     """
     w = Write(subject=URIRef(subject))
     leaves, removed = flatten(values)
+    # The ordinary patch API still removes top-level null/empty values.
+    # A namespaced metadata document is an explicit value, including empties.
+    documents = {key: value for key, value in values.items()
+                 if key == "metadata" or value is not None and value != {} and value != []}
 
     for key, value in values.items():
         attr = REGISTRY.get(key)
@@ -196,6 +201,8 @@ def plan_write(
         if path.split(".", 1)[0] in REGISTRY:
             continue
         w.triples.append((w.subject, URIRef(ATTR_NS + path), to_term(scalar)))
+    w.triples.extend(document_triples(subject, documents))
+    w.replace_forward.extend(str(document_predicate(key)) for key in values)
     return w
 
 

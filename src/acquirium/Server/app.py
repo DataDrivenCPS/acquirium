@@ -947,6 +947,19 @@ def list_drivers() -> dict[str, Any]:
 ##### TIMESERIES INGESTION API ENDPOINTS ####
 
 
+@app.post("/metadata/documents")
+def metadata_documents(subjects: Annotated[list[str], Body()]) -> dict[str, str]:
+    """Read complete typed source metadata, independently of inference."""
+    from acquirium.Metadata import dumps, read_documents
+
+    manager = app.state.manager
+    try:
+        manager.experiments.sync_metadata_graph()
+        return {uri: dumps(value) for uri, value in read_documents(manager.graph_store, subjects).items()}
+    except (TypeError, ValueError, RuntimeError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
 @app.post("/register_datasource")
 def register_datasource(req: RegisterDatasourceRequest) -> dict[str, Any]:
     """Register a named datasource in the knowledge graph.

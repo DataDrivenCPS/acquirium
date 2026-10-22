@@ -47,13 +47,29 @@ nested to any depth.
 A nested dict becomes dotted attributes, `product_info.manufacturer` and
 `product_info.year`; a list keeps its order, `tags.0` and `tags.1`, and is
 also addressable as a whole under `tags`.
-An empty list or dict, like `None`, removes the key; nothing empty is stored.
+At the top level, an empty list or dict, like `None`, removes an ordinary key.
+Nested nulls and empty containers remain in the saved document and are returned
+by `metadata_objects()`. They have no scalar attribute projection.
 Values keep their type: `metadata()` returns `year` as an `Int64` column
 and `last_cleaned` as a `Date` column, because that is how they were
 written.
 
 Keys are letters, digits, underscore and hyphen, starting with a letter or
 underscore.
+For an arbitrary JSON object, use an explicit `metadata` namespace:
+
+```python
+acq.insert_metadata("swro:P1", {
+    "metadata": {"any.key": [None, {}, [], {"": "arbitrary string keys"}]},
+})
+```
+
+The shared backend preserves that complete object, including nulls and empty
+containers. Valid paths also become queryable attributes under `metadata`;
+other keys remain available from `include("metadata").metadata_objects()`.
+Keys such as `unit` and `type` inside this namespace are ordinary user values.
+The encoding and query projection are written together and replaced together.
+
 Anything else raises before the write:
 
 ```python

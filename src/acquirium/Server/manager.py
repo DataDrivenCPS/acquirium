@@ -17,6 +17,7 @@ from acquirium.Storage import (
     create_timeseries_store,
 )
 from acquirium.Storage.graph_store import select_values
+from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
 from acquirium.Storage.publication.types import PublicationReceipt, PublicationRequest, PublicationStore
 from acquirium.Storage.values import normalize_value_kind
 from acquirium.Experiments import ExperimentStore
@@ -924,6 +925,10 @@ class Manager:
         It lets a component remove exactly the triples it registered without
         granting updates to ontology graphs.
         """
+        if source_id == METADATA_SOURCE_ID:
+            # Do not accept an edit that a still-unacknowledged initialization
+            # could overwrite on replay.
+            self.experiments.sync_metadata_graph()
         graph_uri = self.graph_store.source_graph_uri(source_id)
         result = self.graph_store.sparql_update(update, graph_uri=graph_uri)
         self._sync_stream_refs_from_graph()

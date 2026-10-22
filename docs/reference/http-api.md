@@ -628,3 +628,14 @@ returns 400.
 
 Return the active materialization graph as nodes and links, including the
 dependencies between bindings and their current execution state.
+
+
+## Complete metadata documents
+
+`POST /metadata/documents` accepts a JSON array of full subject URIs and returns
+an object mapping each URI to its complete document in the internal typed JSON
+encoding. `AcquiriumClient.metadata_documents(subjects)` decodes it to ordinary
+Python values, preserving dates, null positions, and empty containers. User JSON
+inside the `metadata` namespace retains arbitrary string keys. This endpoint
+reads asserted source documents independently of inference and delivers pending
+experiment metadata writes first. Unknown subjects have empty documents.

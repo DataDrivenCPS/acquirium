@@ -85,7 +85,7 @@ class TestPlanWrite:
         assert w.replace_keys == ["last_cleaned", "product_info", "tags"]
         assert (URIRef(NODE), URIRef(f"{ATTR_NS}product_info.year"), Literal(2019)) in w.triples
         assert (URIRef(NODE), URIRef(f"{ATTR_NS}tags.1"), Literal("b")) in w.triples
-        assert len(w.triples) == 5
+        assert len([t for t in w.triples if not str(t[1]).startswith("urn:acquirium:metadata:document:")]) == 5
 
     def test_uri_like_string_is_a_uri(self):
         w = plan({"datasheet": "https://example.org/ds.pdf"})
@@ -93,18 +93,18 @@ class TestPlanWrite:
 
     def test_builtin_resolves_text_and_keeps_it(self):
         w = plan({"unit": "mg/L"})
-        assert w.replace_forward == [str(HAS_UNIT)]
-        assert w.triples == [(URIRef(NODE), URIRef(f"{ATTR_NS}unit.raw"), Literal("mg/L")),
+        assert str(HAS_UNIT) in w.replace_forward
+        assert w.triples[:2] == [(URIRef(NODE), URIRef(f"{ATTR_NS}unit.raw"), Literal("mg/L")),
                              (URIRef(NODE), HAS_UNIT, URIRef(UNIT))]
         assert w.replace_keys == ["unit"]          # deletes a previous unit.raw too
 
     def test_uri_value_stores_no_raw_text(self):
         w = plan({"unit": UNIT})
-        assert w.triples == [(URIRef(NODE), HAS_UNIT, URIRef(UNIT))] and w.replace_keys == ["unit"]
+        assert w.triples[:1] == [(URIRef(NODE), HAS_UNIT, URIRef(UNIT))] and w.replace_keys == ["unit"]
 
     def test_literal_builtin_has_no_raw_text(self):
         w = plan({"label": "Influent"})
-        assert w.triples == [(URIRef(NODE), RDFS.label, Literal("Influent"))] and w.replace_keys == []
+        assert w.triples[:1] == [(URIRef(NODE), RDFS.label, Literal("Influent"))] and w.replace_keys == []
 
     def test_builtin_unresolvable_raises(self):
         with pytest.raises(ValueError, match="Could not resolve"):
@@ -127,7 +127,7 @@ class TestPlanWrite:
 
     def test_none_removes(self):
         w = plan({"tags": None, "unit": None})
-        assert sorted(w.replace_keys) == ["tags", "unit"] and w.replace_forward == [str(HAS_UNIT)]
+        assert sorted(w.replace_keys) == ["tags", "unit"] and str(HAS_UNIT) in w.replace_forward
         assert w.triples == []
 
     @pytest.mark.parametrize("key", ["entity", "measurement", "upstream", "downstream"])
@@ -140,7 +140,7 @@ class TestUpdateText:
     def test_groups_by_signature_and_inserts_once(self):
         a = plan({"tags": ["x"], "unit": UNIT})
         b = Write(subject=URIRef("urn:x#other"))
-        b.replace_keys, b.replace_forward = ["tags", "unit"], [str(HAS_UNIT)]
+        b.replace_keys, b.replace_forward = list(a.replace_keys), list(a.replace_forward)
         b.triples = [(b.subject, URIRef(f"{ATTR_NS}tags.0"), Literal("y"))]
         c = plan({"other": 1})
         c.subject = URIRef("urn:x#third")

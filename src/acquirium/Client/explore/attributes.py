@@ -175,10 +175,17 @@ def valid_path(path: str) -> bool:
 # Every attr: predicate in use, with the datatype of each value kind it holds
 # (DATATYPE errors on an IRI, so COALESCE falls through to the "iri" marker).
 DISCOVERY_SPARQL = (
-    "SELECT DISTINCT ?p ?dt\nWHERE {\n  ?s ?p ?o .\n"
-    f"  FILTER(STRSTARTS(STR(?p), \"{ATTR_NS}\"))\n"
-    "  BIND(COALESCE(STR(DATATYPE(?o)), IF(isIRI(?o), \"iri\", \"\")) AS ?dt)\n}"
+    "SELECT DISTINCT ?p ?dt\nWHERE {\n { ?s ?p ?o .\n"
+    f'  FILTER(STRSTARTS(STR(?p), "{ATTR_NS}"))\n'
+    '  BIND(COALESCE(STR(DATATYPE(?o)), IF(isIRI(?o), "iri", "")) AS ?dt) }\n'
+    ' UNION { ?s ?document ?value .\n'
+    ' FILTER(STRSTARTS(STR(?document), "urn:acquirium:metadata:document:"))\n'
+    ' BIND(STRAFTER(STR(?document), "urn:acquirium:metadata:document:") AS ?key)\n'
+    ' FILTER(REGEX(?key, "^[A-Za-z_][A-Za-z0-9_-]*$"))\n'
+    f' FILTER NOT EXISTS {{ ?owner ?projected ?leaf . FILTER(STR(?projected) = CONCAT("{ATTR_NS}", ?key) || STRSTARTS(STR(?projected), CONCAT("{ATTR_NS}", ?key, "."))) }}\n'
+    f' BIND(IRI(CONCAT("{ATTR_NS}", ?key)) AS ?p) BIND("" AS ?dt) }}\n}}'
 )
+
 
 # (server_key, graph_version) -> {name: Attr}
 _DISCOVERED_CACHE: Dict[tuple, Dict[str, Attr]] = {}

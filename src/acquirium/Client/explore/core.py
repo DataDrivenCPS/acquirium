@@ -951,6 +951,7 @@ class Query:
                     f"include: unknown alias {of!r}" if of is not None
                     else "include: no current node (start with entity())"
                 )
+            g = replace(g, object_all=tuple(set(g.object_all) | {nid}))
             # an entity node takes every attribute; a measurement node the
             # measurement ones
             kind = "data" if nid in g.data_nodes else "entity"
@@ -969,6 +970,7 @@ class Query:
             _, nid, attr_name = target
             self._check_applies(g, nid, attr_name, "include")
             g = g.with_select(nid, attr_name, required, type=type, strict=strict)
+            g = replace(g, object_excluded=tuple(item for item in g.object_excluded if item != (nid, attr_name)))
         return self._with_graph(g)
 
     def drop(self, *names: str) -> "Query":
@@ -1002,6 +1004,7 @@ class Query:
                     g,
                     selects=tuple(e for e in g.selects if not (e[0] == nid and e[1] == attr_name)),
                     casts=tuple(c for c in g.casts if not (c[0] == nid and c[1] == attr_name)),
+                    object_excluded=g.object_excluded + ((nid, attr_name),),
                 )
         return self._with_graph(g)
 
@@ -1705,8 +1708,8 @@ class Query:
         node: a key it lacks is left out, including the struct fields other
         nodes introduced (``{"mode": "baseline"}``, not ``{"duration": None,
         "mode": "baseline"}``). The table from :meth:`metadata` keeps its
-        shared schema, lists and all. A list saved with a ``None`` element
-        reads back without that position, since nothing empty is stored.
+        shared schema, lists and all. Complete user documents preserve null
+        positions, empty containers, and arbitrary namespaced JSON keys.
         """
         # every object carries its id: the saved one, else the node's URI
         q = self
@@ -1768,6 +1771,48 @@ class Query:
                 _place(record.setdefault(alias, {}), path.split("."),
                        value_of(r[vi], d[vi] if vi < len(d) else None))
         out = [{alias: _lists(obj) for alias, obj in record.items()} for record in groups.values()]
+
+        from acquirium.Metadata import read_documents
+        from acquirium.Client.explore.attributes import REGISTRY
+        from copy import deepcopy
+        subjects = {str(row[i]) for row in rows for _, i in nodes if row[i] is not None}
+        documents = read_documents(self.client, subjects, include_dependencies=include_dependencies) if subjects else {}
+        node_subjects = {}
+        for row in rows:
+            key = tuple(row[i] for i in key_cols)
+            node_subjects.setdefault(key, {alias: str(row[i]) for alias, i in nodes if row[i] is not None})
+        for record, key in zip(out, groups):
+            for nid in g.nodes:
+                alias = g.aliases_reverse.get(nid, f"v{nid}")
+                if alias not in record or alias not in node_subjects[key]:
+                    continue
+                doc = documents.get(node_subjects[key][alias], {})
+                selected = [name for snid, name, _ in g.selects if snid == nid]
+                if nid in g.object_all:
+                    selected += [name for name in doc if name not in REGISTRY]
+                for name in sorted(set(selected), key=len):
+                    if (nid, name) in g.object_excluded or name.split(".", 1)[0] in REGISTRY:
+                        continue
+                    parts = name.split(".")
+                    value = doc
+                    try:
+                        for part in parts:
+                            value = value[int(part)] if isinstance(value, list) else value[part]
+                    except (KeyError, IndexError, ValueError, TypeError):
+                        continue
+                    # A complete parent wins over individual projected leaves.
+                    if len(parts) == 1:
+                        record[alias][name] = deepcopy(value)
+                    else:
+                        _place(record[alias], parts, deepcopy(value))
+                for snid, name in g.object_excluded:
+                    if snid == nid:
+                        parent = record[alias]
+                        parts = name.split(".")
+                        for part in parts[:-1]:
+                            parent = parent.get(part, {}) if isinstance(parent, dict) else {}
+                        if isinstance(parent, dict):
+                            parent.pop(parts[-1], None)
 
         for nid, name, type_, strict in g.casts:
             alias = g.aliases_reverse.get(nid, f"v{nid}")

@@ -1112,6 +1112,14 @@ class AcquiriumClient:
         result = self.sparql_update(update, source_id=METADATA_SOURCE_ID)
         return {**result, "nodes": len(writes)}
 
+    def metadata_documents(self, subjects: Iterable[str]) -> dict[str, dict]:
+        """Read complete typed metadata from the authoritative source graph."""
+        from acquirium.Metadata import loads
+
+        response = self._http.post(f"{self.base_url}/metadata/documents", json=list(subjects))
+        _raise_for_status(response)
+        return {subject: loads(document) for subject, document in response.json().items()}
+
     def insert_timeseries(
         self,
         *,

@@ -23,7 +23,8 @@ def make_client(result, preds=PREDS):
     client.graph_version.return_value = 1
     client.compact_uri.side_effect = lambda x: str(x).replace("urn:p#", "p:")
     client.sparql_query.side_effect = lambda sparql, include_dependencies=True, wait_for_fresh=False: (
-        {"columns": ["p", "dt"], "rows": preds} if sparql == DISCOVERY_SPARQL else result)
+        {"columns": ["p", "dt"], "rows": preds} if sparql == DISCOVERY_SPARQL else
+        {"columns": ["s", "p", "value"], "rows": []} if "urn:acquirium:metadata:document:" in sparql else result)
     return client
 
 
@@ -157,7 +158,7 @@ class TestIdAttribute:
         client = make_client(res, [])
         q = Query(client=client).entity(CLS_A, alias="point")
         assert q.metadata_objects() == [{"point": {"id": "urn:p#a"}}, {"point": {"id": "pump-7"}}]
-        sparql = client.sparql_query.call_args[0][0]
+        sparql = next(call.args[0] for call in client.sparql_query.call_args_list if "OPTIONAL { ?v0" in call.args[0])
         assert f"OPTIONAL {{ ?v0 <{ATTR_NS}id> ?attr0_id_s . }} BIND(COALESCE(?attr0_id_s, ?v0) AS ?attr0_id)" in sparql
         assert q.query_graph.selects == ()                     # the caller's query is untouched
 
