@@ -780,3 +780,43 @@ def test_text_streams_store_and_read_text(system):
     assert read(numeric) == [70.5]
     assert read(numeric, "text") == ["Bad"]
     assert read(numeric, "coalesce") == ["70.5", "Bad"]
+
+
+def test_startup_refuses_an_engine_plan_that_apps_json_does_not_record(tmp_path):
+    from escapement import Input, Native, Operator, Plan, Pointwise
+    from acquirium.apps import Apps
+    from acquirium.core import Core
+
+    core = Core(tmp_path / "engine.duckdb")
+    try:
+        plan = Plan("deployed", [Operator(
+            "app:group", [Input("urn:sensor", "x")], {"out": "urn:derived"},
+            Pointwise(), Native.mean("out"),
+        )])
+        core.wait(core.activate("deploy", plan))
+        # A data directory without apps.json, next to an engine that kept its plan.
+        apps = Apps(core, graph=None, directory=tmp_path)
+        with pytest.raises(RuntimeError, match="records no apps"):
+            apps.recover()
+        assert core.engine.snapshot().plan["id"] == "deployed"
+    finally:
+        core.close()
+
+
+def test_engine_failures_are_retryable_and_bad_input_is_not(system, monkeypatch):
+    from escapement import EngineError
+
+    manager, http, client = system
+    register(system, "errors")
+    body = [dict(source_id="errors", ref_name="temperature", request_id="r", values=[[1, 2.0]])]
+
+    def fail(*args, **kwargs):
+        raise EngineError("database connection lost")
+
+    monkeypatch.setattr(manager, "insert_timeseries_batch", fail)
+    response = http.post("/insert_timeseries", json=body)
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "1"
+    monkeypatch.undo()
+    body[0]["ref_name"] = "unregistered"
+    assert http.post("/insert_timeseries", json=body).status_code == 400

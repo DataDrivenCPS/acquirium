@@ -297,9 +297,16 @@ class Apps:
     def recover(self):
         with self.lock:
             plan = self.state.get("plan")
+            active = self.core.engine.snapshot().plan
+            if not plan and active and active["operators"]:
+                # Deploying nothing would retract every derived output.
+                raise RuntimeError(
+                    f"the engine store runs plan {active['id']} with "
+                    f"{len(active['operators'])} operators, but {self.path} records no "
+                    "apps. Restore apps.json, or start from an empty engine store."
+                )
             if plan:
                 # Reusing the exact declaration also works after retry-ledger expiry.
-                active = self.core.engine.snapshot().plan
                 if not active or active["id"] != plan["id"]:
                     try:
                         self.core.wait(

@@ -24,7 +24,7 @@ from datetime import datetime
 from acquirium.Server.config import load_active_config
 from acquirium.Server.manager import Manager
 from acquirium.apps import App
-from escapement import PendingError, ExecutionError, CapacityError
+from escapement import CapacityError, EngineError, ExecutionError, PendingError
 
 from acquirium.internals.models import (
     StreamInsert,
@@ -203,7 +203,7 @@ def _load_config_app_target(spec: str, *, base_dir: Path) -> object:
 
 
 def _deploy_config_apps(cfg: dict) -> None:
-    """Deploy the materialization applications declared in ``[[apps]]``."""
+    """Deploy the apps declared in ``[[apps]]``."""
     entries = cfg.get("apps", [])
     if not entries:
         return
@@ -449,7 +449,7 @@ def list_namespaces() -> dict[str, str]:
         raise HTTPException(status_code=400, detail=str(e))
     
 \
-#### MATERIALIZATION API ENDPOINTS ####
+#### APP API ENDPOINTS ####
 
 
 @app.get("/apps")
@@ -629,6 +629,18 @@ def resolve_storage_keys(req: ResolveStorageKeysRequest) -> dict[str, str]:
         raise HTTPException(status_code=400, detail=str(e))
 
 
+def _engine_http_error(error: Exception) -> HTTPException:
+    """Bad input is the client's to fix (400). A full inbox, or an engine or
+    database failure, may clear, so clients retry it (503). Anything else is a
+    server bug (500)."""
+    if isinstance(error, (CapacityError, EngineError, OSError)):
+        return HTTPException(status_code=503, detail=str(error), headers={"Retry-After": "1"})
+    if isinstance(error, (ValueError, KeyError)):
+        return HTTPException(status_code=400, detail=str(error))
+    log.exception("engine request failed")
+    return HTTPException(status_code=500, detail=str(error))
+
+
 def _receipt(receipt, source_id, request_id, wait):
     core = app.state.manager.core
     error = None
@@ -657,10 +669,8 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()], wait: floa
                                                                request_id=request_id)
             receipts.append(_receipt(receipt, source_id, request_id, wait))
         return {"ok": True, "rows_inserted": total, "receipts": receipts}
-    except CapacityError as error:
-        raise HTTPException(status_code=503, detail=str(error), headers={"Retry-After": "1"}) from error
     except Exception as error:
-        raise HTTPException(status_code=400, detail=str(error))
+        raise _engine_http_error(error) from error
 
 
 @app.post("/insert_timeseries_arrow")
@@ -679,10 +689,8 @@ async def insert_timeseries_arrow(request: Request, wait: float = Query(30, ge=0
                 source_id, source_frame.drop("source_id").to_arrow(), request_id=request_id)
             receipts.append(await asyncio.to_thread(_receipt, receipt, source_id, request_id, wait))
         return {"ok": True, "rows_inserted": len(frame), "receipts": receipts}
-    except CapacityError as error:
-        raise HTTPException(status_code=503, detail=str(error), headers={"Retry-After": "1"}) from error
     except Exception as error:
-        raise HTTPException(status_code=400, detail=str(error))
+        raise _engine_http_error(error) from error
 
 
 class DeleteObservations(BaseModel):
@@ -698,10 +706,8 @@ def delete_timeseries(request: DeleteObservations, wait: float = Query(30, ge=0)
         receipt = app.state.manager.delete_timeseries(request.source_id, request.ref_name,
             request.timestamps, request_id=request.request_id)
         return _receipt(receipt, request.source_id, request.request_id, wait)
-    except CapacityError as error:
-        raise HTTPException(status_code=503, detail=str(error), headers={"Retry-After": "1"}) from error
     except Exception as error:
-        raise HTTPException(status_code=400, detail=str(error))
+        raise _engine_http_error(error) from error
 
 
 def _parse_dt(s: Optional[str]) -> Optional[datetime]:
@@ -767,17 +773,16 @@ def get_timeseries(
             media_type="application/vnd.apache.arrow.stream",
         )
 
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as error:
+        raise _engine_http_error(error) from error
 
 
 @app.post("/timeseries_info")
 def timeseries_info(req: TimeseriesInfoRequest) -> dict[str, Any]:
     try:
-        result = app.state.manager.timeseries_info_batch(req.uris)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        return app.state.manager.timeseries_info_batch(req.uris)
+    except Exception as error:
+        raise _engine_http_error(error) from error
 
 
 @app.get("/sparql_json")

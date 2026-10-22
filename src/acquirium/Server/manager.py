@@ -194,9 +194,6 @@ class Manager:
             unit_keys_provider=lambda: self._unit_key_index,
         )
 
-        # Kept for backward compat — points to graph matcher
-        self.embedding_matcher = self._graph_matcher
-
         # Embedding index status tracking
         self._embedding_status_lock = Lock()
         self._embedding_status: dict[str, dict[str, Any]] = {
@@ -637,10 +634,14 @@ class Manager:
         )
         return self.core.ingest(source_id, request_id or str(uuid.uuid4()), frame)
 
-    @semantic_operation
     def _validate_refs(self, source, references):
         """Each registered reference's value kind; unregistered or foreign
-        references fail."""
+        references fail.
+
+        No apps lock: a deploy can hold it for seconds, and ingest must not
+        wait on that. The reference maps are replaced whole, never mutated,
+        so a reader sees either the old or the new registrations.
+        """
         # Refresh from the graph, never from a second SQL registry.
         if self._refs_revision != self.graph_store.graph_status()["source_version"]:
             self._sync_stream_refs_from_graph()
