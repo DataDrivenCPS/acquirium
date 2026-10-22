@@ -45,8 +45,8 @@ Its one-operator run therefore also had one scheduler slot. It demonstrated the
 configured bottleneck but did not independently isolate operator width from
 the native worker limit. The harness now accepts `--workers` separately and
 records the effective setting. The corrected diagnostic uses one operator,
-four native scheduler slots, and a four-process pool cap; its evidence is in
-[narrow-workers4](../profiling/2026-10-18-model/narrow-workers4/).
+four native scheduler slots, and a four-process pool cap; its results are in
+the [model comparison](../profiling/2026-10-18-model/README.md).
 
 That diagnostic tests a particular narrow, timestamp-heavy workload. It is not
 evidence that a deployment with many independent device pipelines needs group

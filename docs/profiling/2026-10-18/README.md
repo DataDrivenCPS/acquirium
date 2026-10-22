@@ -86,8 +86,7 @@ difference is the actionable finding. Output validation/writing is a second
 cost to investigate after warm reuse. No results establish benefits for arbitrary
 domain calculations, concurrent epochs, or long-running memory stability.
 
-Retained artifacts: [environment](environment.json), [full summary](summary.json),
-[summary tables](summary.md), [per-epoch timings](epochs.csv),
-[per-invocation timings](workers.csv), and [standalone SVG](execution-profile.svg).
-The reusable harness additionally retains each case's native reports and raw
-worker files in its chosen output directory. Temporary databases are removed.
+The [summary tables](summary.md) and the figure above are kept. The raw measurements are not kept in the repository. Rerun the commands above to
+regenerate them.
+The harness writes each case's native reports and raw worker files to its
+output directory. Temporary databases are removed.
