@@ -89,10 +89,12 @@ rejected. Stream annotations can still be added or closed afterward.
 
 ## Storage
 
-The SQL experiment ledger stores lifecycle state, observation order, and metadata
-snapshots for recovery. Saved metadata reads and filters use the shared graph
-API. The ledger rebuilds that graph after startup or an interrupted write.
-Recording these objects creates their graph nodes automatically.
+The SQL experiment ledger stores lifecycle state and observation order. Complete
+descriptive metadata documents live in the shared graph and use its read and
+filter APIs. A transactional SQL outbox retains pending, already-resolved graph
+updates until delivery succeeds; interrupted delivery replays those updates.
+Recording these objects creates their graph nodes automatically. Backups must
+include both the SQL store and its metadata graph.
 
 The ledger stores JSON, text, scalar, and log observations directly.
 For other data it stores references:
