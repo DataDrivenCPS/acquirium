@@ -181,11 +181,24 @@ def _split_value_column(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def _restore_single_value_column(df: pl.DataFrame) -> pl.DataFrame:
+    """Fold ``value_numeric``/``value_text`` back into one ``value`` column.
+
+    Numeric-only rows give a Float64 column, text-only rows a String column.
+    A frame mixing both (an alias spanning a sensor and a status point) gives
+    a String column with the numbers rendered as text, so no value is lost
+    and the dtype shows the caller the alias is mixed.
+    """
     if "value_numeric" not in df.columns or "value_text" not in df.columns:
         return df
-    if df.is_empty() or df["value_numeric"].null_count() < df.height:
-        return df.with_columns(pl.col("value_numeric").alias("value"))
-    return df.with_columns(pl.col("value_text").alias("value"))
+    has_text = df["value_text"].null_count() < df.height
+    has_numeric = df["value_numeric"].null_count() < df.height
+    if has_text and has_numeric:
+        return df.with_columns(
+            pl.coalesce(pl.col("value_text"), pl.col("value_numeric").cast(pl.Utf8)).alias("value")
+        )
+    if has_text:
+        return df.with_columns(pl.col("value_text").alias("value"))
+    return df.with_columns(pl.col("value_numeric").alias("value"))
 
 
 def _as_utc_datetime(v: "datetime | str | None") -> datetime | None:
