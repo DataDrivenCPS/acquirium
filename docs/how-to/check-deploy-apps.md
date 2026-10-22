@@ -31,5 +31,4 @@ paused computation. Repair the artifact/environment, then explicitly call
 `client.retry_engine()` (`POST /engine/retry`). Accepted changes remain durable while paused.
 
 To remove an app, call `client.remove_app(name)`. Native removal retracts current
-outputs and retains historical versions. The former class-based app check and
-reprocess commands are not part of this initial runtime.
+outputs and retains historical versions.

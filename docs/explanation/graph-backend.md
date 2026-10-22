@@ -8,15 +8,15 @@ This is a guide to the graph backend: the persistent graphs, the derived
 query views, the update rules, and the interfaces application and driver
 authors use.
 The graph backend is owned by the acquirium server.
-Drivers access it through the client and HTTP API; the materializer uses the
-same server-owned interface. Neither opens Oxigraph directly.
+Drivers access it through the client and HTTP API. App compilation runs in the
+server. Nothing else opens Oxigraph.
 
 ## Design goals
 
 The backend separates three kinds of data:
 
 - **Deployment data** is the plant model and the RDF asserted by Acquirium and
-  drivers, including materialization output metadata and lineage. It is
+  drivers, including the output points that apps declare. It is
   persisted and is the input to inference and validation.
 - **Ontology and shape data** defines vocabulary, `owl:imports`, SHACL shapes,
   and SHACL-AF rules. It is managed by OntoEnv, usually from bundled ontologies
@@ -35,10 +35,9 @@ query dataset, and an in-process reentrant lock to coordinate writes and cache
 rebuilds. Oxigraph's files must be opened by this server process only.
 
 Each driver runs in its own child process (`DriverRunner`) and talks to the
-server over the normal client API. Materialization execution uses
-the server's bounded in-process worker pool. This way there is a single
-authoritative graph writer, and a file-backed database handle is never shared
-with actor processes.
+server over the normal client API. Escapement runs app functions in its own
+worker processes, which never touch the graph. There is a single graph writer,
+and no other process opens the graph store.
 
 ## Persistent graph roles
 
@@ -53,7 +52,7 @@ namespaces (e.g. `https://qudt.org/...`).
 | Role | Persistence | Contents | How it is written |
 | --- | --- | --- | --- |
 | Plant data graph | source dataset | The shared plant model; it is the reserved `plant` source. | `insert_graph(..., source_id="plant")` or `sparql_update(..., source_id="plant")`. |
-| Acquirium data graph | source dataset | Acquirium-owned bookkeeping, such as logs and materialization lineage. | Server internals only. |
+| Acquirium data graph | source dataset | Acquirium-owned bookkeeping. | Server internals only. |
 | Source data graph | source dataset | RDF owned by one driver or external metadata source. | `insert_graph(..., source_id="...")`; source-scoped SPARQL update. |
 | Ontology/shape graph | source dataset | Ontologies, shapes, rules, and imports managed through OntoEnv. | Server configuration/startup; not application or driver writes. |
 | Dependency cache | memory | Imports closure minus asserted deployment data. | Backend only. |
@@ -261,21 +260,14 @@ not extra lifecycle work required of driver authors.
 
 ### Apps
 
-The planner manages graph metadata for materialization apps. It publishes
-derived points, references, and structural lineage together in Acquirium's
-reserved internal graph, and replaces that generated view when the binding
-plan changes. App transforms do not write arbitrary graph data.
+Deploying an app writes its output points and references to the source graph
+`derived:<app-name>`, and replaces that graph when the compiled plan changes.
+App functions do not write graph data.
 
-Each output reference uses `derived:<app-name>` as its timeseries `source_id`.
-This identifies the app's streams without creating a caller-owned graph. The
-planner records `acquirium:producedBy "<app name>"` on derived points, allowing
-queries to select them with the `app` attribute.
-
-When an output has no explicit label, the planner generates an `rdfs:label`
-from the measurement and producing app. It preserves labels on existing plant
-points supplied through `point_uri=`. See the
-[app reference](../reference/apps.md#output-declarations) for the complete output
-identity and metadata rules.
+Each output reference uses `derived:<app-name>` as its `source_id`. Output points
+carry `acquirium:producedBy "<app name>"`, so queries can select them with the
+`app` attribute. An output without a label gets `"<app> <port>"`. See the
+[app reference](../reference/apps.md) for output declarations.
 
 ### Updates, queries, and validation
 
@@ -316,8 +308,8 @@ copying and Python result materialization remain the likely Python-owned costs.
 Do not run two acquirium server processes against the same graph-store path;
 RocksDB/Oxigraph locking is treated as a fatal startup error rather than a
 silent fallback to a different store.
-Driver actors connect through the HTTP API. Apps execute inside the server's
-bounded worker pool; `materialization_workers` controls their concurrency.
+Drivers connect through the HTTP API. Escapement executes apps;
+`engine_workers` and `python_pool_size` in `[server]` control its concurrency.
 The graph backend scales by giving its single server process suitable
 resources, or by an explicit remote service boundary; never by sharing its
 database files.

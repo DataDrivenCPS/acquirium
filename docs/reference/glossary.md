@@ -94,7 +94,6 @@ two.
 |---|---|---|
 | driver | a class the server runs on a schedule to ingest data | `PollingIngestDriver` |
 | tick | one scheduled run of a driver | `interval = 10.0` |
-| app | a class the server runs to compute on data and write results back | `App` |
+| app | a declaration: inputs selected from the graph, a function and a window; Escapement runs it | `aq.App` |
 | graph store | the embedded Oxigraph store holding the model and the ontologies | `data_dir/.oxigraph` |
-| timeseries store | where observations are stored | duckdb (default) or timescale |
-| logbook | the event log stored alongside the timeseries | `POST /insert_log` |
+| engine store | where Escapement keeps observations, derived values and history | DuckDB file (default) or `postgres://` URL |

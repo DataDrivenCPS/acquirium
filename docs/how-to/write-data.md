@@ -73,37 +73,15 @@ For high volume, `insert_timeseries_arrow(source_id, table)` takes a
 `(ts, ref_name, value)` arrow table; this is the path the drivers use.
 
 Writes are idempotent on the (stream, timestamp) pair.
-Re-inserting the same timestamps overwrites those rows, so re-running an
-import is safe and will not duplicate anything.
-Ordinary upserts retain omitted timestamps. With `replace=True`, the stream
-contains exactly the supplied rows; replacing an unwritten stream inserts them.
-Replacement physically deletes the old rows and records a durable stream reset.
-Downstream apps rebuild from their full current inputs, including unchanged
-sibling streams, and replace their outputs. Replacement is intended for
-infrequent reloads: rebuilding can use substantially more time and memory than
-ordinary timestamp-level upserts.
-An empty replacement clears the stream:
+Re-inserting a timestamp replaces that reading, so re-running an import is safe
+and does not duplicate anything. Apps that read a corrected reading recompute
+the windows that contain it.
+
+Values may be numbers or text. Each is stored as the stream's `value_kind`; see
+[values](../explanation/values.md).
+
+To remove readings, delete them by timestamp:
 
 ```python
-acq.insert_timeseries("lab-import", "effluent-tds", [], replace=True)
+acq.delete_timeseries("lab-import", "effluent-tds", [datetime(2026, 8, 8, 10, 0, tzinfo=timezone.utc)])
 ```
-
-Each stream replacement is atomic, including its revision. A multi-stream HTTP
-request does not make all replacements atomic together. Returned row counts
-count only replacement rows written. Publication IDs
-remain correlation identifiers and do not deduplicate retries.
-
-### The logbook
-
-Separate from the timeseries, acquirium keeps a plant logbook for human notes.
-
-```python
-acq.insert_log("backwash started early, foam in tank 2")
-acq.read_logs()
-```
-
-`read_logs()` returns the notes as a frame with `message`, `log_time` and the
-observation period a note covers.
-Both calls filter by `log_time_start=`/`log_time_end=` and
-`observation_start=`/`observation_end=`.
-`delete_logs()` clears the logbook.
