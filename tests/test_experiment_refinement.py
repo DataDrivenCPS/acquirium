@@ -17,7 +17,7 @@ T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 def ledger_for(store, tmp_path):
     graph = MemoryGraphStore()
-    ledger = ExperimentStore(store, tmp_path / "artifacts", graph_store=graph,
+    ledger = ExperimentStore(store, graph_store=graph,
                              resolve=lambda *_: "urn:unit:power")
     study = ledger.define("refinement")
     return ledger, graph, study["template_id"]
@@ -27,7 +27,7 @@ def counts(store):
     with store._own_conn() as conn:
         return {table: execute(conn, f"SELECT count(*) FROM {table}").fetchone()[0]
                 for table in ("streams", "ref_ids", "timeseries", "experiment_observations",
-                              "experiment_artifacts", "experiment_metadata_outbox")}
+                              "experiment_artifacts", "experiment_artifact_chunks", "experiment_metadata_outbox")}
 
 
 @pytest.mark.parametrize("failure", ["registration", "samples", "artifact", "observation", "outbox"])
@@ -72,7 +72,7 @@ def test_recording_rolls_back_every_sql_owner(materialization_store, tmp_path, m
     assert counts(store)["timeseries"] == 1
     ledger.finish(run, "succeeded")
     assert ledger.clear()["samples"] == 1
-    assert list(ledger.artifact_dir.iterdir()) == []
+    assert counts(store)["experiment_artifact_chunks"] == 0
 
 
 def legacy_document(ledger, graph, study, *, conflicting=False):
@@ -115,7 +115,7 @@ def test_interrupted_declaration_upgrade_replays_without_resolver(materializatio
     with materialization_store._own_conn() as conn:
         format_, scheduled, published = execute(conn, "SELECT declaration_format,declaration_upgrade_version,published_version FROM experiment_metadata_state").fetchone()
     assert format_ == 0 and scheduled > published
-    restarted = ExperimentStore(materialization_store, ledger.artifact_dir, graph_store=graph,
+    restarted = ExperimentStore(materialization_store, graph_store=graph,
         resolve=lambda *_: (_ for _ in ()).throw(AssertionError("upgrade must reuse semantic terms")))
     saved = restarted.variables(study)[0]
     assert saved["variable_id"] == variable["variable_id"]
@@ -232,14 +232,14 @@ def test_standalone_close_releases_graph_and_preserves_legacy_semantics(tmp_path
     from acquirium.Storage.duckdb_store import DuckDBStore
     store = DuckDBStore(tmp_path / "standalone.duckdb")
     try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "artifacts", resolve=lambda *_: "urn:unit:power")
+        ledger = ExperimentStore.standalone(store, tmp_path / "graph", resolve=lambda *_: "urn:unit:power")
         study = ledger.define("standalone")["template_id"]
         variable, old = legacy_document(ledger, ledger.metadata_graph.graph_store, study)
         # The upgrade reads native asserted terms, without any query/inference adapter.
         saved = ledger.variables(study)[0]
         assert saved["metadata"]["_resolved_semantics"]["unit"] == "urn:unit:power"
         ledger.close()
-        with ExperimentStore.standalone(store, tmp_path / "artifacts") as reopened:
+        with ExperimentStore.standalone(store, tmp_path / "graph") as reopened:
             assert reopened.variables(study)[0] == saved
     finally:
         store.close()
@@ -270,7 +270,7 @@ def test_resolvers_run_before_sql_writer_transactions(materialization_store, tmp
         owned = getattr(store._lock, "_is_owned", None)
         assert not (owned() if owned is not None else store._lock.locked())
         return "urn:resolved:" + kind
-    ledger = ExperimentStore(store, tmp_path / "artifacts", graph_store=MemoryGraphStore(), resolve=resolve)
+    ledger = ExperimentStore(store, graph_store=MemoryGraphStore(), resolve=resolve)
     study = ledger.define("resolver boundary")["template_id"]
     ledger.declare(study, "flow", "output", "timeseries", {"unit": "flow units"})
     run = ledger.start(study, {"type": "run type"})["run_id"]
@@ -291,6 +291,6 @@ def test_committed_sample_intent_replays_after_graph_flush_failure(materializati
     assert counts(materialization_store)["timeseries"] == 1
     assert counts(materialization_store)["experiment_observations"] == 1
     assert counts(materialization_store)["experiment_metadata_outbox"] > 0
-    reopened = ExperimentStore(materialization_store, ledger.artifact_dir, graph_store=graph)
+    reopened = ExperimentStore(materialization_store, graph_store=graph)
     assert reopened.observations(study)[0]["ref_uri"] == receipt["ref_uri"]
     assert counts(materialization_store)["experiment_metadata_outbox"] == 0

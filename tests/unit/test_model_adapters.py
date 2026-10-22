@@ -24,7 +24,7 @@ PAYLOAD = {"a.b": {"arbitrary key": [None, {}, [], {"https://example.org/key": "
 @pytest.fixture
 def model_api(tmp_path, monkeypatch):
     store = DuckDBStore(tmp_path / "models.duckdb")
-    ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
+    ledger = ExperimentStore.standalone(store, tmp_path / "graph")
     module = import_module("acquirium.Server.app")
     monkeypatch.setattr(module.app.state, "manager", SimpleNamespace(experiments=ledger), raising=False)
     client = AcquiriumClient()

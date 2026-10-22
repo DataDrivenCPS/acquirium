@@ -107,6 +107,12 @@ change in any release.
   a start without an end, or an end without a start, before recording anything.
 
 ### Changed
+- Experiment artifact bytes are stored in the SQL store, split into chunks,
+  instead of in an `experiment_artifacts/` directory. They commit and delete
+  with the observations that reference them. `ExperimentStore` no longer takes
+  an artifact directory, and `ExperimentStore.standalone(store, graph_dir)`
+  takes the directory for its metadata graph. Existing artifact files are not
+  migrated.
 - A SPARQL update no longer forces the ontology closure to be recomputed
   unless it changed the graph's `owl:imports` or `owl:Ontology` triples.
 - The query compiler renders `int`, `float`, `bool`, `date` and `datetime`

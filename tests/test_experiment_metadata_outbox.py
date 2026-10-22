@@ -15,7 +15,7 @@ def pending(store):
 
 def test_restart_replays_resolved_documents_without_sql_snapshots(materialization_store, tmp_path, monkeypatch):
     store, graph = materialization_store, MemoryGraphStore()
-    ledger = ExperimentStore(store, tmp_path / "artifacts", graph_store=graph, resolve=lambda *args: "urn:unit:PSI")
+    ledger = ExperimentStore(store, graph_store=graph, resolve=lambda *args: "urn:unit:PSI")
     study = ledger.define("restart")
     variable = ledger.declare(study["template_id"], "pressure", "output", "scalar", {"unit": "psi", "metadata": {"any.key": [None, {}, []]}})
     run = ledger.start(study["template_id"], {"tags": ["A", None, "B"]})
@@ -24,7 +24,7 @@ def test_restart_replays_resolved_documents_without_sql_snapshots(materializatio
         with pytest.raises(OSError, match="offline"):
             ledger.sync_metadata_graph()
     assert pending(store) == 3
-    restarted = ExperimentStore(store, tmp_path / "artifacts", graph_store=graph, resolve=lambda *args: None)
+    restarted = ExperimentStore(store, graph_store=graph, resolve=lambda *args: None)
     assert restarted.variables(study["template_id"])[0]["metadata"] == variable["metadata"]
     assert restarted.run(run["run_id"])["metadata"] == {"tags": ["A", None, "B"]}
     assert (URIRef(variable["variable_id"]), HAS_UNIT, URIRef("urn:unit:PSI")) in graph.dataset
@@ -38,7 +38,7 @@ def test_restart_replays_resolved_documents_without_sql_snapshots(materializatio
 
 def test_graph_commit_before_failed_acknowledgment_is_replayable(materialization_store, tmp_path, monkeypatch):
     store, graph = materialization_store, MemoryGraphStore()
-    ledger = ExperimentStore(store, tmp_path / "artifacts", graph_store=graph)
+    ledger = ExperimentStore(store, graph_store=graph)
     study = ledger.define("ack")
     ledger.sync_metadata_graph()
     run = ledger.start(study["template_id"], {"scenario": "baseline"})
@@ -55,7 +55,7 @@ def test_graph_commit_before_failed_acknowledgment_is_replayable(materialization
             ledger.sync_metadata_graph()
     assert (URIRef(run_uri(run["run_id"])), RDF.type, EXPERIMENT.Run) in graph.dataset
     assert pending(store) == 2
-    restarted = ExperimentStore(store, tmp_path / "artifacts", graph_store=graph)
+    restarted = ExperimentStore(store, graph_store=graph)
     assert restarted.run(run["run_id"])["status"] == "succeeded"
     assert restarted.run(run["run_id"])["metadata"] == {"scenario": "baseline"}
     assert pending(store) == 0
@@ -63,7 +63,7 @@ def test_graph_commit_before_failed_acknowledgment_is_replayable(materialization
 
 def test_outbox_failure_rolls_back_lifecycle_write(materialization_store, tmp_path, monkeypatch):
     store = materialization_store
-    ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
+    ledger = ExperimentStore.standalone(store, tmp_path / "graph")
     study = ledger.define("rollback")
     ledger.sync_metadata_graph()
     queue = ledger._queue_metadata
@@ -80,7 +80,7 @@ def test_outbox_failure_rolls_back_lifecycle_write(materialization_store, tmp_pa
 
 def test_committed_deletion_is_retried_after_restart(materialization_store, tmp_path, monkeypatch):
     store, graph = materialization_store, MemoryGraphStore()
-    ledger = ExperimentStore(store, tmp_path / "artifacts", graph_store=graph)
+    ledger = ExperimentStore(store, graph_store=graph)
     study = ledger.define("delete")
     run = ledger.start(study["template_id"], {"scenario": "baseline"})
     ledger.finish(run["run_id"], "succeeded")
@@ -92,7 +92,7 @@ def test_committed_deletion_is_retried_after_restart(materialization_store, tmp_
     with store._own_conn() as conn:
         assert conn.execute("SELECT count(*) FROM experiment_runs").fetchone()[0] == 0
     assert pending(store) > 0
-    restarted = ExperimentStore(store, tmp_path / "artifacts", graph_store=graph)
+    restarted = ExperimentStore(store, graph_store=graph)
     restarted.sync_metadata_graph()
     assert not list(graph.dataset.triples((URIRef(run_uri(run["run_id"])), None, None)))
     assert pending(store) == 0
@@ -134,7 +134,7 @@ def seed_legacy_ledger(store, *, invalid=False):
 def test_upgrade_moves_snapshots_to_resolved_outbox_and_preserves_recordings(materialization_store, tmp_path):
     store, graph = materialization_store, MemoryGraphStore()
     seed_legacy_ledger(store)
-    ledger = ExperimentStore(store, tmp_path / "artifacts", graph_store=graph, resolve=lambda *args: None)
+    ledger = ExperimentStore(store, graph_store=graph, resolve=lambda *args: None)
     assert pending(store) == 4
     values = ledger.variables("legacy-study")[0]["metadata"]
     assert values == {"unit": ["psi", "PSI"], "type": "urn:example:Result",
@@ -149,7 +149,7 @@ def test_upgrade_moves_snapshots_to_resolved_outbox_and_preserves_recordings(mat
         assert not any(table in {"experiment_runs", "experiment_variables"} and column == "metadata_json" for table, column in columns)
         assert not any(table == "experiment_metadata_resolutions" for table, _ in columns)
         assert conn.execute("SELECT value_json FROM experiment_observations WHERE variable_id IS NULL").fetchone()[0] is None
-    restarted = ExperimentStore(store, tmp_path / "artifacts", graph_store=graph)
+    restarted = ExperimentStore(store, graph_store=graph)
     assert restarted.variables("legacy-study")[0]["metadata"] == values
     assert pending(store) == 0
 
@@ -158,7 +158,7 @@ def test_failed_upgrade_preserves_original_sql_metadata(materialization_store, t
     store = materialization_store
     original = seed_legacy_ledger(store, invalid=True)
     with pytest.raises(ValueError, match="reserved"):
-        ExperimentStore(store, tmp_path / "artifacts", graph_store=MemoryGraphStore())
+        ExperimentStore(store, graph_store=MemoryGraphStore())
     import json
     with store._own_conn() as conn:
         assert json.loads(conn.execute("SELECT metadata_json FROM experiment_variables").fetchone()[0]) == original
@@ -171,11 +171,11 @@ def test_delivery_is_serialized_across_ledgers_without_blocking_sample_writes(ma
     from datetime import datetime, timezone
     import threading
     store, graph = materialization_store, MemoryGraphStore()
-    first = ExperimentStore(store, tmp_path / "artifacts", graph_store=graph)
+    first = ExperimentStore(store, graph_store=graph)
     study = first.define("concurrent")
     first.sync_metadata_graph()
     run = first.start(study["template_id"], {})
-    second = ExperimentStore(store, tmp_path / "artifacts", graph_store=graph)
+    second = ExperimentStore(store, graph_store=graph)
     entered, release, finishing = threading.Event(), threading.Event(), threading.Event()
     update = graph.sparql_update
     def slow(*args, **kwargs):
@@ -208,13 +208,13 @@ def test_delivery_is_serialized_across_ledgers_without_blocking_sample_writes(ma
 
 def test_missing_graph_cannot_be_reinitialized_from_only_new_pending_writes(materialization_store, tmp_path):
     store, graph = materialization_store, MemoryGraphStore()
-    ledger = ExperimentStore(store, tmp_path / "artifacts", graph_store=graph)
+    ledger = ExperimentStore(store, graph_store=graph)
     study = ledger.define("backup boundary")
     first = ledger.start(study["template_id"], {"scenario": "already acknowledged"})
     ledger.sync_metadata_graph()
     ledger.start(study["template_id"], {"scenario": "pending"})
     assert pending(store) == 1
-    restarted = ExperimentStore(store, tmp_path / "artifacts", graph_store=MemoryGraphStore())
+    restarted = ExperimentStore(store, graph_store=MemoryGraphStore())
     with pytest.raises(RuntimeError, match="restore its graph backup"):
         restarted.run(first["run_id"])
     assert pending(store) == 1
@@ -227,7 +227,7 @@ def test_failed_source_flush_keeps_the_outbox_unacknowledged(materialization_sto
             if self.fail_flush:
                 raise OSError("flush failed")
     graph = GraphWithFlush()
-    ledger = ExperimentStore(materialization_store, tmp_path / "artifacts", graph_store=graph)
+    ledger = ExperimentStore(materialization_store, graph_store=graph)
     study = ledger.define("flush")
     with pytest.raises(OSError, match="flush failed"):
         ledger.sync_metadata_graph()

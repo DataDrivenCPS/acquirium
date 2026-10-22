@@ -36,14 +36,14 @@ def test_manager_recreation_resets_experiments_in_external_duckdb(tmp_path, monk
     reopened = Manager(data_dir=data_dir, duckdb_path=db_path, exact_only=True, recreate=recreate)
     try:
         ledger = reopened.experiments
-        artifact_path = ledger.artifact_dir / artifact["digest"]
         if recreate:
             assert ledger.studies() == []
             assert ledger.stream_annotations() == []
             with reopened.timeseries_store._own_conn() as conn:
-                for table in ("experiment_templates", "experiment_variables", "experiment_runs", "experiment_observations", "experiment_artifacts"):
+                for table in ("experiment_templates", "experiment_variables", "experiment_runs", "experiment_observations", "experiment_artifacts", "experiment_artifact_chunks"):
                     assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
-            assert not artifact_path.exists()
+            with pytest.raises(KeyError):
+                ledger.artifact(artifact["digest"])
             assert reopened.timeseries_store.timeseries_info("urn:plant:flow").row_count == 0
             # The recreated ledger is ready for new runs.
             fresh = ledger.define("fresh study")
@@ -54,7 +54,7 @@ def test_manager_recreation_resets_experiments_in_external_duckdb(tmp_path, monk
             assert ledger.study("retained study")["template_id"] == study["template_id"]
             assert len(ledger.observations(study["template_id"])) == 1
             assert len(ledger.stream_annotations()) == 1
-            assert artifact_path.read_bytes() == b"input"
+            assert ledger.artifact(artifact["digest"])["data"] == b"input"
             assert reopened.timeseries_store.timeseries_info("urn:plant:flow").row_count == 1
     finally:
         reopened.close()

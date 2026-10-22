@@ -43,8 +43,9 @@ both the SQL ledger and its authoritative graph. SQL alone can recover pending
 updates, but cannot reconstruct metadata whose updates were already acknowledged.
 Direct ledger callers must supply a backend with document and asserted-term reads, graph writes,
 source clears, and durable flush. The constructor does not select a backend.
-Use `with ExperimentStore.standalone(store, artifact_dir, resolve=...) as ledger:`
-for an embedded Oxigraph graph in `.experiment-metadata` beside the artifacts.
+Use `with ExperimentStore.standalone(store, graph_dir, resolve=...) as ledger:`
+for an embedded Oxigraph graph in `graph_dir`; each graph directory belongs to
+one SQL store.
 Exit or `ledger.close()` delivers pending metadata and releases the local graph
 handle; the caller owns and closes the SQL store afterward. Standalone mode
 explicitly permits unresolved legacy semantic spellings.
@@ -74,6 +75,7 @@ commit samples, stream identities, artifacts, observations, and graph intent
 in one SQL transaction. Outbox events may target a run-owned source graph;
 older events retain the experiment graph as their default target. Source
 clears are ordering barriers. Delivery does not perform another SQL reference
-registration. Artifact files remain content-addressed, with ownership checked
-under the writer lock through file removal. Deletion and clearing retain
-recovery for artifacts and samples orphaned by older versions.
+registration. Artifact bytes are stored in the SQL store, content-addressed
+and split into chunks, so they commit and delete with the rows that reference
+them. Deletion and clearing retain recovery for samples orphaned by older
+versions.

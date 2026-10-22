@@ -77,6 +77,7 @@ class TimescaleStore(TimeseriesStore):
                     "experiment_metadata_state",
                     "experiment_observations",
                     "experiment_artifacts",
+                    "experiment_artifact_chunks",
                     "experiment_runs",
                     "experiment_variables",
                     "experiment_templates",

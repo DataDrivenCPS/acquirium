@@ -10,7 +10,7 @@ from acquirium.Storage.timescale_store import TimescaleStore
 @pytest.mark.parametrize("recreate", [False, True])
 def test_backend_reopen_preserves_or_resets_experiment_ledger(materialization_store, tmp_path, recreate):
     store = materialization_store
-    ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
+    ledger = ExperimentStore.standalone(store, tmp_path / "graph")
     study = ledger.define("experiment reset contract")
     variable = ledger.declare(study["template_id"], "input", "input", "file", {})
     run = ledger.start(study["template_id"], {})
@@ -23,12 +23,12 @@ def test_backend_reopen_preserves_or_resets_experiment_ledger(materialization_st
         # The fixture's DSN scopes both connections to a disposable schema.
         reopened = TimescaleStore(dsn=store.dsn, recreate=recreate)
     try:
-        ledger = ExperimentStore.standalone(reopened, tmp_path / "artifacts")
+        ledger = ExperimentStore.standalone(reopened, tmp_path / "graph")
         if recreate:
             assert ledger.studies() == []
             assert ledger.stream_annotations() == []
             with reopened._own_conn() as conn:
-                for table in ("experiment_templates", "experiment_variables", "experiment_runs", "experiment_observations", "experiment_artifacts"):
+                for table in ("experiment_templates", "experiment_variables", "experiment_runs", "experiment_observations", "experiment_artifacts", "experiment_artifact_chunks"):
                     assert ledger._execute(conn, f"SELECT count(*) FROM {table}").fetchone()[0] == 0
             fresh = ledger.define("fresh study")
             variable = ledger.declare(fresh["template_id"], "output", "output", "scalar", {})
@@ -50,7 +50,7 @@ def test_backend_deletes_runs_studies_and_clears_experiments(materialization_sto
     from datetime import datetime, timezone
 
     store = materialization_store
-    ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
+    ledger = ExperimentStore.standalone(store, tmp_path / "graph")
     when = datetime(2026, 1, 1, tzinfo=timezone.utc)
     site = store.ensure_stream_ref("urn:contract:site", "site", "level", value_kind="numeric")
     store.upsert_rows(site, [(when, 1000.0)], value_kind="numeric")
@@ -87,7 +87,7 @@ def test_batch_deletion_rolls_back_resets_with_ledger_and_outbox(materialization
     from tests.test_timeseries_store_contract import _snapshot
 
     store = materialization_store
-    ledger = ExperimentStore.standalone(store, tmp_path / "reset-artifacts")
+    ledger = ExperimentStore.standalone(store, tmp_path / "reset-graph")
     study = ledger.define("batch reset")
     variable = ledger.declare(study["template_id"], "level", "output", "timeseries", {})
     runs, refs = [], []
@@ -129,7 +129,7 @@ def test_batch_declarations_and_observations_are_ordered_and_atomic(materializat
     from types import SimpleNamespace
     from fastapi.testclient import TestClient
 
-    ledger = ExperimentStore.standalone(materialization_store, tmp_path / "batch-artifacts")
+    ledger = ExperimentStore.standalone(materialization_store, tmp_path / "batch-graph")
     module = import_module("acquirium.Server.app")
     monkeypatch.setattr(module.app.state, "manager", SimpleNamespace(experiments=ledger), raising=False)
     http = TestClient(module.app)
@@ -196,7 +196,7 @@ def test_batch_declarations_and_observations_are_ordered_and_atomic(materializat
 
 def test_key_column_migrates_existing_ledger(materialization_store, tmp_path):
     store = materialization_store
-    ledger = ExperimentStore.standalone(store, tmp_path / "migration-artifacts")
+    ledger = ExperimentStore.standalone(store, tmp_path / "migration-graph")
     study = ledger.define("old ledger")
     variable = ledger.declare(study["template_id"], "cost", "output", "scalar", {})
     run = ledger.start(study["template_id"], {})
@@ -209,7 +209,7 @@ def test_key_column_migrates_existing_ledger(materialization_store, tmp_path):
         ledger._execute(conn, "DELETE FROM schema_migrations WHERE component='experiments' AND version=1")
         ledger._execute(conn, "CREATE INDEX experiment_observations_variable_idx ON experiment_observations(variable_id, run_id, sequence)")
         ledger._execute(conn, "CREATE INDEX experiment_observations_ref_idx ON experiment_observations(ref_uri, range_start, range_end)")
-    migrated = ExperimentStore.standalone(store, tmp_path / "migration-artifacts")
+    migrated = ExperimentStore.standalone(store, tmp_path / "migration-graph")
     observations = migrated.observations(study["template_id"])
     assert observations[0]["value"] == 2
     assert observations[0]["key"] is None
@@ -231,7 +231,7 @@ def test_table_artifact_batch_validation_and_atomicity(materialization_store, tm
     import io
     import polars as pl
 
-    ledger = ExperimentStore.standalone(materialization_store, tmp_path / "table-artifacts")
+    ledger = ExperimentStore.standalone(materialization_store, tmp_path / "table-graph")
     study = ledger.define("table batch")
     scalar = ledger.declare(study["template_id"], "scalar", "output", "scalar", {})
     table = ledger.declare(study["template_id"], "table", "output", "table", {})
@@ -243,7 +243,7 @@ def test_table_artifact_batch_validation_and_atomicity(materialization_store, tm
     with pytest.raises(ValueError):
         ledger.observe_batch(run["run_id"], [attachment, dict(variable_id=scalar["variable_id"], value="bad")])
     assert ledger.observations(study["template_id"]) == []
-    assert list(ledger.artifact_dir.iterdir()) == []
+    assert _stored_artifacts(ledger.store) == []
     malformed = {**attachment, "artifact": {**attachment["artifact"], "data": base64.b64encode(b"not parquet").decode()}}
     with pytest.raises(ValueError, match="Parquet"):
         ledger.observe_batch(run["run_id"], [malformed])
@@ -257,59 +257,28 @@ def test_table_artifact_batch_validation_and_atomicity(materialization_store, tm
 
 
 @pytest.mark.parametrize("sweep", [False, True])
-@pytest.mark.parametrize("batch", [False, True])
-def test_cleanup_preserves_artifact_reattached_after_delete_commit(materialization_store, tmp_path, monkeypatch, sweep, batch):
-    import base64
-    from concurrent.futures import ThreadPoolExecutor, TimeoutError
-    import threading
-
+def test_deleted_artifact_bytes_can_be_attached_again(materialization_store, tmp_path, sweep):
     store = materialization_store
-    ledger = ExperimentStore.standalone(store, tmp_path / "race-artifacts")
-    study = ledger.define("artifact race")
+    ledger = ExperimentStore.standalone(store, tmp_path / "reattach-graph")
+    study = ledger.define("artifact reattach")
     variable = ledger.declare(study["template_id"], "file", "input", "file", {})
     old = ledger.start(study["template_id"], {})
-    data = b"shared bytes"
+    data = b"shared bytes" * 1000
     saved = ledger.attach_file(old["run_id"], variable["variable_id"], "old.txt", "text/plain", data)
     ledger.finish(old["run_id"], "succeeded")
-    # Separate ledger instances represent concurrent callers sharing a store.
-    # Metadata transactions share delivery serialization; attaching bytes to an
-    # already running experiment only needs the writer lock.
-    other = ExperimentStore.standalone(store, ledger.artifact_dir)
-    active = None
-    if not sweep:
-        active = other.start(study["template_id"], {})
-    after_delete = ledger._after_delete
-    started = threading.Event()
-    future = None
-    def interleave(result, **kwargs):
-        nonlocal future
-        def attach():
-            nonlocal active, variable
-            started.set()
-            if sweep:
-                new_study = other.define("new study")
-                variable = other.declare(new_study["template_id"], "file", "input", "file", {})
-                active = other.start(new_study["template_id"], {})
-            if batch:
-                other.observe_batch(active["run_id"], [{"variable_id": variable["variable_id"], "artifact": {
-                    "filename": "new.txt", "media_type": "text/plain", "data": base64.b64encode(data).decode("ascii")}}])
-            else:
-                other.attach_file(active["run_id"], variable["variable_id"], "new.txt", "text/plain", data)
-        # SQL deletion has committed; cleanup has not yet checked the file.
-        future = executor.submit(attach)
-        assert started.wait(5)
-        if sweep:
-            # Creating a new study waits for clear's metadata transaction.
-            # It proceeds after clear returns, then recreates its shared bytes.
-            with pytest.raises(TimeoutError):
-                future.result(timeout=.1)
-        else:
-            future.result(timeout=10)
-        return after_delete(result, **kwargs)
-    monkeypatch.setattr(ledger, "_after_delete", interleave)
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        removed = ledger.clear() if sweep else ledger.delete_runs([old["run_id"]])
-        future.result(timeout=10)
-    assert removed["files"] == int(sweep)
-    assert other.artifact(saved["digest"])["data"] == data
-    assert other.observations(active["template_id"], run_id=active["run_id"])[0]["artifact_digest"] == saved["digest"]
+    # Bytes leave in the deleting transaction, so nothing is left to race.
+    removed = ledger.clear() if sweep else ledger.delete_runs([old["run_id"]])
+    assert removed["files"] == 1
+    assert _stored_artifacts(store) == []
+    if sweep:
+        study = ledger.define("artifact reattach")
+        variable = ledger.declare(study["template_id"], "file", "input", "file", {})
+    active = ledger.start(study["template_id"], {})
+    ledger.attach_file(active["run_id"], variable["variable_id"], "new.txt", "text/plain", data)
+    assert ledger.artifact(saved["digest"]) == {"filename": "new.txt", "media_type": "text/plain", "data": data}
+
+
+def _stored_artifacts(store):
+    """Digests whose bytes are still stored."""
+    with store._own_conn() as conn:
+        return [row[0] for row in conn.execute("SELECT DISTINCT digest FROM experiment_artifact_chunks ORDER BY digest").fetchall()]

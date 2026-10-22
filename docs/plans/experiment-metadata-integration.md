@@ -76,7 +76,7 @@ After acknowledgment, the graph is the only durable copy of metadata. Backups
 and restoration must include both graph and SQL state. The outbox recovers
 pending writes; it is not an archive of already acknowledged documents.
 Standalone ledger callers use the same documents in a small persistent Oxigraph
-store beside their artifact directory through the explicit `ExperimentStore.standalone()` factory. The ordinary
+store in a directory they name through the explicit `ExperimentStore.standalone()` factory. The ordinary
 constructor requires an injected backend. See the current
 [declaration and recording refinement](experiment-refinement.md) and
 [migration/recovery reference](../reference/storage-migrations.md).

@@ -100,7 +100,7 @@ def metadata_api(tmp_path):
     def resolve(text, kind):
         return PSI if kind == "unit" and text in {"PSI", "psi"} else None
 
-    ledger = ExperimentStore(store, tmp_path / "artifacts", graph_store=graph, resolve=resolve)
+    ledger = ExperimentStore(store, graph_store=graph, resolve=resolve)
     client = Mock()
     client.base_url = f"memory:{id(graph)}"
     client.define_experiment.side_effect = ledger.define
@@ -443,7 +443,7 @@ def test_backfill_annotations_and_restart_preserve_source_objects(metadata_api):
     api.ledger.close_stream_annotation(item["annotation_id"], now)
     api.ledger.sync_metadata_graph()
     graph = api.graph
-    reopened = ExperimentStore(api.store, api.ledger.artifact_dir, graph_store=graph, resolve=api.ledger.metadata_graph.resolve)
+    reopened = ExperimentStore(api.store, graph_store=graph, resolve=api.ledger.metadata_graph.resolve)
     reopened.sync_metadata_graph()
     assert (URIRef(saved.uri), RDF.type, EXPERIMENT.Run) in graph.dataset
     assert (URIRef(annotation_uri(item["annotation_id"])), URIRef(ATTR_NS + "treatment"), Literal("A")) in graph.dataset
@@ -548,12 +548,12 @@ def test_restart_retains_resolved_units_without_a_resolver(metadata_api):
     pressure = study.output("pressure").scalar(unit="psi")
     run = study.start({"scenario": "baseline"})
     api.ledger.sync_metadata_graph()
-    reopened = ExperimentStore(api.store, api.ledger.artifact_dir, graph_store=api.graph, resolve=lambda text, kind: None)
+    reopened = ExperimentStore(api.store, graph_store=api.graph, resolve=lambda text, kind: None)
     assert reopened.variables(study.study_id)[0]["metadata"] == pressure.declaration.document()
     reopened.finish(run.run_id, "succeeded")
     assert reopened.run(run.run_id)["metadata"] == {"scenario": "baseline"}
     assert (URIRef(pressure.variable_id), HAS_UNIT, URIRef(PSI)) in api.graph.dataset
-    missing = ExperimentStore(api.store, api.ledger.artifact_dir, graph_store=MemoryGraphStore())
+    missing = ExperimentStore(api.store, graph_store=MemoryGraphStore())
     with pytest.raises(RuntimeError, match="restore its graph backup"):
         missing.run(run.run_id)
 

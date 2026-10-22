@@ -155,11 +155,8 @@ class Manager:
         self.timescale = timeseries_store
         self.graph_store = graph
         self.publication = publication
-        # Artifact bytes live under the server data directory; DuckDB stores
-        # their digest and experiment provenance, not a second blob copy.
         self.experiments = ExperimentStore(
-            timeseries_store, base / "experiment_artifacts",
-            graph_store=graph, resolve=self._resolve_experiment_metadata,
+            timeseries_store, graph_store=graph, resolve=self._resolve_experiment_metadata,
         )
         from acquirium.Materialization.runtime import Materializer
         self.materializer = Materializer(timeseries_store, graph,

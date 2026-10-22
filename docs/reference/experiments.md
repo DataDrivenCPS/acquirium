@@ -231,9 +231,9 @@ use the same execution path. Readers are all checked before sending; table
 bytes are prepared once. Invalid batches leave no new SQL samples, stream
 registrations, artifacts, observations, revisions, or outbox entries.
 
-SQL commits recording state and resolved graph intent together. Graph delivery
-and artifact files remain separate stores: graph failures retain replayable
-intent, and content-addressed orphan files are recovered by clearing experiments.
+SQL commits recording state, artifact bytes, and resolved graph intent
+together. Graph delivery remains a separate store: graph failures retain
+replayable intent.
 Old orphan samples remain covered by deletion and clearing. A retried HTTP
 request can append another observation; receipts do not promise exactly-once
 HTTP retries. See [migration and recovery](storage-migrations.md).

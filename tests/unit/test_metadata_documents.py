@@ -186,7 +186,7 @@ def test_http_documents_preserve_types_and_read_asserted_source(tmp_path, monkey
     from acquirium.Storage.duckdb_store import DuckDBStore
     graph = MemoryGraphStore()
     store = DuckDBStore(tmp_path / "documents.duckdb")
-    ledger = ExperimentStore(store, tmp_path / "artifacts", graph_store=graph)
+    ledger = ExperimentStore(store, graph_store=graph)
     uri = "urn:example:document"
     values = {"metadata": PAYLOAD, "date": date(2026, 1, 1)}
     write = plan_write(uri, values, role="entity", resolve=lambda *args: None)

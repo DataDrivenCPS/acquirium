@@ -100,19 +100,23 @@ class _PreparedBatch:
     frame: pl.DataFrame | None = None
 
 
+# Artifact bytes are split into rows of at most this size, which keeps each
+# value well below per-value limits and bounds the memory a single row needs.
+ARTIFACT_CHUNK_BYTES = 4 << 20
+
+
 class ExperimentStore:
     """Transactional recordings and durable handoff to graph-owned metadata."""
-    def __init__(self, store: Any, artifact_dir: Path, *, graph_store, resolve=None, metadata_strict=True) -> None:
-        self.store, self.artifact_dir = store, artifact_dir
+    def __init__(self, store: Any, *, graph_store, resolve=None, metadata_strict=True) -> None:
+        self.store = store
         self._live_resolve = resolve
         self.metadata = ExperimentMetadata(store, graph_store, self._resolve, strict=metadata_strict)
         self.metadata_graph = self.metadata.writer
         # Serialize graph delivery with metadata reads and lifecycle writes.
         # The store's separate writer lock remains available during graph I/O.
-        artifact_dir.mkdir(parents=True, exist_ok=True)
         # Keep the experiment ledger beside canonical time-series storage.  The
-        # ledger stores small provenance records; time-series samples continue
-        # to live in the normal Acquirium tables.
+        # ledger stores provenance records and artifact bytes; time-series
+        # samples continue to live in the normal Acquirium tables.
         with store._lock, store._write_conn() as conn:
             self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_templates (template_id VARCHAR PRIMARY KEY, name VARCHAR UNIQUE NOT NULL, created_at TIMESTAMP NOT NULL)")
             self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_variables (variable_id VARCHAR PRIMARY KEY, template_id VARCHAR NOT NULL, label VARCHAR NOT NULL, role VARCHAR NOT NULL, kind VARCHAR NOT NULL, metadata_json VARCHAR NOT NULL, created_at TIMESTAMP NOT NULL, UNIQUE(template_id, label))")
@@ -122,6 +126,8 @@ class ExperimentStore:
             migrate(conn, backend="postgres" if conn.__class__.__module__.startswith("psycopg") else "duckdb", component="experiments",
                     migrations=EXPERIMENT_MIGRATIONS)
             self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_artifacts (digest VARCHAR PRIMARY KEY, filename VARCHAR NOT NULL, media_type VARCHAR, byte_length BIGINT NOT NULL, created_at TIMESTAMP NOT NULL)")
+            # Artifact bytes commit with the rows that reference them.
+            self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_artifact_chunks (digest VARCHAR NOT NULL, seq INTEGER NOT NULL, data BYTEA NOT NULL, PRIMARY KEY(digest, seq))")
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_variables_template_idx ON experiment_variables(template_id)")
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_runs_template_idx ON experiment_runs(template_id, status, started_at)")
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_observations_variable_idx ON experiment_observations(variable_id, run_id, sequence)")
@@ -129,15 +135,17 @@ class ExperimentStore:
         self._resolutions = {}
 
     @classmethod
-    def standalone(cls, store, artifact_dir, *, resolve=None):
+    def standalone(cls, store, graph_dir, *, resolve=None):
         """Open a local durable graph; call close() before closing the SQL store.
 
-        Instances sharing a directory share its graph. The ledger does not own
-        the caller's SQL store. Context manager exit releases the graph handle.
+        `graph_dir` holds the metadata graph for this SQL store. Instances
+        given the same directory share its graph. The ledger does not own the
+        caller's SQL store. Context manager exit releases the graph handle.
         """
-        artifact_dir = Path(artifact_dir)
-        graph = LocalMetadataGraph.open(artifact_dir.parent / ".experiment-metadata")
-        ledger = cls(store, artifact_dir, graph_store=graph, resolve=resolve, metadata_strict=False)
+        graph_dir = Path(graph_dir)
+        graph_dir.mkdir(parents=True, exist_ok=True)
+        graph = LocalMetadataGraph.open(graph_dir)
+        ledger = cls(store, graph_store=graph, resolve=resolve, metadata_strict=False)
         ledger._local_graph = graph
         return ledger
 
@@ -314,8 +322,7 @@ class ExperimentStore:
 
     def record_batch(self, run_id: str, entries: list[dict]) -> list[dict]:
         # Sample metadata must serialize with source clears. Attachments and
-        # value-only batches use only the SQL lock, allowing a file to be
-        # reattached between a deletion commit and its ownership-checked unlink.
+        # value-only batches queue no graph intent and need only the SQL lock.
         with self.metadata.lock if any(e.get("form") == "samples" for e in entries) else nullcontext():
             return self._write_recording(run_id, self._prepare_recording(run_id, entries))
 
@@ -430,11 +437,7 @@ class ExperimentStore:
             sequence, recorded = self._next_observation(conn, run_id)
             for offset, item in enumerate(batch.observations):
                 if item.attachment is not None:
-                    artifact, data = item.attachment
-                    target = self.artifact_dir / item.artifact_digest
-                    if not target.exists():
-                        target.write_bytes(data)
-                    self._execute(conn, "INSERT INTO experiment_artifacts VALUES (?, ?, ?, ?, ?) ON CONFLICT(digest) DO NOTHING", [item.artifact_digest, artifact["filename"], artifact.get("media_type"), len(data), _database_timestamp(recorded)])
+                    self._store_artifact(conn, item.artifact_digest, *item.attachment, recorded)
                 self._execute(conn, "INSERT INTO experiment_observations (run_id, variable_id, sequence, recorded_at, occurred_at, value_json, artifact_digest, ref_uri, range_start, range_end, key_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [run_id, item.variable_id, sequence + offset, _database_timestamp(recorded), _database_timestamp(item.occurred_at) if item.occurred_at else None, _json(item.value) if item.value is not None else None, item.artifact_digest, item.ref_uri, _database_timestamp(item.interval[0]) if item.interval else None, _database_timestamp(item.interval[1]) if item.interval else None, _json(item.key) if item.key is not None else None])
                 receipt = {"sequence": sequence + offset, "recorded_at": recorded}
                 if item.sample_ref is not None:
@@ -443,6 +446,14 @@ class ExperimentStore:
             for update in batch.updates:
                 self.metadata.enqueue(conn, update)
         return results
+
+    def _store_artifact(self, conn, digest, artifact, data, recorded):
+        # Identical bytes are stored once, under the first name they arrived with.
+        if self._execute(conn, "SELECT 1 FROM experiment_artifacts WHERE digest=?", [digest]).fetchone():
+            return
+        self._execute(conn, "INSERT INTO experiment_artifacts VALUES (?, ?, ?, ?, ?)", [digest, artifact["filename"], artifact.get("media_type"), len(data), _database_timestamp(recorded)])
+        for seq, start in enumerate(range(0, len(data), ARTIFACT_CHUNK_BYTES)):
+            self._execute(conn, "INSERT INTO experiment_artifact_chunks VALUES (?, ?, ?)", [digest, seq, data[start:start + ARTIFACT_CHUNK_BYTES]])
 
     @_publishes
     def finish(self, run_id: str, status: str, error: Any = None) -> dict[str, Any]:
@@ -464,10 +475,14 @@ class ExperimentStore:
         if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
             raise KeyError(digest)
         with self.store._own_conn() as conn:
-            row = self._execute(conn, "SELECT filename, media_type FROM experiment_artifacts WHERE digest=?", [digest]).fetchone()
-        if row is None:
-            raise KeyError(digest)
-        return {"filename": row[0], "media_type": row[1], "data": (self.artifact_dir / digest).read_bytes()}
+            row = self._execute(conn, "SELECT filename, media_type, byte_length FROM experiment_artifacts WHERE digest=?", [digest]).fetchone()
+            if row is None:
+                raise KeyError(digest)
+            chunks = self._execute(conn, "SELECT data FROM experiment_artifact_chunks WHERE digest=? ORDER BY seq", [digest]).fetchall()
+        data = b"".join(bytes(chunk[0]) for chunk in chunks)
+        if len(data) != row[2]:
+            raise RuntimeError(f"artifact {digest} is missing its stored bytes")
+        return {"filename": row[0], "media_type": row[1], "data": data}
 
     @_publishes
     def annotate_stream(self, run_id: str, ref_uri: str, start: datetime | str, end: datetime | str | None = None, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -783,10 +798,9 @@ class ExperimentStore:
     def _delete_runs(self, conn, run_ids, *, sweep=False) -> dict[str, Any]:
         """Remove runs, their observations, samples, and unshared files in `conn`.
 
-        Returns the counts removed plus the graph nodes and artifact files to
-        drop once the transaction commits. With `sweep`, every experiment
-        stream and unreferenced artifact goes too, including leftovers from
-        an earlier deletion that failed after its ledger commit.
+        Returns the counts removed; graph node deletions are queued in the same
+        transaction. With `sweep`, every experiment stream and unreferenced
+        artifact goes too.
         """
         run_ids = list(dict.fromkeys(run_ids))
         removed = {"runs": len(run_ids), "observations": 0, "annotations": 0, "samples": 0, "files": 0}
@@ -832,7 +846,6 @@ class ExperimentStore:
                 """, refs).fetchone()[0])
             RevisionPublisher(self.store).reset(conn, refs)
             self._execute(conn, f"DELETE FROM streams WHERE ref_uri IN ({ref_marks})", refs)
-        files = []
         if digests:
             # Identical bytes are stored once, so keep a file another run still uses.
             unused = [row[0] for row in self._execute(conn, f"""
@@ -841,8 +854,9 @@ class ExperimentStore:
                   AND NOT EXISTS (SELECT 1 FROM experiment_observations AS o WHERE o.artifact_digest=experiment_artifacts.digest)
                 """, digests).fetchall()]
             if unused:
+                self._execute(conn, f"DELETE FROM experiment_artifact_chunks WHERE digest IN ({self._marks(unused)})", unused)
                 self._execute(conn, f"DELETE FROM experiment_artifacts WHERE digest IN ({self._marks(unused)})", unused)
-            removed["files"], files = len(unused), unused
+            removed["files"] = len(unused)
         for key in keys:
             enqueue(conn, {"operation": "delete", "subject": node_uri(*key)})
         graph = self.metadata_graph.graph_store
@@ -850,23 +864,12 @@ class ExperimentStore:
             enqueue(conn, {"clear": [str(graph.source_graph_uri(source))]})
         if sweep_sources:
             enqueue(conn, {"clear": [str(graph.source_graph_uri(source)) for source in sweep_sources]})
-        return {"removed": removed, "files": files}
+        return removed
 
-    def _after_delete(self, result, *, sweep=False) -> dict[str, Any]:
-        """Drop the deleted records' files and graph nodes after the SQL commit."""
-        # An attachment can recreate an artifact after the deletion commits.
-        # Recheck its record while holding the same lock as attachment writes,
-        # and retain the lock through unlink (including orphan sweeps).
-        with self.store._lock, self.store._own_conn() as conn:
-            paths = list(self.artifact_dir.iterdir()) if sweep else [self.artifact_dir / digest for digest in result["files"]]
-            removed = 0
-            for path in paths:
-                if path.is_file() and self._execute(conn, "SELECT 1 FROM experiment_artifacts WHERE digest=?", [path.name]).fetchone() is None:
-                    path.unlink(missing_ok=True)
-                    removed += 1
-            result["removed"]["files"] = removed
+    def _after_delete(self, removed) -> dict[str, Any]:
+        """Deliver the deleted records' graph changes after the SQL commit."""
         self.sync_metadata_graph()
-        return result["removed"]
+        return removed
 
     def _refuse_running(self, conn, clause, parameters) -> None:
         running = [row[0] for row in self._execute(
@@ -923,7 +926,7 @@ class ExperimentStore:
             for table in ("experiment_variables", "experiment_templates"):
                 self._execute(conn, f"DELETE FROM {table}")
         self._resolutions = {}
-        return {"studies": studies, "variables": variables, **self._after_delete(result, sweep=True)}
+        return {"studies": studies, "variables": variables, **self._after_delete(result)}
 
     def usage(self, *, template_id: str | None = None, run_ids: list[str] | None = None) -> dict[str, Any]:
         """Count what the selected experiments store and estimate its size.

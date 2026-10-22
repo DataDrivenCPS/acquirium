@@ -37,7 +37,7 @@ def test_metadata_sync_reports_old_servers_without_hiding_other_errors(status):
 def test_reusable_template_variables_are_isolated_and_timestamped(tmp_path):
     store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
     try:
-        experiments = ExperimentStore.standalone(store, tmp_path / "artifacts")
+        experiments = ExperimentStore.standalone(store, tmp_path / "graph")
         template = experiments.define("load-shift")
         variable = experiments.declare(template["template_id"], "configuration", "input", "json", {})
         first = experiments.start(template["template_id"], {"case": 1})
@@ -57,14 +57,33 @@ def test_reusable_template_variables_are_isolated_and_timestamped(tmp_path):
 def test_file_attachment_is_content_addressed(tmp_path):
     store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
     try:
-        experiments = ExperimentStore.standalone(store, tmp_path / "artifacts")
+        experiments = ExperimentStore.standalone(store, tmp_path / "graph")
         template = experiments.define("files")
         variable = experiments.declare(template["template_id"], "config", "input", "file", {})
         run = experiments.start(template["template_id"], {})
         first = experiments.attach_file(run["run_id"], variable["variable_id"], "a.json", "application/json", b"{}")
         second = experiments.attach_file(run["run_id"], variable["variable_id"], "b.json", "application/json", b"{}")
         assert first["digest"] == second["digest"]
-        assert (tmp_path / "artifacts" / first["digest"]).read_bytes() == b"{}"
+        assert experiments.artifact(first["digest"])["data"] == b"{}"
+        assert _stored_artifacts(store) == [first["digest"]]
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("data", [b"", bytes(range(256)) * 5], ids=["empty", "chunked"])
+def test_file_attachment_round_trips_across_chunks(tmp_path, monkeypatch, data):
+    monkeypatch.setattr("acquirium.Experiments.ARTIFACT_CHUNK_BYTES", 300)
+    store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
+    try:
+        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
+        study = ledger.define("chunks")
+        variable = ledger.declare(study["template_id"], "dump", "output", "file", {})
+        run = ledger.start(study["template_id"], {})
+        saved = ledger.attach_file(run["run_id"], variable["variable_id"], "dump.bin", None, data)
+        with store._own_conn() as conn:
+            chunks = conn.execute("SELECT count(*) FROM experiment_artifact_chunks").fetchone()[0]
+        assert chunks == -(-len(data) // 300)
+        assert ledger.artifact(saved["digest"])["data"] == data
     finally:
         store.close()
 
@@ -72,7 +91,7 @@ def test_file_attachment_is_content_addressed(tmp_path):
 def test_recording_rejects_empty_samples_so_receipts_match_entries(tmp_path):
     store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
     try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
+        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
         study = ledger.define("samples")
         empty, full = (ledger.declare(study["template_id"], label, "output", "timeseries", {}) for label in ("empty", "full"))
         run = ledger.start(study["template_id"], {})
@@ -89,8 +108,8 @@ def test_recording_rejects_empty_samples_so_receipts_match_entries(tmp_path):
 def test_concurrent_declaration_of_same_label_is_idempotent(tmp_path, monkeypatch):
     store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
     try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
-        other = ExperimentStore.standalone(store, tmp_path / "artifacts")
+        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
+        other = ExperimentStore.standalone(store, tmp_path / "graph")
         study = ledger.define("race")
         record_update = ledger.metadata_graph.record_update
         def interleave(*args, **kwargs):
@@ -114,7 +133,7 @@ def test_concurrent_declaration_of_same_label_is_idempotent(tmp_path, monkeypatc
 def test_observation_rejects_unknown_or_foreign_variable(tmp_path, attachment, foreign):
     store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
     try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
+        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
         study = ledger.define("owner")
         other = ledger.define("other")
         variable = ledger.declare(other["template_id"], "result", "output", "file" if attachment else "scalar", {})
@@ -128,7 +147,7 @@ def test_observation_rejects_unknown_or_foreign_variable(tmp_path, attachment, f
         with store._own_conn() as conn:
             assert conn.execute("SELECT count(*) FROM experiment_observations").fetchone()[0] == 0
             assert conn.execute("SELECT count(*) FROM experiment_artifacts").fetchone()[0] == 0
-        assert list(ledger.artifact_dir.iterdir()) == []
+        assert _stored_artifacts(ledger.store) == []
         owned = ledger.declare(study["template_id"], "valid", "output", "scalar", {})
         assert ledger.observe(run["run_id"], owned["variable_id"], value=42)["sequence"] == 1
     finally:
@@ -159,7 +178,7 @@ def _samples(store, ref):
 def test_delete_runs_removes_what_they_recorded_and_keeps_shared_files(tmp_path):
     store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
     try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
+        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
         study = ledger.define("tank")
         config = ledger.declare(study["template_id"], "config", "input", "file", {})
         level = ledger.declare(study["template_id"], "level", "output", "timeseries", {})
@@ -184,13 +203,13 @@ def test_delete_runs_removes_what_they_recorded_and_keeps_shared_files(tmp_path)
         assert [run["run_id"] for run in ledger.runs(study["template_id"])] == [runs[1]["run_id"]]
         assert ledger.stream_annotations(run_id=runs[0]["run_id"]) == []
         assert (_samples(store, refs[0]), _samples(store, refs[1]), _samples(store, site)) == (0, 1, 1)
-        assert [path.name for path in ledger.artifact_dir.iterdir()] == [sha256(b"{}").hexdigest()]
+        assert _stored_artifacts(ledger.store) == [sha256(b"{}").hexdigest()]
         with store._own_conn() as conn:
             # The reset marker tells materializers to rebuild what they derived.
             assert conn.execute("SELECT count(*) FROM stream_resets WHERE ref_uri=?", [refs[0]]).fetchone()[0] == 1
             assert conn.execute("SELECT count(*) FROM streams WHERE ref_uri=?", [refs[0]]).fetchone()[0] == 0
         ledger.delete_runs([runs[1]["run_id"]])
-        assert list(ledger.artifact_dir.iterdir()) == []
+        assert _stored_artifacts(ledger.store) == []
         with pytest.raises(KeyError):
             ledger.delete_runs([runs[1]["run_id"]])
     finally:
@@ -200,7 +219,7 @@ def test_delete_runs_removes_what_they_recorded_and_keeps_shared_files(tmp_path)
 def test_delete_keeps_streams_that_other_runs_reference(tmp_path):
     store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
     try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
+        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
         simulation, analysis = ledger.define("simulation"), ledger.define("analysis")
         level = ledger.declare(simulation["template_id"], "level", "output", "timeseries", {})
         used = ledger.declare(analysis["template_id"], "level", "input", "timeseries", {})
@@ -225,7 +244,7 @@ def test_delete_keeps_streams_that_other_runs_reference(tmp_path):
 def test_delete_study_clear_and_usage_cover_experiments_only(tmp_path):
     store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
     try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "artifacts", resolve=lambda text, kind: "urn:unit:kW")
+        ledger = ExperimentStore.standalone(store, tmp_path / "graph", resolve=lambda text, kind: "urn:unit:kW")
         assert ledger._resolve("kW", "unit") == "urn:unit:kW"
         site = store.ensure_stream_ref("urn:site#level", "site", "level", value_kind="numeric")
         store.upsert_rows(site, [(T0, 1000.0)], value_kind="numeric")
@@ -260,7 +279,7 @@ def test_delete_study_clear_and_usage_cover_experiments_only(tmp_path):
         assert removed == {"studies": 1, "variables": 2, "runs": 1, "observations": 2, "annotations": 0, "samples": 2, "files": 0}
         with pytest.raises(KeyError):
             ledger.study(studies[0]["template_id"])
-        assert len(list(ledger.artifact_dir.iterdir())) == 1  # the second study still uses it
+        assert len(_stored_artifacts(ledger.store)) == 1  # the second study still uses it
 
         # A stream left by a deletion that failed after its ledger commit.
         orphan = store.ensure_stream_ref(None, "experiment/gone", "level", value_kind="numeric")
@@ -271,7 +290,7 @@ def test_delete_study_clear_and_usage_cover_experiments_only(tmp_path):
         assert ledger.clear() == {"studies": 1, "variables": 2, "runs": 1, "observations": 2, "annotations": 0, "samples": 3, "files": 1}
         assert ledger.studies() == []
         assert ledger.usage()["total_bytes"] == 0
-        assert list(ledger.artifact_dir.iterdir()) == []
+        assert _stored_artifacts(ledger.store) == []
         assert (_samples(store, orphan), _samples(store, site)) == (0, 1)
         with store._own_conn() as conn:
             assert conn.execute("SELECT count(*) FROM experiment_metadata_outbox").fetchone()[0] == 0
@@ -287,7 +306,7 @@ def test_http_delete_routes_report_conflicts_and_require_confirmation(tmp_path, 
 
     store = DuckDBStore(tmp_path / "http.duckdb", recreate=True)
     try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
+        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
         module = import_module("acquirium.Server.app")
         monkeypatch.setattr(module.app.state, "manager", SimpleNamespace(experiments=ledger), raising=False)
         http = TestClient(module.app)
@@ -311,7 +330,7 @@ def test_http_delete_routes_report_conflicts_and_require_confirmation(tmp_path, 
 def test_ledger_enforces_what_each_kind_stores(tmp_path):
     store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
     try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
+        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
         study = ledger.define("kinds")
         declare = lambda label, kind: ledger.declare(study["template_id"], label, "output", kind, {})["variable_id"]
         with pytest.raises(ValueError, match="kind must be one of"):
@@ -333,7 +352,7 @@ def test_ledger_enforces_what_each_kind_stores(tmp_path):
         with pytest.raises(ValueError, match="Parquet"):
             ledger.attach_file(run, table, "x.parquet", None, b"not parquet")
         assert len(ledger.observations(study["template_id"])) == 6
-        assert list(ledger.artifact_dir.iterdir()) == []
+        assert _stored_artifacts(ledger.store) == []
     finally:
         store.close()
 
@@ -343,7 +362,7 @@ def test_http_artifacts_download_with_their_saved_names(tmp_path, monkeypatch):
 
     store = DuckDBStore(tmp_path / "http.duckdb", recreate=True)
     try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
+        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
         module = import_module("acquirium.Server.app")
         monkeypatch.setattr(module.app.state, "manager", SimpleNamespace(experiments=ledger), raising=False)
         http = TestClient(module.app)
@@ -369,7 +388,7 @@ def test_http_artifacts_download_with_their_saved_names(tmp_path, monkeypatch):
 @pytest.fixture
 def study_api(tmp_path):
     store = DuckDBStore(tmp_path / "api.duckdb", recreate=True)
-    ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
+    ledger = ExperimentStore.standalone(store, tmp_path / "graph")
     client = Mock()
     client.define_experiment.side_effect = ledger.define
     client.declare_experiment_variable.side_effect = ledger.declare
@@ -869,7 +888,7 @@ def test_http_routes_accept_reference_uri_variable_ids_and_stream_annotations(tm
 
     store = DuckDBStore(tmp_path / "http.duckdb", recreate=True)
     try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "artifacts")
+        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
         module = import_module("acquirium.Server.app")
         monkeypatch.setattr(module.app.state, "manager", SimpleNamespace(experiments=ledger), raising=False)
         http = TestClient(module.app)
@@ -912,7 +931,7 @@ def test_http_routes_accept_reference_uri_variable_ids_and_stream_annotations(tm
             assert http.post(f"{path}/observations", json={"value": 99}).status_code == expected_status
             assert http.post(f"{path}/file", content=b"invalid").status_code == expected_status
         assert len(ledger.observations(study["template_id"])) == 1
-        assert list(ledger.artifact_dir.iterdir()) == []
+        assert _stored_artifacts(ledger.store) == []
         tagged = http.post(
             f"/experiments/runs/{run['run_id']}/stream-annotations",
             json={"ref_uri": "urn:plant:flow", "start": "2026-01-01T00:00:00Z", "metadata": {"phase": "trial"}},
@@ -1242,3 +1261,9 @@ def test_output_assignment_rejects_unsupported_values_and_conflicts(study_api, t
     with pytest.raises(ValueError, match="declared differently"):
         run.output["config"] = {}
     client.record_experiment_batch.assert_not_called()
+
+
+def _stored_artifacts(store):
+    """Digests whose bytes are still stored."""
+    with store._own_conn() as conn:
+        return [row[0] for row in conn.execute("SELECT DISTINCT digest FROM experiment_artifact_chunks ORDER BY digest").fetchall()]
