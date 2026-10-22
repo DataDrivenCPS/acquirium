@@ -40,7 +40,7 @@ published, and every current output passed independent verification.
 
 ![Fixed pool comparison](model-comparison.png)
 
-[Standalone SVG](model-comparison.svg). The burst is shaded; source counts are
+The burst is shaded; source counts are
 solid for publication and dashed for admission. RSS is the sampled sum of root
 worker processes, counts shared pages per worker, excludes descendants/server,
 and can miss short peaks. The chart includes initialization before time zero.
@@ -85,13 +85,13 @@ cap cannot expose group concurrency under the present API.
 Correction: that initial narrow run also set native scheduler workers to one,
 because the harness tied `workers` to `units`. It did not isolate DAG width from
 the scheduler limit. The harness now provides a separate `--workers` option.
-The [corrected diagnostic](narrow-workers4/result.json) explicitly sets one
+The corrected diagnostic explicitly sets one
 operator, four scheduler slots, and a four-process pool cap. It still launches
 only one process, has zero pool waiters, and accumulates pending source requests.
 It verifies all 106 accepted requests after draining. This additional run
 overlapped integration tests on a busy machine; its latency/rate numbers are
-retained as evidence, not a comparable capacity measurement. `summary.json` and
-the comparison figure retain only the original five cases.
+recorded as evidence, not a comparable capacity measurement. The comparison
+figure shows only the original five cases.
 
 Many independent device pipelines can already expose operator concurrency.
 Group splitting is therefore conditional on a representative narrow-operator
@@ -125,12 +125,10 @@ uv run --locked python -m examples.model_workload.plot \
   /tmp/model-pool1 /tmp/model-pool2 /tmp/model-pool4 --output /tmp/model-comparison
 ```
 
-[summary.json](summary.json) contains the table calculations. Each case retains
-`environment.json`, `result.json`, flattened `samples.csv`, and losslessly
-compressed full `samples.jsonl.gz`, `epochs.json.gz`, and `requests.jsonl.gz`.
-The plot command also reads compressed samples, so this chart can be regenerated
-directly from the checked-in case directories. Native DuckDB scratch files are
-omitted. The full timing histograms use fixed percentile upper bounds; see
+The raw measurements are not kept in the repository. Rerun the commands above to
+regenerate them. Each run writes `environment.json`, `result.json`,
+`samples.csv`, and compressed `samples.jsonl.gz`, `epochs.json.gz` and
+`requests.jsonl.gz`; the plot command reads them. The full timing histograms use fixed percentile upper bounds; see
 [telemetry definitions](../../reference/http-api.md).
 
 Validation passed: 35 native tests, 12 real Python-worker tests, 25 Python API

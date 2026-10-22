@@ -65,12 +65,12 @@ Peak observed pending requests was eight. Observed publication latency upper
 bounds were p50 35.93 ms, p95 135.82 ms, and maximum 199.67 ms; consumption p95
 was 234.67 ms. These bounds include polling and source/client work.
 
-The [steady report](steady-workload.json) retains the complete metrics. Server
+Server
 peak RSS was approximately 745 MiB and **excludes Python worker processes**.
 Warm workers retain memory between invocations; these results do not establish
 total memory savings. Age/job recycling bounds reuse lifetime, not peak RSS.
 
-The [restart report](restart-workload.json) covers 60 requests, three graceful
+The restart run covers 60 requests, three graceful
 server/consumer restarts, and seven-row feed pages. All 138 final rows match;
 both frontiers reach epoch 39, with no delivery retries and peak backlog eight.
 Publication p95 is 6.64 seconds and consumption p95 8.60 seconds: these upper
@@ -120,11 +120,8 @@ uv run --locked python -m examples.streaming.workload \
   --data-dir /tmp/pool-steady --ticks 120 --burst 4 --interval 0.05
 ```
 
-Retained [fresh](fresh/summary.md) and [pooled](pooled/summary.md) summary tables,
-[fresh](fresh/summary.json) and [pooled](pooled/summary.json) machine-readable
-summaries, [fresh](fresh/environment.json) and [pooled](pooled/environment.json)
-environments, per-epoch [fresh](fresh/epochs.csv)/[pooled](pooled/epochs.csv)
-timings, per-invocation [fresh](fresh/workers.csv)/[pooled](pooled/workers.csv)
-timings, and the [standalone SVG](pool-comparison.svg) support inspection.
-The harness retains per-case native reports and raw worker profiles in its
-selected output directory; temporary databases are removed.
+The [fresh](fresh/summary.md) and [pooled](pooled/summary.md) summary tables and
+the figure above are kept. The raw measurements are not kept in the repository. Rerun the commands above to
+regenerate them.
+The harness writes per-case native reports and raw worker profiles to its
+output directory; temporary databases are removed.
