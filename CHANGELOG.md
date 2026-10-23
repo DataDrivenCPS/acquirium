@@ -25,7 +25,8 @@ change in any release.
 - `acq.recipes`: named query shortcuts bound to the client. Five ship with
   the package (`streams`, `stream_stats`, `catalog`, `processes`, `recent`);
   `acq.recipes.add(path)` loads more from a local recipe file, and
-  `acq.recipes.source(name)` shows how one is written. `packaging` is a new
+  `acq.recipes.source(name)` shows how one is written. More recipes live
+  under `examples/recipes/` in the repository. `packaging` is a new
   dependency, used to check a recipe file's `ACQUIRIUM` version pin.
 - `Query.measurement(uri=...)` pins a measurement node to one point.
 - `Query.insert_log()` and `Query.read_logs()` write and read logbook notes

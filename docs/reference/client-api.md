@@ -51,6 +51,7 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 |---|---|
 | `query() -> Query` | Create a new empty `Query` bound to this instance. |
 | `explore() -> Query` | Alias of `query()`. |
+| `recipes -> Recipes` | Named query shortcuts bound to this client; see [Recipes](#recipes). Built on first access. |
 
 ### Graph
 
@@ -186,6 +187,49 @@ See the [data tutorial](../tutorials/data.md).
 | `cast_value` | client-side cast (`Query` only): `"float"` parses numeric text into `value_numeric`; `"int"` also returns `Int64` columns and warns when it truncates fractional values; `"str"` puts every value in `value_text`; `None` (default) leaves values as sent; anything else is a `ValueError` |
 | `value_mode` | `"default"`, `"numeric"`, `"text"` or `"coalesce"` (`Query` only) |
 | `include_dependencies` | query the ontology and shape triples alongside the plant data (`Query` only) |
+
+## Recipes
+
+`acq.recipes` holds named functions with the client already bound: a recipe
+written as `def catalog(acq, query=None)` is called as
+`acq.recipes.catalog(query)`. Five ship with the package; `add()` loads more
+from a local file. Everything in this section is in `acquirium.recipes`.
+
+| member | description |
+|---|---|
+| `add(source, *, replace=False) -> list[str]` | Register the recipes a local `.py` file or an imported module defines; returns their names. A name already registered raises `RecipeError` unless `replace=True`. Names that shadow `add` or `source` are rejected. |
+| `source(name) -> str` | The recipe's source code. |
+| `acq.recipes.<name>(...)` | Call a recipe; `acq` is bound, the visible signature drops it, the docstring is kept. An unknown name raises `AttributeError` listing the available ones. |
+| `repr(acq.recipes)`, `dir(acq.recipes)` | Name, first docstring line and origin of every recipe; the names, for tab completion. |
+| `name in acq.recipes`, `iter(acq.recipes)`, `len(acq.recipes)` | Membership by name; iteration yields `Recipe(name, func, origin)` records with a `description` property. |
+| `Recipes(acq, builtin=True)` | The class behind the property, for a namespace that starts empty (`builtin=False`). |
+| `RecipeError` | `ValueError` subclass raised by `add()`: version mismatch, malformed specifier, name collision, reserved name, or a path that is not a Python file. |
+
+### Recipe files
+
+A recipe file is a plain module. Every public top-level function it defines
+whose first parameter is named `acq` is a recipe; underscore names, imported
+functions and functions with another first parameter are skipped. A module
+constant `ACQUIRIUM` holding a PEP 440 specifier (`">=0.4.0a8"`) pins the
+versions the file was written for: `add()` raises `RecipeError` when the
+installed version is outside it. Without the constant no check runs.
+Files load under a private module name, so they never collide with the
+caller's imports.
+
+### Shipped recipes
+
+All in `acquirium/recipes/builtins.py`.
+
+| recipe | returns |
+|---|---|
+| `streams(**where) -> Query` | Every registered stream, filtered like `where()`: the root `measurement(**where)`. |
+| `stream_stats(query=None) -> pl.DataFrame` | One row per stream the query matches (default: all): `alias`, `stream`, `label`, `rows`, `earliest`, `latest`, from bindings, nothing fetched. Sorted by rows. |
+| `catalog(query=None) -> pl.DataFrame` | One row per stream: `stream`, `label`, `quantity_kind`, `unit`, `substance`, `host`, `host_type`, `feeder`, `process`. Three graph queries left-joined on the stream, so undescribed streams keep a row with empty host and process; `process` is the host's, or the feeder's for a sensor on a pipe. |
+| `processes(*, neighbors=False, max_depth=12) -> pl.DataFrame` | `process` and `units` per treatment step. `neighbors=True` adds `upstream` and `downstream` list columns from the nearest downstream unit of every unit within `max_depth` flow hops. |
+| `recent(query, *, days=None, hours=None, shape="wide", cast_value="float") -> pl.DataFrame` | The last span of the query's data, ending at its newest sample across all streams. Exactly one of `days` or `hours`. |
+
+More live under [`examples/recipes/`](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/recipes)
+in the repository, with the rule for moving one into the package.
 
 ## AcquiriumClient
 
