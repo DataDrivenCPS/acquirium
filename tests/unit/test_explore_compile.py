@@ -1,9 +1,7 @@
-"""Parity tests: explore.compile.compile_sparql vs the legacy Q.to_sparql.
+"""Compiler tests for explore.compile.compile_sparql.
 
-The legacy compiler never touches ``self.client``, so ``Q(client=None,
-query_graph=g).to_sparql()`` runs without a server. Negation differs only in
-the marker class (legacy private ``_Exclude`` vs explore ``Not``), so those
-cases build two structurally identical graphs, one per marker.
+Every graph shape the builder can produce must compile to SPARQL that
+rdflib parses, and the shape-specific clauses must be present.
 """
 
 import re
@@ -12,7 +10,7 @@ import pytest
 
 from acquirium.Client.explore.attributes import Not
 from acquirium.Client.explore.compile import compile_sparql
-from acquirium.Client.query import Q, _Exclude
+from rdflib.plugins.sparql import prepareQuery
 from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
 
 CLS_A = "urn:test#TypeA"
@@ -25,55 +23,8 @@ QK = "http://qudt.org/schema/qudt/hasQuantityKind"
 MEDIUM = "http://data.ashrae.org/standard223#ofMedium"
 
 
-@pytest.fixture(autouse=True)
-def no_hidden_defaults():
-    """Parity vs the legacy compiler needs the hidden-predicate filters off."""
-    from acquirium.Client.explore.hidden import hidden_predicates, unhide
-    unhide(*hidden_predicates())
-    yield
-    unhide()
-
-
 def norm(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
-
-
-def strip_labels(s: str) -> str:
-    """Drop the point-label optionals the explore compiler adds.
-
-    The frozen legacy builder does not fetch ``rdfs:label``, so parity is
-    asserted modulo the ``?lbl<N>`` select vars and their OPTIONAL clauses.
-    """
-    s = re.sub(
-        r"OPTIONAL \{ \?\w+ <http://www\.w3\.org/2000/01/rdf-schema#label> \?lbl\d+ \. \} ?",
-        "",
-        s,
-    )
-    return norm(re.sub(r" \?lbl\d+", "", s))
-
-
-_DATA_EDGE = re.compile(
-    r"\{ \{ (\?v\d+) <http://data\.ashrae\.org/standard223#hasProperty> (\?v\d+) \. \} UNION "
-    r"\{ \1 <http://data\.ashrae\.org/standard223#hasConnectionPoint> \?m_e(\d+)_data_a1_0 \. "
-    r"\?m_e\3_data_a1_0 <http://data\.ashrae\.org/standard223#hasProperty> \2 \. \} UNION "
-    r"\{ \1 <http://data\.ashrae\.org/standard223#actuatedByProperty> \2 \. \} \}"
-)
-
-
-def legacy_data_edge(s: str) -> str:
-    """Rewrite explore's fixed-predicate data edge (the ``entity`` relation)
-    into the any-predicate block the frozen legacy compiler emits, so the
-    rest of the query can still be compared for parity."""
-    return _DATA_EDGE.sub(
-        lambda m: (f"{{ {m.group(1)} ?p_e{m.group(3)}_1 {m.group(2)} . }} UNION "
-                   f"{{ {m.group(1)} <http://data.ashrae.org/standard223#hasConnectionPoint> ?cp_e{m.group(3)}_k1 . "
-                   f"?cp_e{m.group(3)}_k1 ?p_e{m.group(3)}_1 {m.group(2)} . }}"),
-        s,
-    )
-
-
-def legacy_sparql(g: QueryGraph) -> str:
-    return Q(client=None, query_graph=g).to_sparql()
 
 
 def entity(g: QueryGraph, nid: int, *, cls: str | None = None, uri: str | None = None,
@@ -91,30 +42,31 @@ def data_node(g: QueryGraph, nid: int, *, filters: dict) -> QueryGraph:
     return g.with_data_node(DataNodeInfo(node_id=nid, filters=filters))
 
 
-def assert_parity(g: QueryGraph, g_legacy: QueryGraph | None = None):
-    new = compile_sparql(g)
-    old = legacy_sparql(g_legacy if g_legacy is not None else g)
-    assert strip_labels(norm(legacy_data_edge(norm(new)))) == norm(old)
+def assert_compiles(g: QueryGraph) -> str:
+    """The graph compiles, and the SPARQL parses."""
+    sparql = compile_sparql(g)
+    prepareQuery(sparql)
+    return sparql
 
 
 class TestNodeConstraints:
     def test_class_only(self):
         g = entity(QueryGraph(), 0, cls=CLS_A)
         assert "subClassOf" in compile_sparql(g)
-        assert_parity(g)
+        assert_compiles(g)
 
     def test_instance_uri_values(self):
         g = entity(QueryGraph(), 0, uri=INST)
         assert f"VALUES ?v0 {{ <{INST}> }}" in compile_sparql(g)
-        assert_parity(g)
+        assert_compiles(g)
 
     def test_class_and_instance(self):
         g = entity(QueryGraph(), 0, cls=CLS_A, uri=INST)
-        assert_parity(g)
+        assert_compiles(g)
 
     def test_unconstrained_node(self):
         g = entity(QueryGraph(), 0)
-        assert_parity(g)
+        assert_compiles(g)
 
 
 class TestEdges:
@@ -126,12 +78,12 @@ class TestEdges:
     def test_predicates(self, hops):
         g = self.two_nodes().with_edge(
             QueryEdge(source_id=0, target_id=1, hops=hops, predicates=[PRED_P, PRED_Q]))
-        assert_parity(g)
+        assert_compiles(g)
 
     @pytest.mark.parametrize("hops", [1, 2, 3])
     def test_unconstrained(self, hops):
         g = self.two_nodes().with_edge(QueryEdge(source_id=0, target_id=1, hops=hops))
-        assert_parity(g)
+        assert_compiles(g)
 
     @pytest.mark.parametrize("direction", ["upstream", "downstream"])
     @pytest.mark.parametrize("hops", [1, 3])
@@ -140,9 +92,8 @@ class TestEdges:
         loop never returns the source as its own downstream."""
         g = self.two_nodes().with_edge(
             QueryEdge(source_id=0, target_id=1, hops=hops, direction=direction))
-        new = compile_sparql(g)
+        new = assert_compiles(g)
         assert "FILTER(?v1 != ?v0)" in new
-        assert strip_labels(norm(new.replace("FILTER(?v1 != ?v0)", ""))) == norm(legacy_sparql(g))
 
     @pytest.mark.parametrize("hops", [1, 2])
     @pytest.mark.parametrize("predicates", [None, [PRED_P]])
@@ -150,19 +101,17 @@ class TestEdges:
         g = self.two_nodes().with_edge(
             QueryEdge(source_id=0, target_id=1, hops=hops, predicates=predicates,
                       cp_filter=CP_CLASS))
-        assert_parity(g)
+        assert_compiles(g)
 
     def test_inverse_predicate(self):
         g = self.two_nodes().with_edge(
             QueryEdge(source_id=0, target_id=1, hops=1, predicates=[f"^{PRED_P}"]))
-        assert_parity(g)
+        assert_compiles(g)
 
     def test_hops_below_one_raises(self):
         g = self.two_nodes().with_edge(QueryEdge(source_id=0, target_id=1, hops=0))
         with pytest.raises(ValueError):
             compile_sparql(g)
-        with pytest.raises(ValueError):
-            legacy_sparql(g)
 
 
 class TestDataNodes:
@@ -175,23 +124,28 @@ class TestDataNodes:
         g = self.with_data({})
         sparql = compile_sparql(g)
         assert "?ext1" in sparql and "?unit1" in sparql and "?extunit1" in sparql
-        assert_parity(g)
+        # the stream's registered identity rides along for stream_info()
+        first = sparql.splitlines()[0]
+        assert "?extsrc1" in first and "?extname1" in first
+        assert "OPTIONAL { ?ext1 <urn:acquirium#sourceId> ?extsrc1 . }" in sparql
+        assert "OPTIONAL { ?ext1 <urn:acquirium#refName> ?extname1 . }" in sparql
+        assert_compiles(g)
 
     def test_scalar_uri_filter(self):
         g = self.with_data({QK: "http://qudt.org/vocab/quantitykind/MassFlowRate"})
-        assert_parity(g)
+        assert_compiles(g)
 
     def test_list_filter(self):
         g = self.with_data({MEDIUM: ["urn:test#M1", "urn:test#M2", None]})
-        assert_parity(g)
+        assert_compiles(g)
 
     def test_literal_filter(self):
         g = self.with_data({"urn:acquirium#dataSource": "Lab"})
-        assert_parity(g)
+        assert_compiles(g)
 
     def test_none_filter_skipped(self):
         g = self.with_data({QK: None})
-        assert_parity(g)
+        assert_compiles(g)
 
     @pytest.mark.parametrize("value", [
         "urn:test#M1",                     # scalar URI
@@ -200,10 +154,8 @@ class TestDataNodes:
         "Lab",                             # literal
     ])
     def test_negation(self, value):
-        g_new = self.with_data({MEDIUM: Not(value)})
-        g_old = self.with_data({MEDIUM: _Exclude(value)})
-        assert "FILTER NOT EXISTS" in compile_sparql(g_new)
-        assert_parity(g_new, g_old)
+        g = self.with_data({MEDIUM: Not(value)})
+        assert "FILTER NOT EXISTS" in assert_compiles(g)
 
 
 class TestFullChain:
@@ -218,16 +170,8 @@ class TestFullChain:
         })
         g = g.with_edge(QueryEdge(source_id=1, target_id=2, hops=1))
 
-        g_old = entity(QueryGraph(), 0, cls="urn:nawi-water-ontology#ReverseOsmosisMembrane", alias="ro")
-        g_old = entity(g_old, 1, cls="http://data.ashrae.org/standard223#OutletConnectionPoint", alias="ro_out")
-        g_old = g_old.with_edge(QueryEdge(source_id=0, target_id=1, hops=1))
-        g_old = data_node(g_old, 2, filters={
-            QK: "http://qudt.org/vocab/quantitykind/MassFlowRate",
-            MEDIUM: _Exclude("urn:nawi-water-ontology#Water-Brine"),
-        })
-        g_old = g_old.with_edge(QueryEdge(source_id=1, target_id=2, hops=1))
-
-        assert_parity(g, g_old)
+        sparql = assert_compiles(g)
+        assert "MassFlowRate" in sparql and "FILTER NOT EXISTS" in sparql
 
 
 class TestMultiMeasurementUnion:

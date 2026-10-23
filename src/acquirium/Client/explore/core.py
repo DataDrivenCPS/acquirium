@@ -1,6 +1,6 @@
 """Core immutable query builder for the explore layer.
 
-``Query`` is the clean replacement for the legacy builder (now ``Q``): short verbs
+``Query`` is the query builder: short verbs
 (``entity`` / ``related`` / ``measurement`` / ``where`` / ``include`` /
 ``alias`` / ``drop`` / ``refocus``) build an immutable :class:`QueryGraph`, and terminals
 (``metadata`` / ``data`` / ``dataframe`` / ``execute`` / ``to_sparql``) run
@@ -19,7 +19,7 @@ be kept side by side::
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 import polars as pl
@@ -46,6 +46,10 @@ def _is_uri(text: Any) -> bool:
     return isinstance(text, str) and (
         text.startswith("urn:") or text.startswith("http://") or text.startswith("https://")
     )
+
+
+def _iso(v: "datetime | str | None") -> "str | None":
+    return v.isoformat() if isinstance(v, datetime) else v
 
 
 @dataclass(frozen=True)
@@ -368,7 +372,7 @@ class Query:
     def measurement(self, *, frm: "str | list | tuple | None" = None, alias: Optional[str] = None,
                     direction: Optional[str] = None, max_depth: int = 3,
                     nearest: Optional[bool] = None, include_connection_points: bool = True,
-                    **attrs: Any) -> "Query":
+                    uri: str | URIRef | None = None, **attrs: Any) -> "Query":
         """Attach a measurement point (data node) to the pattern and point at it.
 
         Matches nodes carrying an external reference one hop from the source.
@@ -404,12 +408,18 @@ class Query:
             q.measurement(direction="upstream", quantity_kind="ph")
             q.measurement(direction="downstream", nearest=False, max_depth=2)
 
+        ``uri`` pins the measurement node to one point (a full URI or a
+        bound CURIE), the way ``entity(uri=...)`` does for an entity::
+
+            aq.query().measurement(uri="wbs:RO-in-pressure")
+
         Extra keyword arguments are attribute filters applied to the new
         measurement node(s), same as ``where()``::
 
             q.measurement(quantity_kind="mass flow rate", medium=Not("brine"))
         """
         g = self.query_graph
+        instance_uri = self._normalize_instance_uri(uri)
 
         if isinstance(frm, (list, tuple)) and direction is not None:
             raise ValueError("measurement: frm list only combines with the non-directional form")
@@ -454,13 +464,14 @@ class Query:
             g = g.with_edge(QueryEdge(source_id=mid_id, target_id=data_id, hops=1),
                             new_pointer=data_id)
             g = g.with_data_node(DataNodeInfo(node_id=data_id))
+            g = self._pin_uri(g, [data_id], instance_uri)
             if attrs:
                 g = self._apply_attrs(g, [data_id], self._resolve_attr_values(attrs))
             return self._with_graph(g)
 
         if frm is None and not g.nodes:
             # Root form: every measurement point in the plant, no entity
-            # anchor (the legacy find_all_data). A standalone data node —
+            # anchor (what ``Acquirium.find_all_data()`` builds). A standalone data node —
             # still bounded by the external-reference requirement.
             new_id = self._next_id()
             if alias is not None:
@@ -468,6 +479,7 @@ class Query:
             g = g.with_node(QueryNode(id=new_id, alias=alias if alias is not None else "data",
                                       constraints={"is_data_node": True}))
             g = g.with_data_node(DataNodeInfo(node_id=new_id))
+            g = self._pin_uri(g, [new_id], instance_uri)
             if attrs:
                 g = self._apply_attrs(g, [new_id], self._resolve_attr_values(attrs))
             return self._with_graph(g)
@@ -505,9 +517,26 @@ class Query:
             g = g.with_data_node(DataNodeInfo(node_id=new_id))
             created.append(new_id)
 
+        g = self._pin_uri(g, created, instance_uri)
         if attrs:
             g = self._apply_attrs(g, created, self._resolve_attr_values(attrs))
         return self._with_graph(g)
+
+    @staticmethod
+    def _pin_uri(g: QueryGraph, node_ids: List[int], instance_uri: str | None) -> QueryGraph:
+        """Constrain each node to one instance; a no-op without a URI."""
+        if instance_uri is None:
+            return g
+        pointer = g.current_pointer
+        for nid in node_ids:
+            node = g.nodes[nid]
+            g = g.with_node(QueryNode(id=nid, alias=node.alias,
+                                      constraints={**node.constraints, "instance_uri": instance_uri}))
+        # with_node() moves the pointer to the node it writes; put it back.
+        return QueryGraph(
+            nodes=g.nodes, edges=g.edges, aliases=g.aliases, aliases_reverse=g.aliases_reverse,
+            current_pointer=pointer, data_nodes=g.data_nodes, selects=g.selects,
+        )
 
     def _lower_context_via(self, via: Any) -> tuple:
         """Turn ``context(via=...)`` into ``(chains, name)``.
@@ -1011,6 +1040,91 @@ class Query:
             ],
         }
 
+    # ---------- logbook ----------
+
+    def _log_targets(self, alias: Optional[str], *, verb: str) -> List[str]:
+        """URIs a logbook call addresses: the current node's matches, one
+        alias's matches, or every node's with ``alias="*"``."""
+        g = self.query_graph
+        if alias == "*":
+            return self.resolved_nodes()
+        if alias is None:
+            if g.current_pointer is None:
+                raise ValueError(
+                    f"{verb}: the query has no nodes; pass alias= or use "
+                    "Acquirium.insert_log()/read_logs() for plant-level notes"
+                )
+            alias = g.aliases_reverse.get(g.current_pointer, str(g.current_pointer))
+        if g.resolve_alias(alias) is None:
+            raise KeyError(f"{verb}: alias {alias!r} not in query; available: {sorted(g.aliases)}")
+        return self.resolved_nodes(alias=alias)
+
+    def insert_log(
+        self,
+        message: str,
+        *,
+        alias: Optional[str] = None,
+        observation_start: "datetime | str | None" = None,
+        observation_end: "datetime | str | None" = None,
+    ) -> List[str]:
+        """Write a logbook note on every entity the query matches.
+
+        The note goes to the current node's matches, to ``alias``'s, or to
+        every node's with ``alias="*"``. Returns the URIs written to; a
+        query that matches nothing raises ``ValueError`` rather than
+        logging to no one.
+        """
+        uris = self._log_targets(alias, verb="insert_log")
+        if not uris:
+            raise ValueError("insert_log: the query matches no entities")
+        now = datetime.now(timezone.utc).isoformat()
+        for uri in uris:
+            self.client.insert_log(
+                point_uri=uri,
+                log_message=message,
+                log_time=now,
+                observation_start=_iso(observation_start),
+                observation_end=_iso(observation_end),
+            )
+        return uris
+
+    def read_logs(
+        self,
+        *,
+        alias: Optional[str] = None,
+        log_time_start: "datetime | str | None" = None,
+        log_time_end: "datetime | str | None" = None,
+        observation_start: "datetime | str | None" = None,
+        observation_end: "datetime | str | None" = None,
+    ) -> pl.DataFrame:
+        """Read the logbook notes of every entity the query matches.
+
+        Same targeting as :meth:`insert_log`. Returns a frame with
+        ``point_uri``, ``message``, ``log_time``, ``observation_start`` and
+        ``observation_end``, oldest first.
+        """
+        schema = {
+            "point_uri": pl.Utf8,
+            "message": pl.Utf8,
+            "log_time": pl.Datetime(time_zone="UTC"),
+            "observation_start": pl.Datetime(time_zone="UTC"),
+            "observation_end": pl.Datetime(time_zone="UTC"),
+        }
+        rows: list[dict] = []
+        for uri in self._log_targets(alias, verb="read_logs"):
+            for entry in self.client.query_logs(
+                point_uri=uri,
+                log_time_start=_iso(log_time_start),
+                log_time_end=_iso(log_time_end),
+                observation_start=_iso(observation_start),
+                observation_end=_iso(observation_end),
+            ):
+                rows.append(entry.to_dict())
+        if not rows:
+            return pl.DataFrame(schema=schema)
+        return (pl.concat([pl.DataFrame(r, schema=schema) for r in rows], how="vertical")
+                .select(list(schema)).sort("log_time"))
+
     def resolved_nodes(
         self,
         *,
@@ -1088,15 +1202,7 @@ class Query:
                     keep.append(lbl)
             pl_table = pl_table.select(keep)
             pl_table = pl_table.with_columns([
-                pl.col(c)
-                .map_elements(
-                    lambda x: self._compact_uri_safe(x) if isinstance(x, str)
-                    else (None if x is None else str(x)),
-                    return_dtype=pl.String,
-                    skip_nulls=False,
-                )
-                .alias(c)
-                for c in pl_table.columns
+                self._compact_column(pl_table[c]) for c in pl_table.columns
             ]).unique()
             self.cache[cache_key] = pl_table
         return self.cache[cache_key]
@@ -1109,7 +1215,7 @@ class Query:
         limit: int | None = None,
         order: str = "asc",
         include_dependencies: bool = True,
-        cast_value: str | None = "float",
+        cast_value: str | None = None,
         value_mode: str = "default",
     ) -> "DataObject":
         """Return a lazy DataObject with alias-driven access to the matched streams."""
@@ -1134,7 +1240,7 @@ class Query:
         limit: int | None = None,
         order: str = "asc",
         include_dependencies: bool = True,
-        cast_value: str | None = "str",
+        cast_value: str | None = None,
         value_mode: str = "default",
         include_ref: bool = False,
         compact: bool = True,
@@ -1178,6 +1284,14 @@ class Query:
                 return col_name
             base_alias = self.query_graph.aliases_reverse.get(node_id, f"v{node_id}")
             return f"{base_alias}.label"
+        for prefix, suffix in (("extsrc", "_source"), ("extname", "_ref_name")):
+            if col_name.startswith(prefix):
+                try:
+                    node_id = int(col_name[len(prefix):])
+                except ValueError:
+                    return col_name
+                base_alias = self.query_graph.aliases_reverse.get(node_id, col_name)
+                return f"{base_alias}{suffix}"
         if col_name.startswith("ext"):
             try:
                 node_id = int(col_name[3:])
@@ -1198,6 +1312,21 @@ class Query:
             return self.client.compact_uri(uri)
         except Exception:
             return str(uri)
+
+    def _compact_column(self, col: pl.Series) -> pl.Series:
+        """Render a metadata column as text with URIs as CURIEs.
+
+        The compactor runs once per distinct value, not once per cell; a
+        column of ten thousand matches over fifty points costs fifty calls.
+        Literal columns are rendered as text unchanged.
+        """
+        if col.dtype == pl.Boolean:
+            return col.replace_strict({True: "True", False: "False"}, default=None, return_dtype=pl.String)
+        if col.dtype != pl.String:
+            return col.cast(pl.String)
+        distinct = [v for v in col.unique().to_list() if v is not None]
+        mapping = {v: self._compact_uri_safe(v) for v in distinct}
+        return col.replace_strict(mapping, default=None, return_dtype=pl.String)
 
 
 # Append the attribute registry (single source of truth) to every method

@@ -2,7 +2,6 @@ import pytest
 from conftest import ACQUIRIUM_TEST_SERVER_HOST, ACQUIRIUM_TEST_SERVER_PORT
 from acquirium import Acquirium
 from acquirium.internals.internals_namespaces import *
-from acquirium.Client.query import Q
 import shutil
 import polars as pl
 import time
@@ -182,7 +181,7 @@ def test_log_3(acquirium_client_nodata):
     assert result["ok"] is True
     result = acquirium_client_nodata.client.delete_logs(point_uri="urn:ex/Pump1-in")
     assert result["ok"] is True
-    q = acquirium_client_nodata.find_entity(_class = WATR.Pump, alias= "pumps")
+    q = acquirium_client_nodata.query().entity(WATR.Pump, alias="pumps")
 
     q.insert_log(
         message="Pump started successfully."
@@ -194,7 +193,7 @@ def test_log_3(acquirium_client_nodata):
     assert logs.shape == (1, 5)
     assert logs[0, "message"] == "Pump started successfully."
 
-    q2 = q.find_related(_class = S223.OutletConnectionPoint, alias = "out_cp")
+    q2 = q.related(S223.OutletConnectionPoint, alias="out_cp", via=[S223.hasConnectionPoint])
 
     q2.insert_log(
         message="Outlet connected successfully."
@@ -223,12 +222,12 @@ def test_log_4(acquirium_client_nodata):
     Multiple entities, observation period specified
     '''
 
-    q = acquirium_client_nodata.find_entity(_class = WATR.Pump, alias= "pumps")
+    q = acquirium_client_nodata.query().entity(WATR.Pump, alias="pumps")
     q.insert_log(
         message="Pump started successfully. - t2"
     )
 
-    q2 = q.find_related(_class = S223.OutletConnectionPoint, alias = "out_cp")
+    q2 = q.related(S223.OutletConnectionPoint, alias="out_cp", via=[S223.hasConnectionPoint])
     q2.insert_log(
         message="Outlet connected successfully. - t2"
     )
@@ -244,8 +243,8 @@ def test_log_4(acquirium_client_nodata):
         message="Pump and Outlet are happy"
     )
 
-    logs = q2.read_logs(alias = "pump", log_time_start="2026-01-01T01:00:00Z")
-    assert len(logs) == 0
+    with pytest.raises(KeyError):
+        q2.read_logs(alias="pump", log_time_start="2026-01-01T01:00:00Z")   # no such alias
 
     logs = q2.read_logs(alias = "pumps", log_time_start="2026-01-01T01:00:00Z")
     assert len(logs) == 2

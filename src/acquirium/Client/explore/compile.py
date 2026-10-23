@@ -1,14 +1,12 @@
 """Pure SPARQL compiler for the explore query layer.
 
 ``compile_sparql(graph)`` turns a :class:`QueryGraph` into a SELECT query.
-Ported from ``Query.to_sparql`` / ``_edge_pattern`` / ``_direction_edge_pattern``
-(``Client/query.py``) as free functions with no client or builder state, so it
-can be unit-tested and reused without a running deployment. Output parity with
-the legacy builder is asserted in ``tests/unit/test_explore_compile.py``.
+Free functions with no client or builder state, so the compiler can be
+unit-tested and reused without a running deployment
+(``tests/unit/test_explore_compile.py``).
 
 Negation in data-node filters is expressed with the public
-:class:`~acquirium.Client.explore.attributes.Not` marker (the legacy builder
-used a private ``_Exclude`` wrapper with identical SPARQL output).
+:class:`~acquirium.Client.explore.attributes.Not` marker.
 """
 from __future__ import annotations
 
@@ -26,6 +24,8 @@ from acquirium.internals.internals_namespaces import (
     CONNECTION_POINT,
     CONNECTS_FROM,
     CONNECTS_TO,
+    ACQUIRIUM_REF_NAME,
+    ACQUIRIUM_SOURCE_ID,
     HAS_EXTERNAL_REFERENCE,
     HAS_UNIT,
     S223,
@@ -463,11 +463,13 @@ def _node_constraint_clauses(v: str, node) -> List[str]:
 
 
 def _data_node_clauses(v: str, nid: int, info) -> List[str]:
-    """ext-ref triple, unit/label OPTIONALs, and filters for one data node."""
+    """ext-ref triple, unit/label/stream-identity OPTIONALs, and filters for one data node."""
     clauses: List[str] = [f"{v} <{HAS_EXTERNAL_REFERENCE}> ?ext{nid} ."]
     clauses.append(f"OPTIONAL {{ {v} <{HAS_UNIT}> ?unit{nid} . }}")
     clauses.append(f"OPTIONAL {{ ?ext{nid} <{HAS_UNIT}> ?extunit{nid} . }}")
     clauses.append(f"OPTIONAL {{ {v} <{RDFS.label}> ?lbl{nid} . }}")
+    clauses.append(f"OPTIONAL {{ ?ext{nid} <{ACQUIRIUM_SOURCE_ID}> ?extsrc{nid} . }}")
+    clauses.append(f"OPTIONAL {{ ?ext{nid} <{ACQUIRIUM_REF_NAME}> ?extname{nid} . }}")
 
     for pred, val in (info.filters or {}).items():
         if val is None:
@@ -569,6 +571,8 @@ def compile_parts(graph: QueryGraph) -> tuple:
     unit_vars = {}
     extunit_vars = {}
     lbl_vars = {}
+    extsrc_vars = {}
+    extname_vars = {}
     for nid, info in graph.data_nodes.items():
         v = var_map[nid]
         ext = f"?ext{nid}"
@@ -585,13 +589,18 @@ def compile_parts(graph: QueryGraph) -> tuple:
         where_clauses.append(f"OPTIONAL {{ {v} <{HAS_UNIT}> {uvar} . }}")
         where_clauses.append(f"OPTIONAL {{ {ext} <{HAS_UNIT}> {euvar} . }}")
         where_clauses.append(f"OPTIONAL {{ {v} <{RDFS.label}> {lvar} . }}")
+        # the stream's identity as its driver knows it
+        extsrc_vars[nid] = f"?extsrc{nid}"
+        extname_vars[nid] = f"?extname{nid}"
+        where_clauses.append(f"OPTIONAL {{ {ext} <{ACQUIRIUM_SOURCE_ID}> {extsrc_vars[nid]} . }}")
+        where_clauses.append(f"OPTIONAL {{ {ext} <{ACQUIRIUM_REF_NAME}> {extname_vars[nid]} . }}")
 
         for pred, val in (info.filters or {}).items():
             if val is None:
                 continue
 
             # Registry-attribute keys expand via the attribute definition;
-            # anything else is a raw predicate URI (legacy-shaped filters).
+            # anything else is a raw predicate URI.
             if isinstance(pred, str) and pred in REGISTRY:
                 where_clauses.extend(_attr_clauses(v, REGISTRY[pred], val))
                 continue
@@ -655,6 +664,8 @@ def compile_parts(graph: QueryGraph) -> tuple:
         + [v for nid, v in unit_vars.items() if nid not in dropped]
         + [v for nid, v in extunit_vars.items() if nid not in dropped]
         + [v for nid, v in lbl_vars.items() if nid not in dropped]
+        + [v for nid, v in extsrc_vars.items() if nid not in dropped]
+        + [v for nid, v in extname_vars.items() if nid not in dropped]
     )
     if not select_parts:
         raise ValueError("drop(): every node is dropped — nothing left to select")
@@ -780,6 +791,8 @@ def _compile_parts_multi(graph: QueryGraph) -> tuple:
         + [f"?unit{nid}" for nid in graph.data_nodes if nid not in dropped]
         + [f"?extunit{nid}" for nid in graph.data_nodes if nid not in dropped]
         + [f"?lbl{nid}" for nid in graph.data_nodes if nid not in dropped]
+        + [f"?extsrc{nid}" for nid in graph.data_nodes if nid not in dropped]
+        + [f"?extname{nid}" for nid in graph.data_nodes if nid not in dropped]
     )
     if not select_parts:
         raise ValueError("drop(): every node is dropped — nothing left to select")

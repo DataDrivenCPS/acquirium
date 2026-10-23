@@ -9,13 +9,13 @@
 
 # Equipment with properties that have real QUDT units
 ex:pump_1 a acq:A ;
-    acq:hasProperty ex:flow_rate_1 .
+    s223:hasProperty ex:flow_rate_1 .
 
 ex:pump_2 a acq:A ;
-    acq:hasProperty ex:volume_1 .
+    s223:hasProperty ex:volume_1 .
 
 ex:sensor_1 a acq:A ;
-    acq:hasProperty ex:temp_no_unit .
+    s223:hasProperty ex:temp_no_unit .
 
 # Property WITH unit (Case 2: user can provide to_unit only)
 ex:flow_rate_1 a s223:QuantifiableObservableProperty ;
