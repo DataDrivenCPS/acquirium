@@ -26,6 +26,10 @@ change in any release.
   on the entities a query matches, as the legacy builder did.
 - `DataObject` supports `alias in data`, `iter(data)` and `len(data)`;
   `data["typo"]` raises `KeyError`.
+- `DataObject.stream_info()` lists the streams behind an object with the
+  `source_id` and `ref_name` their driver registered, and
+  `dataframe(streams=...)` / `latest(streams=...)` read only the listed
+  streams, by number from that table or by ref URI. `ref_info()` is removed.
 - Text resolution has a `role` kind: the s223 role enumeration, the NAWI roles
   that extend it, and whatever a loaded model uses with `s223:hasRole`. A role
   is found by its bare name, so `resolve_text("backwash", kind="role")` returns
@@ -41,6 +45,9 @@ change in any release.
   point from its own unit. `latest()` fetches each point's newest reading and
   takes no alias to report every point. `iter()` is gone; split `d["alias"]`
   on `point_uri` instead.
+- A unit conversion that cannot be done is no longer only logged: the
+  automatic one raises a `UserWarning` and returns the values as stored, and a
+  `convert_to()` that fails at fetch time raises `ValueError`.
 - Roles are no longer part of `kind="class"`. `resolve_text("condenser",
   kind="class")` returns the equipment class only; the role needs
   `kind="role"`.
