@@ -183,7 +183,7 @@ class TestDataObjectUnits:
     def test_units_returns_mapping(self, acquirium_client):
         """units() should return {alias: unit_uri_or_None}."""
         acq = acquirium_client
-        query = acq.find_all_data()
+        query = acq.query().measurement()
         data = query.data()
         units = data.units()
         assert isinstance(units, dict)
@@ -216,7 +216,7 @@ class TestDataObjectUnits:
     def test_convert_to_case1(self, acquirium_client):
         """Case 1: no unit on property, user provides from_unit and to_unit."""
         acq = acquirium_client
-        query = acq.find_all_data()
+        query = acq.query().measurement()
         data = query.data()
 
         units = data.units()
@@ -257,7 +257,7 @@ class TestDataObjectUnits:
         resolver may return fuzzy candidates, but none is compatible with
         the source unit, and the error names both sides."""
         acq = acquirium_client
-        data = acq.find_all_data().data()
+        data = acq.query().measurement().data()
 
         with pytest.raises(ValueError, match=r"no convertible unit pair for .*NoSuchUnit12345"):
             data.convert_to("NoSuchUnit12345")
@@ -265,7 +265,7 @@ class TestDataObjectUnits:
     def test_convert_to_unresolvable_from_unit_raises(self, acquirium_client):
         """A garbage from_unit is reported before any conversion runs."""
         acq = acquirium_client
-        data = acq.find_all_data().data()
+        data = acq.query().measurement().data()
 
         with pytest.raises(ValueError, match=r"no convertible unit pair for 'NoSuchUnit12345'"):
             data.convert_to("L-PER-MIN", from_unit="NoSuchUnit12345")
@@ -273,7 +273,7 @@ class TestDataObjectUnits:
     def test_convert_to_accepts_full_unit_uri(self, acquirium_client):
         """to_unit may be a full QUDT URI, not only a label/UCUM code."""
         acq = acquirium_client
-        data = acq.find_all_data().data()
+        data = acq.query().measurement().data()
 
         units = data.units()
         alias_with_unit = next(

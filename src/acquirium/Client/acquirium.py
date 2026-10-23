@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import math
 import json
 import sys
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
 from rdflib import URIRef
 
 from acquirium.Client.explore.core import Query
+from acquirium.recipes import Recipes
 from acquirium.Materialization.api import App
 from acquirium.Materialization.planner import Deployment
 
@@ -158,15 +160,14 @@ class Acquirium:
         """Alias of :meth:`query`."""
         return self.query()
 
-    def find_all_data(self, *, _class: Optional[str] = None, uri: str | URIRef | None = None) -> Query:
-        """Every registered measurement point, as a :class:`Query`.
+    @functools.cached_property
+    def recipes(self) -> Recipes:
+        """Named query shortcuts bound to this client; see :mod:`acquirium.recipes`.
 
-        Shorthand for ``acq.query().measurement(type=_class, uri=uri)``:
-        ``_class`` restricts the points to a class (URI or free text) and
-        ``uri`` pins the query to one point.
+        Built on first access with the shipped recipes loaded.
+        ``acq.recipes.add(path)`` loads more from a local file.
         """
-        attrs = {"type": _class} if _class is not None else {}
-        return self.query().measurement(uri=uri, **attrs)
+        return Recipes(self)
 
     # ------------------------------------------------------------------
     # TIMESERIES API

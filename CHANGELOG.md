@@ -12,15 +12,22 @@ change in any release.
 
 ### Removed
 - The legacy query builder (`acquirium.Q`, `acq.find_entity()` and the
-  `find_related` / `find_data` / `filter_by_*` family). `acq.find_all_data()`
-  stays and now builds an explore `Query`; see "Coming from the old
-  interface" in the client API reference for the verb-by-verb mapping.
+  `find_related` / `find_data` / `filter_by_*` family) and
+  `acq.find_all_data()`, whose shorthand is now the `streams` recipe; see
+  "Coming from the old interface" in the client API reference for the
+  verb-by-verb mapping.
 - The Grafana dashboard helpers (`generate_grafana_dashboard()`,
   `add_gauge_panel()`, `add_time_series_panel()`) and the `grafanalib`
   dependency. The Grafana service in `compose.yaml` is unchanged.
 - The ignored `lexicon_path` argument of `Acquirium()`.
 
 ### Added
+- `acq.recipes`: named query shortcuts bound to the client. Five ship with
+  the package (`streams`, `stream_stats`, `catalog`, `processes`, `recent`);
+  `acq.recipes.add(path)` loads more from a local recipe file, and
+  `acq.recipes.source(name)` shows how one is written. More recipes live
+  under `examples/recipes/` in the repository. `packaging` is a new
+  dependency, used to check a recipe file's `ACQUIRIUM` version pin.
 - `Query.measurement(uri=...)` pins a measurement node to one point.
 - `Query.insert_log()` and `Query.read_logs()` write and read logbook notes
   on the entities a query matches, as the legacy builder did.

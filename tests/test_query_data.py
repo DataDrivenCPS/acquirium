@@ -8,9 +8,9 @@ from conftest import ACQUIRIUM_TEST_SERVER_HOST, ACQUIRIUM_TEST_SERVER_PORT, _CS
 
 ##### Find all data tests #####
 
-def test_find_all_data_1(acquirium_client_csv):
+def test_root_measurement_1(acquirium_client_csv):
     acq = acquirium_client_csv
-    query = acq.find_all_data()
+    query = acq.query().measurement()
 
     assert len(query.query_graph.data_nodes) == 1
     assert len(query.query_graph.nodes) == 1
@@ -35,7 +35,7 @@ def test_find_all_data_1(acquirium_client_csv):
     assert df_wide_desc["time"][0] == datetime(2023, 12, 31, 23, 0, 0 , tzinfo=ZoneInfo("UTC"))
 
 
-def test_find_all_data_2(acquirium_client_csv):
+def test_root_measurement_2(acquirium_client_csv):
     acq = acquirium_client_csv
     entity_BE = acq.query().entity(ACQUIRIUM_NS.B, alias="b").entity(ACQUIRIUM_NS.E, alias="e")
     all_data_query = entity_BE.measurement(frm="*")
@@ -63,7 +63,7 @@ def test_find_all_data_2(acquirium_client_csv):
 #### Test Filters
 def test_data_filters(acquirium_client_csv):
     acq = acquirium_client_csv
-    query = acq.find_all_data()
+    query = acq.query().measurement()
     point = lambda n: acq.client.compact_uri(f"urn:ex/point_{n}")   # prefix is environment-dependent
 
     meta_1 = query.where(medium=ACQUIRIUM_NS.Medium4).metadata()
@@ -90,7 +90,7 @@ def test_data_filters(acquirium_client_csv):
     assert len(meta_6) == 2
     assert point(10) in meta_6["data"].to_list()
 
-    meta_7 = acq.find_all_data(uri="urn:ex/point_10").metadata()
+    meta_7 = acq.query().measurement(uri="urn:ex/point_10").metadata()
     assert len(meta_7) == 1
     assert meta_7["data"].to_list() == [point(10)]
 
@@ -154,7 +154,7 @@ def test_expand_uri_requires_bound_curie(acquirium_client_csv):
 def test_metadata_renders_compact_curie(acquirium_client_csv):
     """metadata() renders point ids as CURIEs (prefix:local), not bare local names."""
     acq = acquirium_client_csv
-    ids = acq.find_all_data().metadata()["data"].to_list()
+    ids = acq.query().measurement().metadata()["data"].to_list()
 
     assert all(":" in pid for pid in ids)
     assert any(pid.endswith(":point_1") for pid in ids)
@@ -163,7 +163,7 @@ def test_metadata_renders_compact_curie(acquirium_client_csv):
 def test_normalize_instance_uri(acquirium_client_csv):
     """uri= accepts full URIs and bound CURIEs, rejects everything else."""
     acq = acquirium_client_csv
-    query = acq.find_all_data()
+    query = acq.query().measurement()
 
     # Full URI string and URIRef pass through unchanged; None stays None.
     assert query._normalize_instance_uri("urn:ex/point_1") == "urn:ex/point_1"
@@ -190,7 +190,7 @@ def test_dataframe_cast_float_is_per_frame(acquirium_client_csv):
     ``value_text`` instead of one bad frame derailing the whole cast.
     """
     acq = acquirium_client_csv
-    df = acq.find_all_data().dataframe(shape="narrow", cast_value="float", limit=5)
+    df = acq.query().measurement().dataframe(shape="narrow", cast_value="float", limit=5)
 
     # point ids render as CURIEs whose prefix is environment-dependent; derive
     # them the same way dataframe() does so the test is prefix-agnostic.
@@ -214,7 +214,7 @@ def test_dataframe_cast_int_warns_when_truncating(acquirium_client_csv):
     """cast_value='int' truncates the fractional values of points 5-8 and says so."""
     acq = acquirium_client_csv
     with pytest.warns(UserWarning, match="cast_value='int' truncates"):
-        df = acq.find_all_data().dataframe(shape="narrow", cast_value="int", limit=5)
+        df = acq.query().measurement().dataframe(shape="narrow", cast_value="int", limit=5)
     assert df["value_numeric"].dtype == pl.Int64
     assert acq.client.compact_uri("urn:ex/point_9") in set(df["point_id"].to_list())   # text point still present
 
@@ -222,7 +222,7 @@ def test_dataframe_cast_int_warns_when_truncating(acquirium_client_csv):
 def test_dataframe_cast_value_is_validated(acquirium_client_csv):
     acq = acquirium_client_csv
     with pytest.raises(ValueError, match="cast_value must be"):
-        acq.find_all_data().data(cast_value="double")
+        acq.query().measurement().data(cast_value="double")
 
 
 ##### Find data tests #####

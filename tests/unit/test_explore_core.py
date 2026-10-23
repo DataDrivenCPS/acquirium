@@ -364,13 +364,6 @@ class TestMeasurementUri:
         assert "VALUES ?v1 { <urn:ex/p1> }" in sparql
         assert q.query_graph.current_pointer == 1
 
-    def test_find_all_data_is_the_root_measurement(self):
-        from acquirium import Acquirium
-        acq = Acquirium(health_timeout=None)
-        assert isinstance(acq.find_all_data(), Query)
-        assert acq.find_all_data().to_sparql() == acq.query().measurement().to_sparql()
-        assert "VALUES ?v0 { <urn:ex/p1> }" in acq.find_all_data(uri="urn:ex/p1").to_sparql()
-
 
 class TestMetadataCompaction:
     def test_curies_computed_once_per_distinct_value(self):

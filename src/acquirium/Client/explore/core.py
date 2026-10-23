@@ -471,7 +471,7 @@ class Query:
 
         if frm is None and not g.nodes:
             # Root form: every measurement point in the plant, no entity
-            # anchor (what ``Acquirium.find_all_data()`` builds). A standalone data node —
+            # anchor (what the ``streams`` recipe builds). A standalone data node —
             # still bounded by the external-reference requirement.
             new_id = self._next_id()
             if alias is not None:
