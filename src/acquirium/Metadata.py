@@ -234,12 +234,15 @@ def projected_values(values):
     return values
 
 
-def batch_update(operations):
+def batch_update(operations, graph_uri):
     """Coalesce resolved node replacements and field patches into one update.
 
-    The SQL outbox keeps delivery order. This produces at most three SPARQL
-    operations for an arbitrarily large batch, rather than one per event.
+    The SQL outbox keeps delivery order. Every operation names `graph_uri`, so
+    a backend can apply the text natively without rescoping it. Each delete
+    names its subject, an index lookup rather than a join against every
+    triple in the graph, and one INSERT DATA follows them.
     """
+    graph = URIRef(graph_uri).n3()
     nodes, replacements, predicates = {}, set(), set()
     for operation in operations:
         subject = operation["subject"]
@@ -255,14 +258,11 @@ def batch_update(operations):
         for triple_subject, predicate, value in operation.get("triples", []):
             nodes.setdefault(triple_subject, {}).setdefault(predicate, set()).add(value)
     updates = []
-    if replacements:
-        values = " ".join(URIRef(subject).n3() for subject in sorted(replacements))
-        updates.append(f"DELETE {{ ?s ?p ?o }} WHERE {{ VALUES ?s {{ {values} }} ?s ?p ?o }}")
-    if predicates:
-        values = " ".join(f"({URIRef(subject).n3()} {URIRef(predicate).n3()})" for subject, predicate in sorted(predicates))
-        updates.append(f"DELETE {{ ?s ?p ?o }} WHERE {{ VALUES (?s ?p) {{ {values} }} ?s ?p ?o }}")
+    updates += [f"DELETE WHERE {{ GRAPH {graph} {{ {URIRef(subject).n3()} ?p ?o }} }}" for subject in sorted(replacements)]
+    updates += [f"DELETE WHERE {{ GRAPH {graph} {{ {URIRef(subject).n3()} {URIRef(predicate).n3()} ?o }} }}"
+                for subject, predicate in sorted(predicates)]
     triples = [f"{URIRef(subject).n3()} {URIRef(predicate).n3()} {value} ."
                for subject, fields in nodes.items() for predicate, values in fields.items() for value in sorted(values)]
     if triples:
-        updates.append("INSERT DATA { " + "\n".join(triples) + " }")
+        updates.append(f"INSERT DATA {{ GRAPH {graph} {{ " + "\n".join(triples) + " } }")
     return ";\n".join(updates)

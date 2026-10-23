@@ -44,6 +44,11 @@ class MemoryGraphStore:
         self.version += 1
         self.updates += 1
 
+    def metadata_update(self, update, *, graph_uri):
+        self.dataset.update(update)
+        self.version += 1
+        self.updates += 1
+
     def query(self, query, **kwargs):
         payload = json.loads(self.dataset.query(query).serialize(format="json"))
         columns = payload["head"]["vars"]
@@ -295,7 +300,7 @@ def test_object_reads_repair_failed_publication_and_do_not_hide_read_errors(meta
     study = api.service.define("read recovery")
     run = study.start({"scenario": "baseline"})
     with monkeypatch.context() as patch:
-        patch.setattr(api.graph, "sparql_update", Mock(side_effect=OSError("graph unavailable")))
+        patch.setattr(api.graph, "metadata_update", Mock(side_effect=OSError("graph unavailable")))
         with pytest.raises(OSError, match="graph unavailable"):
             api.ledger.read_metadata([api.ledger.run(run.run_id)], EXPERIMENT.Run, "run_id")
     with api.store._own_conn() as conn:
@@ -397,7 +402,7 @@ def test_lazy_selection_refreshes_after_writes_and_graph_failure(metadata_api, m
     publisher = api.ledger.metadata_graph
     saved = study.start({"scenario": "trial"})
     with monkeypatch.context() as patch:
-        patch.setattr(api.graph, "sparql_update", Mock(side_effect=OSError("graph unavailable")))
+        patch.setattr(api.graph, "metadata_update", Mock(side_effect=OSError("graph unavailable")))
         with pytest.raises(OSError, match="graph unavailable"):
             selected.all()
     with api.store._own_conn() as conn:
@@ -562,12 +567,12 @@ def test_reads_wait_for_durable_graph_delivery(metadata_api, monkeypatch):
     study = api.service.define("publication race")
     run = study.start({"scenario": "a"})
     entered, release = threading.Event(), threading.Event()
-    update = api.graph.sparql_update
+    update = api.graph.metadata_update
     def slow_update(*args, **kwargs):
         entered.set()
         assert release.wait(5)
         return update(*args, **kwargs)
-    monkeypatch.setattr(api.graph, "sparql_update", slow_update)
+    monkeypatch.setattr(api.graph, "metadata_update", slow_update)
     results = []
     first = threading.Thread(target=lambda: results.append(api.ledger.run(run.run_id)))
     first.start()

@@ -175,7 +175,7 @@ class TestPlanWrite:
 
 
 class TestUpdateText:
-    def test_groups_by_signature_and_inserts_once(self):
+    def test_deletes_name_each_subject_and_inserts_once(self):
         a = plan({"tags": ["x"], "unit": UNIT})
         b = Write(subject=URIRef("urn:x#other"))
         b.replace_keys, b.replace_forward = list(a.replace_keys), list(a.replace_forward)
@@ -184,12 +184,14 @@ class TestUpdateText:
         c.subject = URIRef("urn:x#third")
         text = update_text([a, b, c])
         ops = text.split(" ;\n")
-        assert len(ops) == 3
-        assert ops[0].startswith("DELETE { ?s ?p ?o }") and f"VALUES ?s {{ <{NODE}> <urn:x#other> }}" in ops[0]
+        assert len(ops) == 4
+        # A bound subject is an index lookup; a VALUES join scans the graph.
+        assert "VALUES" not in text
+        for op, subject in zip(ops, (NODE, "urn:x#other", "urn:x#third")):
+            assert op.startswith(f"DELETE {{ <{subject}> ?p ?o }}") and f"<{subject}> ?p ?o ." in op
         assert f'STRSTARTS(STR(?p), "{ATTR_NS}tags.")' in ops[0] and f"?p = <{ATTR_NS}tags>" in ops[0]
         assert f"?p = <{HAS_UNIT}>" in ops[0]
-        assert ops[1].startswith("DELETE { ?s ?p ?o }") and "VALUES ?s { <urn:x#third> }" in ops[1]
-        assert ops[2].startswith("INSERT DATA {") and '"y"' in ops[2] and f"<{UNIT}>" in ops[2]
+        assert ops[3].startswith("INSERT DATA {") and '"y"' in ops[3] and f"<{UNIT}>" in ops[3]
 
     def test_delete_only(self):
         text = update_text([plan({"tags": None})])
@@ -333,8 +335,13 @@ META = source_graph_uri(METADATA_SOURCE_ID)
 PLANT = URIRef(PLANT_GRAPH_URI)
 
 
-def dataset_with_orphans() -> Dataset:
-    ds = Dataset(default_union=False)
+def dataset_with_orphans(native: bool = False) -> Dataset:
+    if native:
+        import pyoxigraph
+        from oxrdflib.store import OxigraphStore
+        ds = Dataset(store=OxigraphStore(store=pyoxigraph.Store()), default_union=False)
+    else:
+        ds = Dataset(default_union=False)
     ds.graph(PLANT).add((URIRef("urn:x#kept"), RDF.type, URIRef("urn:w#Valve")))
     ds.graph(URIRef("urn:onto")).add((URIRef(UNIT), RDF.type, URIRef("urn:q#Unit")))
     m = ds.graph(META)
@@ -347,8 +354,10 @@ def dataset_with_orphans() -> Dataset:
 
 
 class TestStore:
-    def test_prune_checks_the_subject_only(self):
-        ds = dataset_with_orphans()
+    @pytest.mark.parametrize("native", [False, True], ids=["rdflib", "oxigraph"])
+    def test_prune_checks_the_subject_only(self, native):
+        # Oxigraph-backed datasets prune with Oxigraph's engine; both agree.
+        ds = dataset_with_orphans(native)
         gs.prune_orphan_metadata(ds, META)
         # the subject must be known elsewhere; a URI value may point anywhere
         assert set(ds.graph(META)) == {
@@ -382,6 +391,15 @@ class TestStore:
         store.sparql_update("INSERT DATA { <urn:o> <http://www.w3.org/2002/07/owl#imports> <urn:dep> }",
                             graph_uri=PLANT)
         store._finalize_source_write.assert_called_with(affects_closure=True)
+
+    def test_metadata_update_runs_natively_and_prunes(self):
+        store = self.make_store(dataset_with_orphans(native=True))
+        store.metadata_update(f"DELETE WHERE {{ GRAPH <{PLANT}> {{ ?s ?p ?o }} }}", graph_uri=PLANT)
+        assert len(store.source_dataset.graph(PLANT)) == 0
+        assert len(store.source_dataset.graph(META)) == 0  # every subject gone with the plant
+        store._finalize_source_write.assert_called_once_with(affects_closure=False)
+        with pytest.raises(ValueError, match="not a registered data input"):
+            store.metadata_update("INSERT DATA { GRAPH <urn:onto> { <urn:x#a> <urn:x#b> 1 } }", graph_uri=URIRef("urn:onto"))
 
     def test_sparql_update_prunes(self):
         store = self.make_store(dataset_with_orphans())

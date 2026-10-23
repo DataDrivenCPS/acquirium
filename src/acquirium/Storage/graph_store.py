@@ -101,12 +101,17 @@ def prune_orphan_metadata(dataset: Dataset, metadata_graph_uri: URIRef) -> None:
     graph, so metadata never outlives the node it describes.
     """
     m = f"<{metadata_graph_uri}>"
-    dataset.update(
+    update = (
         f"DELETE {{ GRAPH {m} {{ ?s ?p ?o }} }}\n"
         f"WHERE {{\n  GRAPH {m} {{ ?s ?p ?o }}\n"
         f"  FILTER NOT EXISTS {{ GRAPH ?g {{ {{ ?s ?a ?b }} UNION {{ ?c ?d ?s }} }} FILTER(?g != {m}) }}\n"
         f"}}"
     )
+    # This runs after every source write. rdflib evaluates the NOT EXISTS for
+    # each metadata triple against every graph (seconds on a modest plant);
+    # Oxigraph's engine runs the same update in milliseconds.
+    native = getattr(dataset.store, "_inner", None)
+    (native.update if isinstance(native, ox.Store) else dataset.update)(update)
 
 
 # Kept at the old cache IRI so a warm start overwrites the former materialized
@@ -915,6 +920,20 @@ class OxigraphGraphStore:
             self._prune_orphan_metadata()
             self._finalize_source_write(affects_closure=affects_closure)
         return {"message": "update applied", "changed": True}
+
+    def metadata_update(self, update: str, *, graph_uri: URIRef) -> None:
+        """Apply a graph-qualified experiment metadata update natively.
+
+        rdflib's SPARQL parser is superlinear in update size, so a delivery
+        batch runs on Oxigraph's engine as one atomic update. Experiment
+        documents never carry owl:imports or owl:Ontology triples, so the
+        import closure is left alone. ``update`` writes only ``graph_uri``.
+        """
+        with self._lock, timed_debug(_logger, "metadata_update"):
+            self._registered_data_graph(graph_uri)
+            self.source_dataset.store._inner.update(update)
+            self._prune_orphan_metadata()
+            self._finalize_source_write(affects_closure=False)
 
     def metadata_documents(self, subjects):
         """Read authoritative documents from source quads, without inference."""

@@ -263,10 +263,13 @@ class ExperimentStore:
             return result
 
     def _prepare_declarations(self, template_id, declarations):
+        # Only labels in this request are compared, so a new declaration does
+        # not load (or wait for graph delivery of) the rest of the Study.
+        labels = list(dict.fromkeys(declaration["label"] for declaration in declarations))
         with self.store._own_conn() as conn:
             if self._execute(conn, "SELECT 1 FROM experiment_templates WHERE template_id=?", [template_id]).fetchone() is None:
                 raise KeyError(template_id)
-            rows = self._execute(conn, "SELECT variable_id, label, role, kind, created_at FROM experiment_variables WHERE template_id=?", [template_id]).fetchall()
+            rows = self._execute(conn, f"SELECT variable_id, label, role, kind, created_at FROM experiment_variables WHERE template_id=? AND label IN ({self._marks(labels)})", [template_id, *labels]).fetchall() if labels else []
         saved = self._metadata(EXPERIMENT.Variable, [row[0] for row in rows]) if rows else {}
         existing = {row[1]: dict(variable_id=row[0], label=row[1], role=row[2], kind=row[3], metadata=saved[row[0]], created_at=timestamp(row[4]), created=False) for row in rows}
         result, pending = [], []

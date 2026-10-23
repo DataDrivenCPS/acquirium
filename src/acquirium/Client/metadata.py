@@ -236,23 +236,23 @@ def plan_write(
 def update_text(writes: Iterable[Write]) -> str:
     """One SPARQL update for the writes: the deletes, then one INSERT DATA.
 
-    Nodes with the same set of replaced keys share a DELETE. Meant to run
-    inside the metadata graph (the store scopes an update to its graph), so
-    no GRAPH clause.
+    Each node with replaced keys gets its own DELETE naming the subject, so
+    the store looks the node up by index; a VALUES list joined against
+    ``?s ?p ?o`` scans the whole graph instead. Meant to run inside the
+    metadata graph (the store scopes an update to its graph), so no GRAPH
+    clause.
     """
-    groups: Dict[tuple, List[Write]] = {}
-    for w in writes:
-        groups.setdefault(w.signature, []).append(w)
     ops: List[str] = []
-    for (forward, keys), members in groups.items():
-        values = " ".join(w.subject.n3() for w in members)
+    for w in writes:
+        forward, keys = w.signature
         if forward or keys:
             terms = [f"?p = <{p}>" for p in forward]
             terms += [f"?p = <{ATTR_NS}{k}>" for k in keys]
             terms += [f'STRSTARTS(STR(?p), "{ATTR_NS}{k}.")' for k in keys]
+            subject = w.subject.n3()
             ops.append(
-                f"DELETE {{ ?s ?p ?o }}\nWHERE {{\n  VALUES ?s {{ {values} }}\n"
-                f"  ?s ?p ?o .\n  FILTER({' || '.join(terms)})\n}}"
+                f"DELETE {{ {subject} ?p ?o }}\nWHERE {{\n  {subject} ?p ?o .\n"
+                f"  FILTER({' || '.join(terms)})\n}}"
             )
     triples = [t for w in writes for t in w.triples]
     if triples:

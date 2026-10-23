@@ -96,6 +96,10 @@ class LocalMetadataGraph:
     def sparql_update(self, update, *, graph_uri):
         self.dataset.graph(graph_uri).update(update)
 
+    def metadata_update(self, update, *, graph_uri):
+        """Apply an update that writes only `graph_uri`, with Oxigraph's own engine."""
+        self.dataset.store._inner.update(update)
+
     def metadata_triples(self, subjects, *, graph_uri):
         from acquirium.Metadata import scan_subject_triples
         return scan_subject_triples(self.dataset.store._inner, subjects, graph_uri)

@@ -20,7 +20,7 @@ def test_restart_replays_resolved_documents_without_sql_snapshots(materializatio
     variable = ledger.declare(study["template_id"], "pressure", "output", "scalar", {"unit": "psi", "metadata": {"any.key": [None, {}, []]}})
     run = ledger.start(study["template_id"], {"tags": ["A", None, "B"]})
     with monkeypatch.context() as patch:
-        patch.setattr(graph, "sparql_update", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("offline")))
+        patch.setattr(graph, "metadata_update", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("offline")))
         with pytest.raises(OSError, match="offline"):
             ledger.sync_metadata_graph()
     assert pending(store) == 3
@@ -86,7 +86,7 @@ def test_committed_deletion_is_retried_after_restart(materialization_store, tmp_
     ledger.finish(run["run_id"], "succeeded")
     ledger.sync_metadata_graph()
     with monkeypatch.context() as patch:
-        patch.setattr(graph, "sparql_update", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("offline")))
+        patch.setattr(graph, "metadata_update", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("offline")))
         with pytest.raises(OSError, match="offline"):
             ledger.delete_runs([run["run_id"]])
     with store._own_conn() as conn:
@@ -177,12 +177,12 @@ def test_delivery_is_serialized_across_ledgers_without_blocking_sample_writes(ma
     run = first.start(study["template_id"], {})
     second = ExperimentStore(store, graph_store=graph)
     entered, release, finishing = threading.Event(), threading.Event(), threading.Event()
-    update = graph.sparql_update
+    update = graph.metadata_update
     def slow(*args, **kwargs):
         entered.set()
         assert release.wait(5)
         return update(*args, **kwargs)
-    monkeypatch.setattr(graph, "sparql_update", slow)
+    monkeypatch.setattr(graph, "metadata_update", slow)
     def finish():
         finishing.set()
         second.finish(run["run_id"], "succeeded")

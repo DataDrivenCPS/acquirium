@@ -88,6 +88,43 @@ def test_file_attachment_round_trips_across_chunks(tmp_path, monkeypatch, data):
         store.close()
 
 
+def test_declarations_load_only_the_labels_they_name(tmp_path, monkeypatch):
+    store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
+    try:
+        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
+        study = ledger.define("scaling")["template_id"]
+        ledger.declare_batch(study, [dict(label=f"x{i}", role="input", kind="scalar") for i in range(20)])
+        hydrated, delivered = [], []
+        read = ledger.metadata.read
+        monkeypatch.setattr(ledger.metadata, "read", lambda kind, ids: hydrated.append(list(ids)) or read(kind, ids))
+        update = ledger.metadata_graph.graph_store.metadata_update
+        monkeypatch.setattr(ledger.metadata_graph.graph_store, "metadata_update",
+                            lambda *args, **kwargs: delivered.append(args) or update(*args, **kwargs))
+        # A new label compares against nothing, so it neither reads nor
+        # waits for graph delivery of the Study's other declarations.
+        ledger.declare(study, "new", "input", "scalar", {})
+        assert hydrated == [] and delivered == []
+        again = ledger.declare(study, "x3", "input", "scalar", {})
+        assert again["created"] is False and len(hydrated) == 1 and len(hydrated[0]) == 1
+    finally:
+        store.close()
+
+
+def test_batch_update_names_each_subject_and_its_graph():
+    from acquirium.Metadata import batch_update
+    text = batch_update([
+        {"operation": "replace", "subject": "urn:x#a", "triples": [["urn:x#a", "urn:p#v", '"1"']]},
+        {"operation": "patch", "subject": "urn:x#b", "predicates": ["urn:p#v"], "triples": []},
+    ], "urn:g#experiments")
+    # A VALUES list joined against ?s ?p ?o scans the whole graph per update.
+    assert "VALUES" not in text
+    assert text.split(";\n") == [
+        "DELETE WHERE { GRAPH <urn:g#experiments> { <urn:x#a> ?p ?o } }",
+        "DELETE WHERE { GRAPH <urn:g#experiments> { <urn:x#b> <urn:p#v> ?o } }",
+        'INSERT DATA { GRAPH <urn:g#experiments> { <urn:x#a> <urn:p#v> "1" . } }',
+    ]
+
+
 def test_recording_rejects_empty_samples_so_receipts_match_entries(tmp_path):
     store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
     try:

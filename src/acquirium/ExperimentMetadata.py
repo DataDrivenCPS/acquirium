@@ -226,7 +226,7 @@ class ExperimentMetadata:
 
     def __init__(self, store, graph_store, resolve, *, strict=True):
         import threading
-        required = ("metadata_documents", "metadata_triples", "sparql_update", "clear_graphs", "flush_metadata", "source_graph_uri")
+        required = ("metadata_documents", "metadata_triples", "metadata_update", "sparql_update", "clear_graphs", "flush_metadata", "source_graph_uri")
         missing = [name for name in required if not callable(getattr(graph_store, name, None))]
         if missing:
             raise TypeError(f"experiment metadata backend lacks capabilities: {', '.join(missing)}")
@@ -282,7 +282,7 @@ class ExperimentMetadata:
         buffered, current_target = [], target
         def deliver():
             if buffered:
-                graph.sparql_update(batch_update(buffered), graph_uri=current_target)
+                graph.metadata_update(batch_update(buffered, current_target), graph_uri=current_target)
                 buffered.clear()
         for operation in operations:
             if "clear" in operation:

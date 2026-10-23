@@ -105,6 +105,12 @@ change in any release.
   preventing samples from different streams from being merged silently.
 - Single-observation HTTP requests use the batch range validation and reject
   a start without an end, or an end without a start, before recording anything.
+- Declaring an experiment variable no longer slows as a Study grows. A
+  declaration reads only the labels it names, and experiment metadata reaches
+  the graph through Oxigraph's own update engine rather than rdflib's parser,
+  which was superlinear in update size. Metadata deletes name their subject
+  instead of joining a list against every triple, and the orphan-metadata
+  prune that follows every server graph write runs natively as well.
 
 ### Changed
 - Experiment artifact bytes are stored in the SQL store, split into chunks,
