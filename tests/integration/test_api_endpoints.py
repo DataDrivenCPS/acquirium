@@ -112,8 +112,8 @@ class TestTimeseriesEndpoints:
     @pytest.fixture(scope="class", autouse=True)
     def _cleanup_registered_stream(self):
         # The registered stream makes TEST_POINT a first-class data point,
-        # visible to any test that queries across all sources (e.g.
-        # find_all_data). Remove it once this class is done so it doesn't
+        # visible to any test that queries across all sources (a root
+        # measurement()). Remove it once this class is done so it doesn't
         # leak into unrelated tests.
         yield
         ref_uri = compute_ref_uri(self.TEST_SOURCE, self.TEST_REF_NAME)

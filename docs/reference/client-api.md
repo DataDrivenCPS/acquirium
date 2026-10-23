@@ -51,7 +51,6 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 |---|---|
 | `query() -> Query` | Create a new empty `Query` bound to this instance. |
 | `explore() -> Query` | Alias of `query()`. |
-| `find_all_data(*, _class=None, uri=None) -> Query` | Every registered measurement point: `query().measurement(type=_class, uri=uri)`. |
 
 ### Graph
 
@@ -267,8 +266,9 @@ and are listed once above.
 Optional. Skip this unless you have queries written against the previous
 `find_*` methods.
 
-The old builder (`acquirium.Q`, `acq.find_entity()`) has been removed.
-`acq.find_all_data()` remains as a shorthand for `acq.query().measurement()`.
+The old builder (`acquirium.Q`, `acq.find_entity()`, `acq.find_all_data()`) has
+been removed. `acq.recipes.streams(**where)` is the shorthand for
+`acq.query().measurement(**where)`.
 The rewrite is usually mechanical: one verb per old method, one `where()` in
 place of the `filter_by_*` family.
 
@@ -279,8 +279,8 @@ place of the `filter_by_*` family.
 | `find_related(_class=, _from=, hops=, predicates=)` | `related(cls, frm=, max_depth=, via=)` |
 | `find_related(direction=)` | `related(direction=)` |
 | `find_data(_from=, alias=, filters_dict=)` | `measurement(frm=, alias=, **attrs)` |
-| `find_all_data()` | `measurement(frm="*")`, or `measurement()` on an empty query |
-| `find_all_data(uri=)` | `measurement(uri=)` |
+| `find_all_data()` | `measurement()` on an empty query, or `acq.recipes.streams()` |
+| `find_all_data(uri=)` | `measurement(uri=)`, or `acq.recipes.streams(uri=)` |
 | `find_related_data(...)` | `related(...).measurement(...)` |
 | `relate_to(other, _from=, hops=)` | `related(cls, frm=, max_depth=)` |
 | `filter_by_unit(v)` | `where(unit=v)` |

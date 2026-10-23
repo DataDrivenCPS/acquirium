@@ -9,7 +9,7 @@ from conftest import _CSV_SOURCE_ID
 def test_getitem_returns_correct_columns(acquirium_client_csv):
     """data['alias'] should return a DataFrame with [time, value] columns."""
     acq = acquirium_client_csv
-    query = acq.find_all_data()
+    query = acq.query().measurement()
     data = query.data()
 
     assert not data.is_empty()
@@ -25,7 +25,7 @@ def test_getitem_returns_correct_columns(acquirium_client_csv):
 def test_getitem_nonexistent_alias_raises(acquirium_client_csv):
     """A typo in the alias is an error, not an empty frame."""
     acq = acquirium_client_csv
-    data = acq.find_all_data().data()
+    data = acq.query().measurement().data()
 
     assert "nonexistent_alias_xyz" not in data
     with pytest.raises(KeyError):
@@ -56,7 +56,7 @@ def test_by_grouping(acquirium_client_csv):
 def test_by_invalid_entity_raises(acquirium_client_csv):
     """by() with a nonexistent entity alias should raise KeyError."""
     acq = acquirium_client_csv
-    query = acq.find_all_data()
+    query = acq.query().measurement()
     data = query.data()
 
     with pytest.raises(KeyError):
@@ -68,7 +68,7 @@ def test_by_invalid_entity_raises(acquirium_client_csv):
 def test_dataframe_wide(acquirium_client_csv):
     """dataframe() should return a wide DataFrame with alias-named columns."""
     acq = acquirium_client_csv
-    query = acq.find_all_data()
+    query = acq.query().measurement()
     data = query.data()
 
     df = data.dataframe(shape="wide")
@@ -83,7 +83,7 @@ def test_dataframe_wide(acquirium_client_csv):
 def test_dataframe_narrow(acquirium_client_csv):
     """dataframe(shape='narrow', compact=False) returns the enriched tall frame."""
     acq = acquirium_client_csv
-    query = acq.find_all_data()
+    query = acq.query().measurement()
     data = query.data()
 
     df = data.dataframe(shape="narrow", compact=False)
@@ -105,7 +105,7 @@ def test_dataframe_narrow(acquirium_client_csv):
 def test_metadata(acquirium_client_csv):
     """metadata() should return unique rows with alias and URI info."""
     acq = acquirium_client_csv
-    query = acq.find_all_data()
+    query = acq.query().measurement()
     data = query.data()
 
     meta = data.metadata()
@@ -123,7 +123,7 @@ def test_metadata(acquirium_client_csv):
 def test_stream_info(acquirium_client_csv):
     """stream_info() names each stream the way its driver registered it."""
     acq = acquirium_client_csv
-    data = acq.find_all_data().data()
+    data = acq.query().measurement().data()
 
     info = data.stream_info()
     assert info.columns == ["stream", "alias", "point_uri", "ref_uri", "source_id", "ref_name"]
@@ -144,7 +144,7 @@ def test_stream_info(acquirium_client_csv):
 def test_dataframe_streams(acquirium_client_csv):
     """streams= narrows every shape to the chosen streams, by number or ref URI."""
     acq = acquirium_client_csv
-    data = acq.find_all_data().data()
+    data = acq.query().measurement().data()
     info = data.stream_info()
 
     one = data.dataframe(shape="narrow", compact=False, streams=[0])
@@ -167,7 +167,7 @@ def test_dataframe_streams(acquirium_client_csv):
 def test_latest(acquirium_client_csv):
     """latest() should return the newest row of every point of an alias."""
     acq = acquirium_client_csv
-    query = acq.find_all_data()
+    query = acq.query().measurement()
     data = query.data()
 
     alias = data.aliases[0]
@@ -201,13 +201,13 @@ def test_empty_data_object(acquirium_client_csv):
 
 
 def test_single_data_node_no_entity(acquirium_client_csv):
-    """find_all_data with no prior entities should still work."""
+    """A root measurement() with no prior entities should still work."""
     acq = acquirium_client_csv
-    query = acq.find_all_data()
+    query = acq.query().measurement()
     data = query.data(limit=5, order="desc")
 
     assert not data.is_empty()
-    # With find_all_data (no entity), entity_aliases should be empty
+    # With a root measurement() (no entity), entity_aliases should be empty
     # (there are no non-data nodes to group by)
 
 
@@ -228,6 +228,6 @@ def test_data_with_entity_context(acquirium_client_csv):
 def test_query_data_method_exists(acquirium_client_csv):
     """Query.data() method should exist and return a DataObject."""
     acq = acquirium_client_csv
-    query = acq.find_all_data()
+    query = acq.query().measurement()
     data = query.data()
     assert isinstance(data, DataObject)
