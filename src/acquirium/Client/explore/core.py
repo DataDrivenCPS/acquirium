@@ -1504,8 +1504,9 @@ class Query:
             if list_names and rows:
                 # one row per combination of the scalar columns; every list
                 # column collects its elements by index across the rows that
-                # combination produced (two lists in one query cross-multiply
-                # in SPARQL, the index map undoes that)
+                # combination produced (a row carries one element of one
+                # list, the other list columns null; lists of different
+                # nodes still multiply, and the index map undoes that)
                 groups: Dict[tuple, Dict[str, dict]] = {}
                 for r_i, r in enumerate(rows):
                     key = tuple(parsed[n][r_i] for n in scalar_names)

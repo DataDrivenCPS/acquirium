@@ -13,9 +13,9 @@ used a private ``_Exclude`` wrapper with identical SPARQL output).
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import date, datetime
-from typing import Any, List
+from typing import Any, Dict, List
 
 from rdflib import Literal
 from rdflib.namespace import RDF, RDFS
@@ -635,9 +635,8 @@ def _attr_select_clause(v: str, nid: int, name: str, required: bool,
     variables it binds.
 
     A scalar attribute binds one variable over the OR-union of its
-    predicates. A list attribute (see ``attributes.is_list_attr``) also
-    binds the predicate, ``?attrp<N>_<name>``, so the client can put the
-    elements back in index order when it assembles the list cell.
+    predicates. List attributes (see ``attributes.is_list_attr``) are
+    compiled per node by :func:`_list_select_clause`.
     """
     attr = registry[name]
     avar = attr_var(nid, name)
@@ -646,14 +645,55 @@ def _attr_select_clause(v: str, nid: int, name: str, required: bool,
         saved = f"{avar}_s"
         return (f"OPTIONAL {{ {v} <{ATTR_NS}id> {saved} . }} BIND(COALESCE({saved}, {v}) AS {avar})",
                 [avar])
-    if is_list_attr(attr):
-        pvar = attr_var(nid, name, pred=True)
-        values = " ".join(f"<{p}>" for p in attr.predicates)
-        clause = f"VALUES {pvar} {{ {values} }} {v} {pvar} {avar} ."
-        return (clause if required else f"OPTIONAL {{ {clause} }}"), [avar, pvar]
     pred_path = "|".join(f"<{p}>" for p in attr.predicates)
     clause = f"{v} ({pred_path}) {avar} ."
     return (clause if required else f"OPTIONAL {{ {clause} }}"), [avar]
+
+
+def _list_select_clause(v: str, nid: int, items: List[tuple], registry: Mapping) -> str:
+    """One node's list attributes, ``items`` as ``(name, required)``, in one
+    OPTIONAL with a UNION branch per list.
+
+    Each element binds the value and its predicate, ``?attrp<N>_<name>``, so
+    the client puts the elements back in index order. A row carries one
+    element of one list: lists of n1, n2 and n3 elements give n1 + n2 + n3
+    rows for the node, where an OPTIONAL per list would give their product.
+    A required list adds an EXISTS over its own variables.
+    """
+    branches: List[str] = []
+    required: List[str] = []
+    for name, req in items:
+        attr = registry[name]
+        avar, pvar = attr_var(nid, name), attr_var(nid, name, pred=True)
+        values = " ".join(f"<{p}>" for p in attr.predicates)
+        branches.append(f"{{ VALUES {pvar} {{ {values} }} {v} {pvar} {avar} . }}")
+        if req:
+            # ?attrq/?attrr never name a projected column (attr_var puts the
+            # node id right after "attr" or "attrp")
+            qo, qp = "?attrq" + avar[len("?attr"):], "?attrr" + avar[len("?attr"):]
+            required.append(f"FILTER EXISTS {{ VALUES {qp} {{ {values} }} {v} {qp} {qo} . }}")
+    return " ".join([f"OPTIONAL {{ {' UNION '.join(branches)} }}", *required])
+
+
+def _select_clauses(var_map: Mapping[int, str], selects: Iterable[tuple],
+                    registry: Mapping) -> tuple:
+    """``(clauses, [(nid, var)])`` projecting ``selects`` (``(nid, name,
+    required)``): one clause per scalar attribute, one per node for all its
+    list attributes. The variables keep the order of ``selects``."""
+    clauses: List[str] = []
+    pairs: List[tuple] = []
+    lists: Dict[int, List[tuple]] = {}
+    for nid, name, required in selects:
+        if is_list_attr(registry[name]):
+            lists.setdefault(nid, []).append((name, required))
+            pairs.extend([(nid, attr_var(nid, name)), (nid, attr_var(nid, name, pred=True))])
+            continue
+        clause, avars = _attr_select_clause(var_map[nid], nid, name, required, registry)
+        clauses.append(clause)
+        pairs.extend((nid, avar) for avar in avars)
+    clauses.extend(_list_select_clause(var_map[nid], nid, items, registry)
+                   for nid, items in lists.items())
+    return clauses, pairs
 
 
 def compile_parts(graph: QueryGraph, registry: Mapping = REGISTRY) -> tuple:
@@ -778,11 +818,8 @@ def compile_parts(graph: QueryGraph, registry: Mapping = REGISTRY) -> tuple:
     # projected attribute columns (?attr<N>_<name>, OPTIONAL so rows without
     # the attribute survive; the prefix is disjoint from v/ext/unit/extunit
     # so DataObject's column parsing ignores them)
-    attr_var_pairs: List[tuple] = []  # (node_id, var) in selects order
-    for nid, name, required in _leaf_selects(graph, registry):
-        clause, avars = _attr_select_clause(var_map[nid], nid, name, required, registry)
-        where_clauses.append(clause)
-        attr_var_pairs.extend((nid, avar) for avar in avars)
+    clauses, attr_var_pairs = _select_clauses(var_map, _leaf_selects(graph, registry), registry)
+    where_clauses.extend(clauses)
 
     # drop(): nodes stay in the pattern (WHERE) but leave the projection —
     # which also collapses DISTINCT rows that differed only in them.
@@ -878,14 +915,10 @@ def _compile_parts_multi(graph: QueryGraph, registry: Mapping = REGISTRY) -> tup
             is_data_edge=False,
         ))
 
-    attr_var_pairs: List[tuple] = []  # (node_id, var) in selects order
     leaf_selects = _leaf_selects(graph, registry)
-    for nid, name, required in leaf_selects:
-        if nid in data_ids or nid in branch_only:
-            continue
-        clause, avars = _attr_select_clause(var_map[nid], nid, name, required, registry)
-        where_clauses.append(clause)
-        attr_var_pairs.extend((nid, avar) for avar in avars)
+    clauses, attr_var_pairs = _select_clauses(
+        var_map, [s for s in leaf_selects if s[0] not in data_ids and s[0] not in branch_only], registry)
+    where_clauses.extend(clauses)
 
     branches: List[str] = []
     for nid, info in graph.data_nodes.items():
@@ -906,11 +939,9 @@ def _compile_parts_multi(graph: QueryGraph, registry: Mapping = REGISTRY) -> tup
                     is_data_edge=False))
         # this node's projected attributes live inside its branch: outside it
         # the unbound variable would turn the binding into an open pattern
-        for snid, name, required in leaf_selects:
-            if snid in members:
-                clause, avars = _attr_select_clause(var_map[snid], snid, name, required, registry)
-                b.append(clause)
-                attr_var_pairs.extend((snid, avar) for avar in avars)
+        clauses, pairs = _select_clauses(var_map, [s for s in leaf_selects if s[0] in members], registry)
+        b.extend(clauses)
+        attr_var_pairs.extend(pairs)
         branches.append("{ " + " ".join(b) + " }")
     where_clauses.append(" UNION ".join(branches))
 
