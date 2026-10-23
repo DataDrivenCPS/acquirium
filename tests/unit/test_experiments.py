@@ -1415,3 +1415,18 @@ def test_cloudpickle_codec_saves_what_pickle_cannot():
     double = lambda value: 2 * value
     assert pickle.loads(aq.CloudpickleCodec().dumps(double))(4) == 8
 
+
+def test_local_graph_releases_its_directory_with_its_last_handle(tmp_path):
+    import gc
+    from acquirium.Storage.metadata_outbox import LocalMetadataGraph
+    gc.disable()
+    try:
+        graph = LocalMetadataGraph.open(tmp_path / "graph")
+        # An rdflib dataset can sit in a reference cycle and outlive its handle
+        # until the cyclic collector runs; the directory must not stay locked.
+        leftover = [graph.dataset]
+        leftover.append(leftover)
+        del graph
+        LocalMetadataGraph.open(tmp_path / "graph")
+    finally:
+        gc.enable()

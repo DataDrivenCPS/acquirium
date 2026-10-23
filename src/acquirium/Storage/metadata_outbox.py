@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import threading
 from uuid import uuid4
-from weakref import WeakValueDictionary
+from weakref import WeakValueDictionary, finalize
 
 from rdflib import Dataset
 from oxrdflib.store import OxigraphStore
@@ -66,6 +66,10 @@ def migrate_documents(conn):
     execute(conn, "DROP TABLE IF EXISTS experiment_metadata_resolutions")
 
 
+def _release_store(store):
+    store._store = None  # OxigraphStore._inner reads this attribute
+
+
 class LocalMetadataGraph:
     """The same durable RDF documents for callers without a server graph.
 
@@ -88,6 +92,10 @@ class LocalMetadataGraph:
 
     def __init__(self, path):
         self.dataset = Dataset(store=OxigraphStore(store=pyoxigraph.Store(path)), default_union=True)
+        # rdflib datasets are reference cycles, so a dataset can outlive this
+        # handle until the cyclic collector runs, keeping the directory locked
+        # against the next open(). Drop the store as soon as the handle dies.
+        finalize(self, _release_store, self.dataset.store)
 
     def metadata_documents(self, subjects):
         from acquirium.Metadata import scan_documents
