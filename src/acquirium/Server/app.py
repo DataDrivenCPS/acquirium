@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import importlib
+import importlib.util
 import io
 import json
 import logging
@@ -502,12 +503,26 @@ def _load_config_app_target(spec: str, *, base_dir: Path) -> object:
             file_path = (base_dir / file_path).resolve()
         if not file_path.is_file():
             raise ValueError(f"app file not found: {module_part}")
-        if not file_path.stem.isidentifier():
+        module_name = file_path.stem
+        if not module_name.isidentifier():
             raise ValueError(f"app file name must be a Python module name: {file_path.name}")
+        # Deployments re-import the class by module name, so the file stem
+        # must name this file and nothing else: not a loaded or installed
+        # module, and not a same-named file in another directory.
+        importlib.invalidate_caches()
+        try:
+            found = importlib.util.find_spec(module_name)
+        except (ImportError, ValueError):
+            found = False
+        origin = getattr(found, "origin", None)
+        if found is not None and (origin is None or Path(origin).resolve() != file_path):
+            raise ValueError(f"app file {file_path} would import as {module_name!r}, which is already "
+                             f"{origin or 'another module'}; rename the file or install it as a package")
         module_dir = str(file_path.parent)
         if module_dir not in sys.path:
-            sys.path.insert(0, module_dir)
-        module = importlib.import_module(file_path.stem)
+            # Appended, so app directories never shadow installed modules.
+            sys.path.append(module_dir)
+        module = importlib.import_module(module_name)
     else:
         module = importlib.import_module(module_part)
     try:
@@ -613,7 +628,8 @@ async def lifespan(app: FastAPI):
     _cfg = loaded_config.data
     config_dir = str(loaded_config.directory)
     if config_dir not in sys.path:
-        sys.path.insert(0, config_dir)
+        # Appended, so a config-directory file never shadows an installed module.
+        sys.path.append(config_dir)
     server_cfg = _cfg.get("server", {})
     idle_seconds = float(server_cfg.get("materialization_poll_seconds", 0.25))
     error_log_seconds = float(server_cfg.get("materialization_error_log_seconds", 30.0))
