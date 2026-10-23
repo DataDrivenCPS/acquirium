@@ -1284,6 +1284,14 @@ class Query:
                 return col_name
             base_alias = self.query_graph.aliases_reverse.get(node_id, f"v{node_id}")
             return f"{base_alias}.label"
+        for prefix, suffix in (("extsrc", "_source"), ("extname", "_ref_name")):
+            if col_name.startswith(prefix):
+                try:
+                    node_id = int(col_name[len(prefix):])
+                except ValueError:
+                    return col_name
+                base_alias = self.query_graph.aliases_reverse.get(node_id, col_name)
+                return f"{base_alias}{suffix}"
         if col_name.startswith("ext"):
             try:
                 node_id = int(col_name[3:])

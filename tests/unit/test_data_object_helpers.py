@@ -236,3 +236,72 @@ class TestCastValue:
         d = self._object([1.0, 1.5], "float")
         assert d["flow"]["value"].to_list() == [1.0, 1.5]
         assert d["flow"]["value"].dtype == pl.Float64
+
+
+class TestStreamInfo:
+    def _object(self):
+        from acquirium.Client.data_object import BindingInfo, DataObject
+        from acquirium.Client.query_graph import QueryGraph
+        bs = [
+            BindingInfo(nid=0, point_uri="urn:t#p1", ref_uri="urn:t#r1", alias="flow",
+                        entity_contexts=[{}], source_id="scada", ref_name="FT-101"),
+            BindingInfo(nid=0, point_uri="urn:t#p1", ref_uri="urn:t#r2", alias="flow",
+                        entity_contexts=[{}], source_id="lab", ref_name="flow_csv"),
+            BindingInfo(nid=1, point_uri="urn:t#p2", ref_uri="urn:t#r3", alias="temp",
+                        entity_contexts=[{}]),
+        ]
+        return DataObject(_bindings=bs, _entity_columns=[], _query_graph=QueryGraph())
+
+    def test_one_row_per_stream_with_driver_names(self):
+        info = self._object().stream_info()
+        assert info.columns == ["stream", "alias", "point_uri", "ref_uri", "source_id", "ref_name"]
+        assert info["stream"].to_list() == [0, 1, 2]
+        assert info["source_id"].to_list() == ["scada", "lab", None]
+        assert info["ref_name"].to_list() == ["FT-101", "flow_csv", None]
+
+    def test_alias_keeps_the_numbering(self):
+        d = self._object()
+        assert d.stream_info("temp")["stream"].to_list() == [2]
+        import pytest
+        with pytest.raises(KeyError):
+            d.stream_info("nope")
+
+    def test_metadata_with_refs_shows_identity(self):
+        meta = self._object().metadata(include_ref_uris=True)
+        assert meta.filter(meta["ref_uri"] == "urn:t#r1")["ref_name"].to_list() == ["FT-101"]
+
+    def test_streams_resolve_by_number_or_ref_uri(self):
+        d = self._object()
+        assert d._resolve_streams(None) is None
+        assert d._resolve_streams(1) == {"urn:t#r2"}
+        assert d._resolve_streams("urn:t#r3") == {"urn:t#r3"}
+        assert d._resolve_streams([0, "urn:t#r2"]) == {"urn:t#r1", "urn:t#r2"}
+
+    def test_unknown_stream_raises(self):
+        import pytest
+        d = self._object()
+        with pytest.raises(KeyError, match="0..2"):
+            d._resolve_streams([3])
+        with pytest.raises(KeyError, match="stream_info"):
+            d._resolve_streams(["urn:t#nope"])
+        with pytest.raises(TypeError):
+            d._resolve_streams([1.5])
+
+    def test_dataframe_streams_filters_the_tall_frame(self):
+        import polars as pl
+        from datetime import datetime, timezone
+        d = self._object()
+        t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        d._tall = pl.DataFrame({
+            "data_alias": ["flow", "flow", "temp"],
+            "point_uri": ["urn:t#p1", "urn:t#p1", "urn:t#p2"],
+            "ref_uri": ["urn:t#r1", "urn:t#r2", "urn:t#r3"],
+            "time": [t, t, t],
+            "value_numeric": [1.0, 1.1, 20.0],
+            "value_text": pl.Series([None, None, None], dtype=pl.Utf8),
+        })
+        d._materialized = True
+        assert d.dataframe(compact=False)["flow"].to_list() == [1.0]       # first stream wins
+        assert d.dataframe(compact=False, streams=[1])["flow"].to_list() == [1.1]
+        narrow = d.dataframe(shape="narrow", compact=False, streams=["urn:t#r2", 2])
+        assert sorted(narrow["ref_uri"].to_list()) == ["urn:t#r2", "urn:t#r3"]

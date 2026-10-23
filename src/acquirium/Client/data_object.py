@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from typing import Any, Iterator, TYPE_CHECKING
+from typing import Any, Iterator, Sequence, TYPE_CHECKING
 import polars as pl
 import warnings
 
@@ -42,18 +42,30 @@ def _parse_sparql_bindings(
     data_node_ids = set(qg.data_nodes.keys())
 
     # Map column index -> node id for v<N>, ext<N>, unit<N>, extunit<N>,
-    # lbl<N> columns
+    # lbl<N>, extsrc<N>, extname<N> columns
     col_to_id: dict[int, int] = {}
     ext_ref_col_to_id: dict[int, int] = {}
     unit_col_to_id: dict[int, int] = {}
     extunit_col_to_id: dict[int, int] = {}
     lbl_col_to_id: dict[int, int] = {}
+    extsrc_col_to_id: dict[int, int] = {}
+    extname_col_to_id: dict[int, int] = {}
     for i, c in enumerate(cols):
         if not isinstance(c, str):
             continue
         if c.startswith("extunit"):
             try:
                 extunit_col_to_id[i] = int(c[7:])
+            except ValueError:
+                pass
+        elif c.startswith("extsrc"):
+            try:
+                extsrc_col_to_id[i] = int(c[6:])
+            except ValueError:
+                pass
+        elif c.startswith("extname"):
+            try:
+                extname_col_to_id[i] = int(c[7:])
             except ValueError:
                 pass
         elif c.startswith("ext"):
@@ -81,6 +93,11 @@ def _parse_sparql_bindings(
     nid_to_unit_col: dict[int, int] = {v: k for k, v in unit_col_to_id.items()}
     nid_to_extunit_col: dict[int, int] = {v: k for k, v in extunit_col_to_id.items()}
     nid_to_lbl_col: dict[int, int] = {v: k for k, v in lbl_col_to_id.items()}
+    nid_to_extsrc_col: dict[int, int] = {v: k for k, v in extsrc_col_to_id.items()}
+    nid_to_extname_col: dict[int, int] = {v: k for k, v in extname_col_to_id.items()}
+
+    def _cell(r, col):
+        return str(r[col]) if col is not None and col < len(r) and r[col] is not None else None
 
     data_col_indices = [i for i, nid in col_to_id.items() if nid in data_node_ids]
     ref_col_indices = [i for i, nid in ext_ref_col_to_id.items() if nid in data_node_ids]
@@ -98,9 +115,10 @@ def _parse_sparql_bindings(
     property_units: dict[tuple[int, str, str], str | None] = {}
     ref_units: dict[tuple[int, str, str], str | None] = {}
     point_labels: dict[tuple[int, str, str], str | None] = {}
+    stream_ids: dict[tuple[int, str, str], tuple[str | None, str | None]] = {}
 
     if not data_col_indices or not ref_col_indices:
-        return [], {}, {}, {}, {}
+        return [], {}, {}, {}, {}, {}
 
     for r in rows:
         # Build entity context for this row
@@ -145,9 +163,10 @@ def _parse_sparql_bindings(
                     point_labels[key] = str(r[lbl_col])
                 else:
                     point_labels[key] = None
+                stream_ids[key] = (_cell(r, nid_to_extsrc_col.get(nid)), _cell(r, nid_to_extname_col.get(nid)))
             entity_context.setdefault(key, []).append(row_entities)
 
-    return point_ref_uris, entity_context, property_units, ref_units, point_labels
+    return point_ref_uris, entity_context, property_units, ref_units, point_labels, stream_ids
 
 
 def _deduplicate_contexts(contexts: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -329,6 +348,8 @@ class BindingInfo:
     property_unit: str | None = None    # unit URI from qudt:hasUnit on the property
     ref_unit: str | None = None         # unit URI from qudt:hasUnit on the ext reference
     point_label: str | None = None      # rdfs:label on the property (display name)
+    source_id: str | None = None        # acq:sourceId on the ext reference (the datasource)
+    ref_name: str | None = None         # acq:refName on the ext reference (the driver's stream name)
 
 
 def _graph_data_aliases(qg: QueryGraph | None) -> list[str]:
@@ -419,7 +440,7 @@ class DataObject:
         if not getattr(qg, "data_nodes", None):
             return cls._empty(qg, cast_value=cast_value, client=query.client)
 
-        point_ref_uris, entity_context, prop_units, ext_ref_units, point_labels = _parse_sparql_bindings(
+        point_ref_uris, entity_context, prop_units, ext_ref_units, point_labels, stream_ids = _parse_sparql_bindings(
             query,
             include_dependencies=include_dependencies,
         )
@@ -458,6 +479,8 @@ class DataObject:
                 property_unit=prop_units.get(key),
                 ref_unit=ext_ref_units.get(key),
                 point_label=point_labels.get(key),
+                source_id=stream_ids.get(key, (None, None))[0],
+                ref_name=stream_ids.get(key, (None, None))[1],
             ))
 
         return cls(
@@ -862,6 +885,7 @@ class DataObject:
         order: str = "asc",
         include_ref: bool = False,
         compact: bool = True,
+        streams: "int | str | Sequence[int | str] | None" = None,
     ) -> pl.DataFrame:
         """Return a flat DataFrame.
 
@@ -891,19 +915,52 @@ class DataObject:
         tall frame (every ``(data_alias, point_uri, ref_uri, time)`` row
         preserved with entity columns), wide keeps alias/URI column names.
 
+        ``streams`` keeps only the listed streams: numbers from the
+        ``stream`` column of :meth:`stream_info`, ref URIs, or a mix. A
+        point fed by several streams then shows just the chosen ones, so
+        ``streams=[1]`` reads one driver's values for a point that has two.
+        An unknown number or URI raises ``KeyError``.
+
         With ``cast_value="int"`` on the query the value columns come back as
         ``Int64``; a column whose values lose their fraction raises a
         ``UserWarning``.
         """
         frame = self._build_dataframe(shape, start=start, end=end, limit=limit, order=order,
-                                      include_ref=include_ref, compact=compact)
+                                      include_ref=include_ref, compact=compact, streams=streams)
         return self._cast_output(frame)
 
-    def _build_dataframe(self, shape, *, start, end, limit, order, include_ref, compact) -> pl.DataFrame:
+    def _resolve_streams(self, streams) -> set[str] | None:
+        """Turn ``streams`` (numbers from :meth:`stream_info`, ref URIs, or a
+        mix) into the set of ref URIs they name; ``None`` means all."""
+        if streams is None:
+            return None
+        if isinstance(streams, (int, str)):
+            streams = [streams]
+        table = self.stream_info()
+        by_number = dict(zip(table["stream"].to_list(), table["ref_uri"].to_list()))
+        known = set(by_number.values())
+        refs: set[str] = set()
+        for item in streams:
+            if isinstance(item, bool) or not isinstance(item, (int, str)):
+                raise TypeError(f"streams: expected a stream number or ref URI, got {item!r}")
+            if isinstance(item, int):
+                if item not in by_number:
+                    raise KeyError(f"stream {item} not in this object; stream_info() lists 0..{len(by_number) - 1}")
+                refs.add(by_number[item])
+            else:
+                if item not in known:
+                    raise KeyError(f"ref URI {item!r} not in this object; see stream_info()")
+                refs.add(item)
+        return refs
+
+    def _build_dataframe(self, shape, *, start, end, limit, order, include_ref, compact,
+                         streams=None) -> pl.DataFrame:
+        refs = self._resolve_streams(streams)
         self._materialize()
 
         descending = order == "desc"
-        windowed = _apply_window(self._tall, start, end, limit, order)
+        tall = self._tall if refs is None else self._tall.filter(pl.col("ref_uri").is_in(list(refs)))
+        windowed = _apply_window(tall, start, end, limit, order)
 
         if windowed.is_empty():
             return windowed
@@ -1023,7 +1080,7 @@ class DataObject:
         ``include_ref_uris=True`` to keep the per-ref breakdown (useful for
         per-ref filtering and debugging).
         """
-        ref_col = ["ref_uri"] if include_ref_uris else []
+        ref_col = ["ref_uri", "source_id", "ref_name"] if include_ref_uris else []
         cols = ["data_alias", "point_label", "point_uri", "unit"] + ref_col + self._entity_columns
         rows: list[dict[str, str | None]] = []
         for b in self._bindings:
@@ -1036,6 +1093,8 @@ class DataObject:
                 }
                 if include_ref_uris:
                     row["ref_uri"] = b.ref_uri
+                    row["source_id"] = b.source_id
+                    row["ref_name"] = b.ref_name
                 for ec in self._entity_columns:
                     row[ec] = ctx.get(ec)
                 rows.append(row)
@@ -1060,12 +1119,31 @@ class DataObject:
         """List of entity alias names (without the ``entity__`` prefix)."""
         return [c.removeprefix("entity__") for c in self._entity_columns]
 
-    def ref_info(self, alias: str) -> list[tuple[int, str]]:
-        """Return ``[(index, ref_uri), ...]`` for a given data alias."""
-        refs = sorted(set(b.ref_uri for b in self._bindings if b.alias == alias))
-        return [(i, ref) for i, ref in enumerate(refs)]
+    def stream_info(self, alias: str | None = None) -> pl.DataFrame:
+        """The streams behind the object, one row each.
 
-    def latest(self, alias: str | None = None) -> pl.DataFrame:
+        Columns: ``stream`` (a number to pass as ``streams=`` to
+        :meth:`dataframe` or :meth:`latest`, valid for this object), ``alias``, ``point_uri``, ``ref_uri``, ``source_id``
+        and ``ref_name``, the last two being the datasource and stream name
+        the driver registered. With ``alias`` only that alias's streams are
+        listed, numbered as in the full table.
+        """
+        if alias is not None and alias not in self.aliases:
+            raise KeyError(f"Data alias '{alias}' not found. Available: {self.aliases}")
+        rows = sorted(
+            {(b.alias, b.point_uri, b.ref_uri, b.source_id, b.ref_name) for b in self._bindings}
+        )
+        table = pl.DataFrame(
+            rows, orient="row",
+            schema={"alias": pl.Utf8, "point_uri": pl.Utf8, "ref_uri": pl.Utf8,
+                    "source_id": pl.Utf8, "ref_name": pl.Utf8},
+        ).with_row_index("stream")
+        if alias is not None:
+            table = table.filter(pl.col("alias") == alias)
+        return table
+
+    def latest(self, alias: str | None = None, *,
+               streams: "int | str | Sequence[int | str] | None" = None) -> pl.DataFrame:
         """Return the newest reading of each point.
 
         Answers from its own fetch (one row per stream, newest first), so
@@ -1077,14 +1155,18 @@ class DataObject:
         With ``alias`` the frame is ``[time, value]`` for a single point or
         ``[time, value, point_uri]`` when the alias covers several, as with
         ``__getitem__``. Without it every binding is reported as
-        ``[data_alias, point_uri, time, value]``.
+        ``[data_alias, point_uri, time, value]``. ``streams`` restricts the
+        fetch to the listed streams, as in :meth:`dataframe`.
         """
+        refs = self._resolve_streams(streams)
         if alias is not None:
             if alias not in self.aliases:
                 raise KeyError(f"Data alias '{alias}' not found. Available: {self.aliases}")
             bindings = [b for b in self._bindings if b.alias == alias]
         else:
             bindings = list(self._bindings)
+        if refs is not None:
+            bindings = [b for b in bindings if b.ref_uri in refs]
 
         if bindings and self._client is not None:
             tall = self._fetch_tall(

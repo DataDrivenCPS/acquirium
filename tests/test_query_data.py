@@ -52,7 +52,8 @@ def test_find_all_data_2(acquirium_client_csv):
     assert meta["b_data"].null_count() + meta["e_data"].null_count() == 12
 
     meta_full = all_data_query.metadata(include_internals=True)
-    assert len(meta_full.columns) == 10
+    # per data node: ref, unit, ref unit, source id, ref name
+    assert len(meta_full.columns) == 4 + 2 * 5
 
     df_long = all_data_query.dataframe(shape="narrow")
     assert df_long.shape == (6*365*24, 5)

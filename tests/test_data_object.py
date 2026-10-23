@@ -1,6 +1,7 @@
 import pytest
 from acquirium.Client.data_object import DataObject
 from acquirium.internals.internals_namespaces import *
+from conftest import _CSV_SOURCE_ID
 
 
 # ---- Alias-based access ----
@@ -117,19 +118,48 @@ def test_metadata(acquirium_client_csv):
     assert "ref_uri" in meta_full.columns
 
 
-# ---- ref_info ----
+# ---- stream_info ----
 
-def test_ref_info(acquirium_client_csv):
-    """ref_info() should return indexed ref URIs."""
+def test_stream_info(acquirium_client_csv):
+    """stream_info() names each stream the way its driver registered it."""
     acq = acquirium_client_csv
-    query = acq.find_all_data()
-    data = query.data()
+    data = acq.find_all_data().data()
 
-    alias = data.aliases[0]
-    refs = data.ref_info(alias)
-    assert len(refs) >= 1
-    assert refs[0][0] == 0  # first index is 0
-    assert isinstance(refs[0][1], str)
+    info = data.stream_info()
+    assert info.columns == ["stream", "alias", "point_uri", "ref_uri", "source_id", "ref_name"]
+    assert info.height == 10
+    assert info["stream"].to_list() == list(range(10))
+    assert set(info["source_id"].to_list()) == {_CSV_SOURCE_ID}
+    assert set(info["ref_name"].to_list()) == {f"point_{i}" for i in range(1, 11)}
+
+    only = data.stream_info(data.aliases[0])
+    assert only.height == 10
+    with pytest.raises(KeyError):
+        data.stream_info("nope")
+
+    meta = data.metadata(include_ref_uris=True)
+    assert {"ref_uri", "source_id", "ref_name"} <= set(meta.columns)
+
+
+def test_dataframe_streams(acquirium_client_csv):
+    """streams= narrows every shape to the chosen streams, by number or ref URI."""
+    acq = acquirium_client_csv
+    data = acq.find_all_data().data()
+    info = data.stream_info()
+
+    one = data.dataframe(shape="narrow", compact=False, streams=[0])
+    assert one["ref_uri"].unique().to_list() == [info["ref_uri"][0]]
+    assert data.dataframe(shape="narrow", compact=False, streams=info["ref_uri"][0]).equals(one)
+
+    two = data.dataframe(shape="narrow", compact=False, streams=[0, info["ref_uri"][1]])
+    assert set(two["ref_uri"].to_list()) == set(info["ref_uri"][:2].to_list())
+
+    wide = data.dataframe(streams=[0])
+    assert len(wide.columns) == 2            # time + one stream
+
+    assert data.latest(streams=[0]).height == 1
+    with pytest.raises(KeyError):
+        data.dataframe(streams=[info.height])
 
 
 # ---- latest() ----

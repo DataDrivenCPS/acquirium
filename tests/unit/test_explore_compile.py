@@ -124,6 +124,11 @@ class TestDataNodes:
         g = self.with_data({})
         sparql = compile_sparql(g)
         assert "?ext1" in sparql and "?unit1" in sparql and "?extunit1" in sparql
+        # the stream's registered identity rides along for stream_info()
+        first = sparql.splitlines()[0]
+        assert "?extsrc1" in first and "?extname1" in first
+        assert "OPTIONAL { ?ext1 <urn:acquirium#sourceId> ?extsrc1 . }" in sparql
+        assert "OPTIONAL { ?ext1 <urn:acquirium#refName> ?extname1 . }" in sparql
         assert_compiles(g)
 
     def test_scalar_uri_filter(self):
