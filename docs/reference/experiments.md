@@ -578,7 +578,8 @@ in the client that records or loads. Loading a pickle runs code named in its
 bytes, so load pickles only from people you trust. A pickle loads only where
 the classes it names still import, usually with the same library versions
 that wrote it. A format the library itself defines, such as a model spec,
-outlasts upgrades better.
+outlasts upgrades better. [`examples/flexpse-codec`](../../examples/flexpse-codec/README.md)
+saves flex-pse models through their spec this way.
 
 `aq.register_value_handler()` is the other extension point: it converts a type
 to JSON for a JSON, text, or log value, which is stored in the observation and

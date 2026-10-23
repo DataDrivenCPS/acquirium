@@ -2,6 +2,7 @@
 .acquirium
 examples/transformation/.data/
 examples/flexpse/.data/
+examples/flexpse-codec/.data/
 examples/pump-tank/.data/
 
 scripts/dev_examples
