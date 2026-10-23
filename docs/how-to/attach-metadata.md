@@ -353,8 +353,11 @@ vocabulary you already use, then tag them in one update.
 
 ## Annotate a stream at registration
 
-`register_streams()` takes the same map under a `metadata` key, written on
-the point together with the stream, into the stream's own graph:
+`register_streams()` takes the same map under a `metadata` key and writes it
+on the point right after the stream, with the same update as
+`insert_metadata()`. Registering again with a changed map replaces each key
+it names, so a driver that registers its streams on every start keeps one
+value per key:
 
 ```python
 acq.register_streams([{

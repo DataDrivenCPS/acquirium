@@ -939,9 +939,13 @@ class AcquiriumClient:
         the same ``source_id`` and source-local ``ref_name``. Acquirium resolves
         those inserts to the same canonical reference URI internally.
         """
-        from acquirium.Client.metadata import plan_write
+        from acquirium.Client.metadata import plan_write, update_text
+        from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
 
         graphs: dict[str, Graph] = {}
+        # the ``metadata`` maps per point; a later stream on the same point
+        # wins key by key
+        extras: dict[str, dict[str, Any]] = {}
         for stream in streams:
             stream, extra = _split_stream_metadata(stream)
             source_id = stream.get("source_id")
@@ -958,11 +962,11 @@ class AcquiriumClient:
             existing = self._point_metadata(str(point_uri)) if point_uri is not None else {}
             subj = _build_stream_triples(graph, stream, resolved, existing, self._units_compatible)
             if extra:
-                # Same map insert_metadata takes; the annotations land with
-                # the stream, in its own graph.
-                write = plan_write(str(subj), extra, role="data", resolve=self._resolve_one)
-                for triple in write.triples:
-                    graph.add(triple)
+                extras.setdefault(str(subj), {}).update(extra)
+        # Plan the metadata before writing anything, so a bad key or a value
+        # that does not resolve fails the whole registration.
+        writes = [plan_write(subj, extra, role="data", resolve=self._resolve_one)
+                  for subj, extra in extras.items()]
         for source_id, graph in graphs.items():
             if len(graph):
                 self.insert_graph(
@@ -971,6 +975,13 @@ class AcquiriumClient:
                     replace=False,
                     source_id=source_id,
                 )
+        # Same map and same update as insert_metadata: each key is replaced
+        # in the metadata graph, so registering again with a changed value
+        # leaves only the new one. Runs after the stream triples, which make
+        # the point a node the metadata graph may describe.
+        update = update_text(writes)
+        if update:
+            self.sparql_update(update, source_id=METADATA_SOURCE_ID)
 
     def _resolve_one(self, text: str, kind: str) -> Optional[str]:
         """Resolve one text value of the given kind to a URI, or None."""

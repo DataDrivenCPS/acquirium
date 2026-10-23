@@ -172,6 +172,9 @@ def make_client(roles_rows, resolved=None):
     return client
 
 
+XSD_INTEGER = "http://www.w3.org/2001/XMLSchema#integer"
+
+
 class TestClientInsert:
     def test_roles_from_external_reference(self):
         client = make_client([[NODE, "urn:x#ref"], ["urn:x#e", None]])
@@ -284,9 +287,38 @@ class TestRegisterStreamsMetadata:
         }])
         turtle, kwargs = client.insert_graph.call_args[0][0], client.insert_graph.call_args[1]
         g = Graph().parse(data=turtle, format="turtle")
-        assert (URIRef(NODE), URIRef(f"{ATTR_NS}product_info.year"), Literal(2019)) in g
+        # the stream field merges into the stream, in the driver's graph
         assert (URIRef(NODE), HAS_UNIT, URIRef(UNIT)) in g
         assert kwargs["source_id"] == "src" and kwargs["replace"] is False
+        # the user attribute goes to the metadata graph, replacing the key
+        assert not list(g.triples((None, URIRef(f"{ATTR_NS}product_info.year"), None)))
+        update, ukw = client.sparql_update.call_args[0][0], client.sparql_update.call_args[1]
+        assert ukw == {"source_id": METADATA_SOURCE_ID}
+        assert f'STRSTARTS(STR(?p), "{ATTR_NS}product_info.")' in update
+        assert f'<{NODE}> <{ATTR_NS}product_info.year> "2019"^^<{XSD_INTEGER}>' in update
+        assert client.insert_graph.call_count == 1   # the stream first, then the metadata
+
+    def test_register_streams_merges_metadata_per_point(self):
+        client = make_client([])
+        client.insert_graph = MagicMock()
+        client._point_metadata = MagicMock(return_value={})
+        client.register_streams([
+            {"source_id": "src", "ref_name": "a", "point_uri": NODE, "metadata": {"year": 2019, "loop": "L1"}},
+            {"source_id": "src", "ref_name": "b", "point_uri": NODE, "metadata": {"year": 2020}},
+        ])
+        update = client.sparql_update.call_args[0][0]
+        assert f'<{NODE}> <{ATTR_NS}year> "2020"^^<{XSD_INTEGER}>' in update and "2019" not in update
+        assert f'<{NODE}> <{ATTR_NS}loop> "L1"' in update
+
+    def test_register_streams_bad_metadata_writes_nothing(self):
+        client = make_client([])
+        client.insert_graph = MagicMock()
+        client._point_metadata = MagicMock(return_value={})
+        with pytest.raises(ValueError, match="invalid metadata key"):
+            client.register_streams([{"source_id": "src", "ref_name": "a", "point_uri": NODE,
+                                      "metadata": {"bad key": 1}}])
+        client.insert_graph.assert_not_called()
+        client.sparql_update.assert_not_called()
 
 
 META = source_graph_uri(METADATA_SOURCE_ID)

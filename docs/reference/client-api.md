@@ -234,11 +234,11 @@ external reference.
 The update runs in the reserved `metadata` source graph and touches nothing
 outside it, so it cannot retract a value the plant model or a driver graph
 asserts.
-The `metadata` key of `register_streams()` differs in two ways: the leaves
-are written together with the stream, into the stream's own graph, and a key
+The `metadata` key of `register_streams()` is written with the same update,
+after the stream triples, and replaces each key it names the same way. A key
 that is also a stream field (`unit`, `quantity_kind`, `medium`, `substance`,
-`data_source`, `label`) is merged into the stream, or raises when the two
-disagree.
+`data_source`, `label`) is merged into the stream instead, or raises when the
+two disagree.
 
 A column that is null on every matched row is still typed from the
 datatypes the graph holds for the attribute elsewhere (discovery collects
