@@ -11,6 +11,13 @@ change in any release.
 ## [Unreleased]
 
 ### Added
+- `object` experiment variables save any Python object through a codec class
+  and rebuild it with `observation.load()`. A codec has a `media_type`,
+  `dumps(value) -> bytes`, and `loads(data)`; the declaration stores its
+  import path and the server never decodes the bytes. `PickleCodec`,
+  `CloudpickleCodec`, `JsonCodec`, and `BytesCodec` are built in, and model
+  adapters declare object components with `adapter.object(label, read=...,
+  codec=...)`.
 - Experiment recordings now use one request and SQL transaction for stream
   registration, revisioned samples, artifact ownership, observations, and durable
   graph intent. Rejected batches leave no new recorded SQL state.

@@ -18,7 +18,7 @@ FORMAT_VERSION = 1
 # These are properties of a declaration, rather than arbitrary user fields.
 FIELDS = frozenset({"unit", "quantity_kind", "type", "substance", "process", "role_type",
     "keys", "observed", "observed_by_key", "source_path", "source_unit", "description", "media_type",
-    "_resolved_semantics"})
+    "codec", "_resolved_semantics"})
 
 
 def stream_keys(kind: str, metadata: Mapping) -> tuple[str, ...]:
@@ -93,6 +93,7 @@ class Declaration:
     variable_id: str | None = None
     resolved: Mapping[str, Any] = field(default_factory=dict)
     media_type: str | None = None
+    codec: str | None = None
     observed_by_key: tuple[dict, ...] = ()
     semantic_fields: Mapping[str, Any] = field(default_factory=dict)
 
@@ -138,7 +139,7 @@ class Declaration:
         return replace(self, resolved=resolved)
 
 
-_PROPERTIES = ("unit", "quantity_kind", "source_path", "description", "source_unit", "media_type")
+_PROPERTIES = ("unit", "quantity_kind", "source_path", "description", "source_unit", "media_type", "codec")
 
 
 def validate_declaration(component: Declaration, *, model=False, metadata_is_json=False) -> Declaration:
@@ -146,9 +147,16 @@ def validate_declaration(component: Declaration, *, model=False, metadata_is_jso
         raise ValueError("a non-empty label is required")
     if component.role not in ({"input", "output"} if model else {"input", "output", "annotation"}):
         raise ValueError("adapter declarations must be inputs or outputs" if model else "a valid role is required")
-    allowed = {"scalar", "text", "json", "table", "timeseries"} if model else KINDS
+    allowed = {"scalar", "text", "json", "table", "object", "timeseries"} if model else KINDS
     if component.kind not in allowed:
         raise ValueError(f"unsupported model component kind {component.kind!r}" if model else f"kind must be one of {', '.join(sorted(KINDS))}")
+    if component.kind == "object":
+        # The codec is the only way to read the bytes back as an object.
+        module, _, qualname = (component.codec or "").partition(":")
+        if not module or not qualname:
+            raise ValueError(f"{component.label!r} is an object variable and needs a codec import path, module:Class")
+    elif component.codec is not None:
+        raise ValueError(f"{component.label!r} is a {component.kind} variable; only object variables take a codec")
     keys = stream_keys(component.kind, {"keys": component.keys})
     payload = component.metadata if metadata_is_json else to_json(component.metadata, path=f"{component.label}.metadata")
     if not isinstance(payload, dict):

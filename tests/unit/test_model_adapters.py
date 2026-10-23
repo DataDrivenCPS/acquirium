@@ -416,3 +416,21 @@ def test_hand_and_model_declarations_share_metadata_and_query_paths(model_api):
     # A separate namespaced value cannot silently replace a descriptive value.
     with pytest.raises(ValueError, match="objective"):
         study.output("conflict").scalar(objective="minimize", metadata={"objective": "maximize"})
+
+
+def test_adapter_object_components_record_through_their_codec(model_api):
+    state = {"elements": [{"kind": "fix", "variable": "pump.status", "value": [0.0]}]}
+    adapter = aq.adapters.define()
+    adapter.output.object("model", read=lambda: state, codec=aq.JsonCodec)
+    adapter.scalar("cost", read=lambda: 4.0)
+    assert adapter.preview()["model"] is state
+    variables = model_api.study.declare_from(adapter)
+    model_api.study.start()
+    variables.record_values()
+    assert model_api.client.record_experiment_batch.call_count == 1
+    observation = variables["model"].observations().latest()
+    assert observation.load() == state and observation.filename == "model.json"
+    with pytest.raises(ValueError, match="could not read 'bad'"):
+        broken = aq.adapters.define()
+        broken.object("bad", read=lambda: {1, 2}, codec=aq.JsonCodec)
+        broken.preview()

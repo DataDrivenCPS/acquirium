@@ -26,6 +26,7 @@ from acquirium.Storage.metadata_outbox import LocalMetadataGraph, enqueue, execu
 from acquirium.Storage.publication.revision import RevisionPublisher
 from acquirium.Client.streams import Stream, StreamInterval
 from acquirium.ExperimentValues import ARTIFACT_KINDS, TABLE_MEDIA_TYPE, check_kind, to_json, timestamp, parquet as _parquet, sample_rows as _sample_rows, value_entry, recording_entries, artifact_entry
+from acquirium.ObjectCodecs import codec_path, encode as _encode, load_codec
 from acquirium.ModelAdapters import (
     AdapterDefinition, Component, ModelAdapter, UNSET, read_component,
 )
@@ -392,7 +393,7 @@ class ExperimentStore:
                 artifact = entry["artifact"]
                 data = base64.b64decode(artifact["data"], validate=True)
                 if kind not in ARTIFACT_KINDS:
-                    raise ValueError(f"{label!r} is a {kind} variable; only file and table variables take attachments")
+                    raise ValueError(f"{label!r} is a {kind} variable; only file, table, and object variables take attachments")
                 if kind == "table" and (len(data) < 8 or data[:4] != b"PAR1" or data[-4:] != b"PAR1"):
                     raise ValueError(f"{label!r} is a table; attach a Parquet file")
                 item.artifact_digest = sha256(data).hexdigest()
@@ -1087,10 +1088,25 @@ class Observation:
         return self.stream.between(self.range_start, self.range_end)
 
     def read_bytes(self) -> bytes:
-        """Download the saved bytes of a file or table observation."""
+        """Download the saved bytes of a file, table, or object observation."""
         if self.artifact_digest is None:
-            raise TypeError("read_bytes() is only available for file and table observations")
+            raise TypeError("read_bytes() is only available for file, table, and object observations")
         return self._client.experiment_artifact(self.artifact_digest)
+
+    def load(self, *, codec: type | None = None) -> Any:
+        """Rebuild the object an object variable recorded, with its codec.
+
+        `codec` overrides the declared one, for instance where the declared
+        codec cannot be imported, or to decode a file observation's bytes.
+        Decoding runs the codec here, in this process; the server never does.
+        """
+        if codec is None:
+            if self.variable.kind != "object":
+                raise TypeError(f"{self.variable.label!r} is a {self.variable.kind} variable; pass load(codec=...) to decode its bytes")
+            decoder = load_codec(self.variable.codec)
+        else:
+            decoder = load_codec(codec_path(codec))
+        return decoder.loads(self.read_bytes())
 
     def __repr__(self) -> str:
         if self.ref_uri is not None:
@@ -1152,6 +1168,9 @@ class _Builder:
     def text(self, **metadata: Any): return self._make("text", **metadata)
     def scalar(self, *, unit: str | None = None, **metadata: Any): return self._make("scalar", unit=unit, **metadata)
     def file(self, *, media_type: str | None = None, **metadata: Any): return self._make("file", media_type=media_type, **metadata)
+    def object(self, *, codec: type, **metadata: Any):
+        """An object saved through `codec` and rebuilt by `observation.load()`."""
+        return self._make("object", codec=codec_path(codec), media_type=codec.media_type, **metadata)
     def table(self, **metadata: Any): return self._make("table", **metadata)
     def timeseries(self, *, observed: Mapping[tuple, str] | str | Point | None = None, unit: str | None = None, keys: tuple[str, ...] = (), **metadata: Any):
         return self._make("timeseries", observed=observed, unit=unit, keys=keys, **metadata)
@@ -1223,6 +1242,21 @@ class ExperimentVariable:
         return self.declaration.media_type
 
     @property
+    def codec(self):
+        """The import path of an object variable's codec."""
+        return self.declaration.codec
+
+    def _serialize(self, value: Any) -> tuple[bytes, str, str]:
+        codec = load_codec(self.codec)
+        return (_encode(codec, value, label=self.label),
+                f"{self.label}{getattr(codec, 'suffix', '')}", codec.media_type)
+
+    def object_entry(self, value: Any) -> dict:
+        """Serialize `value` with this object variable's codec for recording."""
+        data, filename, media_type = self._serialize(value)
+        return artifact_entry(self.variable_id, data, filename=filename, media_type=media_type)
+
+    @property
     def uri(self) -> str:
         return variable_uri(self.variable_id)
 
@@ -1237,7 +1271,7 @@ class ExperimentVariable:
         if self.study._experiment is None: raise RuntimeError("start an experiment before mutating variables")
         return self.study._experiment.run_id
     def record(self, value: Any, *, occurred_at: datetime | None = None):
-        """Record a value, event, file, table, or time series in the active run.
+        """Record a value, event, file, table, object, or time series in the active run.
 
         A time-series variable takes rows, which are stored with the run, or
         `stream.between(start, end)`, which records a reference: later reads
@@ -1245,7 +1279,7 @@ class ExperimentVariable:
         """
         # Check before file/stream operations, including empty time series.
         self.run_id
-        if self.kind in {"file", "table", "timeseries"} and occurred_at is not None:
+        if self.kind in {"file", "table", "object", "timeseries"} and occurred_at is not None:
             raise TypeError("occurred_at is only supported for JSON, text, scalar, and log values")
         if self.kind == "table":
             return self.study.client.attach_experiment_bytes(
@@ -1256,6 +1290,11 @@ class ExperimentVariable:
             return self.study.client.attach_experiment_file(
                 self.run_id, self.variable_id, value,
                 media_type=self.media_type,
+            )
+        if self.kind == "object":
+            data, filename, media_type = self._serialize(value)
+            return self.study.client.attach_experiment_bytes(
+                self.run_id, self.variable_id, data, filename=filename, media_type=media_type,
             )
         if self.kind == "timeseries":
             if isinstance(value, StreamInterval):

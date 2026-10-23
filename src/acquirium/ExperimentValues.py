@@ -23,10 +23,11 @@ import numpy as np
 # so it may return containers that still hold numpy or date values.
 _HANDLERS: dict[type, Callable[[Any], Any]] = {}
 
-# Kinds whose value travels in the observation itself. Files and tables are
-# stored as artifacts and time series as stream references instead.
+# Kinds whose value travels in the observation itself. Files, tables, and
+# codec-serialized objects are stored as artifacts and time series as stream
+# references instead.
 VALUE_KINDS = {"json", "text", "scalar", "log"}
-ARTIFACT_KINDS = {"file", "table"}
+ARTIFACT_KINDS = {"file", "table", "object"}
 KINDS = VALUE_KINDS | ARTIFACT_KINDS | {"timeseries"}
 TABLE_MEDIA_TYPE = "application/vnd.apache.parquet"
 
@@ -182,6 +183,8 @@ def recording_entries(variable, value, *, at=None):
     if variable.kind == "table":
         return [artifact_entry(variable.variable_id, parquet(value),
             filename=f"{variable.label}.parquet", media_type=TABLE_MEDIA_TYPE)]
+    if variable.kind == "object":
+        return [variable.object_entry(value)]
     if variable.kind != "timeseries":
         return [value_entry(variable.variable_id, variable.kind, variable.label, value)]
     if at is None and isinstance(value, StreamInterval):

@@ -55,7 +55,7 @@ reports zero `studies` and `variables`.
 
 ## Declaring variables
 
-Inputs and outputs support the same six value types. The role describes how
+Inputs and outputs support the same seven value types. The role describes how
 the calculation uses a value; the type selects its storage.
 
 | Declaration | Records |
@@ -65,6 +65,7 @@ the calculation uses a value; the type selects its storage.
 | `study.output("cost").scalar(unit=None, **metadata)` | Scalar values with an optional unit |
 | `study.input("model").file(media_type=None, **metadata)` | File copies |
 | `study.output("schedule").table(**metadata)` | Tables, saved as Parquet files |
+| `study.output("model").object(codec=Codec, **metadata)` | Python objects, saved as bytes by a codec and rebuilt by `observation.load()` |
 | `study.output("power").timeseries(observed=None, unit=None, keys=(), **metadata)` | Numeric timestamp/value samples, optionally one stream per key |
 | `study.log("solver events", **metadata)` | Events and diagnostics |
 
@@ -120,6 +121,7 @@ an explicit `metadata=` JSON object; unknown keyword arguments are rejected.
 | `text(label, *, read, metadata=None)` | String |
 | `json(label, *, read, metadata=None)` | Any JSON-convertible value |
 | `table(label, *, read, metadata=None)` | Supported Polars, pandas, or Arrow table |
+| `object(label, *, read, codec, metadata=None)` | Any value the codec can save |
 | `timeseries(label, *, read=None, read_at=None, unit=None, quantity_kind=None, observed=None, metadata=None)` | One finite numeric value |
 
 Time series require exactly one of zero-argument `read()` and one-argument
@@ -268,6 +270,7 @@ again by the server:
 | JSON, log | Any JSON value: dicts with string keys, lists, strings, numbers, booleans, or `None` |
 | File | A file path |
 | Table | A Polars, pandas, or Arrow table |
+| Object | Any value its codec's `dumps()` accepts |
 | Time series | Timestamp/value rows |
 
 Values are converted to JSON first. NumPy scalars become Python numbers,
@@ -372,7 +375,8 @@ time-series samples.
 | `runs.scalars(*variables, metadata=())` | A Polars table with one row per selected run and one column per scalar variable |
 | `observation.value` | The recorded JSON, text, scalar, or event value |
 | `observation.dataframe(**kwargs)` | Samples within a time-series recording's interval, or a table recording as a Polars DataFrame |
-| `observation.read_bytes()` | The saved bytes of a file or table recording |
+| `observation.read_bytes()` | The saved bytes of a file, table, or object recording |
+| `observation.load(codec=None)` | The object an object recording saved, rebuilt by its codec; `codec=` decodes any artifact's bytes |
 | `observation.as_dict()` | The observation's value, metadata, identifiers, timestamps, and references |
 
 Run observation selectors accept a variable handle, label, or ID. They return
@@ -502,7 +506,7 @@ Put similarly named descriptive fields inside a context object, such as
 `{"context": {"type": "baseline"}}`. See the
 [shared metadata rules](../how-to/attach-metadata.md) for details.
 
-## Stream annotations and file artifacts
+## Stream annotations and artifacts
 
 ### Stream annotations
 
@@ -531,7 +535,54 @@ File bytes are copied into artifact storage and deduplicated by SHA-256 digest.
 Later local edits do not change the saved copy. Filename and media type come
 from the first attachment with that digest. `observation.read_bytes()`
 downloads the saved bytes. Tables are stored the same way, as Parquet files;
-the server rejects a table attachment that is not Parquet.
+the server rejects a table attachment that is not Parquet. Artifact bytes are
+stored in the SQL store, beside the observations that reference them.
+
+### Object variables and codecs
+
+An object variable saves a Python object you want back later but never search
+inside, such as a model's full state. Its codec turns the object into bytes
+and back:
+
+```python
+class ModelSpecCodec:
+    media_type = "application/json"
+    suffix = ".json"          # optional; appended to the saved filename
+
+    def dumps(self, model) -> bytes:
+        return json.dumps(emit_spec(model)).encode()
+
+    def loads(self, data: bytes):
+        return build_model(json.loads(data))
+
+model = study.output("model").object(codec=ModelSpecCodec)
+model.record(m)
+restored = run.observations(model).latest().load()
+```
+
+Pass the codec class, not an instance. The declaration saves its import path,
+and `load()` imports it and builds it with no arguments, so a codec must be
+defined at module level; configure one by subclassing. Redeclaring a variable
+with a different codec raises `ValueError`. Where the declared codec cannot be
+imported, pass `load(codec=...)`.
+
+| Codec | Saves |
+|---|---|
+| `aq.PickleCodec` | Picklable objects |
+| `aq.CloudpickleCodec` | Also lambdas and classes defined in a notebook; requires `cloudpickle` |
+| `aq.JsonCodec` | A JSON document, kept as an opaque file instead of a queryable value |
+| `aq.BytesCodec` | Bytes, unchanged |
+
+The server stores and serves the bytes without decoding them; codecs run only
+in the client that records or loads. Loading a pickle runs code named in its
+bytes, so load pickles only from people you trust. A pickle loads only where
+the classes it names still import, usually with the same library versions
+that wrote it. A format the library itself defines, such as a model spec,
+outlasts upgrades better.
+
+`aq.register_value_handler()` is the other extension point: it converts a type
+to JSON for a JSON, text, or log value, which is stored in the observation and
+can be queried, but is not converted back.
 
 ## Identity, timestamps, and shared helpers
 

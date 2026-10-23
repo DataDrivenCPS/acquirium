@@ -27,6 +27,10 @@ def read_component(adapter: ModelAdapter, component: Component, *, sampling=Fals
         if component.kind == "table":
             parquet(value)
             return value
+        if component.kind == "object":
+            from acquirium.ObjectCodecs import encode, load_codec
+            encode(load_codec(component.codec), value, label=component.label)
+            return value
         return sampled_values(component, value) if sampling else json_value(component.kind, value, label=repr(component.label))
     except Exception as error:
         details = f", source={component.source_path!r}" if component.source_path else ""
@@ -60,6 +64,10 @@ class _Declarations:
     def table(self, label, source=UNSET, *, read=None, metadata=None):
         return self._owner._declare("table", label, source, read=read, metadata=metadata, role=self._role)
 
+    def object(self, label, *, read, codec, metadata=None):
+        """A value `read()` returns, saved through `codec`; see acquirium.ObjectCodecs."""
+        return self._owner._declare_object(label, read=read, codec=codec, metadata=metadata, role=self._role)
+
     def timeseries(self, label, source=UNSET, *, read=None, read_at=None, unit=UNSET,
                    quantity_kind=None, observed=None, metadata=None):
         return self._owner._declare("timeseries", label, source, read=read, read_at=read_at,
@@ -83,6 +91,12 @@ class AdapterDefinition(_Declarations):
             observed=observed, metadata={} if metadata is None else metadata,
             role=role, quantity_kind=quantity_kind)
         return self.add(component, read=read, read_at=read_at)
+
+    def _declare_object(self, label, *, read, codec, metadata=None, role="output"):
+        from acquirium.ObjectCodecs import codec_path
+        component = Component(label, "object", codec=codec_path(codec), media_type=codec.media_type,
+            metadata={} if metadata is None else metadata, role=role)
+        return self.add(component, read=read)
 
     def add(self, component: Component, *, read=None, read_at=None) -> Component:
         """Low-level registration, also supporting explicitly keyed components."""

@@ -82,10 +82,11 @@ Use `record(value)` for every variable type:
 | `study.output("cost").scalar(unit="USD")` | A number |
 | `study.input("configuration file").file(media_type="application/json")` | A file path |
 | `study.output("pump schedule").table()` | A Polars, pandas, or Arrow table |
+| `study.output("model state").object(codec=aq.PickleCodec)` | Any object the codec can save |
 | `study.output("permeate flow").timeseries(observed=point, unit="KiloGM-PER-SEC")` | Numeric timestamp/value pairs |
 | `study.log("solver events")` | An event, usually a dictionary |
 
-Inputs and outputs support the same six value types. Labels must be nonempty
+Inputs and outputs support the same seven value types. Labels must be nonempty
 and unique across all inputs, outputs, and logs in a Study.
 
 NumPy values, tuples, and dates are converted for you: `cost.record(np.float64(12.5))`
@@ -162,6 +163,38 @@ the saved JSON, not an instance of your class.
 
 The variable's type still applies. A handler that returns a number can record
 to a scalar; one that returns a dictionary needs a JSON or log variable.
+
+## Save objects to restore later
+
+To keep an object you will load back but never search inside, such as a
+model's full state, declare an object variable with a codec. The codec turns
+the object into bytes when you record it, and back when you load it:
+
+```python
+class ModelStateCodec:
+    media_type = "application/json"
+
+    def dumps(self, model) -> bytes:
+        return json.dumps(model.to_dict()).encode()
+
+    def loads(self, data: bytes):
+        return Model.from_dict(json.loads(data))
+
+model_state = study.output("model state").object(codec=ModelStateCodec)
+
+experiment = study.start()
+model_state.record(model)
+experiment.finish()
+
+restored = experiment.observations(model_state).latest().load()
+```
+
+Define the codec at module level and pass the class; `load()` imports it by
+name, in this or a later session. `aq.PickleCodec`, `aq.CloudpickleCodec`,
+`aq.JsonCodec`, and `aq.BytesCodec` are built in. Prefer a format your library
+defines over a pickle when you can: a pickle runs code when it loads, and
+usually loads only with the library versions that wrote it. See the
+[reference](../reference/experiments.md#object-variables-and-codecs).
 
 ## Record progress and event times
 

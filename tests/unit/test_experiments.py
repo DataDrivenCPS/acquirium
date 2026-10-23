@@ -371,7 +371,7 @@ def test_ledger_enforces_what_each_kind_stores(tmp_path):
         study = ledger.define("kinds")
         declare = lambda label, kind: ledger.declare(study["template_id"], label, "output", kind, {})["variable_id"]
         with pytest.raises(ValueError, match="kind must be one of"):
-            declare("bogus", "object")
+            declare("bogus", "blob")
         scalar, text, data, file, table, series = (declare(kind, kind) for kind in ("scalar", "text", "json", "file", "table", "timeseries"))
         run = ledger.start(study["template_id"], {})["run_id"]
         rejected = [
@@ -384,7 +384,7 @@ def test_ledger_enforces_what_each_kind_stores(tmp_path):
                 ledger.observe(run, variable, **body)
         for variable, value in ((scalar, 2), (scalar, 2.5), (scalar, True), (text, "ok"), (data, None), (data, [1, {"a": "b"}])):
             ledger.observe(run, variable, value=value)
-        with pytest.raises(ValueError, match="only file and table"):
+        with pytest.raises(ValueError, match="only file, table, and object"):
             ledger.attach_file(run, scalar, "x.txt", None, b"x")
         with pytest.raises(ValueError, match="Parquet"):
             ledger.attach_file(run, table, "x.parquet", None, b"not parquet")
@@ -1304,3 +1304,114 @@ def _stored_artifacts(store):
     """Digests whose bytes are still stored."""
     with store._own_conn() as conn:
         return [row[0] for row in conn.execute("SELECT DISTINCT digest FROM experiment_artifact_chunks ORDER BY digest").fetchall()]
+
+
+class _Point:
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+
+    def __eq__(self, other):
+        return (self.x, self.y) == (other.x, other.y)
+
+
+class PointCodec:
+    """A custom codec: how a project saves objects only it understands."""
+    media_type = "text/x-point"
+    suffix = ".pt"
+
+    def dumps(self, value):
+        return f"{value.x},{value.y}".encode()
+
+    def loads(self, data):
+        return _Point(*map(int, data.decode().split(",")))
+
+
+class TextCodec:
+    media_type = "text/plain"
+
+    def dumps(self, value):
+        return value  # a str, not bytes
+
+    def loads(self, data):
+        return data.decode()
+
+
+def test_object_variables_round_trip_through_their_codec(study_api):
+    import acquirium as aq
+    study = study_api.study
+    state = study.output("state").object(codec=PointCodec)
+    blob = study.output("blob").object(codec=aq.PickleCodec)
+    config = study.input("config").file(media_type="application/json")
+    run = study.start()
+    saved = state.record(_Point(1, 2))
+    assert saved["filename"] == "state.pt" and saved["byte_length"] == 3
+    blob.record({"a": [1, 2], "b": (3, 4)})
+    with pytest.raises(TypeError, match="occurred_at"):
+        state.record(_Point(0, 0), occurred_at=T0)
+    run.finish()
+    observation = run.observations(state).latest()
+    assert observation.load() == _Point(1, 2)
+    assert observation.media_type == "text/x-point" and observation.read_bytes() == b"1,2"
+    assert repr(observation).startswith("<Observation 'state' = object 'state.pt' (3 bytes)")
+    assert run.observations(blob).latest().load() == {"a": [1, 2], "b": (3, 4)}
+    assert state.codec.endswith(":PointCodec") and state.media_type == "text/x-point"
+    # Redeclaring with another codec is a different declaration.
+    with pytest.raises(ValueError, match="declared differently"):
+        study.output("state").object(codec=aq.JsonCodec)
+    assert study.output("state").object(codec=PointCodec).variable_id == state.variable_id
+
+
+def test_object_codecs_are_classes_that_load_can_import(study_api):
+    import acquirium as aq
+    study = study_api.study
+    with pytest.raises(TypeError, match="pass the codec class"):
+        study.output("x").object(codec=aq.PickleCodec())
+    class Local(PointCodec):
+        pass
+    with pytest.raises(ValueError, match="module level"):
+        study.output("x").object(codec=Local)
+    broken = study.output("text").object(codec=TextCodec)
+    profile = study.output("profile").table()
+    run = study.start()
+    with pytest.raises(TypeError, match=r"'text': TextCodec.dumps\(\) returned str, not bytes"):
+        broken.record("hello")
+    profile.record(pl.DataFrame({"flow": [3]}))
+    observation = run.observations(profile).latest()
+    with pytest.raises(TypeError, match="pass load\\(codec=...\\)"):
+        observation.load()
+    # Any artifact's bytes decode with an explicit codec.
+    assert observation.load(codec=aq.BytesCodec)[:4] == b"PAR1"
+
+
+def test_ledger_requires_a_codec_for_objects_only(tmp_path):
+    store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
+    try:
+        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
+        study = ledger.define("codecs")["template_id"]
+        with pytest.raises(ValueError, match="needs a codec import path"):
+            ledger.declare(study, "state", "output", "object", {})
+        with pytest.raises(ValueError, match="only object variables take a codec"):
+            ledger.declare(study, "cost", "output", "scalar", {"codec": "acquirium.ObjectCodecs:PickleCodec"})
+        declared = ledger.declare(study, "state", "output", "object", {"codec": "acquirium.ObjectCodecs:PickleCodec"})
+        assert declared["metadata"]["codec"] == "acquirium.ObjectCodecs:PickleCodec"
+    finally:
+        store.close()
+
+
+def test_builtin_codecs():
+    import pickle
+    import acquirium as aq
+    assert aq.BytesCodec().loads(aq.BytesCodec().dumps(bytearray(b"ab"))) == b"ab"
+    with pytest.raises(TypeError, match="records bytes"):
+        aq.BytesCodec().dumps("ab")
+    assert aq.JsonCodec().loads(aq.JsonCodec().dumps({"when": T0, "n": [1]})) == {"when": T0.isoformat(), "n": [1]}
+    assert isinstance(aq.PickleCodec(), aq.Codec)
+
+
+def test_cloudpickle_codec_saves_what_pickle_cannot():
+    import pickle
+    import acquirium as aq
+    pytest.importorskip("cloudpickle")
+    double = lambda value: 2 * value
+    assert pickle.loads(aq.CloudpickleCodec().dumps(double))(4) == 8
+
