@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import math
 import json
 import sys
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
 from rdflib import URIRef
 
 from acquirium.Client.explore.core import Query
+from acquirium.recipes import Recipes
 from acquirium.Materialization.api import App
 from acquirium.Materialization.planner import Deployment
 
@@ -157,6 +159,15 @@ class Acquirium:
     def explore(self) -> Query:
         """Alias of :meth:`query`."""
         return self.query()
+
+    @functools.cached_property
+    def recipes(self) -> Recipes:
+        """Named query shortcuts bound to this client; see :mod:`acquirium.recipes`.
+
+        Built on first access with the shipped recipes loaded.
+        ``acq.recipes.add(path)`` loads more from a local file.
+        """
+        return Recipes(self)
 
     def find_all_data(self, *, _class: Optional[str] = None, uri: str | URIRef | None = None) -> Query:
         """Every registered measurement point, as a :class:`Query`.
