@@ -18,7 +18,9 @@ CLS_A = "urn:test#TypeA"
 
 DATA_ATTRS = ["type", "medium", "substance", "quantity_kind", "unit",
               "enumeration_kind", "data_source", "app", "label"]
-ENTITY_ATTRS = ["type", "process", "cp_type", "medium", "label"]
+# an entity node covers every attribute: its own, then the measurement-only ones
+ENTITY_ATTRS = ["type", "process", "cp_type", "medium", "label",
+                "substance", "quantity_kind", "unit", "enumeration_kind", "data_source", "app"]
 
 
 @pytest.fixture(autouse=True)

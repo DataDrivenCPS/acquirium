@@ -53,17 +53,31 @@ from acquirium.Drivers.supervisor import DriverSupervisor
 log = logging.getLogger("acquirium.api")
 
 
+def _cell_datatype(cell: dict[str, Any] | None) -> str | None:
+    """``"iri"`` for a node, the XSD IRI of a typed literal, else ``None``."""
+    if not cell:
+        return None
+    if cell.get("type") == "uri":
+        return "iri"
+    return cell.get("datatype")
+
+
 def _sparql_results_to_rows(serialized: bytes) -> dict[str, Any]:
-    """Preserve Acquirium's SPARQL response contract without RDFLib terms."""
+    """Preserve Acquirium's SPARQL response contract without RDFLib terms.
+
+    ``rows`` holds every cell as text, as it always has. ``datatypes`` is a
+    matrix of the same shape saying what each cell is: ``"iri"`` for a node,
+    the XSD datatype IRI of a typed literal, ``None`` for a plain string or
+    an unbound cell. The client parses typed values back from it.
+    """
     payload = json.loads(serialized)
     if "boolean" in payload:
         return {"columns": [], "rows": [[bool(payload["boolean"])]]}
     columns = payload["head"].get("vars", [])
-    rows = [
-        [binding.get(column, {}).get("value") for column in columns]
-        for binding in payload["results"].get("bindings", [])
-    ]
-    return {"columns": columns, "rows": rows}
+    bindings = payload["results"].get("bindings", [])
+    rows = [[binding.get(column, {}).get("value") for column in columns] for binding in bindings]
+    datatypes = [[_cell_datatype(binding.get(column)) for column in columns] for binding in bindings]
+    return {"columns": columns, "rows": rows, "datatypes": datatypes}
 
 
 _SPARQL_RESULT_FORMATS = {

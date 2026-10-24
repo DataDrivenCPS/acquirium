@@ -124,8 +124,7 @@ class TestOptionsErrors:
     def test_role_mismatch(self):
         with pytest.raises(ValueError, match="does not apply to data"):
             base(make_client([], [])).options("process")
-        with pytest.raises(ValueError, match="does not apply to entity"):
-            base(make_client([], [])).options("quantity_kind", of="ro")
+        base(make_client([], [])).options("quantity_kind", of="ro")   # entity nodes are not gated
 
 
 def test_metadata_types_sparse_column_from_all_rows():

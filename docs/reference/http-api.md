@@ -161,7 +161,9 @@ Term types: `uri`, `literal`, `bnode`. Literals may include `"xml:lang"` or `"da
 
 ### `GET /sparql_json`
 
-Legacy endpoint. Executes a SPARQL SELECT query and returns results in an internal `{columns, rows}` format. Prefer `/sparql` for new code.
+Legacy endpoint. Executes a SPARQL SELECT query and returns results in an internal `{columns, rows, datatypes}` format. Prefer `/sparql` for new code.
+
+`rows` holds every cell as text. `datatypes` is a matrix of the same shape naming what each cell is: `"iri"` for a node, the XSD datatype IRI of a typed literal (`http://www.w3.org/2001/XMLSchema#integer`, `...#date`, ...), `null` for a plain string or an unbound cell. The Python client's `metadata()` parses typed values from it.
 
 | Parameter | Default | Description |
 | --- | --- | --- |
@@ -189,7 +191,9 @@ Execute a SPARQL UPDATE against one owned data graph. `/sparql` is read-only; th
 | `update` | yes | SPARQL UPDATE (`INSERT`/`DELETE`) statement |
 | `source_id` | yes | Owner of the data graph to update; use the reserved `plant` for the shared plant model |
 
-The update is scoped to that owner's graph, so it cannot touch the plant model or another source's triples unless `source_id` names it. Drivers and apps use their own `sparql_update()` helper, which supplies the owner for them.
+The update is scoped to that owner's graph, so it cannot touch the plant model or another source's triples unless `source_id` names it. Drivers and apps use their own `sparql_update()` helper, which supplies the owner for them. The client's `insert_metadata()` is one such update, sent with the reserved `metadata` source; there is no separate endpoint for it.
+
+The server compares the graph's `owl:imports` and `owl:Ontology` triples before and after the update and recomputes the ontology closure only when they changed. After the update it removes, from the `metadata` source graph, every triple whose subject or URI object no longer appears in any other graph.
 
 **Response** `{"ok": true, ...}`
 

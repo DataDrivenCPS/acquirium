@@ -41,6 +41,10 @@ queries do not reach it.
 `register_streams()` writes two connected pieces of RDF.
 Each stream needs a `source_id`, and its triples go into that source's own
 graph.
+A stream's `metadata` key adds a third piece, in the same graph: one
+`attr:` predicate per leaf of each key, as
+[`insert_metadata()`](../reference/client-api.md#metadata-values) writes
+them.
 
 For the stream itself, a reference node under the computed `ref_uri`:
 
