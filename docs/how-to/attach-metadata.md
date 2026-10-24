@@ -40,6 +40,10 @@ The node must already exist in the model; a URI no graph mentions raises
 `ValueError`.
 Values may be strings, numbers, booleans, dates, datetimes, dicts and lists,
 nested to any depth.
+A string that is a URI under a namespace the model binds, such as
+`"urn:example:tank"` with `@prefix ex: <urn:example:>`, is stored as a link;
+any other string is text, a web link included. Wrap a value in
+`rdflib.URIRef` to store it as a URI regardless.
 A nested dict becomes dotted attributes, `product_info.manufacturer` and
 `product_info.year`; a list keeps its order, `tags.0` and `tags.1`, and is
 also addressable as a whole under `tags`.

@@ -15,14 +15,16 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping
 from datetime import date, datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from rdflib import Literal
+from rdflib import Literal, URIRef
 from rdflib.namespace import RDF, RDFS
 
 import itertools
 
-from acquirium.Client.explore.attributes import ATTR_NS, REGISTRY, Attr, Not, is_list_attr, normalize_value
+from acquirium.Client.explore.attributes import (
+    ATTR_NS, REGISTRY, Attr, Not, is_list_attr, looks_like_uri, normalize_value,
+)
 from acquirium.Client.explore.expr import BoolOp
 from acquirium.Client.explore.hidden import hidden_filter
 from acquirium.Client.query_graph import QueryEdge, QueryGraph
@@ -45,7 +47,7 @@ def _format_pred(p: str) -> str:
 
 
 def _is_iri(x: object) -> bool:
-    return isinstance(x, str) and ("://" in x or x.startswith("urn:"))
+    return looks_like_uri(x)
 
 
 def _term(x: object) -> str:
@@ -66,16 +68,26 @@ def _term(x: object) -> str:
     return f'"{text}"'
 
 
-def _id_terms(values) -> str:
-    """The SPARQL terms a ``where(id=...)`` value can match: the value as a
-    URI when it looks like one, and always as the string literal a saved id
-    is written as."""
+def _value_terms(values, attr: Optional[Attr] = None) -> List[str]:
+    """The SPARQL terms a filter value can match. On a user attribute or a
+    literal built-in (``id``, ``label``), a string that looks like a URI
+    matches the URI and the text: ``insert_metadata`` writes it as a URI
+    only when its node is known, and a saved ``id`` is always text. A
+    ``URIRef``, or any value of a URI-valued built-in (``unit``), matches
+    the URI only."""
+    either = attr is None or attr.name not in REGISTRY or attr.literal
     terms: List[str] = []
     for x in values:
-        for t in (_term(x), _term(_Text(x)) if _is_iri(x) else None):
+        both = either and _is_iri(x) and not isinstance(x, (URIRef, _Text))
+        for t in (_term(x), _term(_Text(x)) if both else None):
             if t is not None and t not in terms:
                 terms.append(t)
-    return ", ".join(terms)
+    return terms
+
+
+def _id_terms(values) -> str:
+    """The terms of :func:`_value_terms`, comma-separated for ``IN``."""
+    return ", ".join(_value_terms(values))
 
 
 class _Text(str):
@@ -118,12 +130,13 @@ def _expr_sparql(v: str, expr, registry: Mapping) -> str:
         return f"EXISTS {{ {_id_filter(v, x, cond)} }}"
     if expr.op == "exists":
         return f"EXISTS {{ {v} ({path}) {x} . }}"
-    if expr.op == "==":
-        return f"EXISTS {{ {v} ({path}) {_term(expr.value)} . }}"
-    if expr.op == "!=":
-        return f"!EXISTS {{ {v} ({path}) {_term(expr.value)} . }}"
+    if expr.op in ("==", "!="):
+        terms = _value_terms([expr.value], attr)
+        test = (f"{v} ({path}) {terms[0]} ." if len(terms) == 1
+                else f"{v} ({path}) {x} . FILTER({x} IN ({', '.join(terms)}))")
+        return f"{'!' if expr.op == '!=' else ''}EXISTS {{ {test} }}"
     if expr.op == "in":
-        terms = ", ".join(_term(t) for t in expr.value)
+        terms = ", ".join(_value_terms(expr.value, attr))
         return f"EXISTS {{ {v} ({path}) {x} . FILTER({x} IN ({terms})) }}"
     return f"EXISTS {{ {v} ({path}) {x} . FILTER({x} {expr.op} {_term(expr.value)}) }}"
 
@@ -209,7 +222,7 @@ def _attr_clauses(var: str, attr: Attr, value: Any) -> List[str]:
         clauses.append(f"{{ SELECT DISTINCT {fence_var} WHERE {{ {inner}}} }}")
         return clauses
 
-    combos = [(p, _term(x)) for p in attr.predicates for x in values]
+    combos = [(p, t) for p in attr.predicates for t in _value_terms(values, attr)]
     if len(combos) == 1:
         p, t = combos[0]
         triple = f"{var} <{p}> {t} ."

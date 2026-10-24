@@ -67,10 +67,31 @@ class TestFlatten:
 class TestTerms:
     @pytest.mark.parametrize("value", [
         "text", 'say "hi"', 2015, 2.5, True, False, date(2020, 1, 2),
-        datetime(2020, 1, 2, 3, 4, 5), "urn:x#node", "https://example.org/a",
+        datetime(2020, 1, 2, 3, 4, 5), "see https://example.org/a for details",
     ])
     def test_writer_and_compiler_agree(self, value):
         assert to_term(value).n3() == _term(value)
+
+    @pytest.mark.parametrize("value", ["urn:x#node", "https://example.org/a"])
+    def test_uri_looking_string_matches_either_way(self, value):
+        # written as a URI when the node is known, as text otherwise; a
+        # filter on a user attribute matches both
+        from acquirium.Client.explore.compile import _value_terms
+        terms = _value_terms([value])
+        assert to_term(value, namespaces=[value[:-1]]).n3() in terms
+        assert to_term(value).n3() in terms and len(terms) == 2
+        assert _value_terms([URIRef(value)]) == [f"<{value}>"]
+
+    def test_uri_only_under_a_known_namespace(self):
+        ns = ["urn:x#", "http://qudt.org/vocab/unit/"]
+        assert to_term("https://example.org/a", ns) == Literal("https://example.org/a")
+        assert to_term("urn:x#tank", ns) == URIRef("urn:x#tank")
+        assert to_term("http://qudt.org/vocab/unit/PSI", ns) == URIRef("http://qudt.org/vocab/unit/PSI")
+        assert to_term("urn:x#", ns) == Literal("urn:x#")             # the namespace itself names nothing
+        assert to_term("urn:xy", ns) == Literal("urn:xy")
+        assert to_term(URIRef("https://example.org/a"), ns) == URIRef("https://example.org/a")
+        # text that mentions a link is text, whatever its namespace
+        assert to_term("urn:x#see this", ns) == Literal("urn:x#see this")
 
     def test_unsupported(self):
         with pytest.raises(TypeError):
@@ -85,9 +106,12 @@ class TestPlanWrite:
         assert (URIRef(NODE), URIRef(f"{ATTR_NS}tags.1"), Literal("b")) in w.triples
         assert len(w.triples) == 5
 
-    def test_uri_like_string_is_a_uri(self):
+    def test_uri_string_is_a_uri_only_under_a_known_namespace(self):
         w = plan({"datasheet": "https://example.org/ds.pdf"})
-        assert w.triples[0][2] == URIRef("https://example.org/ds.pdf")
+        assert w.triples[0][2] == Literal("https://example.org/ds.pdf")
+        w = plan_write(NODE, {"feeds": "urn:x#tank"}, role="entity", resolve=lambda t, k: None,
+                       namespaces=["urn:x#"])
+        assert w.triples[0][2] == URIRef("urn:x#tank")
 
     def test_builtin_resolves_text_and_keeps_it(self):
         w = plan({"unit": "mg/L"})
@@ -169,6 +193,7 @@ def make_client(roles_rows, resolved=None):
         k: (resolved or {}).get(t) for k, (t, kind) in record.items()})
     client.expand_uri = MagicMock(side_effect=expand)
     client.graph_version = MagicMock(return_value=1)
+    client._namespace_uris = MagicMock(return_value=("urn:x#",))
     return client
 
 
@@ -198,6 +223,38 @@ class TestClientInsert:
                                       if "://" in s or s.startswith("urn:") else expand(s))
         client.insert_metadata({NODE: {"a": 1}, "x:valve-1": {"b": 2}})
         assert client.node_uri("x:valve-1") == NODE and client.node_uri(NODE) == NODE
+
+    def test_roles_ignore_user_attribute_links(self):
+        # a link saved as a value is mentioned only through attr: predicates
+        client = make_client([])
+        client.node_roles(["https://example.org/ds.pdf"])
+        sparql = client.sparql_query.call_args[0][0]
+        assert sparql.count(f'FILTER(!STRSTARTS(STR(?p), "{ATTR_NS}"))') == 1
+        assert sparql.count(f'FILTER(!STRSTARTS(STR(?q), "{ATTR_NS}"))') == 1
+
+    def test_insert_writes_uris_under_known_namespaces(self):
+        client = make_client([[NODE, None]])
+        client.insert_metadata({NODE: {"feeds": "urn:x#tank", "sheet": "https://e.org/a.pdf",
+                                       "forced": URIRef("https://e.org/b"), "n": 1}})
+        update = client.sparql_update.call_args[0][0]
+        assert f"<{NODE}> <{ATTR_NS}feeds> <urn:x#tank>" in update
+        assert f'<{NODE}> <{ATTR_NS}sheet> "https://e.org/a.pdf"' in update
+        assert f"<{NODE}> <{ATTR_NS}forced> <https://e.org/b>" in update
+        assert client.sparql_query.call_count == 1               # the role check; no lookup
+
+    def test_namespace_uris_from_the_server_list(self):
+        client = AcquiriumClient.__new__(AcquiriumClient)
+        client.base_url = "http://test:8000"
+        client._namespaces_cache = None
+        client._http = MagicMock()
+        client._http.get.return_value = MagicMock(status_code=200, json=lambda: {"ex": "urn:example:"})
+        assert "urn:example:" in client._namespace_uris()
+        client._namespace_uris()
+        assert client._http.get.call_count == 1                  # cached
+        client._http.post.return_value = MagicMock(status_code=200)
+        client.insert_graph("<urn:a> a <urn:b> .", source_id="plant")
+        client._namespace_uris()
+        assert client._http.get.call_count == 2                  # a graph insert may bind new prefixes
 
     def test_unknown_subject_raises(self):
         client = make_client([])
