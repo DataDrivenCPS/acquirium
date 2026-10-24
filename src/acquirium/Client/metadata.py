@@ -13,8 +13,11 @@ is refused: edges of the plant model are not written here.
 
 Nested dicts and lists flatten to dotted leaf paths, ``product_info.year``,
 ``tags.0``; order and duplicates of a list survive as indices. Scalars are
-typed literals; a string that looks like a URI is a URI. ``None`` on a
-top-level key removes it.
+typed literals. A string that is a URI under a namespace the server knows
+(a prefix the loaded graphs and ontologies bind) is written as a URI; any
+other string is text, a link to a web page included. A ``URIRef`` is always
+a URI.
+``None`` on a top-level key removes it.
 
 The update replaces every touched key: delete what the node carries under
 the key (the leaf itself and everything under ``key.``), then insert the
@@ -31,7 +34,6 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from rdflib import Literal, URIRef
 from rdflib.namespace import RDF, RDFS
-from acquirium.internals.models import looks_like_uri
 from acquirium.Metadata import document_predicate, document_triples, projected_values
 
 from acquirium.Client.explore.attributes import (
@@ -39,6 +41,7 @@ from acquirium.Client.explore.attributes import (
     REGISTRY,
     Attr,
     check_key,
+    looks_like_uri,
     raw_predicate,
 )
 from acquirium.Client.explore.relations import RELATIONS
@@ -59,23 +62,30 @@ NOT_WRITABLE = frozenset({"cp_type"})
 
 
 def is_uri(value: Any) -> bool:
-    return isinstance(value, URIRef) or (looks_like_uri(value) and not any(
-        char.isspace() or char in '<>"{}|\\^`' for char in value
-    ))
+    return isinstance(value, URIRef) or looks_like_uri(value)
 
 
-def to_term(value: Any) -> "Literal | URIRef":
-    """The RDF term for one scalar: typed literal, or URI for URI-like text.
+def in_namespace(value: str, namespaces: Iterable[str]) -> bool:
+    """True when ``value`` starts with one of ``namespaces`` and names
+    something after it."""
+    return any(value.startswith(ns) and len(value) > len(ns) for ns in namespaces)
 
-    The query compiler renders the same Python values with the same
-    ``n3()`` forms, so an equality filter matches what was written.
+
+def to_term(value: Any, namespaces: Iterable[str] = ()) -> "Literal | URIRef":
+    """The RDF term for one scalar: a typed literal, or a URI.
+
+    A ``URIRef`` is a URI. A string is a URI when it is one and falls under
+    one of ``namespaces``; otherwise it is text. The query compiler matches
+    a URI-looking string in both forms, so a filter finds what was written
+    either way.
     """
     if isinstance(value, URIRef):
         return value
     if isinstance(value, bool) or isinstance(value, (int, float, datetime, date)):
         return Literal(value)
     if isinstance(value, str):
-        return URIRef(value) if is_uri(value) else Literal(value)
+        return (URIRef(value) if looks_like_uri(value) and in_namespace(value, namespaces)
+                else Literal(value))
     raise TypeError(
         f"unsupported metadata value {value!r}: use str, int, float, bool, date, "
         "datetime, a URI, or a dict/list of those"
@@ -173,6 +183,7 @@ def plan_write(
     resolve: Callable[[str, str], Optional[str]],
     resolved: Mapping[str, Any] | None = None,
     strict: bool = True,
+    namespaces: Iterable[str] = (),
 ) -> Write:
     """Build the :class:`Write` for one node.
 
@@ -180,7 +191,10 @@ def plan_write(
     takes, and whether it applies). ``resolve(text, kind)`` turns text on a
     URI-valued built-in into a URI, or ``None``. Saved ``resolved`` terms
     bypass resolution; non-strict projection omits unresolved whole fields.
+    ``namespaces`` are the namespace URIs a URI-looking user attribute value
+    must fall under to be written as a URI.
     """
+    namespaces = tuple(namespaces)
     w = Write(subject=URIRef(subject))
     leaves, removed = flatten(values)
     # The ordinary patch API still removes top-level null/empty values.
@@ -227,7 +241,7 @@ def plan_write(
     for path, scalar in leaves.items():
         if path.split(".", 1)[0] in REGISTRY:
             continue
-        w.triples.append((w.subject, URIRef(ATTR_NS + path), to_term(scalar)))
+        w.triples.append((w.subject, URIRef(ATTR_NS + path), to_term(scalar, namespaces)))
     w.triples.extend(document_triples(subject, documents))
     w.replace_forward.extend(str(document_predicate(key)) for key in values)
     return w

@@ -153,6 +153,16 @@ def raw_predicate(key: str) -> str:
 # the dot stays the separator; an all-digit segment is a list index.
 KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 
+# A whole string that is one absolute URI: a scheme with "://", or "urn:",
+# and none of the characters an IRI cannot hold. Text that merely mentions a
+# link ("see https://...") is not one.
+_URI_PATTERN = re.compile(r'^(?:[A-Za-z][A-Za-z0-9+.-]*://|urn:)[^\s<>"{}|\\^`]+$')
+
+
+def looks_like_uri(value: object) -> bool:
+    """True for a string that is a single well-formed absolute URI."""
+    return isinstance(value, str) and bool(_URI_PATTERN.match(value))
+
 
 def check_key(key: object) -> str:
     """Validate one metadata key; returns it. Raises ``ValueError`` otherwise."""

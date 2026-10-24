@@ -142,6 +142,26 @@ class TestWhereWithExpressions:
         assert q.query_graph.nodes[0].constraints["attrs"] == {"last_cleaned": "x"}
         assert q.query_graph.nodes[0].constraints["exprs"][0].value == "y"
 
+    def test_uri_value_on_user_attribute_matches_uri_or_text(self):
+        # insert_metadata writes a URI-looking string as a URI only when its
+        # node is known, so a filter matches either form
+        from rdflib import URIRef
+        a = attr(make_client())
+        s = Query(client=make_client()).entity(CLS_A, alias="ro").where(last_cleaned="urn:x#t").to_sparql()
+        assert (f'{{ ?v0 <{ATTR_NS}last_cleaned> <urn:x#t> . }} UNION '
+                f'{{ ?v0 <{ATTR_NS}last_cleaned> "urn:x#t" . }}') in s
+        s = (Query(client=make_client()).entity(CLS_A, alias="ro")
+             .where((a.last_cleaned != "urn:x#t") | a.tags.exists()).to_sparql())
+        assert f'!EXISTS {{ ?v0 (<{ATTR_NS}last_cleaned>) ?_x . FILTER(?_x IN (<urn:x#t>, "urn:x#t")) }}' in s
+        s = (Query(client=make_client()).entity(CLS_A, alias="ro")
+             .where(last_cleaned=URIRef("urn:x#t")).to_sparql())
+        assert f"?v0 <{ATTR_NS}last_cleaned> <urn:x#t> ." in s and '"urn:x#t"' not in s
+
+    def test_uri_value_on_uri_builtin_matches_the_uri_only(self):
+        s = (Query(client=make_client()).entity(CLS_A, alias="ro").measurement(alias="m")
+             .where("m", unit=UNIT).to_sparql())
+        assert f"<{UNIT}>" in s and f'"{UNIT}"' not in s
+
     def test_ordering_compiles_to_exists_filter(self):
         a = attr(make_client())
         q = Query(client=make_client()).entity(CLS_A, alias="ro").where(a.product_info.year >= 2015)

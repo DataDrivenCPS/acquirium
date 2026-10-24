@@ -232,6 +232,8 @@ class AcquiriumClient:
         data["source_id"] = source_id
         response = self._http.post(url, json=data)
         _raise_for_status(response)
+        # the graph may bind new prefixes: read the list again when next needed
+        self._namespaces_cache = None
 
     def insert_graph_file(
         self,
@@ -861,9 +863,13 @@ class AcquiriumClient:
         the same ``source_id`` and source-local ``ref_name``. Acquirium resolves
         those inserts to the same canonical reference URI internally.
         """
-        from acquirium.Client.metadata import plan_write
+        from acquirium.Client.metadata import plan_write, update_text
+        from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
 
         graphs: dict[str, Graph] = {}
+        # the ``metadata`` maps per point; a later stream on the same point
+        # wins key by key
+        extras: dict[str, dict[str, Any]] = {}
         for stream in streams:
             stream, extra = _split_stream_metadata(stream)
             source_id = stream.get("source_id")
@@ -880,11 +886,13 @@ class AcquiriumClient:
             existing = self._point_metadata(str(point_uri)) if point_uri is not None else {}
             subj = _build_stream_triples(graph, stream, resolved, existing, self._units_compatible)
             if extra:
-                # Same map insert_metadata takes; the annotations land with
-                # the stream, in its own graph.
-                write = plan_write(str(subj), extra, role="data", resolve=self._resolve_one)
-                for triple in write.triples:
-                    graph.add(triple)
+                extras.setdefault(str(subj), {}).update(extra)
+        # Plan the metadata before writing anything, so a bad key or a value
+        # that does not resolve fails the whole registration.
+        namespaces = self._namespace_uris() if extras else ()
+        writes = [plan_write(subj, extra, role="data", resolve=self._resolve_one,
+                             namespaces=namespaces)
+                  for subj, extra in extras.items()]
         for source_id, graph in graphs.items():
             if len(graph):
                 self.insert_graph(
@@ -893,6 +901,13 @@ class AcquiriumClient:
                     replace=False,
                     source_id=source_id,
                 )
+        # Same map and same update as insert_metadata: each key is replaced
+        # in the metadata graph, so registering again with a changed value
+        # leaves only the new one. Runs after the stream triples, which make
+        # the point a node the metadata graph may describe.
+        update = update_text(writes)
+        if update:
+            self.sparql_update(update, source_id=METADATA_SOURCE_ID)
 
     def _resolve_one(self, text: str, kind: str) -> Optional[str]:
         """Resolve one text value of the given kind to a URI, or None."""
@@ -904,16 +919,22 @@ class AcquiriumClient:
 
         A node is a data node when it carries an external reference, the
         same rule the explore layer's measurement nodes follow. A URI the
-        graphs do not mention (as subject or object) is left out.
+        graphs do not mention (as subject or object) is left out, and so is
+        one only user attributes mention.
         """
+        from acquirium.Client.explore.attributes import ATTR_NS
+
         uris = list(dict.fromkeys(str(u) for u in uris))
         roles: dict[str, str] = {}
         for i in range(0, len(uris), 500):
             chunk = " ".join(f"<{u}>" for u in uris[i:i + 500])
+            # a URI that only user attributes mention (a link saved as a
+            # value) is not a node: metadata on it would be pruned at once
             sparql = (
                 "SELECT DISTINCT ?s ?ref\nWHERE {\n"
                 f"  VALUES ?s {{ {chunk} }}\n"
-                "  { ?s ?p ?o . } UNION { ?x ?q ?s . }\n"
+                f'  {{ ?s ?p ?o . FILTER(!STRSTARTS(STR(?p), "{ATTR_NS}")) }}\n'
+                f'  UNION {{ ?x ?q ?s . FILTER(!STRSTARTS(STR(?q), "{ATTR_NS}")) }}\n'
                 f"  OPTIONAL {{ ?s <{HAS_EXTERNAL_REFERENCE}> ?ref . }}\n}}"
             )
             res = self.sparql_query(sparql, include_dependencies=False)
@@ -926,12 +947,21 @@ class AcquiriumClient:
                     roles[s] = "data" if row[ri] is not None else "entity"
         return roles
 
+    def _namespace_uris(self) -> tuple[str, ...]:
+        """The namespace URIs the server binds, from the cached prefix list:
+        a URI-looking metadata value under one of them is written as a URI
+        (see :func:`acquirium.Client.metadata.to_term`)."""
+        return tuple(str(ns) for _, ns in self.namespace_manager().namespaces())
+
     def insert_metadata(self, records: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
         """Write value maps on nodes: ``{node_uri: {key: value}}``.
 
         See :mod:`acquirium.Client.metadata` for what a value map may hold.
         Subjects may be CURIEs. Every subject must already exist in a data
-        graph; text on a URI-valued built-in is resolved. Writes land in the
+        graph; text on a URI-valued built-in is resolved. A URI-looking
+        string is written as a URI when it falls under a namespace the
+        server binds, else as text; pass a ``URIRef`` to write a URI
+        regardless. Writes land in the
         reserved metadata source graph as one SPARQL update, so each key is
         replaced atomically and nothing outside that graph is touched.
         """
@@ -945,8 +975,10 @@ class AcquiriumClient:
         missing = sorted(set(subjects) - set(roles))
         if missing:
             raise ValueError(f"unknown node(s), not in any data graph: {missing}")
+        namespaces = self._namespace_uris()
         writes = [
-            plan_write(uri, values, role=roles[uri], resolve=self._resolve_one)
+            plan_write(uri, values, role=roles[uri], resolve=self._resolve_one,
+                       namespaces=namespaces)
             for uri, values in subjects.items()
         ]
         update = update_text(writes)

@@ -241,8 +241,12 @@ It is flattened to one predicate per leaf: `{"product_info": {"year": 2019}}`
 writes `attr:product_info.year`, `{"tags": ["lab", "scada"]}` writes
 `attr:tags.0` and `attr:tags.1`, so a list keeps its order and its
 duplicates.
-`str`, `int`, `float`, `bool`, `date` and `datetime` become typed literals; a
-string that looks like a URI (`urn:`, `http://`, `https://`) becomes a URI.
+`str`, `int`, `float`, `bool`, `date` and `datetime` become typed literals.
+A string that is a URI (`urn:...`, `https://...`) becomes a URI when it
+falls under a namespace the server binds (the prefixes of the loaded graphs
+and ontologies, `client.namespace_manager()`), and text otherwise, so a link
+to a web page is stored as a string. A `URIRef` is always written as a URI. In `where()`, a URI-looking string on a user attribute matches either
+form.
 A key is one or more of letters, digits, underscore and hyphen, starting with
 a letter or underscore; anything else raises `ValueError`.
 
@@ -260,11 +264,11 @@ external reference.
 The update runs in the reserved `metadata` source graph and touches nothing
 outside it, so it cannot retract a value the plant model or a driver graph
 asserts.
-The `metadata` key of `register_streams()` differs in two ways: the leaves
-are written together with the stream, into the stream's own graph, and a key
+The `metadata` key of `register_streams()` is written with the same update,
+after the stream triples, and replaces each key it names the same way. A key
 that is also a stream field (`unit`, `quantity_kind`, `medium`, `substance`,
-`data_source`, `label`) is merged into the stream, or raises when the two
-disagree.
+`data_source`, `label`) is merged into the stream instead, or raises when the
+two disagree.
 
 A column that is null on every matched row is still typed from the
 datatypes the graph holds for the attribute elsewhere (discovery collects
@@ -272,8 +276,9 @@ them with the names), so a frame's schema does not depend on which nodes
 matched; `schema()` reports the same types in advance.
 
 Metadata lives as long as the node it describes: after a `replace=True`
-graph insert or a SPARQL update, the server removes metadata whose subject,
-or whose URI value, no longer appears in any other graph.
+graph insert or a SPARQL update, the server removes metadata whose subject
+no longer appears in any other graph. A URI value is not checked; it may
+point anywhere.
 See [Attach metadata to a node](../how-to/attach-metadata.md).
 
 ### Helpers

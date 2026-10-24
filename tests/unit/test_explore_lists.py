@@ -22,6 +22,7 @@ def make_client(result=None):
     client.compact_uri.side_effect = lambda x: str(x).replace("urn:p#", "p:")
     client.sparql_query.side_effect = lambda sparql, include_dependencies=True, wait_for_fresh=False: (
         {"columns": ["p"], "rows": [[p] for p in PREDS]} if sparql == DISCOVERY_SPARQL
+        else {"columns": ["s", "p", "value"], "rows": []} if "urn:acquirium:metadata:document:" in sparql
         else (result or {"columns": [], "rows": []}))
     return client
 
@@ -45,16 +46,46 @@ class TestCompile:
     def test_list_attribute_projects_its_predicate(self):
         q = Query(client=make_client()).entity(CLS_A, alias="e").include("tags", "tags.0", "name")
         s = q.to_sparql()
-        assert (f"OPTIONAL {{ VALUES ?attrp0_tags {{ <{ATTR_NS}tags> <{ATTR_NS}tags.0> <{ATTR_NS}tags.1> }} "
-                f"?v0 ?attrp0_tags ?attr0_tags . }}") in s
+        assert (f"OPTIONAL {{ {{ VALUES ?attrp0_tags {{ <{ATTR_NS}tags> <{ATTR_NS}tags.0> <{ATTR_NS}tags.1> }} "
+                f"?v0 ?attrp0_tags ?attr0_tags . }} }}") in s
         assert f"OPTIONAL {{ ?v0 (<{ATTR_NS}tags.0>) ?attr0_tags_46_0 . }}" in s
         first = s.splitlines()[0]
         assert "?attr0_tags ?attrp0_tags" in first and "?attr0_name" in first
         prepareQuery(s)
 
-    def test_required_list_has_no_optional(self):
+    def test_required_list_adds_exists(self):
         s = Query(client=make_client()).entity(CLS_A, alias="e").include("tags", required=True).to_sparql()
-        assert "VALUES ?attrp0_tags" in s and "OPTIONAL { VALUES" not in s
+        assert "OPTIONAL { { VALUES ?attrp0_tags" in s
+        assert (f"FILTER EXISTS {{ VALUES ?attrr0_tags {{ <{ATTR_NS}tags> <{ATTR_NS}tags.0> <{ATTR_NS}tags.1> }} "
+                f"?v0 ?attrr0_tags ?attrq0_tags . }}") in s
+        prepareQuery(s)
+
+    def test_lists_of_one_node_share_one_optional(self):
+        # one UNION branch per list: rows add up per element instead of
+        # multiplying across lists
+        s = Query(client=make_client()).entity(CLS_A, alias="e").include("tags", "nums", "items.n").to_sparql()
+        assert s.count("OPTIONAL {") == 1
+        assert s.count(" UNION ") == 2
+        first = s.splitlines()[0]
+        assert "?attr0_tags ?attrp0_tags ?attr0_nums ?attrp0_nums ?attr0_items_46_n ?attrp0_items_46_n" in first
+        prepareQuery(s)
+
+    def test_lists_add_up_on_a_graph(self):
+        from rdflib import Graph, Literal, URIRef
+        from rdflib.namespace import RDF
+        g = Graph()
+        a, b = URIRef("urn:p#a"), URIRef("urn:p#b")
+        g.add((a, RDF.type, URIRef(CLS_A)))
+        g.add((b, RDF.type, URIRef(CLS_A)))
+        for i in range(2):
+            g.add((a, URIRef(f"{ATTR_NS}tags.{i}"), Literal(f"t{i}")))
+            g.add((a, URIRef(f"{ATTR_NS}nums.{i}"), Literal(i)))
+            g.add((a, URIRef(f"{ATTR_NS}items.{i}.n"), Literal(i)))
+        q = Query(client=make_client()).entity(CLS_A, alias="e")
+        rows = list(g.query(q.include("tags", "nums", "items.n").to_sparql()))
+        assert len(rows) == 6 + 1          # 2 + 2 + 2 elements on a, b with none
+        required = list(g.query(q.include("tags", required=True).to_sparql()))
+        assert {str(r[0]) for r in required} == {"urn:p#a"}
 
 
 def rows_for(*entries):
@@ -67,6 +98,21 @@ def rows_for(*entries):
 
 
 class TestMetadataLists:
+    def test_rows_of_different_lists_fold_into_one_row(self):
+        # each row carries one element of one list; the others are null
+        res = {"columns": ["v0", "attr0_tags", "attrp0_tags", "attr0_nums", "attrp0_nums"],
+               "rows": [["urn:p#a", "x", f"{ATTR_NS}tags.0", None, None],
+                        ["urn:p#a", None, None, 2, f"{ATTR_NS}nums.1"],
+                        ["urn:p#a", "y", f"{ATTR_NS}tags.1", None, None],
+                        ["urn:p#a", None, None, 1, f"{ATTR_NS}nums.0"]],
+               "datatypes": [["iri", None, "iri", None, None], ["iri", None, None, XSD + "integer", "iri"],
+                             ["iri", None, "iri", None, None], ["iri", None, None, XSD + "integer", "iri"]]}
+        q = Query(client=make_client(res)).entity(CLS_A, alias="e").include("tags", "nums")
+        df = q.metadata()
+        assert df.height == 1
+        assert df["e.tags"].to_list() == [["x", "y"]] and df["e.nums"].to_list() == [[1, 2]]
+        assert q.metadata_objects() == [{"e": {"id": "urn:p#a", "tags": ["x", "y"], "nums": [1, 2]}}]
+
     def test_elements_in_index_order_scalar_as_singleton_absent_as_null(self):
         res = rows_for(
             ("urn:p#a", "critical", f"{ATTR_NS}tags.1", "A"),
