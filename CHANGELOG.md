@@ -15,8 +15,23 @@ change in any release.
   that extend it, and whatever a loaded model uses with `s223:hasRole`. A role
   is found by its bare name, so `resolve_text("backwash", kind="role")` returns
   `nawi:Role-Backwash`.
+- `BindingInfo.source_id` and `BindingInfo.ref_name`: the `(source_id,
+  ref_name)` identity of a binding's reference, the inverse of
+  `reference_uri()`. Both are `None` for an external reference.
+  `DataObject.metadata(include_ref_uris=True)` adds them as `source_id` and
+  `ref_name` columns after `ref_uri`.
+- `Query.data(stats=False)` describes streams without the per-stream row
+  count and time range, which cost the store a scan of every sample.
+  `DataObject.total_rows`, `time_range` and `is_empty()` fetch the statistics
+  the first time they are read; `bindings`, `metadata()`, `units()` and
+  materialization never do. `DataObject.stats_loaded` tells whether a
+  binding's `row_count`, `earliest` and `latest` are filled yet.
+- `measurement(ref=...)` and `where(ref=...)` select streams by reference URI
+  (one URI or CURIE, or a list). An unknown reference matches nothing.
 
 ### Changed
+- `Query.dataframe()` no longer fetches per-stream statistics, which it never
+  used.
 - Roles are no longer part of `kind="class"`. `resolve_text("condenser",
   kind="class")` returns the equipment class only; the role needs
   `kind="role"`.

@@ -5,6 +5,9 @@ from typing import Dict, List, Optional, Any
 class DataNodeInfo:
     node_id: int
     filters: Dict[str, Any] = field(default_factory=dict)
+    # Reference URIs the node's ``?ext`` variable is restricted to
+    # (``measurement(ref=...)``); None means unrestricted.
+    refs: Optional[tuple] = None
 
 
 

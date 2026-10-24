@@ -226,6 +226,26 @@ class Query:
                 g = g.with_node(replace(node, constraints=constraints))
         return replace(g, current_pointer=ptr)
 
+    def _normalize_refs(self, ref: Any) -> tuple:
+        """Coerce a ``ref=`` value (one reference URI/CURIE or a list) to a tuple of URIs."""
+        if isinstance(ref, Not):
+            raise ValueError("ref: Not() is not supported; ref selects streams, it does not exclude them")
+        values = [ref] if isinstance(ref, (str, URIRef)) else list(ref)
+        return tuple(dict.fromkeys(
+            self._normalize_instance_uri(r, param="ref") for r in values if r is not None
+        ))
+
+    def _apply_refs(self, g: QueryGraph, node_ids: List[int], refs: tuple) -> QueryGraph:
+        """Restrict data nodes' references to ``refs`` (intersected with any earlier restriction)."""
+        for nid in node_ids:
+            if nid not in g.data_nodes:
+                alias = g.aliases_reverse.get(nid, str(nid))
+                raise ValueError(f"ref applies to measurement nodes only, not entity node {alias!r}")
+            info = g.data_nodes[nid]
+            narrowed = refs if info.refs is None else tuple(r for r in info.refs if r in refs)
+            g = g.with_data_node(replace(info, refs=narrowed))
+        return g
+
     # ---------- verbs ----------
 
     def entity(self, cls: str | URIRef | None = None, *, uri: str | URIRef | None = None,
@@ -368,7 +388,7 @@ class Query:
     def measurement(self, *, frm: "str | list | tuple | None" = None, alias: Optional[str] = None,
                     direction: Optional[str] = None, max_depth: int = 3,
                     nearest: Optional[bool] = None, include_connection_points: bool = True,
-                    **attrs: Any) -> "Query":
+                    ref: Any = None, **attrs: Any) -> "Query":
         """Attach a measurement point (data node) to the pattern and point at it.
 
         Matches nodes carrying an external reference one hop from the source.
@@ -408,8 +428,18 @@ class Query:
         measurement node(s), same as ``where()``::
 
             q.measurement(quantity_kind="mass flow rate", medium=Not("brine"))
+
+        ``ref`` selects streams by reference URI (one URI/CURIE or a list,
+        e.g. from ``Acquirium.reference_uri(source_id, ref_name)``). It
+        restricts the reference itself, so a point with several references
+        keeps only the requested ones; an unknown ref matches nothing.
+        Combine with ``data(stats=False)`` to describe known streams from the
+        graph alone::
+
+            aq.query().measurement(ref=[ref_a, ref_b]).data(stats=False).bindings
         """
         g = self.query_graph
+        refs = self._normalize_refs(ref) if ref is not None else None
 
         if isinstance(frm, (list, tuple)) and direction is not None:
             raise ValueError("measurement: frm list only combines with the non-directional form")
@@ -456,6 +486,8 @@ class Query:
             g = g.with_data_node(DataNodeInfo(node_id=data_id))
             if attrs:
                 g = self._apply_attrs(g, [data_id], self._resolve_attr_values(attrs))
+            if refs is not None:
+                g = self._apply_refs(g, [data_id], refs)
             return self._with_graph(g)
 
         if frm is None and not g.nodes:
@@ -470,6 +502,8 @@ class Query:
             g = g.with_data_node(DataNodeInfo(node_id=new_id))
             if attrs:
                 g = self._apply_attrs(g, [new_id], self._resolve_attr_values(attrs))
+            if refs is not None:
+                g = self._apply_refs(g, [new_id], refs)
             return self._with_graph(g)
 
         if isinstance(frm, str) and frm.strip().lower() in {"*", "all"}:
@@ -507,6 +541,8 @@ class Query:
 
         if attrs:
             g = self._apply_attrs(g, created, self._resolve_attr_values(attrs))
+        if refs is not None:
+            g = self._apply_refs(g, created, refs)
         return self._with_graph(g)
 
     def _lower_context_via(self, via: Any) -> tuple:
@@ -624,7 +660,7 @@ class Query:
             self._require_free_alias(g, name, verb="alias")
         return self._with_graph(g.with_node(replace(node, alias=name)))
 
-    def where(self, target: Optional[str] = None, **attrs: Any) -> "Query":
+    def where(self, target: Optional[str] = None, *, ref: Any = None, **attrs: Any) -> "Query":
         """Filter a node by registry attributes (see ``explore.attributes.REGISTRY``).
 
         - ``target``: alias to filter (default: current pointer); ``"*"``
@@ -633,10 +669,14 @@ class Query:
           wrapped in :class:`Not` to exclude::
 
               q.where(quantity_kind="mass flow rate", medium=Not("brine"))
+
+        - ``ref``: measurement nodes only; keep only these reference URIs
+          (one or a list), same as ``measurement(ref=...)``.
         """
-        if not attrs:
+        if not attrs and ref is None:
             raise ValueError('where: provide at least one attribute filter, e.g. where(medium="water")')
-        resolved = self._resolve_attr_values(attrs)
+        refs = self._normalize_refs(ref) if ref is not None else None
+        resolved = self._resolve_attr_values(attrs) if attrs else {}
         g = self.query_graph
         if isinstance(target, str) and target.strip().lower() in {"*", "all"}:
             ids = sorted(g.data_nodes)
@@ -650,7 +690,11 @@ class Query:
                     else "where: no current node (start with entity())"
                 )
             ids = [nid]
-        return self._with_graph(self._apply_attrs(g, ids, resolved))
+        if resolved:
+            g = self._apply_attrs(g, ids, resolved)
+        if refs is not None:
+            g = self._apply_refs(g, ids, refs)
+        return self._with_graph(g)
 
     def _column_target(self, g: QueryGraph, name: str, of: Optional[str]) -> tuple:
         """Resolve a column spec to ("attr", nid, attr_name) or ("node", nid).
@@ -1006,6 +1050,7 @@ class Query:
                     "id": nid,
                     "alias": g.aliases_reverse.get(nid, f"v{nid}"),
                     "filters": safe(dict(info.filters or {})),
+                    "refs": list(info.refs) if info.refs is not None else None,
                 }
                 for nid, info in g.data_nodes.items()
             ],
@@ -1052,8 +1097,8 @@ class Query:
         """Return the pattern matches as a polars table with alias column names.
 
         The internal SPARQL columns driving ``data()`` (``ext<nid>``,
-        ``unit<nid>``, ``extunit<nid>``) are hidden unless
-        ``include_internals=True``.
+        ``unit<nid>``, ``extunit<nid>``, ``extsid<nid>``, ``extrname<nid>``)
+        are hidden unless ``include_internals=True``.
         """
         cache_key = f"metadata_table:{include_internals}:{include_dependencies}"
         if self.cache.get(cache_key) is None:
@@ -1111,8 +1156,22 @@ class Query:
         include_dependencies: bool = True,
         cast_value: str | None = "float",
         value_mode: str = "default",
+        stats: bool = True,
     ) -> "DataObject":
-        """Return a lazy DataObject with alias-driven access to the matched streams."""
+        """Return a lazy DataObject with alias-driven access to the matched streams.
+
+        Each binding carries the point, label, units and the reference's
+        ``(source_id, ref_name)`` identity from the graph. With
+        ``stats=True`` (default) the per-stream row count and time range are
+        fetched too, which costs the store a scan of every sample of every
+        matched stream. ``stats=False`` skips that: bindings keep
+        ``row_count=0``/``earliest=None``/``latest=None`` and
+        ``DataObject.total_rows``/``time_range``/``is_empty()`` fetch the
+        stats on first use. Materialization (``dataframe()``, ``iter()``,
+        ``latest()``) never needs them::
+
+            q.measurement(ref=refs).data(stats=False).bindings   # graph only
+        """
         from acquirium.Client.data_object import DataObject
         return DataObject._from_query(
             self,
@@ -1123,6 +1182,7 @@ class Query:
             include_dependencies=include_dependencies,
             cast_value=cast_value,
             value_mode=value_mode,
+            stats=stats,
         )
 
     def dataframe(
@@ -1158,6 +1218,8 @@ class Query:
             include_dependencies=include_dependencies,
             cast_value=cast_value,
             value_mode=value_mode,
+            # the frame never reads row counts / time ranges
+            stats=False,
         ).dataframe(shape=shape, include_ref=include_ref, compact=compact)
 
     # ---------- display helpers ----------

@@ -22,6 +22,8 @@ from acquirium.Client.explore.attributes import REGISTRY, Attr, Not, normalize_v
 from acquirium.Client.explore.hidden import hidden_predicates
 from acquirium.Client.query_graph import QueryEdge, QueryGraph
 from acquirium.internals.internals_namespaces import (
+    ACQUIRIUM_REF_NAME,
+    ACQUIRIUM_SOURCE_ID,
     CONNECTED_THROUGH,
     CONNECTION_POINT,
     CONNECTS_FROM,
@@ -462,11 +464,38 @@ def _node_constraint_clauses(v: str, node) -> List[str]:
     return clauses
 
 
+def _ref_values_clause(nid: int, info) -> List[str]:
+    """``VALUES ?ext<nid> { ... }`` for a data node restricted to given refs.
+
+    Constrains the reference variable itself, not the point: a point with
+    several references keeps only the requested ones. An empty tuple
+    compiles to an empty VALUES block, which matches nothing.
+    """
+    refs = getattr(info, "refs", None)
+    if refs is None:
+        return []
+    return [f"VALUES ?ext{nid} {{ " + " ".join(f"<{r}>" for r in refs) + " }"]
+
+
+def _ext_identity_clauses(nid: int) -> List[str]:
+    """OPTIONALs for the reference's ``(source_id, ref_name)`` identity.
+
+    Both are written by ``register_streams`` on Acquirium-managed
+    references; external references lack them and leave the columns unbound.
+    """
+    return [
+        f"OPTIONAL {{ ?ext{nid} <{ACQUIRIUM_SOURCE_ID}> ?extsid{nid} . }}",
+        f"OPTIONAL {{ ?ext{nid} <{ACQUIRIUM_REF_NAME}> ?extrname{nid} . }}",
+    ]
+
+
 def _data_node_clauses(v: str, nid: int, info) -> List[str]:
-    """ext-ref triple, unit/label OPTIONALs, and filters for one data node."""
-    clauses: List[str] = [f"{v} <{HAS_EXTERNAL_REFERENCE}> ?ext{nid} ."]
+    """ext-ref triple, unit/label/identity OPTIONALs, and filters for one data node."""
+    clauses: List[str] = _ref_values_clause(nid, info)
+    clauses.append(f"{v} <{HAS_EXTERNAL_REFERENCE}> ?ext{nid} .")
     clauses.append(f"OPTIONAL {{ {v} <{HAS_UNIT}> ?unit{nid} . }}")
     clauses.append(f"OPTIONAL {{ ?ext{nid} <{HAS_UNIT}> ?extunit{nid} . }}")
+    clauses.extend(_ext_identity_clauses(nid))
     clauses.append(f"OPTIONAL {{ {v} <{RDFS.label}> ?lbl{nid} . }}")
 
     for pred, val in (info.filters or {}).items():
@@ -573,9 +602,11 @@ def compile_parts(graph: QueryGraph) -> tuple:
         v = var_map[nid]
         ext = f"?ext{nid}"
         ext_vars[nid] = ext
+        where_clauses.extend(_ref_values_clause(nid, info))
         where_clauses.append(f"{v} <{HAS_EXTERNAL_REFERENCE}> {ext} .")
 
-        # OPTIONAL unit and label metadata for property and external reference
+        # OPTIONAL unit, identity and label metadata for property and
+        # external reference
         uvar = f"?unit{nid}"
         euvar = f"?extunit{nid}"
         lvar = f"?lbl{nid}"
@@ -584,6 +615,7 @@ def compile_parts(graph: QueryGraph) -> tuple:
         lbl_vars[nid] = lvar
         where_clauses.append(f"OPTIONAL {{ {v} <{HAS_UNIT}> {uvar} . }}")
         where_clauses.append(f"OPTIONAL {{ {ext} <{HAS_UNIT}> {euvar} . }}")
+        where_clauses.extend(_ext_identity_clauses(nid))
         where_clauses.append(f"OPTIONAL {{ {v} <{RDFS.label}> {lvar} . }}")
 
         for pred, val in (info.filters or {}).items():
@@ -628,8 +660,8 @@ def compile_parts(graph: QueryGraph) -> tuple:
                     where_clauses.append(f'{v} <{pred}> "{val}" .')
 
     # projected attribute columns (?attr<N>_<name>, OPTIONAL so rows without
-    # the attribute survive; the prefix is disjoint from v/ext/unit/extunit
-    # so DataObject's column parsing ignores them)
+    # the attribute survive; the prefix is disjoint from v/ext/unit/extunit/
+    # extsid/extrname so DataObject's column parsing ignores them)
     attr_var_pairs: List[tuple] = []  # (node_id, var) in selects order
     for nid, name, required in getattr(graph, "selects", ()):
         attr = REGISTRY[name]
@@ -654,6 +686,8 @@ def compile_parts(graph: QueryGraph) -> tuple:
         [v for nid, v in ext_vars.items() if nid not in dropped]
         + [v for nid, v in unit_vars.items() if nid not in dropped]
         + [v for nid, v in extunit_vars.items() if nid not in dropped]
+        + [f"?extsid{nid}" for nid in extunit_vars if nid not in dropped]
+        + [f"?extrname{nid}" for nid in extunit_vars if nid not in dropped]
         + [v for nid, v in lbl_vars.items() if nid not in dropped]
     )
     if not select_parts:
@@ -779,6 +813,8 @@ def _compile_parts_multi(graph: QueryGraph) -> tuple:
         [f"?ext{nid}" for nid in graph.data_nodes if nid not in dropped]
         + [f"?unit{nid}" for nid in graph.data_nodes if nid not in dropped]
         + [f"?extunit{nid}" for nid in graph.data_nodes if nid not in dropped]
+        + [f"?extsid{nid}" for nid in graph.data_nodes if nid not in dropped]
+        + [f"?extrname{nid}" for nid in graph.data_nodes if nid not in dropped]
         + [f"?lbl{nid}" for nid in graph.data_nodes if nid not in dropped]
     )
     if not select_parts:
