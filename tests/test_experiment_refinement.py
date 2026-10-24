@@ -228,23 +228,6 @@ def test_stream_delivery_preserves_each_triples_subject(materialization_store, t
     assert not list(graph.dataset.objects(point, ACQUIRIUM_SOURCE_ID))
 
 
-def test_standalone_close_releases_graph_and_preserves_legacy_semantics(tmp_path):
-    from acquirium.Storage.duckdb_store import DuckDBStore
-    store = DuckDBStore(tmp_path / "standalone.duckdb")
-    try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "graph", resolve=lambda *_: "urn:unit:power")
-        study = ledger.define("standalone")["template_id"]
-        variable, old = legacy_document(ledger, ledger.metadata_graph.graph_store, study)
-        # The upgrade reads native asserted terms, without any query/inference adapter.
-        saved = ledger.variables(study)[0]
-        assert saved["metadata"]["_resolved_semantics"]["unit"] == "urn:unit:power"
-        ledger.close()
-        with ExperimentStore.standalone(store, tmp_path / "graph") as reopened:
-            assert reopened.variables(study)[0] == saved
-    finally:
-        store.close()
-
-
 def test_upgrade_keeps_user_overrides_and_semantic_assertions_in_their_sources(materialization_store, tmp_path):
     from acquirium.Client.metadata import plan_write, update_text
     from acquirium.internals.internals_namespaces import HAS_UNIT

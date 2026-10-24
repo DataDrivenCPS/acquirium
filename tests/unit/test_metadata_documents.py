@@ -156,27 +156,6 @@ def test_indexed_object_selection_applies_casts_at_the_original_position():
     assert query.metadata_objects() == [{"item": {"id": uri, "items": [None, {"cost": "1"}, None]}}]
 
 
-def test_standalone_graph_uses_document_precedence_for_queries(tmp_path):
-    from tests.graph_query_client import QueryableLocalMetadataGraph as LocalMetadataGraph
-
-    graph = LocalMetadataGraph(tmp_path / "standalone")
-    uri, cls = "urn:example:node", "urn:example:Class"
-    source = source_graph_uri("experiments")
-    try:
-        graph.sparql_update(f"INSERT DATA {{ <{uri}> a <{cls}> }}", graph_uri=source)
-        for owner, values in ((source, {"scenario": "baseline", "metadata": {"old": True}}),
-                              (source_graph_uri("metadata"), {"scenario": "edited", "metadata": {}})):
-            graph.sparql_update(update_text([plan_write(uri, values, role="entity", resolve=lambda *args: None)]), graph_uri=owner)
-        client = _GraphQueryClient(graph)
-        query = Query(client).entity(cls, alias="item")
-        assert query.where(scenario="baseline").metadata_objects() == []
-        assert query.where(scenario="edited").include("scenario", "metadata").metadata_objects() == [
-            {"item": {"id": uri, "scenario": "edited", "metadata": {}}}]
-        assert graph.metadata_documents([uri])[uri] == {"scenario": "edited", "metadata": {}}
-    finally:
-        graph.dataset.close()
-
-
 def test_http_documents_preserve_types_and_read_asserted_source(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from importlib import import_module

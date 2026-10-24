@@ -12,6 +12,7 @@ import pytest
 from acquirium import Acquirium
 from acquirium.Storage.timescale_store import TimescaleStore
 from acquirium.Storage.values import assign_stream_value_kind
+from tests.local_server import local_acquirium_server, reset_experiments
 
 
 PG_DSN = os.getenv(
@@ -153,3 +154,17 @@ def materialization_store(request, tmp_path):
         if request.param == "timescale":
             with psycopg.connect(dsn, autocommit=True) as conn:
                 conn.execute(f'DROP SCHEMA "{schema}" CASCADE')
+
+
+@pytest.fixture(scope="module")
+def local_acquirium(tmp_path_factory):
+    """One local server per test module, started with aq.init()."""
+    with local_acquirium_server(tmp_path_factory.mktemp("acquirium")) as ac:
+        yield ac
+
+
+@pytest.fixture
+def ac(local_acquirium):
+    """The module's local server, with no Studies or runs."""
+    reset_experiments(local_acquirium.client)
+    return local_acquirium

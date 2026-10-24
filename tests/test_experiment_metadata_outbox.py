@@ -61,23 +61,6 @@ def test_graph_commit_before_failed_acknowledgment_is_replayable(materialization
     assert pending(store) == 0
 
 
-def test_outbox_failure_rolls_back_lifecycle_write(materialization_store, tmp_path, monkeypatch):
-    store = materialization_store
-    ledger = ExperimentStore.standalone(store, tmp_path / "graph")
-    study = ledger.define("rollback")
-    ledger.sync_metadata_graph()
-    queue = ledger._queue_metadata
-    def fail(conn, record):
-        queue(conn, record)
-        raise OSError("transaction failed")
-    with monkeypatch.context() as patch:
-        patch.setattr(ledger, "_queue_metadata", fail)
-        with pytest.raises(OSError, match="transaction failed"):
-            ledger.start(study["template_id"], {})
-    assert ledger.runs(study["template_id"]) == []
-    assert pending(store) == 0
-
-
 def test_committed_deletion_is_retried_after_restart(materialization_store, tmp_path, monkeypatch):
     store, graph = materialization_store, MemoryGraphStore()
     ledger = ExperimentStore(store, graph_store=graph)

@@ -41,14 +41,8 @@ The next metadata read delivers the outbox. Entries are removed only after their
 graph update and source flush succeed; retries do not re-resolve saved units. Backups must retain
 both the SQL ledger and its authoritative graph. SQL alone can recover pending
 updates, but cannot reconstruct metadata whose updates were already acknowledged.
-Direct ledger callers must supply a backend with document and asserted-term reads, graph writes,
-source clears, and durable flush. The constructor does not select a backend.
-Use `with ExperimentStore.standalone(store, graph_dir, resolve=...) as ledger:`
-for an embedded Oxigraph graph in `graph_dir`; each graph directory belongs to
-one SQL store.
-Exit or `ledger.close()` delivers pending metadata and releases the local graph
-handle; the caller owns and closes the SQL store afterward. Standalone mode
-explicitly permits unresolved legacy semantic spellings.
+The experiment ledger runs only inside the server, against the server's graph;
+clients reach it through `aq.init()`.
 
 Experiment schema version 3 adds a declaration format and scheduled delivery
 frontier to the existing outbox state. Before normalized reads, the metadata

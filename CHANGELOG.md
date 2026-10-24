@@ -26,7 +26,7 @@ change in any release.
   query paths move under `metadata`. Conflicting legacy duplicates require repair;
   interrupted graph upgrades replay through the outbox delivery frontier.
 - Experiment metadata consistency has one component, with explicit backend
-  capabilities and a standalone factory. HTTP reads hydrate each batch once,
+  capabilities. HTTP reads hydrate each batch once,
   and object queries assemble saved user values directly from documents.
 
 - Shared lossless metadata documents retain arbitrary namespaced JSON, null
@@ -120,12 +120,12 @@ change in any release.
   prune that follows every server graph write runs natively as well.
 
 ### Changed
+- Experiments always go through a server: start one with `aq.init()`.
+  `ExperimentStore.standalone()` and its embedded metadata graph are removed.
 - Experiment artifact bytes are stored in the SQL store, split into chunks,
   instead of in an `experiment_artifacts/` directory. They commit and delete
   with the observations that reference them. `ExperimentStore` no longer takes
-  an artifact directory, and `ExperimentStore.standalone(store, graph_dir)`
-  takes the directory for its metadata graph. Existing artifact files are not
-  migrated.
+  an artifact directory. Existing artifact files are not migrated.
 - A SPARQL update no longer forces the ontology closure to be recomputed
   unless it changed the graph's `owl:imports` or `owl:Ontology` triples.
 - The query compiler renders `int`, `float`, `bool`, `date` and `datetime`

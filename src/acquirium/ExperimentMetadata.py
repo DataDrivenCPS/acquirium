@@ -232,14 +232,14 @@ class ExperimentMetadata:
         EXPERIMENT.Variable: "variable_id", EXPERIMENT.StreamAnnotation: "annotation_id",
     }
 
-    def __init__(self, store, graph_store, resolve, *, strict=True):
+    def __init__(self, store, graph_store, resolve):
         import threading
         required = ("metadata_documents", "metadata_triples", "metadata_update", "sparql_update", "clear_graphs", "flush_metadata", "source_graph_uri")
         missing = [name for name in required if not callable(getattr(graph_store, name, None))]
         if missing:
             raise TypeError(f"experiment metadata backend lacks capabilities: {', '.join(missing)}")
         self.store = store
-        self.writer = ExperimentMetadataGraph(graph_store, resolve, strict=strict)
+        self.writer = ExperimentMetadataGraph(graph_store, resolve)
         self.lock = graph_store.__dict__.setdefault("_experiment_delivery_lock", threading.RLock())
         self._generation_checked = False
 

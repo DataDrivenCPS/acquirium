@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
 from hashlib import sha256
-from importlib import import_module
 from types import SimpleNamespace
 from urllib.parse import quote
 from unittest.mock import Mock
@@ -8,11 +7,57 @@ import warnings
 
 import polars as pl
 import pytest
+from requests import HTTPError
 
 from acquirium.Client.streams import Stream
-from acquirium.Experiments import ExperimentStore, Study, StudyService, timestamp, _stream_name
-from acquirium.Storage.duckdb_store import DuckDBStore
+from acquirium.Experiments import Study, StudyService, timestamp, _stream_name
 from acquirium.internals.models import compute_ref_uri
+
+
+def _declare(client, template_id, label, role, kind, metadata=None):
+    return client.declare_experiment_variable(template_id, label=label, role=role, kind=kind, metadata=metadata or {})
+
+
+def _status(error):
+    return error.value.response.status_code
+
+
+def _recorded_stream(ac, run, variable, rows):
+    """Record samples with a run, as a time-series record() does."""
+    receipt = ac.client.record_experiment_batch(run["run_id"], [{
+        "form": "samples", "variable_id": variable["variable_id"],
+        "samples": [[when.isoformat(), value] for when, value in rows]}])
+    return receipt[0]["ref_uri"]
+
+
+def _site_stream(ac, name, rows):
+    """A stream a driver wrote, outside any experiment."""
+    ac.register_streams([{"source_id": "site", "ref_name": name}])
+    ac.insert_timeseries("site", name, rows)
+    return str(ac.reference_uri("site", name))
+
+
+def _samples(ac, ref):
+    return ac.client.timeseries_df(ref).height
+
+
+def _stored(ac, digest):
+    """Whether the server still has an artifact's bytes."""
+    try:
+        ac.client.experiment_artifact(digest)
+    except HTTPError as error:
+        if error.response.status_code == 404:
+            return False
+        raise
+    return True
+
+
+def _post(ac, path, **kwargs):
+    return ac.client._http.post(f"{ac.client.base_url}{path}", **kwargs)
+
+
+def _get(ac, path, **kwargs):
+    return ac.client._http.get(f"{ac.client.base_url}{path}", **kwargs)
 
 
 @pytest.mark.parametrize("status", [404, 400])
@@ -34,80 +79,44 @@ def test_metadata_sync_reports_old_servers_without_hiding_other_errors(status):
         assert caught.value is error
 
 
-def test_reusable_template_variables_are_isolated_and_timestamped(tmp_path):
-    store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
-    try:
-        experiments = ExperimentStore.standalone(store, tmp_path / "graph")
-        template = experiments.define("load-shift")
-        variable = experiments.declare(template["template_id"], "configuration", "input", "json", {})
-        first = experiments.start(template["template_id"], {"case": 1})
-        first_observation = experiments.observe(first["run_id"], variable["variable_id"], value={"flow": 10})
-        assert first_observation["sequence"] == 1
-        assert first_observation["recorded_at"].tzinfo is not None
-        experiments.finish(first["run_id"], "succeeded")
-        with pytest.raises(ValueError, match="terminal"):
-            experiments.observe(first["run_id"], variable["variable_id"], value={"flow": 20})
-        second = experiments.start(template["template_id"], {"case": 2})
-        second_observation = experiments.observe(second["run_id"], variable["variable_id"], value={"flow": 20})
-        assert second_observation["sequence"] == 1
-    finally:
-        store.close()
+def test_reusable_template_variables_are_isolated_and_timestamped(ac):
+    client = ac.client
+    template = client.define_experiment("load-shift")
+    variable = _declare(client, template["template_id"], "configuration", "input", "json")
+    first = client.start_experiment(template["template_id"], {"case": 1})
+    first_observation = client.observe_experiment(first["run_id"], variable["variable_id"], value={"flow": 10})
+    assert first_observation["sequence"] == 1
+    assert timestamp(first_observation["recorded_at"]).utcoffset() is not None
+    client.finish_experiment(first["run_id"])
+    with pytest.raises(HTTPError, match="terminal"):
+        client.observe_experiment(first["run_id"], variable["variable_id"], value={"flow": 20})
+    second = client.start_experiment(template["template_id"], {"case": 2})
+    second_observation = client.observe_experiment(second["run_id"], variable["variable_id"], value={"flow": 20})
+    assert second_observation["sequence"] == 1
 
 
-def test_file_attachment_is_content_addressed(tmp_path):
-    store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
-    try:
-        experiments = ExperimentStore.standalone(store, tmp_path / "graph")
-        template = experiments.define("files")
-        variable = experiments.declare(template["template_id"], "config", "input", "file", {})
-        run = experiments.start(template["template_id"], {})
-        first = experiments.attach_file(run["run_id"], variable["variable_id"], "a.json", "application/json", b"{}")
-        second = experiments.attach_file(run["run_id"], variable["variable_id"], "b.json", "application/json", b"{}")
-        assert first["digest"] == second["digest"]
-        assert experiments.artifact(first["digest"])["data"] == b"{}"
-        assert _stored_artifacts(store) == [first["digest"]]
-    finally:
-        store.close()
+def test_file_attachment_is_content_addressed(ac):
+    client = ac.client
+    template = client.define_experiment("files")
+    variable = _declare(client, template["template_id"], "config", "input", "file")
+    run = client.start_experiment(template["template_id"], {})
+    first = client.attach_experiment_bytes(run["run_id"], variable["variable_id"], b"{}", filename="a.json", media_type="application/json")
+    second = client.attach_experiment_bytes(run["run_id"], variable["variable_id"], b"{}", filename="b.json", media_type="application/json")
+    assert first["digest"] == second["digest"]
+    assert client.experiment_artifact(first["digest"]) == b"{}"
+    assert client.experiment_usage()["files"] == 1
 
 
-@pytest.mark.parametrize("data", [b"", bytes(range(256)) * 5], ids=["empty", "chunked"])
-def test_file_attachment_round_trips_across_chunks(tmp_path, monkeypatch, data):
-    monkeypatch.setattr("acquirium.Experiments.ARTIFACT_CHUNK_BYTES", 300)
-    store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
-    try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
-        study = ledger.define("chunks")
-        variable = ledger.declare(study["template_id"], "dump", "output", "file", {})
-        run = ledger.start(study["template_id"], {})
-        saved = ledger.attach_file(run["run_id"], variable["variable_id"], "dump.bin", None, data)
-        with store._own_conn() as conn:
-            chunks = conn.execute("SELECT count(*) FROM experiment_artifact_chunks").fetchone()[0]
-        assert chunks == -(-len(data) // 300)
-        assert ledger.artifact(saved["digest"])["data"] == data
-    finally:
-        store.close()
-
-
-def test_declarations_load_only_the_labels_they_name(tmp_path, monkeypatch):
-    store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
-    try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
-        study = ledger.define("scaling")["template_id"]
-        ledger.declare_batch(study, [dict(label=f"x{i}", role="input", kind="scalar") for i in range(20)])
-        hydrated, delivered = [], []
-        read = ledger.metadata.read
-        monkeypatch.setattr(ledger.metadata, "read", lambda kind, ids: hydrated.append(list(ids)) or read(kind, ids))
-        update = ledger.metadata_graph.graph_store.metadata_update
-        monkeypatch.setattr(ledger.metadata_graph.graph_store, "metadata_update",
-                            lambda *args, **kwargs: delivered.append(args) or update(*args, **kwargs))
-        # A new label compares against nothing, so it neither reads nor
-        # waits for graph delivery of the Study's other declarations.
-        ledger.declare(study, "new", "input", "scalar", {})
-        assert hydrated == [] and delivered == []
-        again = ledger.declare(study, "x3", "input", "scalar", {})
-        assert again["created"] is False and len(hydrated) == 1 and len(hydrated[0]) == 1
-    finally:
-        store.close()
+@pytest.mark.parametrize("data", [b"", bytes(range(256)) * (2 ** 14 + 3)], ids=["empty", "chunked"])
+def test_file_attachment_round_trips_across_chunks(ac, data):
+    # The second payload is just over 4 MiB, the size of one stored chunk.
+    client = ac.client
+    study = client.define_experiment("chunks")
+    variable = _declare(client, study["template_id"], "dump", "output", "file")
+    run = client.start_experiment(study["template_id"], {})
+    saved = client.attach_experiment_bytes(run["run_id"], variable["variable_id"], data, filename="dump.bin")
+    assert saved["byte_length"] == len(data)
+    assert client.experiment_artifact(saved["digest"]) == data
 
 
 def test_batch_update_names_each_subject_and_its_graph():
@@ -125,81 +134,55 @@ def test_batch_update_names_each_subject_and_its_graph():
     ]
 
 
-def test_recording_rejects_empty_samples_so_receipts_match_entries(tmp_path):
-    store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
-    try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
-        study = ledger.define("samples")
-        empty, full = (ledger.declare(study["template_id"], label, "output", "timeseries", {}) for label in ("empty", "full"))
-        run = ledger.start(study["template_id"], {})
-        when = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        with pytest.raises(ValueError, match="at least one sample"):
-            ledger.record_batch(run["run_id"], [
-                {"form": "samples", "variable_id": empty["variable_id"], "samples": []},
-                {"form": "samples", "variable_id": full["variable_id"], "samples": [(when, 1.0)]}])
-        assert ledger.observations(study["template_id"], run_id=run["run_id"]) == []
-    finally:
-        store.close()
+def test_recording_rejects_empty_samples_so_receipts_match_entries(ac):
+    client = ac.client
+    study = client.define_experiment("samples")
+    empty, full = (_declare(client, study["template_id"], label, "output", "timeseries") for label in ("empty", "full"))
+    run = client.start_experiment(study["template_id"], {})
+    when = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    with pytest.raises(HTTPError, match="at least one sample"):
+        client.record_experiment_batch(run["run_id"], [
+            {"form": "samples", "variable_id": empty["variable_id"], "samples": []},
+            {"form": "samples", "variable_id": full["variable_id"], "samples": [[when.isoformat(), 1.0]]}])
+    assert client.list_experiment_observations(study["template_id"], run_id=run["run_id"]) == []
 
 
-def test_concurrent_declaration_of_same_label_is_idempotent(tmp_path, monkeypatch):
-    store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
-    try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
-        other = ExperimentStore.standalone(store, tmp_path / "graph")
-        study = ledger.define("race")
-        record_update = ledger.metadata_graph.record_update
-        def interleave(*args, **kwargs):
-            # Another caller commits the same declaration after this one has
-            # read the existing variables but before it inserts.
-            monkeypatch.setattr(ledger.metadata_graph, "record_update", record_update)
-            other.declare(study["template_id"], "flow", "input", "scalar", {})
-            return record_update(*args, **kwargs)
-        monkeypatch.setattr(ledger.metadata_graph, "record_update", interleave)
-        variable = ledger.declare(study["template_id"], "flow", "input", "scalar", {})
-        assert variable["created"] is False
-        assert [item["label"] for item in ledger.variables(study["template_id"])] == ["flow"]
-        with pytest.raises(ValueError, match="declared differently"):
-            ledger.declare(study["template_id"], "flow", "output", "scalar", {})
-    finally:
-        store.close()
+def test_concurrent_declaration_of_same_label_is_idempotent(ac):
+    from concurrent.futures import ThreadPoolExecutor
+
+    client = ac.client
+    study = client.define_experiment("race")
+    with ThreadPoolExecutor(8) as pool:
+        declared = list(pool.map(lambda _: _declare(client, study["template_id"], "flow", "input", "scalar"), range(8)))
+    assert sum(item["created"] for item in declared) == 1
+    assert len({item["variable_id"] for item in declared}) == 1
+    assert [item["label"] for item in client.list_experiment_variables(study["template_id"])] == ["flow"]
+    with pytest.raises(HTTPError, match="declared differently"):
+        _declare(client, study["template_id"], "flow", "output", "scalar")
 
 
 @pytest.mark.parametrize("attachment", [False, True])
 @pytest.mark.parametrize("foreign", [False, True])
-def test_observation_rejects_unknown_or_foreign_variable(tmp_path, attachment, foreign):
-    store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
-    try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
-        study = ledger.define("owner")
-        other = ledger.define("other")
-        variable = ledger.declare(other["template_id"], "result", "output", "file" if attachment else "scalar", {})
-        run = ledger.start(study["template_id"], {})
-        variable_id = variable["variable_id"] if foreign else "missing"
-        with pytest.raises(ValueError if foreign else KeyError):
-            if attachment:
-                ledger.attach_file(run["run_id"], variable_id, "result.txt", "text/plain", b"result")
-            else:
-                ledger.observe(run["run_id"], variable_id, value=12.5)
-        with store._own_conn() as conn:
-            assert conn.execute("SELECT count(*) FROM experiment_observations").fetchone()[0] == 0
-            assert conn.execute("SELECT count(*) FROM experiment_artifacts").fetchone()[0] == 0
-        assert _stored_artifacts(ledger.store) == []
-        owned = ledger.declare(study["template_id"], "valid", "output", "scalar", {})
-        assert ledger.observe(run["run_id"], owned["variable_id"], value=42)["sequence"] == 1
-    finally:
-        store.close()
+def test_observation_rejects_unknown_or_foreign_variable(ac, attachment, foreign):
+    client = ac.client
+    study = client.define_experiment("owner")
+    other = client.define_experiment("other")
+    variable = _declare(client, other["template_id"], "result", "output", "file" if attachment else "scalar")
+    run = client.start_experiment(study["template_id"], {})
+    variable_id = variable["variable_id"] if foreign else "missing"
+    with pytest.raises(HTTPError) as caught:
+        if attachment:
+            client.attach_experiment_bytes(run["run_id"], variable_id, b"result", filename="result.txt", media_type="text/plain")
+        else:
+            client.observe_experiment(run["run_id"], variable_id, value=12.5)
+    assert _status(caught) == (400 if foreign else 404)
+    assert client.experiment_usage()["observations"] == 0
+    assert client.experiment_usage()["files"] == 0
+    owned = _declare(client, study["template_id"], "valid", "output", "scalar")
+    assert client.observe_experiment(run["run_id"], owned["variable_id"], value=42)["sequence"] == 1
 
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
-
-
-def _recorded_stream(store, ledger, run, variable, rows, name="level"):
-    """Store samples under the run's source, as a time-series record() does."""
-    ref = store.ensure_stream_ref(None, f"experiment/{run['run_id']}", name, value_kind="numeric")
-    store.upsert_rows(ref, rows, value_kind="numeric")
-    ledger.observe(run["run_id"], variable["variable_id"], ref_uri=ref, interval=(rows[0][0], rows[-1][0]))
-    return ref
 
 
 def _stream_frame(ref, rows):
@@ -207,264 +190,180 @@ def _stream_frame(ref, rows):
     return pl.DataFrame({"ts": [when for when, _ in rows], "value": [value for _, value in rows], "uri": [ref] * len(rows)})
 
 
-def _samples(store, ref):
-    with store._own_conn() as conn:
-        return conn.execute("SELECT count(*) FROM timeseries_streams WHERE ref_uri=?", [ref]).fetchone()[0]
+def test_delete_runs_removes_what_they_recorded_and_keeps_shared_files(ac):
+    client = ac.client
+    study = client.define_experiment("tank")
+    config = _declare(client, study["template_id"], "config", "input", "file")
+    level = _declare(client, study["template_id"], "level", "output", "timeseries")
+    site = _site_stream(ac, "level", [(T0, 1000.0)])
+    runs, refs = [], []
+    for index in range(2):
+        run = client.start_experiment(study["template_id"], {"case": index})
+        client.attach_experiment_bytes(run["run_id"], config["variable_id"], b"{}", filename="shared.json")
+        refs.append(_recorded_stream(ac, run, level, [(T0, float(index))]))
+        client.annotate_experiment_stream(run["run_id"], site, start=T0.isoformat())
+        runs.append(run)
+    own = client.attach_experiment_bytes(runs[0]["run_id"], config["variable_id"], b"[]", filename="own.json")
+    with pytest.raises(HTTPError, match="finish or fail"):
+        client.delete_experiments([runs[0]["run_id"]])
+    assert client.experiment_usage(template_id=study["template_id"])["observations"] == 5
+    for run in runs:
+        client.finish_experiment(run["run_id"])
+
+    removed = client.delete_experiments([runs[0]["run_id"]])
+    assert removed == {"runs": 1, "observations": 3, "annotations": 1, "samples": 1, "files": 1}
+    assert [run["run_id"] for run in client.list_experiments(study["template_id"])] == [runs[1]["run_id"]]
+    assert client.list_experiment_stream_annotations(run_id=runs[0]["run_id"]) == []
+    assert (_samples(ac, refs[0]), _samples(ac, refs[1]), _samples(ac, site)) == (0, 1, 1)
+    assert not _stored(ac, own["digest"]) and _stored(ac, sha256(b"{}").hexdigest())
+    client.delete_experiments([runs[1]["run_id"]])
+    assert not _stored(ac, sha256(b"{}").hexdigest())
+    with pytest.raises(HTTPError) as caught:
+        client.delete_experiments([runs[1]["run_id"]])
+    assert _status(caught) == 404
 
 
-def test_delete_runs_removes_what_they_recorded_and_keeps_shared_files(tmp_path):
-    store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
-    try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
-        study = ledger.define("tank")
-        config = ledger.declare(study["template_id"], "config", "input", "file", {})
-        level = ledger.declare(study["template_id"], "level", "output", "timeseries", {})
-        site = store.ensure_stream_ref("urn:site#level", "site", "level", value_kind="numeric")
-        store.upsert_rows(site, [(T0, 1000.0)], value_kind="numeric")
-        runs, refs = [], []
-        for index in range(2):
-            run = ledger.start(study["template_id"], {"case": index})
-            ledger.attach_file(run["run_id"], config["variable_id"], "shared.json", None, b"{}")
-            refs.append(_recorded_stream(store, ledger, run, level, [(T0, float(index))]))
-            ledger.annotate_stream(run["run_id"], site, T0)
-            runs.append(run)
-        ledger.attach_file(runs[0]["run_id"], config["variable_id"], "own.json", None, b"[]")
-        with pytest.raises(ValueError, match="finish or fail"):
-            ledger.delete_runs([runs[0]["run_id"]])
-        assert ledger.usage(template_id=study["template_id"])["observations"] == 5
-        for run in runs:
-            ledger.finish(run["run_id"], "succeeded")
-
-        removed = ledger.delete_runs([runs[0]["run_id"]])
-        assert removed == {"runs": 1, "observations": 3, "annotations": 1, "samples": 1, "files": 1}
-        assert [run["run_id"] for run in ledger.runs(study["template_id"])] == [runs[1]["run_id"]]
-        assert ledger.stream_annotations(run_id=runs[0]["run_id"]) == []
-        assert (_samples(store, refs[0]), _samples(store, refs[1]), _samples(store, site)) == (0, 1, 1)
-        assert _stored_artifacts(ledger.store) == [sha256(b"{}").hexdigest()]
-        with store._own_conn() as conn:
-            # The reset marker tells materializers to rebuild what they derived.
-            assert conn.execute("SELECT count(*) FROM stream_resets WHERE ref_uri=?", [refs[0]]).fetchone()[0] == 1
-            assert conn.execute("SELECT count(*) FROM streams WHERE ref_uri=?", [refs[0]]).fetchone()[0] == 0
-        ledger.delete_runs([runs[1]["run_id"]])
-        assert _stored_artifacts(ledger.store) == []
-        with pytest.raises(KeyError):
-            ledger.delete_runs([runs[1]["run_id"]])
-    finally:
-        store.close()
+def test_delete_keeps_streams_that_other_runs_reference(ac):
+    client = ac.client
+    simulation, analysis = client.define_experiment("simulation"), client.define_experiment("analysis")
+    level = _declare(client, simulation["template_id"], "level", "output", "timeseries")
+    used = _declare(client, analysis["template_id"], "level", "input", "timeseries")
+    source = client.start_experiment(simulation["template_id"], {})
+    ref = _recorded_stream(ac, source, level, [(T0, 1.0)])
+    reader = client.start_experiment(analysis["template_id"], {})
+    client.observe_experiment(reader["run_id"], used["variable_id"], ref_uri=ref)
+    for run in (source, reader):
+        client.finish_experiment(run["run_id"])
+    for delete in (lambda: client.delete_experiments([source["run_id"]]),
+                   lambda: client.delete_experiment_study(simulation["template_id"])):
+        with pytest.raises(HTTPError, match=reader["run_id"]):
+            delete()
+    assert _samples(ac, ref) == 1
+    # Deleting the reader with the run it read from is allowed.
+    assert client.delete_experiments([source["run_id"], reader["run_id"]])["runs"] == 2
+    assert _samples(ac, ref) == 0
 
 
-def test_delete_keeps_streams_that_other_runs_reference(tmp_path):
-    store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
-    try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
-        simulation, analysis = ledger.define("simulation"), ledger.define("analysis")
-        level = ledger.declare(simulation["template_id"], "level", "output", "timeseries", {})
-        used = ledger.declare(analysis["template_id"], "level", "input", "timeseries", {})
-        source = ledger.start(simulation["template_id"], {})
-        ref = _recorded_stream(store, ledger, source, level, [(T0, 1.0)])
-        reader = ledger.start(analysis["template_id"], {})
-        ledger.observe(reader["run_id"], used["variable_id"], ref_uri=ref)
-        for run in (source, reader):
-            ledger.finish(run["run_id"], "succeeded")
-        for delete in (lambda: ledger.delete_runs([source["run_id"]]),
-                       lambda: ledger.delete_study(simulation["template_id"])):
-            with pytest.raises(ValueError, match=reader["run_id"]):
-                delete()
-        assert _samples(store, ref) == 1
-        # Deleting the reader with the run it read from is allowed.
-        assert ledger.delete_runs([source["run_id"], reader["run_id"]])["runs"] == 2
-        assert _samples(store, ref) == 0
-    finally:
-        store.close()
+def test_delete_study_clear_and_usage_cover_experiments_only(ac):
+    client = ac.client
+    site = _site_stream(ac, "level", [(T0, 1000.0)])
+    studies, runs = [], []
+    for name in ("first", "second"):
+        study = client.define_experiment(name)
+        config = _declare(client, study["template_id"], "config", "input", "file")
+        level = _declare(client, study["template_id"], "level", "output", "timeseries")
+        run = client.start_experiment(study["template_id"], {})
+        client.attach_experiment_bytes(run["run_id"], config["variable_id"], b"shared", filename="shared.json")
+        _recorded_stream(ac, run, level, [(T0, 1.0), (T0.replace(minute=1), 2.0)])
+        studies.append(study); runs.append(run)
+
+    everything = client.experiment_usage()
+    assert {key: everything[key] for key in ("studies", "variables", "runs", "observations", "samples", "files", "file_bytes")} == {
+        "studies": 2, "variables": 4, "runs": 2, "observations": 4, "samples": 4, "files": 1, "file_bytes": 6,
+    }
+    assert everything["sample_bytes"] == 4 * 16
+    assert everything["total_bytes"] == everything["sample_bytes"] + everything["file_bytes"] + everything["ledger_bytes"]
+    first = client.experiment_usage(template_id=studies[0]["template_id"])
+    assert (first["studies"], first["runs"], first["files"], first["file_bytes"]) == (1, 1, 1, 6)
+    selected = client.experiment_usage(run_ids=[runs[0]["run_id"]])
+    assert (selected["studies"], selected["variables"], selected["runs"], selected["samples"]) == (0, 0, 1, 2)
+    assert client.experiment_usage(run_ids=[])["runs"] == 0
+    with pytest.raises(HTTPError) as caught:
+        client.experiment_usage(template_id="missing")
+    assert _status(caught) == 404
+
+    with pytest.raises(HTTPError, match=runs[0]["run_id"]):
+        client.delete_experiment_study(studies[0]["template_id"])
+    client.finish_experiment(runs[0]["run_id"])
+    removed = client.delete_experiment_study(studies[0]["template_id"])
+    assert removed == {"studies": 1, "variables": 2, "runs": 1, "observations": 2, "annotations": 0, "samples": 2, "files": 0}
+    with pytest.raises(HTTPError) as caught:
+        client.get_experiment_study(studies[0]["template_id"])
+    assert _status(caught) == 404
+    assert client.experiment_usage()["files"] == 1  # the second study still uses it
+
+    with pytest.raises(HTTPError, match="finish or fail"):
+        client.clear_experiments(confirm=True)
+    client.finish_experiment(runs[1]["run_id"], failed=True, error={"message": "abandoned"})
+    assert client.clear_experiments(confirm=True) == {"studies": 1, "variables": 2, "runs": 1, "observations": 2, "annotations": 0, "samples": 2, "files": 1}
+    assert client.list_experiment_studies() == []
+    assert client.experiment_usage()["total_bytes"] == 0
+    assert not _stored(ac, sha256(b"shared").hexdigest())
+    assert _samples(ac, site) == 1
+    fresh = client.define_experiment("first")
+    assert client.list_experiment_variables(fresh["template_id"]) == []
 
 
-def test_delete_study_clear_and_usage_cover_experiments_only(tmp_path):
-    store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
-    try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "graph", resolve=lambda text, kind: "urn:unit:kW")
-        assert ledger._resolve("kW", "unit") == "urn:unit:kW"
-        site = store.ensure_stream_ref("urn:site#level", "site", "level", value_kind="numeric")
-        store.upsert_rows(site, [(T0, 1000.0)], value_kind="numeric")
-        studies, runs = [], []
-        for name in ("first", "second"):
-            study = ledger.define(name)
-            config = ledger.declare(study["template_id"], "config", "input", "file", {})
-            level = ledger.declare(study["template_id"], "level", "output", "timeseries", {})
-            run = ledger.start(study["template_id"], {})
-            ledger.attach_file(run["run_id"], config["variable_id"], "shared.json", None, b"shared")
-            _recorded_stream(store, ledger, run, level, [(T0, 1.0), (T0.replace(minute=1), 2.0)])
-            studies.append(study); runs.append(run)
-
-        everything = ledger.usage()
-        assert {key: everything[key] for key in ("studies", "variables", "runs", "observations", "samples", "files", "file_bytes")} == {
-            "studies": 2, "variables": 4, "runs": 2, "observations": 4, "samples": 4, "files": 1, "file_bytes": 6,
-        }
-        assert everything["sample_bytes"] == 4 * 16
-        assert everything["total_bytes"] == everything["sample_bytes"] + everything["file_bytes"] + everything["ledger_bytes"]
-        first = ledger.usage(template_id=studies[0]["template_id"])
-        assert (first["studies"], first["runs"], first["files"], first["file_bytes"]) == (1, 1, 1, 6)
-        selected = ledger.usage(run_ids=[runs[0]["run_id"]])
-        assert (selected["studies"], selected["variables"], selected["runs"], selected["samples"]) == (0, 0, 1, 2)
-        assert ledger.usage(run_ids=[])["runs"] == 0
-        with pytest.raises(KeyError):
-            ledger.usage(template_id="missing")
-
-        with pytest.raises(ValueError, match=runs[0]["run_id"]):
-            ledger.delete_study(studies[0]["template_id"])
-        ledger.finish(runs[0]["run_id"], "succeeded")
-        removed = ledger.delete_study(studies[0]["template_id"])
-        assert removed == {"studies": 1, "variables": 2, "runs": 1, "observations": 2, "annotations": 0, "samples": 2, "files": 0}
-        with pytest.raises(KeyError):
-            ledger.study(studies[0]["template_id"])
-        assert len(_stored_artifacts(ledger.store)) == 1  # the second study still uses it
-
-        # A stream left by a deletion that failed after its ledger commit.
-        orphan = store.ensure_stream_ref(None, "experiment/gone", "level", value_kind="numeric")
-        store.upsert_rows(orphan, [(T0, 3.0)], value_kind="numeric")
-        with pytest.raises(ValueError, match="finish or fail"):
-            ledger.clear()
-        ledger.finish(runs[1]["run_id"], "failed", {"message": "abandoned"})
-        assert ledger.clear() == {"studies": 1, "variables": 2, "runs": 1, "observations": 2, "annotations": 0, "samples": 3, "files": 1}
-        assert ledger.studies() == []
-        assert ledger.usage()["total_bytes"] == 0
-        assert _stored_artifacts(ledger.store) == []
-        assert (_samples(store, orphan), _samples(store, site)) == (0, 1)
-        with store._own_conn() as conn:
-            assert conn.execute("SELECT count(*) FROM experiment_metadata_outbox").fetchone()[0] == 0
-        assert ledger._resolutions == {}
-        fresh = ledger.define("first")
-        assert ledger.variables(fresh["template_id"]) == []
-    finally:
-        store.close()
+def test_http_delete_routes_report_conflicts_and_require_confirmation(ac):
+    client = ac.client
+    study = client.define_experiment("http")
+    run = client.start_experiment(study["template_id"], {})
+    assert _post(ac, "/experiments/runs/delete", json={"run_ids": ["missing"]}).status_code == 404
+    assert _post(ac, "/experiments/runs/delete", json={"run_ids": [run["run_id"]]}).status_code == 409
+    assert _post(ac, f"/experiments/templates/{study['template_id']}/delete").status_code == 409
+    assert _post(ac, "/experiments/clear", json={}).status_code == 400
+    assert _post(ac, "/experiments/clear", json={"confirm": True}).status_code == 409
+    assert _post(ac, "/experiments/usage", json={}).json()["runs"] == 1
+    client.finish_experiment(run["run_id"])
+    assert _post(ac, "/experiments/runs/delete", json={"run_ids": [run["run_id"]]}).json()["runs"] == 1
+    assert _post(ac, f"/experiments/templates/{study['template_id']}/delete").json()["studies"] == 1
+    assert _post(ac, "/experiments/templates/missing/delete").status_code == 404
+    assert _post(ac, "/experiments/clear", json={"confirm": True}).json()["studies"] == 0
 
 
-def test_http_delete_routes_report_conflicts_and_require_confirmation(tmp_path, monkeypatch):
-    from fastapi.testclient import TestClient
-
-    store = DuckDBStore(tmp_path / "http.duckdb", recreate=True)
-    try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
-        module = import_module("acquirium.Server.app")
-        monkeypatch.setattr(module.app.state, "manager", SimpleNamespace(experiments=ledger), raising=False)
-        http = TestClient(module.app)
-        study = ledger.define("http")
-        run = ledger.start(study["template_id"], {})
-        assert http.post("/experiments/runs/delete", json={"run_ids": ["missing"]}).status_code == 404
-        assert http.post("/experiments/runs/delete", json={"run_ids": [run["run_id"]]}).status_code == 409
-        assert http.post(f"/experiments/templates/{study['template_id']}/delete").status_code == 409
-        assert http.post("/experiments/clear", json={}).status_code == 400
-        assert http.post("/experiments/clear", json={"confirm": True}).status_code == 409
-        assert http.post("/experiments/usage", json={}).json()["runs"] == 1
-        ledger.finish(run["run_id"], "succeeded")
-        assert http.post("/experiments/runs/delete", json={"run_ids": [run["run_id"]]}).json()["runs"] == 1
-        assert http.post(f"/experiments/templates/{study['template_id']}/delete").json()["studies"] == 1
-        assert http.post("/experiments/templates/missing/delete").status_code == 404
-        assert http.post("/experiments/clear", json={"confirm": True}).json()["studies"] == 0
-    finally:
-        store.close()
-
-
-def test_ledger_enforces_what_each_kind_stores(tmp_path):
-    store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
-    try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
-        study = ledger.define("kinds")
-        declare = lambda label, kind: ledger.declare(study["template_id"], label, "output", kind, {})["variable_id"]
-        with pytest.raises(ValueError, match="kind must be one of"):
-            declare("bogus", "blob")
-        scalar, text, data, file, table, series = (declare(kind, kind) for kind in ("scalar", "text", "json", "file", "table", "timeseries"))
-        run = ledger.start(study["template_id"], {})["run_id"]
-        rejected = [
-            (scalar, {"value": "abc"}), (scalar, {"value": None}), (scalar, {"value": float("nan")}),
-            (scalar, {"value": [1]}), (text, {"value": 5}), (data, {"value": {"x": float("inf")}}),
-            (scalar, {"value": 1, "ref_uri": "urn:ref"}), (series, {"value": 1}), (file, {"value": "x"}),
-        ]
-        for variable, body in rejected:
-            with pytest.raises(ValueError):
-                ledger.observe(run, variable, **body)
-        for variable, value in ((scalar, 2), (scalar, 2.5), (scalar, True), (text, "ok"), (data, None), (data, [1, {"a": "b"}])):
-            ledger.observe(run, variable, value=value)
-        with pytest.raises(ValueError, match="only file, table, and object"):
-            ledger.attach_file(run, scalar, "x.txt", None, b"x")
-        with pytest.raises(ValueError, match="Parquet"):
-            ledger.attach_file(run, table, "x.parquet", None, b"not parquet")
-        assert len(ledger.observations(study["template_id"])) == 6
-        assert _stored_artifacts(ledger.store) == []
-    finally:
-        store.close()
+def test_ledger_enforces_what_each_kind_stores(ac):
+    client = ac.client
+    study = client.define_experiment("kinds")
+    declare = lambda label, kind: _declare(client, study["template_id"], label, "output", kind)["variable_id"]
+    with pytest.raises(HTTPError, match="kind must be one of"):
+        declare("bogus", "blob")
+    scalar, text, data, file, table, series = (declare(kind, kind) for kind in ("scalar", "text", "json", "file", "table", "timeseries"))
+    run = client.start_experiment(study["template_id"], {})["run_id"]
+    # NaN and infinity are not JSON, so the client cannot send them at all.
+    rejected = [
+        (scalar, {"value": "abc"}), (scalar, {"value": None}), (scalar, {"value": [1]}), (text, {"value": 5}),
+        (scalar, {"value": 1, "ref_uri": "urn:ref"}), (series, {"value": 1}), (file, {"value": "x"}),
+    ]
+    for variable, body in rejected:
+        with pytest.raises(HTTPError):
+            client.observe_experiment(run, variable, **body)
+    for variable, value in ((scalar, 2), (scalar, 2.5), (scalar, True), (text, "ok"), (data, None), (data, [1, {"a": "b"}])):
+        client.observe_experiment(run, variable, value=value)
+    with pytest.raises(HTTPError, match="only file, table, and object"):
+        client.attach_experiment_bytes(run, scalar, b"x", filename="x.txt")
+    with pytest.raises(HTTPError, match="Parquet"):
+        client.attach_experiment_bytes(run, table, b"not parquet", filename="x.parquet")
+    assert len(client.list_experiment_observations(study["template_id"])) == 6
+    assert client.experiment_usage()["files"] == 0
 
 
-def test_http_artifacts_download_with_their_saved_names(tmp_path, monkeypatch):
-    from fastapi.testclient import TestClient
-
-    store = DuckDBStore(tmp_path / "http.duckdb", recreate=True)
-    try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
-        module = import_module("acquirium.Server.app")
-        monkeypatch.setattr(module.app.state, "manager", SimpleNamespace(experiments=ledger), raising=False)
-        http = TestClient(module.app)
-        study = ledger.define("http")
-        report = ledger.declare(study["template_id"], "report", "output", "file", {})
-        cost = ledger.declare(study["template_id"], "cost", "output", "scalar", {})
-        run = ledger.start(study["template_id"], {})
-        path = f"/experiments/runs/{run['run_id']}/variables/{quote(report['variable_id'], safe='')}/file"
-        saved = http.post(path, content=b"report", headers={"X-Filename": quote("débit.txt", safe=""), "Content-Type": "text/plain"}).json()
-        download = http.get(f"/experiments/artifacts/{saved['digest']}")
-        assert (download.status_code, download.content) == (200, b"report")
-        assert download.headers["content-type"].startswith("text/plain")
-        assert ledger.observations(study["template_id"])[0]["filename"] == "débit.txt"
-        for digest in ("0" * 64, "..%2F..%2Fdata.duckdb", "not-a-digest"):
-            assert http.get(f"/experiments/artifacts/{digest}").status_code == 404
-        scalar_path = f"/experiments/runs/{run['run_id']}/variables/{quote(cost['variable_id'], safe='')}"
-        assert http.post(f"{scalar_path}/file", content=b"x").status_code == 400
-        assert http.post(f"{scalar_path}/observations", json={"value": "abc"}).status_code == 400
-    finally:
-        store.close()
+def test_http_artifacts_download_with_their_saved_names(ac):
+    client = ac.client
+    study = client.define_experiment("http")
+    report = _declare(client, study["template_id"], "report", "output", "file")
+    cost = _declare(client, study["template_id"], "cost", "output", "scalar")
+    run = client.start_experiment(study["template_id"], {})
+    path = f"/experiments/runs/{run['run_id']}/variables/{quote(report['variable_id'], safe='')}/file"
+    saved = _post(ac, path, data=b"report", headers={"X-Filename": quote("débit.txt", safe=""), "Content-Type": "text/plain"}).json()
+    download = _get(ac, f"/experiments/artifacts/{saved['digest']}")
+    assert (download.status_code, download.content) == (200, b"report")
+    assert download.headers["content-type"].startswith("text/plain")
+    assert client.list_experiment_observations(study["template_id"])[0]["filename"] == "débit.txt"
+    for digest in ("0" * 64, "..%2F..%2Fdata.duckdb", "not-a-digest"):
+        assert _get(ac, f"/experiments/artifacts/{digest}").status_code == 404
+    scalar_path = f"/experiments/runs/{run['run_id']}/variables/{quote(cost['variable_id'], safe='')}"
+    assert _post(ac, f"{scalar_path}/file", data=b"x").status_code == 400
+    assert _post(ac, f"{scalar_path}/observations", json={"value": "abc"}).status_code == 400
 
 
 @pytest.fixture
-def study_api(tmp_path):
-    store = DuckDBStore(tmp_path / "api.duckdb", recreate=True)
-    ledger = ExperimentStore.standalone(store, tmp_path / "graph")
-    client = Mock()
-    client.define_experiment.side_effect = ledger.define
-    client.declare_experiment_variable.side_effect = ledger.declare
-    client.list_experiment_studies.side_effect = ledger.studies
-    client.get_experiment_study.side_effect = ledger.study
-    client.list_experiment_variables.side_effect = ledger.variables
-    client.start_experiment.side_effect = ledger.start
-    client.list_experiments.side_effect = ledger.runs
-    client.get_experiment.side_effect = ledger.run
-    client.list_experiment_observations.side_effect = ledger.observations
-    def observe(run_id, variable_id, *, start=None, end=None, occurred_at=None, **body):
-        interval = (timestamp(start), timestamp(end)) if start and end else None
-        return ledger.observe(
-            run_id,
-            variable_id,
-            occurred_at=timestamp(occurred_at) if occurred_at else None,
-            interval=interval,
-            **body,
-        )
-    client.observe_experiment.side_effect = observe
-    client.record_experiment_batch.side_effect = ledger.record_batch
-    client.finish_experiment.side_effect = lambda run_id, failed=False, error=None: ledger.finish(run_id, "failed" if failed else "succeeded", error)
-    client.annotate_experiment_stream.side_effect = lambda run_id, ref_uri, *, start, end=None, metadata=None: ledger.annotate_stream(run_id, ref_uri, start, end, metadata)
-    client.close_experiment_stream_annotation.side_effect = lambda annotation_id, *, end: ledger.close_stream_annotation(annotation_id, end)
-    client.list_experiment_stream_annotations.side_effect = ledger.stream_annotations
-    client.delete_experiments.side_effect = ledger.delete_runs
-    client.delete_experiment_study.side_effect = ledger.delete_study
-    client.clear_experiments.side_effect = lambda *, confirm: ledger.clear()
-    client.experiment_usage.side_effect = ledger.usage
-    client.attach_experiment_bytes.side_effect = (
-        lambda run_id, variable_id, data, *, filename, media_type=None:
-        ledger.attach_file(run_id, variable_id, filename, media_type, data))
-    client.experiment_artifact.side_effect = lambda digest: ledger.artifact(digest)["data"]
-    ac = Mock(client=client)
-    item = ledger.define("study")
-    try:
-        yield SimpleNamespace(study=Study(ac, item), ac=ac, client=client, item=item, ledger=ledger)
-    finally:
-        store.close()
+def study_api(ac):
+    # The real client and Acquirium handle from aq.init(), wrapped so tests
+    # can count calls and stub stream reads; every other call reaches the server.
+    client = Mock(wraps=ac.client)
+    spy = Mock(wraps=ac, client=client)
+    item = ac.client.define_experiment("study")
+    return SimpleNamespace(study=Study(spy, item), ac=spy, client=client, item=item)
 
 
 def test_collections_preserve_handles_and_roles(study_api):
@@ -486,9 +385,9 @@ def test_collections_preserve_handles_and_roles(study_api):
     assert list(study.log) == [log]
     with pytest.raises(KeyError):
         study.output["missing"]
-    with pytest.raises(ValueError, match="declared differently"):
+    with pytest.raises(HTTPError, match="declared differently"):
         study.output("cost").scalar(unit="EUR")
-    with pytest.raises(ValueError, match="declared differently"):
+    with pytest.raises(HTTPError, match="declared differently"):
         study.input("cost").scalar(unit="USD")
     assert study.output["cost"] is cost
 
@@ -548,7 +447,7 @@ def test_stream_annotations_support_historical_and_live_intervals(study_api):
 
     live.close(datetime(2026, 1, 3, tzinfo=timezone.utc))
     assert live.range_end == datetime(2026, 1, 3, tzinfo=timezone.utc)
-    with pytest.raises(ValueError, match="already closed"):
+    with pytest.raises(HTTPError, match="already closed"):
         live.close(datetime(2026, 1, 4, tzinfo=timezone.utc))
     assert len(reopened.stream_annotations(start=datetime(2026, 1, 4, tzinfo=timezone.utc))) == 0
     retrospective = reopened.experiments.get(run.run_id).annotate_stream(
@@ -564,12 +463,12 @@ def test_stream_annotation_rejects_invalid_range_and_keeps_parallel_runs(study_a
     start = datetime(2026, 1, 2, tzinfo=timezone.utc)
     before = datetime(2026, 1, 1, tzinfo=timezone.utc)
     first = study.start()
-    with pytest.raises(ValueError, match="at or after start"):
+    with pytest.raises(HTTPError, match="at or after start"):
         first.annotate_stream("urn:plant:flow", start=start, end=before)
-    with pytest.raises(ValueError, match="reference URI"):
+    with pytest.raises(HTTPError, match="reference URI"):
         first.annotate_stream(" ", start=start)
     annotation = first.annotate_stream("urn:plant:flow", start=start)
-    with pytest.raises(ValueError, match="at or after start"):
+    with pytest.raises(HTTPError, match="at or after start"):
         annotation.close(before)
     second_study = StudyService(study_api.ac).get("study")
     second = second_study.start()
@@ -821,6 +720,7 @@ def test_record_files_and_streams(study_api, tmp_path):
         stream.record([])
     run = study.start()
     path = tmp_path / "config.json"
+    path.write_text("{}")
     file.record(path)
     client.attach_experiment_file.assert_called_once_with(run.run_id, file.variable_id, path, media_type="application/json")
     when = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -920,69 +820,51 @@ def test_resumed_run_registers_stream_once_in_new_session(study_api):
     assert [item.range_start.hour for item in resumed.observations("power").all()] == [0, 1, 2]
 
 
-def test_http_routes_accept_reference_uri_variable_ids_and_stream_annotations(tmp_path, monkeypatch):
-    from fastapi.testclient import TestClient
-
-    store = DuckDBStore(tmp_path / "http.duckdb", recreate=True)
-    try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
-        module = import_module("acquirium.Server.app")
-        monkeypatch.setattr(module.app.state, "manager", SimpleNamespace(experiments=ledger), raising=False)
-        http = TestClient(module.app)
-        study = http.post("/experiments/templates", json={"name": "http"}).json()
-        variable = http.post(
-            f"/experiments/templates/{study['template_id']}/variables",
-            json={"label": "power (kW)", "role": "output", "kind": "scalar", "metadata": {}},
-        ).json()
-        assert variable["variable_id"].startswith("urn:acquirium#")
-        run = http.post(f"/experiments/templates/{study['template_id']}/runs", json={"metadata": {}}).json()
-        observed = http.post(
-            f"/experiments/runs/{run['run_id']}/variables/{quote(variable['variable_id'], safe='')}/observations",
-            json={"value": 42.0},
-        )
-        assert observed.status_code == 200
-        selected_runs = http.post(
-            f"/experiments/templates/{study['template_id']}/runs/query",
-            json={"run_ids": [run["run_id"]]},
-        )
-        assert selected_runs.status_code == 200
-        assert [item["run_id"] for item in selected_runs.json()] == [run["run_id"]]
-        selected_observations = http.post(
-            f"/experiments/templates/{study['template_id']}/observations/query",
-            json={"run_ids": [run["run_id"]], "variable_id": variable["variable_id"]},
-        )
-        assert selected_observations.status_code == 200
-        assert selected_observations.json()[0]["value"] == 42.0
-        assert http.post(
-            f"/experiments/templates/{study['template_id']}/runs/query",
-            json={"run_ids": []},
-        ).json() == []
-        assert http.post(
-            f"/experiments/templates/{study['template_id']}/observations/query",
-            json={"run_ids": ["missing"]},
-        ).json() == []
-        other = ledger.define("other")
-        foreign = ledger.declare(other["template_id"], "foreign", "output", "scalar", {})
-        for invalid_id, expected_status in (("missing", 404), (foreign["variable_id"], 400)):
-            path = f"/experiments/runs/{run['run_id']}/variables/{quote(invalid_id, safe='')}"
-            assert http.post(f"{path}/observations", json={"value": 99}).status_code == expected_status
-            assert http.post(f"{path}/file", content=b"invalid").status_code == expected_status
-        assert len(ledger.observations(study["template_id"])) == 1
-        assert _stored_artifacts(ledger.store) == []
-        tagged = http.post(
-            f"/experiments/runs/{run['run_id']}/stream-annotations",
-            json={"ref_uri": "urn:plant:flow", "start": "2026-01-01T00:00:00Z", "metadata": {"phase": "trial"}},
-        )
-        assert tagged.status_code == 200
-        listed = http.get("/experiments/stream-annotations", params={"ref_uri": "urn:plant:flow"})
-        assert listed.status_code == 200
-        assert listed.json()[0]["metadata"] == {"phase": "trial"}
-        assert http.post(
-            f"/experiments/stream-annotations/{tagged.json()['annotation_id']}/close",
-            json={"end": "2026-01-02T00:00:00Z"},
-        ).status_code == 200
-    finally:
-        store.close()
+def test_http_routes_accept_reference_uri_variable_ids_and_stream_annotations(ac):
+    client = ac.client
+    study = _post(ac, "/experiments/templates", json={"name": "http"}).json()
+    variable = _post(
+        ac, f"/experiments/templates/{study['template_id']}/variables",
+        json={"label": "power (kW)", "role": "output", "kind": "scalar", "metadata": {}},
+    ).json()
+    assert variable["variable_id"].startswith("urn:acquirium#")
+    run = _post(ac, f"/experiments/templates/{study['template_id']}/runs", json={"metadata": {}}).json()
+    observed = _post(
+        ac, f"/experiments/runs/{run['run_id']}/variables/{quote(variable['variable_id'], safe='')}/observations",
+        json={"value": 42.0},
+    )
+    assert observed.status_code == 200
+    selected_runs = _post(ac, f"/experiments/templates/{study['template_id']}/runs/query", json={"run_ids": [run["run_id"]]})
+    assert selected_runs.status_code == 200
+    assert [item["run_id"] for item in selected_runs.json()] == [run["run_id"]]
+    selected_observations = _post(
+        ac, f"/experiments/templates/{study['template_id']}/observations/query",
+        json={"run_ids": [run["run_id"]], "variable_id": variable["variable_id"]},
+    )
+    assert selected_observations.status_code == 200
+    assert selected_observations.json()[0]["value"] == 42.0
+    assert _post(ac, f"/experiments/templates/{study['template_id']}/runs/query", json={"run_ids": []}).json() == []
+    assert _post(ac, f"/experiments/templates/{study['template_id']}/observations/query", json={"run_ids": ["missing"]}).json() == []
+    other = client.define_experiment("other")
+    foreign = _declare(client, other["template_id"], "foreign", "output", "scalar")
+    for invalid_id, expected_status in (("missing", 404), (foreign["variable_id"], 400)):
+        path = f"/experiments/runs/{run['run_id']}/variables/{quote(invalid_id, safe='')}"
+        assert _post(ac, f"{path}/observations", json={"value": 99}).status_code == expected_status
+        assert _post(ac, f"{path}/file", data=b"invalid").status_code == expected_status
+    assert len(client.list_experiment_observations(study["template_id"])) == 1
+    assert client.experiment_usage()["files"] == 0
+    tagged = _post(
+        ac, f"/experiments/runs/{run['run_id']}/stream-annotations",
+        json={"ref_uri": "urn:plant:flow", "start": "2026-01-01T00:00:00Z", "metadata": {"phase": "trial"}},
+    )
+    assert tagged.status_code == 200
+    listed = _get(ac, "/experiments/stream-annotations", params={"ref_uri": "urn:plant:flow"})
+    assert listed.status_code == 200
+    assert listed.json()[0]["metadata"] == {"phase": "trial"}
+    assert _post(
+        ac, f"/experiments/stream-annotations/{tagged.json()['annotation_id']}/close",
+        json={"end": "2026-01-02T00:00:00Z"},
+    ).status_code == 200
 
 
 def test_handles_delete_their_records_and_clear_needs_confirmation(study_api):
@@ -1009,38 +891,31 @@ def test_handles_delete_their_records_and_clear_needs_confirmation(study_api):
 
 
 @pytest.mark.parametrize("batch", [False, True])
-def test_http_observation_ranges_require_both_bounds(study_api, monkeypatch, batch):
-    from fastapi.testclient import TestClient
-
-    study, ledger = study_api.study, study_api.ledger
+def test_http_observation_ranges_require_both_bounds(study_api, ac, batch):
+    study = study_api.study
     variable = study.input("flow").timeseries()
     run = study.start()
-    module = import_module("acquirium.Server.app")
-    monkeypatch.setattr(module.app.state, "manager", SimpleNamespace(experiments=ledger), raising=False)
-    http = TestClient(module.app)
     path = (f"/experiments/runs/{run.run_id}/observations/batch" if batch else
             f"/experiments/runs/{run.run_id}/variables/{quote(variable.variable_id, safe='')}/observations")
     start, end = T0.isoformat(), T0.replace(hour=1).isoformat()
+    saved = lambda: ac.client.list_experiment_observations(study.study_id)
     def record(bounds):
         body = {"ref_uri": "urn:site:flow", **bounds}
-        return http.post(path, json=[{"variable_id": variable.variable_id, **body}] if batch else body)
-    try:
-        for bounds in ({"start": start}, {"end": end},
-                       {"start": start, "end": None}, {"start": None, "end": end}):
-            response = record(bounds)
-            assert response.status_code == 400, response.text
-            assert response.json()["detail"] == "stream ranges require both start and end"
-        assert ledger.observations(study.study_id) == []
-        for bounds in ({}, {"start": None, "end": None}, {"start": start, "end": end}):
-            response = record(bounds)
-            assert response.status_code == 200, response.text
-            receipt = response.json()[0] if batch else response.json()
-            assert receipt["sequence"] == len(ledger.observations(study.study_id))
-        observations = ledger.observations(study.study_id)
-        assert [(item["range_start"], item["range_end"]) for item in observations] == [
-            (None, None), (None, None), (T0, T0.replace(hour=1))]
-    finally:
-        http.close()
+        return _post(ac, path, json=[{"variable_id": variable.variable_id, **body}] if batch else body)
+    for bounds in ({"start": start}, {"end": end},
+                   {"start": start, "end": None}, {"start": None, "end": end}):
+        response = record(bounds)
+        assert response.status_code == 400, response.text
+        assert response.json()["detail"] == "stream ranges require both start and end"
+    assert saved() == []
+    for bounds in ({}, {"start": None, "end": None}, {"start": start, "end": end}):
+        response = record(bounds)
+        assert response.status_code == 200, response.text
+        receipt = response.json()[0] if batch else response.json()
+        assert receipt["sequence"] == len(saved())
+    ranges = [(item["range_start"], item["range_end"]) for item in saved()]
+    assert [tuple(timestamp(value) if value else None for value in pair) for pair in ranges] == [
+        (None, None), (None, None), (T0, T0.replace(hour=1))]
 
 
 def test_record_converts_values_and_checks_kinds_before_sending(study_api):
@@ -1295,15 +1170,9 @@ def test_output_assignment_rejects_unsupported_values_and_conflicts(study_api, t
         with pytest.raises(TypeError, match="JSON-compatible"):
             run.output["unsupported"] = value
     assert "unsupported" not in study.output
-    with pytest.raises(ValueError, match="declared differently"):
+    with pytest.raises(HTTPError, match="declared differently"):
         run.output["config"] = {}
     client.record_experiment_batch.assert_not_called()
-
-
-def _stored_artifacts(store):
-    """Digests whose bytes are still stored."""
-    with store._own_conn() as conn:
-        return [row[0] for row in conn.execute("SELECT DISTINCT digest FROM experiment_artifact_chunks ORDER BY digest").fetchall()]
 
 
 class _Point:
@@ -1356,7 +1225,7 @@ def test_object_variables_round_trip_through_their_codec(study_api):
     assert run.observations(blob).latest().load() == {"a": [1, 2], "b": (3, 4)}
     assert state.codec.endswith(":PointCodec") and state.media_type == "text/x-point"
     # Redeclaring with another codec is a different declaration.
-    with pytest.raises(ValueError, match="declared differently"):
+    with pytest.raises(HTTPError, match="declared differently"):
         study.output("state").object(codec=aq.JsonCodec)
     assert study.output("state").object(codec=PointCodec).variable_id == state.variable_id
 
@@ -1383,19 +1252,15 @@ def test_object_codecs_are_classes_that_load_can_import(study_api):
     assert observation.load(codec=aq.BytesCodec)[:4] == b"PAR1"
 
 
-def test_ledger_requires_a_codec_for_objects_only(tmp_path):
-    store = DuckDBStore(tmp_path / "data.duckdb", recreate=True)
-    try:
-        ledger = ExperimentStore.standalone(store, tmp_path / "graph")
-        study = ledger.define("codecs")["template_id"]
-        with pytest.raises(ValueError, match="needs a codec import path"):
-            ledger.declare(study, "state", "output", "object", {})
-        with pytest.raises(ValueError, match="only object variables take a codec"):
-            ledger.declare(study, "cost", "output", "scalar", {"codec": "acquirium.ObjectCodecs:PickleCodec"})
-        declared = ledger.declare(study, "state", "output", "object", {"codec": "acquirium.ObjectCodecs:PickleCodec"})
-        assert declared["metadata"]["codec"] == "acquirium.ObjectCodecs:PickleCodec"
-    finally:
-        store.close()
+def test_ledger_requires_a_codec_for_objects_only(ac):
+    client = ac.client
+    study = client.define_experiment("codecs")["template_id"]
+    with pytest.raises(HTTPError, match="needs a codec import path"):
+        _declare(client, study, "state", "output", "object")
+    with pytest.raises(HTTPError, match="only object variables take a codec"):
+        _declare(client, study, "cost", "output", "scalar", {"codec": "acquirium.ObjectCodecs:PickleCodec"})
+    declared = _declare(client, study, "state", "output", "object", {"codec": "acquirium.ObjectCodecs:PickleCodec"})
+    assert declared["metadata"]["codec"] == "acquirium.ObjectCodecs:PickleCodec"
 
 
 def test_builtin_codecs():
@@ -1414,19 +1279,3 @@ def test_cloudpickle_codec_saves_what_pickle_cannot():
     pytest.importorskip("cloudpickle")
     double = lambda value: 2 * value
     assert pickle.loads(aq.CloudpickleCodec().dumps(double))(4) == 8
-
-
-def test_local_graph_releases_its_directory_with_its_last_handle(tmp_path):
-    import gc
-    from acquirium.Storage.metadata_outbox import LocalMetadataGraph
-    gc.disable()
-    try:
-        graph = LocalMetadataGraph.open(tmp_path / "graph")
-        # An rdflib dataset can sit in a reference cycle and outlive its handle
-        # until the cyclic collector runs; the directory must not stay locked.
-        leftover = [graph.dataset]
-        leftover.append(leftover)
-        del graph
-        LocalMetadataGraph.open(tmp_path / "graph")
-    finally:
-        gc.enable()

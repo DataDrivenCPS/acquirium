@@ -10,14 +10,15 @@ For model components bound to reader functions, see
 
 ## Wrap an analysis in an experiment
 
-Connect to your Acquirium server, then declare the values you want to record.
-Inputs describe what goes into the calculation; outputs hold its results.
-The type specifies how Acquirium stores each value.
+Start Acquirium with `aq.init()`, then declare the values you want to record.
+`aq.init()` starts a local server for the script, or connects to one with
+`aq.init(address=...)`. Inputs describe what goes into the calculation; outputs
+hold its results. The type specifies how Acquirium stores each value.
 
 ```python
 import acquirium as aq
 
-ac = aq.Acquirium()
+ac = aq.init()
 study = ac.study.define("operating-scenarios")
 
 # A structured input used by your calculation.

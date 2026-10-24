@@ -36,33 +36,3 @@ class _GraphQueryClient:
             ]
         result["rows"] = [[str(value) if value is not None else None for value in row] for row in result["rows"]]
         return result
-
-
-
-
-from acquirium.Storage.metadata_outbox import LocalMetadataGraph
-
-
-class QueryableLocalMetadataGraph(LocalMetadataGraph):
-    """Test-only effective query view over a standalone document backend."""
-    version = 0
-
-    def sparql_update(self, update, *, graph_uri):
-        super().sparql_update(update, graph_uri=graph_uri)
-        self.version += 1
-
-    def graph_status(self):
-        return {"source_version": self.version}
-
-    def sparql_query(self, query, **kwargs):
-        from rdflib import Graph
-        from oxrdflib.store import OxigraphStore
-        import pyoxigraph
-        from acquirium.Metadata import overlay_documents
-        from acquirium.Storage.graph_registry import METADATA_SOURCE_ID, source_graph_uri
-        graph = Graph(store=OxigraphStore(store=pyoxigraph.Store()))
-        for context in self.dataset.graphs():
-            graph += context
-        overlay_documents(graph, self.dataset.graph(source_graph_uri(METADATA_SOURCE_ID)))
-        result = graph.query(query)
-        return {"columns": [str(v) for v in result.vars], "rows": [list(row) for row in result]}

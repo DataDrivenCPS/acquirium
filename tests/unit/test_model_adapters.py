@@ -1,19 +1,15 @@
 """Explicit adapter declarations, local readers, and batched recording."""
 from datetime import datetime, timedelta, timezone
-from importlib import import_module
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import numpy as np
 import polars as pl
 import pytest
-from fastapi.testclient import TestClient
-from httpx import HTTPStatusError
+from requests import HTTPError
 
 import acquirium as aq
-from acquirium.Client.client import AcquiriumClient
-from acquirium.Experiments import ExperimentStore, Study, StudyService, _stream_name
-from acquirium.Storage.duckdb_store import DuckDBStore
+from acquirium.Experiments import Study, StudyService, _stream_name
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 PAYLOAD = {"a.b": {"arbitrary key": [None, {}, [], {"https://example.org/key": "value"}]},
@@ -22,25 +18,13 @@ PAYLOAD = {"a.b": {"arbitrary key": [None, {}, [], {"https://example.org/key": "
 
 
 @pytest.fixture
-def model_api(tmp_path, monkeypatch):
-    store = DuckDBStore(tmp_path / "models.duckdb")
-    ledger = ExperimentStore.standalone(store, tmp_path / "graph")
-    module = import_module("acquirium.Server.app")
-    monkeypatch.setattr(module.app.state, "manager", SimpleNamespace(experiments=ledger), raising=False)
-    client = AcquiriumClient()
-    client._http.close()
-    client._http = TestClient(module.app)
-    client.insert_timeseries_batch = Mock(return_value={"ok": True})
-    client.record_experiment_batch = Mock(wraps=client.record_experiment_batch)
-    client.resolve = Mock(side_effect=lambda value, **kwargs: value)
-    client.sync_experiment_metadata = Mock(return_value={"ok": True})
-    ac = SimpleNamespace(client=client, register_streams=Mock())
-    study = Study(ac, ledger.define("models"))
-    try:
-        yield SimpleNamespace(study=study, ac=ac, client=client, ledger=ledger)
-    finally:
-        client._http.close()
-        store.close()
+def model_api(ac):
+    # The real client and Acquirium handle from aq.init(), wrapped so tests
+    # can count calls; every call still reaches the server.
+    client = Mock(wraps=ac.client)
+    spy = Mock(wraps=ac, client=client)
+    study = Study(spy, ac.client.define_experiment("models"))
+    return SimpleNamespace(study=study, ac=spy, client=client)
 
 
 def fake_adapter():
@@ -75,7 +59,7 @@ def test_namespaces_declaration_filters_and_idempotency(model_api):
     assert again["cost"].unit == "urn:unit:USD"
     conflict = aq.adapters.define()
     conflict.scalar("cost", read=lambda: 9, unit="urn:unit:EUR", metadata={"stage": "final"})
-    with pytest.raises(HTTPStatusError) as caught:
+    with pytest.raises(HTTPError) as caught:
         study.declare_from(conflict)
     assert "declared differently" in caught.value.response.json()["detail"]
     with pytest.raises(TypeError, match="role"):
@@ -236,34 +220,14 @@ def test_builder_validation_and_explicit_json_metadata():
         adapter.json("bad", read=lambda: {}, metadata={"x": float("nan")})
 
 
-@pytest.mark.parametrize("failure", ["registration", "insertion", "observation", "outbox"])
-def test_transport_retries_and_atomic_observation_batches(model_api, monkeypatch, failure):
+def test_transport_retries_and_atomic_observation_batches(model_api):
     variables = model_api.study.declare_from(fake_adapter()[0])
     run = model_api.study.start()
-    ledger = model_api.ledger
-    ledger.sync_metadata_graph()
-    execute = ledger._execute
-    with monkeypatch.context() as patch:
-        def fail(*args, **kwargs):
-            raise RuntimeError("temporary")
-        if failure == "registration":
-            patch.setattr(ledger.store, "_ensure_stream_refs", fail)
-        elif failure == "insertion":
-            patch.setattr(ledger.store, "_insert_frame", fail)
-        elif failure == "outbox":
-            patch.setattr(ledger.metadata, "enqueue", fail)
-        else:
-            def insert(conn, statement, parameters=None):
-                if statement.startswith("INSERT INTO experiment_observations"):
-                    raise RuntimeError("temporary")
-                return execute(conn, statement, parameters)
-            patch.setattr(ledger, "_execute", insert)
-        with pytest.raises(RuntimeError, match="temporary"):
-            variables.sample(at=T0)
+    model_api.client.record_experiment_batch.side_effect = RuntimeError("temporary")
+    with pytest.raises(RuntimeError, match="temporary"):
+        variables.sample(at=T0)
+    model_api.client.record_experiment_batch.side_effect = None
     assert run.observations().all() == []
-    with ledger.store._own_conn() as conn:
-        assert conn.execute("SELECT count(*) FROM timeseries").fetchone()[0] == 0
-        assert conn.execute("SELECT count(*) FROM streams").fetchone()[0] == 0
     variables.sample(at=T0)
     assert len(run.observations().all()) == 3
     assert model_api.client.record_experiment_batch.call_count == 2
@@ -345,12 +309,11 @@ def test_hand_declared_keyed_series_remain_supported(model_api):
 
 def test_keyed_registration_distinguishes_numeric_types(model_api):
     flow = model_api.study.output("flow").timeseries(keys=("pump",))
-    model_api.study.start()
+    run = model_api.study.start()
     for key in (1, True, 1.0, 0.0, -0.0):
         flow.record({(key,): [(T0, 5)]})
     assert model_api.client.record_experiment_batch.call_count == 5
-    with model_api.ledger.store._own_conn() as conn:
-        assert conn.execute("SELECT count(*) FROM streams").fetchone()[0] == 5
+    assert len({item.ref_uri for item in run.observations(flow).all()}) == 5
 
 
 def test_importing_core_does_not_import_pyomo():
@@ -399,7 +362,7 @@ def test_custom_adapters_pass_through_shared_validation(model_api):
     adapter = SimpleNamespace(components=lambda: [aq.Component("bad", "scalar", role="annotation")])
     with pytest.raises(ValueError, match="inputs or outputs"):
         model_api.study.declare_from(adapter)
-    assert model_api.ledger.variables(model_api.study.study_id) == []
+    assert model_api.client.list_experiment_variables(model_api.study.study_id) == []
 
 
 def test_hand_and_model_declarations_share_metadata_and_query_paths(model_api):

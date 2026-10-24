@@ -2,16 +2,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-import threading
 from uuid import uuid4
-from weakref import WeakValueDictionary, finalize
-
-from rdflib import Dataset
-from oxrdflib.store import OxigraphStore
-import pyoxigraph
-
-from acquirium.Storage.graph_registry import source_graph_uri
 
 
 def execute(conn, statement, parameters=()):
@@ -65,59 +56,3 @@ def migrate_documents(conn):
     execute(conn, "UPDATE experiment_observations SET value_json=NULL WHERE variable_id IS NULL")
     execute(conn, "DROP TABLE IF EXISTS experiment_metadata_resolutions")
 
-
-def _release_store(store):
-    store._store = None  # OxigraphStore._inner reads this attribute
-
-
-class LocalMetadataGraph:
-    """The same durable RDF documents for callers without a server graph.
-
-    Standalone ledger users share one embedded Oxigraph instance per directory.
-    Server users supply their existing deployment graph instead.
-    """
-    _instances = WeakValueDictionary()
-    _instances_lock = threading.Lock()
-    source_graph_uri = staticmethod(source_graph_uri)
-
-    @classmethod
-    def open(cls, path):
-        key = str(Path(path).resolve())
-        with cls._instances_lock:
-            instance = cls._instances.get(key)
-            if instance is None:
-                instance = cls(key)
-                cls._instances[key] = instance
-            return instance
-
-    def __init__(self, path):
-        self.dataset = Dataset(store=OxigraphStore(store=pyoxigraph.Store(path)), default_union=True)
-        # rdflib datasets are reference cycles, so a dataset can outlive this
-        # handle until the cyclic collector runs, keeping the directory locked
-        # against the next open(). Drop the store as soon as the handle dies.
-        finalize(self, _release_store, self.dataset.store)
-
-    def metadata_documents(self, subjects):
-        from acquirium.Metadata import scan_documents
-        return scan_documents(self.dataset.store._inner, subjects)
-
-    def sparql_update(self, update, *, graph_uri):
-        self.dataset.graph(graph_uri).update(update)
-
-    def metadata_update(self, update, *, graph_uri):
-        """Apply an update that writes only `graph_uri`, with Oxigraph's own engine."""
-        self.dataset.store._inner.update(update)
-
-    def metadata_triples(self, subjects, *, graph_uri):
-        from acquirium.Metadata import scan_subject_triples
-        return scan_subject_triples(self.dataset.store._inner, subjects, graph_uri)
-
-    def flush_metadata(self):
-        self.dataset.store._inner.flush()
-
-    def clear_graphs(self, graph_uris=(), *, prefix=None):
-        targets = set(graph_uris)
-        if prefix:
-            targets.update(g.identifier for g in self.dataset.graphs() if str(g.identifier).startswith(prefix))
-        for uri in targets:
-            self.dataset.graph(uri).remove((None, None, None))

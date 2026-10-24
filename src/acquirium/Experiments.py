@@ -22,7 +22,7 @@ from uuid import uuid4
 import polars as pl
 from acquirium.internals.models import compute_ref_uri
 from acquirium.Storage.migrations import EXPERIMENT_MIGRATIONS, migrate
-from acquirium.Storage.metadata_outbox import LocalMetadataGraph, enqueue, execute
+from acquirium.Storage.metadata_outbox import enqueue, execute
 from acquirium.Storage.publication.revision import RevisionPublisher
 from acquirium.Client.streams import Stream, StreamInterval
 from acquirium.ExperimentValues import ARTIFACT_KINDS, TABLE_MEDIA_TYPE, check_kind, to_json, timestamp, parquet as _parquet, sample_rows as _sample_rows, value_entry, recording_entries, artifact_entry
@@ -108,10 +108,10 @@ ARTIFACT_CHUNK_BYTES = 4 << 20
 
 class ExperimentStore:
     """Transactional recordings and durable handoff to graph-owned metadata."""
-    def __init__(self, store: Any, *, graph_store, resolve=None, metadata_strict=True) -> None:
+    def __init__(self, store: Any, *, graph_store, resolve=None) -> None:
         self.store = store
         self._live_resolve = resolve
-        self.metadata = ExperimentMetadata(store, graph_store, self._resolve, strict=metadata_strict)
+        self.metadata = ExperimentMetadata(store, graph_store, self._resolve)
         self.metadata_graph = self.metadata.writer
         # Serialize graph delivery with metadata reads and lifecycle writes.
         # The store's separate writer lock remains available during graph I/O.
@@ -134,33 +134,6 @@ class ExperimentStore:
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_observations_variable_idx ON experiment_observations(variable_id, run_id, sequence)")
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_observations_ref_idx ON experiment_observations(ref_uri, range_start, range_end)")
         self._resolutions = {}
-
-    @classmethod
-    def standalone(cls, store, graph_dir, *, resolve=None):
-        """Open a local durable graph; call close() before closing the SQL store.
-
-        `graph_dir` holds the metadata graph for this SQL store. Instances
-        given the same directory share its graph. The ledger does not own the
-        caller's SQL store. Context manager exit releases the graph handle.
-        """
-        graph_dir = Path(graph_dir)
-        graph_dir.mkdir(parents=True, exist_ok=True)
-        graph = LocalMetadataGraph.open(graph_dir)
-        ledger = cls(store, graph_store=graph, resolve=resolve, metadata_strict=False)
-        ledger._local_graph = graph
-        return ledger
-
-    def close(self):
-        self.sync_metadata_graph()
-        if getattr(self, "_local_graph", None) is not None:
-            self.metadata_graph.graph_store = None
-            self._local_graph = None
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        self.close()
 
     def _resolve(self, text, kind):
         key = (text, kind)
@@ -284,8 +257,7 @@ class ExperimentStore:
                 result.append({**previous, "created": False})
                 continue
             variable_id = str(compute_ref_uri(f"study/{template_id}", label))
-            if self.metadata_graph.strict:
-                prepared = prepared.resolve(self._resolve)
+            prepared = prepared.resolve(self._resolve)
             metadata = prepared.document()
             item = dict(variable_id=variable_id, label=label, role=role, kind=kind, metadata=metadata, created_at=_now(), created=True)
             existing[label] = item
