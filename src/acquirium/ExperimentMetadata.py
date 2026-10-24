@@ -92,12 +92,20 @@ class ExperimentMetadataGraph:
         self.graph_store = graph_store
         self.resolve = resolve
 
+    def namespaces(self):
+        """The namespace URIs the graph binds, the ones the server lists:
+        a URI-looking user value under one is written as a URI, as in
+        insert_metadata(). A graph without bindings writes such values as text."""
+        manager = getattr(self.graph_store, "namespace_manager", None)
+        return tuple(str(ns) for _, ns in manager().namespaces()) if callable(manager) else ()
+
     def validate(self, uri, values, *, variable=False):
         # Scalar declarations carry units without pretending to be live streams.
         projection = {key: value for key, value in {**values.get("_resolved_semantics", {}), **values}.items()
                       if key not in {"_resolved_semantics", "_declaration_format"}}
         return plan_write(uri, projection, role="data" if variable else "entity", resolve=self.resolve,
-                          resolved=values.get("_resolved_semantics"), strict=self.strict)
+                          resolved=values.get("_resolved_semantics"), strict=self.strict,
+                          namespaces=self.namespaces())
 
     def triples(self, record, *, prepared=None):
         uri, cls, fields, metadata = record
@@ -109,7 +117,7 @@ class ExperimentMetadataGraph:
             # terms were already resolved before entering that transaction.
             projection = [(URIRef(uri), p, o) for _,p,o in prepared.triples]
             projection += plan_write(uri, fields, role="data" if cls == EXPERIMENT.Variable else "entity",
-                                     resolve=lambda *_: None).triples
+                                     resolve=lambda *_: None, namespaces=self.namespaces()).triples
         # Complete values are authoritative; attributes are a query projection.
         return list(set([(URIRef(uri), RDF.type, cls), *(triple for triple in projection if not str(triple[1]).startswith(DOCUMENT_NS)),
                          *document_triples(uri, values)]))
@@ -119,7 +127,7 @@ class ExperimentMetadataGraph:
                 "triples": [[str(s), str(p), o.n3()] for s, p, o in self.triples(record, prepared=prepared)]}
 
     def fields_update(self, uri, fields):
-        write = plan_write(uri, fields, role="entity", resolve=self.resolve)
+        write = plan_write(uri, fields, role="entity", resolve=self.resolve, namespaces=self.namespaces())
         return {"operation": "patch", "subject": uri,
                 "predicates": [*write.replace_forward, *(ATTR_NS + key for key in write.replace_keys)],
                 "triples": [[str(s), str(p), o.n3()] for s, p, o in write.triples]}
@@ -446,7 +454,8 @@ class ExperimentMetadata:
                     if not pred.startswith(DOCUMENT_NS) and (root is None or root in RESERVED_METADATA_KEYS or root in REGISTRY):
                         kept.append(triple)
                 projection = {k:v for k,v in values.items() if k not in REGISTRY and k not in {FORMAT, "_resolved_semantics"}}
-                write = plan_write(subject, projection, role="data", resolve=lambda *_: None)
+                write = plan_write(subject, projection, role="data", resolve=lambda *_: None,
+                                   namespaces=self.writer.namespaces())
                 complete = {**values, **{k:v for k,v in old.items() if k in RESERVED_METADATA_KEYS}}
                 triples = [*kept, *[[str(s), str(p), o.n3()] for s,p,o in write.triples if not str(p).startswith(DOCUMENT_NS)],
                            *[[str(s), str(p), o.n3()] for s,p,o in document_triples(subject, complete)]]
@@ -479,7 +488,8 @@ def stream_update(writer, source, name, study_id, run_id, variable_id, label, me
     for field in ("source_path", "description"):
         if field in metadata:
             identity[field] = metadata[field]
-    write = plan_write(str(point), identity, role="data", resolve=lambda *_: None)
+    write = plan_write(str(point), identity, role="data", resolve=lambda *_: None,
+                       namespaces=writer.namespaces())
     for triple in write.triples:
         graph.add(triple)
     # Insert is idempotent and preserves other assertions on the run-owned point.

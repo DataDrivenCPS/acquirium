@@ -455,6 +455,35 @@ def test_backfill_annotations_and_restart_preserve_source_objects(metadata_api):
     assert reopened.run(saved.run_id)["metadata"] == {"scenario": "baseline"}
 
 
+class NamespacedGraphStore(MemoryGraphStore):
+    """A graph that binds namespaces, as the server's graph store does."""
+
+    def namespace_manager(self):
+        self.dataset.bind("plant", "urn:plant#")
+        return self.dataset.namespace_manager
+
+
+def test_uri_values_under_a_bound_namespace_are_written_as_uris(tmp_path):
+    store = DuckDBStore(tmp_path / "experiments.duckdb", recreate=True)
+    graph = NamespacedGraphStore()
+    ledger = ExperimentStore(store, graph_store=graph, resolve=lambda *_: None)
+    study = ledger.define("namespaces")["template_id"]
+    values = {"feeds": "urn:plant#tank", "datasheet": "https://example.org/ds.pdf"}
+    variable = ledger.declare(study, "level", "output", "scalar", dict(values))
+    run = ledger.start(study, dict(values))
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    annotation = ledger.annotate_stream(run["run_id"], "urn:site:stream", now, metadata=dict(values))
+    ledger.sync_metadata_graph()
+    # a variable keeps its metadata under the metadata key
+    for subject, prefix in ((variable_uri(variable["variable_id"]), "metadata."), (run_uri(run["run_id"]), ""),
+                            (annotation_uri(annotation["annotation_id"]), "")):
+        assert (URIRef(subject), URIRef(ATTR_NS + prefix + "feeds"), URIRef("urn:plant#tank")) in graph.dataset
+        assert (URIRef(subject), URIRef(ATTR_NS + prefix + "datasheet"),
+                Literal("https://example.org/ds.pdf")) in graph.dataset
+    assert ledger.run(run["run_id"])["metadata"] == values
+    store.close()
+
+
 def test_invalid_metadata_fails_before_sql_insert_and_recording_avoids_graph_work(metadata_api):
     api = metadata_api
     study = api.service.define("validation")

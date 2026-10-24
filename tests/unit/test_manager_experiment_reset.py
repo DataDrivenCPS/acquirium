@@ -16,6 +16,7 @@ def test_manager_recreation_resets_experiments_in_external_duckdb(tmp_path, monk
     graph = Mock()
     for name in ("sparql_query", "sparql_update", "source_graph_uri", "clear_graphs", "graph_status", "metadata_documents", "metadata_triples", "metadata_update", "flush_metadata"):
         setattr(graph, name, getattr(source, name))
+    graph.namespace_manager = lambda: source.dataset.namespace_manager
     monkeypatch.setattr(module, "OxigraphGraphStore", Mock(return_value=graph))
     monkeypatch.setattr(Manager, "_build_embedding_indexes", lambda self: None)
     data_dir = tmp_path / "server-data"
