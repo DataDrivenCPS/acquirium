@@ -996,9 +996,11 @@ class OxigraphGraphStore:
         with self._lock:
             _, _, data, shapes = self._snapshot_query_inputs()
         with timed_debug(_logger, "shifty.validate"):
+            # No ontology closure means no shapes. shifty rejects an empty
+            # shapes graph; None validates against any shapes in the data.
             conforms, report_graph, results_text = shifty.validate(
                 data,
-                shapes,
+                shapes if len(shapes) else None,
                 graph_mode="union",
             )
         return {
@@ -1039,7 +1041,15 @@ class OxigraphGraphStore:
             incoming = content
         else:
             with timed_debug(_logger, "insert_graph parse fmt=%s", fmt):
-                incoming.parse(data=content, format=fmt)
+                if fmt == "trix":
+                    # TriX holds named graphs, which a Graph parse drops
+                    # silently. Merge every graph into the one being written.
+                    dataset = Dataset()
+                    dataset.parse(data=content, format=fmt)
+                    for s, p, o, _ in dataset.quads((None, None, None, None)):
+                        incoming.add((s, p, o))
+                else:
+                    incoming.parse(data=content, format=fmt)
         _logger.debug("insert_graph: %d incoming triples (replace=%s)", len(incoming), replace)
 
         # Parsing stays outside the lock: `incoming` is thread-local and this is

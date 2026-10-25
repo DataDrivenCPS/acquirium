@@ -172,9 +172,7 @@ class TestInsertGraph:
         assert _objects(client, f"{ns}b", f"{ns}p") == [f"{ns}one"]
 
     @pytest.mark.parametrize("suffix,format", [
-        (".ttl", "turtle"), (".n3", "n3"), (".xml", "xml"), (".rdf", "xml"),
-        pytest.param(".trix", "trix", marks=pytest.mark.xfail(
-            strict=True, reason="the server parses into a Graph, which drops TriX's named graphs"))])
+        (".ttl", "turtle"), (".n3", "n3"), (".xml", "xml"), (".rdf", "xml"), (".trix", "trix")])
     def test_insert_graph_infers_format_from_a_path(self, client, ns, tmp_path, suffix, format):
         path = tmp_path / f"model{suffix}"
         # TriX serializes named graphs, so rdflib needs a dataset for it.
@@ -189,8 +187,8 @@ class TestInsertGraph:
         client.insert_graph_file(path, format="turtle", source_id="s")
         assert _objects(client, f"{ns}a", f"{ns}p") == [f"{ns}b"]
 
-    @pytest.mark.xfail(strict=True, reason="validate() raises when the server has no SHACL shapes")
-    def test_validate_graph(self, client):
+    def test_validate_graph_without_ontology_shapes(self, client):
+        # A server with no plant model loads no shapes; there is nothing to violate.
         assert client.validate_graph()["conforms"] is True
 
 

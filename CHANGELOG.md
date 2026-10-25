@@ -118,6 +118,12 @@ change in any release.
   which was superlinear in update size. Metadata deletes name their subject
   instead of joining a list against every triple, and the orphan-metadata
   prune that follows every server graph write runs natively as well.
+- Inserting a TriX graph stores its triples. They were parsed into a plain
+  graph, which drops TriX's named graphs, so the insert succeeded and stored
+  nothing.
+- `validate_graph()` on a server with no ontology shapes, such as one
+  `aq.init()` started without a plant model, reports a conforming graph
+  instead of failing on an empty shapes graph.
 
 ### Changed
 - Experiments always go through a server: start one with `aq.init()`.
