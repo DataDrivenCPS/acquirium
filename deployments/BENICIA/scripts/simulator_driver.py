@@ -7,7 +7,7 @@ Acquirium. No broker, no external process — ``acquirium server`` runs it as a
 Ray actor.
 
 Each generated stream is registered with its ontology point URI
-(``<namespace><property-local-name>``, e.g. ``urn:ex/Effluent_Pump-out-ph``), so
+(``<namespace><property-local-name>``, e.g. ``urn:benicia/effluent-pump-out-ph``), so
 the rows land on the model's points and meaning-first queries reach them. The
 model's s223/QUDT graph is inserted on setup so those points carry their unit
 and quantity-kind semantics.
@@ -16,9 +16,9 @@ Config keys (under ``[[drivers]]`` / ``self.config["driver"]``):
 
     spec            = "scripts/simulator_driver.py:BeniciaSimulatorDriver"
     interval        = 1.0            # seconds between generated samples
-    model           = "benicia-model-100.ttl"   # relative to this config file
+    model           = "benicia-model-large.ttl" # relative to this config file
     source_id       = "benicia-live"
-    namespace       = "urn:ex/"      # property URI namespace
+    namespace       = "urn:benicia/" # property URI namespace
     insert_graph    = true           # insert the model graph on setup
     seed            = 42
     excursion_rate  = 0.02           # prob. per sample of a limit excursion
@@ -52,12 +52,12 @@ class BeniciaSimulatorDriver(PollingIngestDriver):
     def setup(self) -> None:
         cfg = self.config.get("driver", {})
         self.source_id = str(cfg.get("source_id", "benicia-live"))
-        self._namespace = str(cfg.get("namespace", "urn:ex/"))
+        self._namespace = str(cfg.get("namespace", "urn:benicia/"))
         self._excursion_rate = float(cfg.get("excursion_rate", 0.02))
         step_frac = float(cfg.get("step_frac", 0.02))
         self._rng = random.Random(int(cfg.get("seed", 42)))
 
-        model_path = self.config_dir() / str(cfg.get("model", "benicia-model-100.ttl"))
+        model_path = self.config_dir() / str(cfg.get("model", "benicia-model-large.ttl"))
         if not model_path.exists():
             raise FileNotFoundError(f"Benicia model not found: {model_path}")
         graph = rdflib.Graph().parse(model_path)

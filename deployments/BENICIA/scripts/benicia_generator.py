@@ -2,8 +2,8 @@
 
 Both the live driver (``simulator_driver.py``) and the historical data script
 (``generate_historical.py``) introspect a Benicia model TTL for its
-``s223:Quantifiable*Property`` nodes and synthesise a realistic time series per
-property. This module holds that logic in one place:
+``s223:Quantifiable*Property`` and ``s223:EnumeratedObservableProperty`` nodes
+and synthesise a realistic time series per property. This module holds that logic in one place:
 
   * :func:`get_properties` — enumerate the model's measurement points.
   * :class:`SeriesState`   — per-property stateful random walk. Call
@@ -13,7 +13,7 @@ property. This module holds that logic in one place:
 Ranges come from permit-informed profiles (:data:`BENICIA_LIMITS`) when the
 property URI is known, otherwise from the property's QUDT unit / quantity kind.
 Nothing here is Benicia-model-specific beyond those profile tables, so it works
-against ``benicia-model.ttl`` and ``benicia-model-100.ttl`` alike.
+against ``benicia-model.ttl`` and ``benicia-model-large.ttl`` alike.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from acquirium.internals.internals_namespaces import QUDT, QUDT_UNIT, S223
 PROPERTY_TYPES = {
     S223.QuantifiableObservableProperty,
     S223.QuantifiableActuatableProperty,
+    S223.EnumeratedObservableProperty,
 }
 
 UNIT_RANGES = {
@@ -58,35 +59,35 @@ QUANTITY_KIND_RANGES = {
 # ranges above.
 BENICIA_LIMITS = {
     # Influent
-    "urn:ex/Influent_Pump-in-flow-rate": {"min": 0.0, "max": 4.5, "center": 2.5},
-    "urn:ex/Influent_Pump-in-cyanide": {"min": 0.0, "max": 6.6, "center": 2.0},
-    "urn:ex/Influent_Pump-in-biochemical-oxygen-demand": {"min": 80.0, "max": 450.0, "center": 220.0},
-    "urn:ex/Influent_Pump-in-tss-concentration": {"min": 80.0, "max": 500.0, "center": 250.0},
+    "urn:benicia/influent-pump-in-flow-rate": {"min": 0.0, "max": 4.5, "center": 2.5},
+    "urn:benicia/influent-pump-in-cyanide": {"min": 0.0, "max": 6.6, "center": 2.0},
+    "urn:benicia/influent-pump-in-biochemical-oxygen-demand": {"min": 80.0, "max": 450.0, "center": 220.0},
+    "urn:benicia/influent-pump-in-tss-concentration": {"min": 80.0, "max": 500.0, "center": 250.0},
     # Effluent
-    "urn:ex/Effluent_Pump-out-biochemical-oxygen-demand": {"min": 0.0, "max": 30.0, "center": 18.0},
-    "urn:ex/Effluent_Pump-out-tss-concentration": {"min": 0.0, "max": 30.0, "center": 16.0},
-    "urn:ex/Effluent_Pump-out-ph": {"min": 6.0, "max": 9.0, "center": 7.2},
-    "urn:ex/Effluent_Pump-out-cl2-mgL": {"min": 0.0, "max": 0.38, "center": 0.08},
-    "urn:ex/Effluent_Pump-out-nh4-mgL": {"min": 0.0, "max": 64.0, "center": 20.0},
-    "urn:ex/Effluent_Pump-out-copper": {"min": 0.0, "max": 64.0, "center": 25.0},
-    "urn:ex/Effluent_Pump-out-cyanide": {"min": 0.0, "max": 17.0, "center": 5.0},
-    "urn:ex/Effluent_Pump-out-teq-dioxin": {"min": 0.0, "max": 1.4e-8, "center": 0.6e-8},
-    "urn:ex/Effluent_Pump-out-bacteria-enterococcus": {"min": 0.0, "max": 210.0, "center": 80.0},
+    "urn:benicia/effluent-pump-out-biochemical-oxygen-demand": {"min": 0.0, "max": 30.0, "center": 18.0},
+    "urn:benicia/effluent-pump-out-tss-concentration": {"min": 0.0, "max": 30.0, "center": 16.0},
+    "urn:benicia/effluent-pump-out-ph": {"min": 6.0, "max": 9.0, "center": 7.2},
+    "urn:benicia/effluent-pump-out-cl2-mgL": {"min": 0.0, "max": 0.38, "center": 0.08},
+    "urn:benicia/effluent-pump-out-nh4-mgL": {"min": 0.0, "max": 64.0, "center": 20.0},
+    "urn:benicia/effluent-pump-out-copper": {"min": 0.0, "max": 64.0, "center": 25.0},
+    "urn:benicia/effluent-pump-out-cyanide": {"min": 0.0, "max": 17.0, "center": 5.0},
+    "urn:benicia/effluent-pump-out-teq-dioxin": {"min": 0.0, "max": 1.4e-8, "center": 0.6e-8},
+    "urn:benicia/chlorine-contact-tank-out-bacteria-enterococcus": {"min": 0.0, "max": 210.0, "center": 80.0},
 }
 
 # Upper caps used only when injecting excursions beyond the typical range.
 BENICIA_EXCURSION_CAPS = {
-    "urn:ex/Influent_Pump-in-flow-rate": 6.0,
-    "urn:ex/Influent_Pump-in-cyanide": 15.0,
-    "urn:ex/Effluent_Pump-out-biochemical-oxygen-demand": 60.0,
-    "urn:ex/Effluent_Pump-out-tss-concentration": 80.0,
-    "urn:ex/Effluent_Pump-out-ph": 10.0,
-    "urn:ex/Effluent_Pump-out-cl2-mgL": 0.8,
-    "urn:ex/Effluent_Pump-out-nh4-mgL": 120.0,
-    "urn:ex/Effluent_Pump-out-copper": 150.0,
-    "urn:ex/Effluent_Pump-out-cyanide": 60.0,
-    "urn:ex/Effluent_Pump-out-teq-dioxin": 4.0e-8,
-    "urn:ex/Effluent_Pump-out-bacteria-enterococcus": 2000.0,
+    "urn:benicia/influent-pump-in-flow-rate": 6.0,
+    "urn:benicia/influent-pump-in-cyanide": 15.0,
+    "urn:benicia/effluent-pump-out-biochemical-oxygen-demand": 60.0,
+    "urn:benicia/effluent-pump-out-tss-concentration": 80.0,
+    "urn:benicia/effluent-pump-out-ph": 10.0,
+    "urn:benicia/effluent-pump-out-cl2-mgL": 0.8,
+    "urn:benicia/effluent-pump-out-nh4-mgL": 120.0,
+    "urn:benicia/effluent-pump-out-copper": 150.0,
+    "urn:benicia/effluent-pump-out-cyanide": 60.0,
+    "urn:benicia/effluent-pump-out-teq-dioxin": 4.0e-8,
+    "urn:benicia/chlorine-contact-tank-out-bacteria-enterococcus": 2000.0,
 }
 
 
@@ -125,7 +126,7 @@ def get_unit_range(graph: rdflib.Graph, prop: rdflib.term.Identifier) -> tuple[f
 
 
 def is_enumeration(graph: rdflib.Graph, prop: rdflib.term.Identifier) -> bool:
-    return any(graph.triples((prop, QUDT.hasEnumerationKind, None)))
+    return any(graph.triples((prop, S223.hasEnumerationKind, None)))
 
 
 def _clamp(x: float, lo: float, hi: float) -> float:

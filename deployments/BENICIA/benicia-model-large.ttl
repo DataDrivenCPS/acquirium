@@ -1,0 +1,2400 @@
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix qudtqk: <http://qudt.org/vocab/quantitykind/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix s223: <http://data.ashrae.org/standard223#> .
+@prefix unit: <http://qudt.org/vocab/unit/> .
+@prefix watr: <https://watermetadata.org/ontology/watr#> .
+@prefix wbs: <urn:benicia/> .
+
+wbs: a owl:Ontology ;
+    owl:imports <http://data.ashrae.org/standard223/1.0/model/all>,
+        <https://watermetadata.org/ontology/watr> .
+
+wbs:anaerobic-digester-ph-sensor a watr:pHSensor ;
+    s223:hasObservationLocation wbs:anaerobic-digester ;
+    s223:observes wbs:anaerobic-digester-ph .
+
+wbs:anaerobic-digester-temperature-sensor a watr:TemperatureSensor ;
+    s223:hasObservationLocation wbs:anaerobic-digester ;
+    s223:observes wbs:anaerobic-digester-temperature .
+
+wbs:anaerobic-digester-volume-sensor a watr:VolumeSensor ;
+    s223:hasObservationLocation wbs:anaerobic-digester ;
+    s223:observes wbs:anaerobic-digester-volume .
+
+wbs:as-aeration-basin-dissolved-o2-sensor a watr:ConcentrationSensor ;
+    s223:hasObservationLocation wbs:as-aeration-basin ;
+    s223:observes wbs:as-aeration-basin-dissolved-o2 .
+
+wbs:as-aeration-basin-mlss-concentration-sensor a watr:ConcentrationSensor ;
+    s223:hasObservationLocation wbs:as-aeration-basin ;
+    s223:observes wbs:as-aeration-basin-mlss-concentration .
+
+wbs:as-aeration-basin-out-nh4-mgL-sensor a watr:ConcentrationSensor ;
+    s223:hasObservationLocation wbs:as-aeration-basin-out ;
+    s223:observes wbs:as-aeration-basin-out-nh4-mgL .
+
+wbs:as-aeration-basin-out-no3-mgL-sensor a watr:ConcentrationSensor ;
+    s223:hasObservationLocation wbs:as-aeration-basin-out ;
+    s223:observes wbs:as-aeration-basin-out-no3-mgL .
+
+wbs:as-aeration-basin-ph-sensor a watr:pHSensor ;
+    s223:hasObservationLocation wbs:as-aeration-basin ;
+    s223:observes wbs:as-aeration-basin-ph .
+
+wbs:as-aeration-basin-temperature-sensor a watr:TemperatureSensor ;
+    s223:hasObservationLocation wbs:as-aeration-basin ;
+    s223:observes wbs:as-aeration-basin-temperature .
+
+wbs:as-aeration-basin-volume-sensor a watr:VolumeSensor ;
+    s223:hasObservationLocation wbs:as-aeration-basin ;
+    s223:observes wbs:as-aeration-basin-volume .
+
+wbs:as-secondary-clarifier-level-status-sensor a watr:LevelSensor ;
+    s223:hasObservationLocation wbs:as-secondary-clarifier ;
+    s223:observes wbs:as-secondary-clarifier-level-status .
+
+wbs:as-secondary-clarifier-out-sludge-tss-concentration-sensor a watr:ConcentrationSensor ;
+    s223:hasObservationLocation wbs:as-secondary-clarifier-out-sludge ;
+    s223:observes wbs:as-secondary-clarifier-out-sludge-tss-concentration .
+
+wbs:as-secondary-clarifier-out-tss-concentration-sensor a watr:ConcentrationSensor ;
+    s223:hasObservationLocation wbs:as-secondary-clarifier-out ;
+    s223:observes wbs:as-secondary-clarifier-out-tss-concentration .
+
+wbs:as-secondary-clarifier-out-turbidity-sensor a watr:TurbidityMeter ;
+    s223:hasObservationLocation wbs:as-secondary-clarifier-out ;
+    s223:observes wbs:as-secondary-clarifier-out-turbidity .
+
+wbs:as-secondary-clarifier-volume-sensor a watr:VolumeSensor ;
+    s223:hasObservationLocation wbs:as-secondary-clarifier ;
+    s223:observes wbs:as-secondary-clarifier-volume .
+
+wbs:belt-filter-press-electric-current-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:belt-filter-press ;
+    s223:observes wbs:belt-filter-press-electric-current .
+
+wbs:belt-filter-press-in-flow-rate-sensor a watr:FlowSensor ;
+    s223:hasObservationLocation wbs:belt-filter-press-in ;
+    s223:observes wbs:belt-filter-press-in-flow-rate .
+
+wbs:belt-filter-press-out-tss-concentration-sensor a watr:ConcentrationSensor ;
+    s223:hasObservationLocation wbs:belt-filter-press-out ;
+    s223:observes wbs:belt-filter-press-out-tss-concentration .
+
+wbs:belt-filter-press-status-onoff-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:belt-filter-press ;
+    s223:observes wbs:belt-filter-press-status-onoff .
+
+wbs:benicia-wwtp a s223:System ;
+    s223:hasBoundaryConnectionPoint wbs:belt-filter-press-out,
+        wbs:chlorine-mixing-chamber-chem-in,
+        wbs:dechlorination-chem-in,
+        wbs:effluent-junction-outlet-cp,
+        wbs:influent-pump-in,
+        wbs:wet-weather-screen-in ;
+    s223:hasMember wbs:activated-sludge-system,
+        wbs:disinfection-system,
+        wbs:flow-regulation-system,
+        wbs:headworks-system,
+        wbs:rbc-system,
+        wbs:solids-system,
+        wbs:wet-weather-system .
+
+wbs:chlorine-contact-tank-cl2-mgL-sensor a watr:ConcentrationSensor ;
+    s223:hasObservationLocation wbs:chlorine-contact-tank ;
+    s223:observes wbs:chlorine-contact-tank-cl2-mgL .
+
+wbs:chlorine-contact-tank-out-bacteria-enterococcus-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:chlorine-contact-tank-out ;
+    s223:observes wbs:chlorine-contact-tank-out-bacteria-enterococcus .
+
+wbs:chlorine-contact-tank-out-flow-rate-sensor a watr:FlowSensor ;
+    s223:hasObservationLocation wbs:chlorine-contact-tank-out ;
+    s223:observes wbs:chlorine-contact-tank-out-flow-rate .
+
+wbs:chlorine-contact-tank-ph-sensor a watr:pHSensor ;
+    s223:hasObservationLocation wbs:chlorine-contact-tank ;
+    s223:observes wbs:chlorine-contact-tank-ph .
+
+wbs:chlorine-contact-tank-temperature-sensor a watr:TemperatureSensor ;
+    s223:hasObservationLocation wbs:chlorine-contact-tank ;
+    s223:observes wbs:chlorine-contact-tank-temperature .
+
+wbs:chlorine-contact-tank-volume-sensor a watr:VolumeSensor ;
+    s223:hasObservationLocation wbs:chlorine-contact-tank ;
+    s223:observes wbs:chlorine-contact-tank-volume .
+
+wbs:chlorine-mixing-chamber-dosing-flow-rate-sensor a watr:FlowSensor ;
+    s223:hasObservationLocation wbs:chlorine-mixing-chamber ;
+    s223:observes wbs:chlorine-mixing-chamber-dosing-flow-rate .
+
+wbs:chlorine-mixing-chamber-out-cl2-mgL-sensor a watr:ConcentrationSensor ;
+    s223:hasObservationLocation wbs:chlorine-mixing-chamber-out ;
+    s223:observes wbs:chlorine-mixing-chamber-out-cl2-mgL .
+
+wbs:chlorine-mixing-chamber-out-ph-sensor a watr:pHSensor ;
+    s223:hasObservationLocation wbs:chlorine-mixing-chamber-out ;
+    s223:observes wbs:chlorine-mixing-chamber-out-ph .
+
+wbs:daf-thickener-in-flow-rate-sensor a watr:FlowSensor ;
+    s223:hasObservationLocation wbs:daf-thickener-in ;
+    s223:observes wbs:daf-thickener-in-flow-rate .
+
+wbs:daf-thickener-in-tss-concentration-sensor a watr:ConcentrationSensor ;
+    s223:hasObservationLocation wbs:daf-thickener-in ;
+    s223:observes wbs:daf-thickener-in-tss-concentration .
+
+wbs:daf-thickener-out-flow-rate-sensor a watr:FlowSensor ;
+    s223:hasObservationLocation wbs:daf-thickener-out ;
+    s223:observes wbs:daf-thickener-out-flow-rate .
+
+wbs:daf-thickener-out-tss-concentration-sensor a watr:ConcentrationSensor ;
+    s223:hasObservationLocation wbs:daf-thickener-out ;
+    s223:observes wbs:daf-thickener-out-tss-concentration .
+
+wbs:dechlorination-dosing-flow-rate-sensor a watr:FlowSensor ;
+    s223:hasObservationLocation wbs:dechlorination ;
+    s223:observes wbs:dechlorination-dosing-flow-rate .
+
+wbs:dechlorination-out-cl2-mgL-sensor a watr:ConcentrationSensor ;
+    s223:hasObservationLocation wbs:dechlorination-out ;
+    s223:observes wbs:dechlorination-out-cl2-mgL .
+
+wbs:diurnal-flow-box-level-status-sensor a watr:LevelSensor ;
+    s223:hasObservationLocation wbs:diurnal-flow-box ;
+    s223:observes wbs:diurnal-flow-box-level-status .
+
+wbs:diurnal-flow-box-ph-sensor a watr:pHSensor ;
+    s223:hasObservationLocation wbs:diurnal-flow-box ;
+    s223:observes wbs:diurnal-flow-box-ph .
+
+wbs:diurnal-flow-box-temperature-sensor a watr:TemperatureSensor ;
+    s223:hasObservationLocation wbs:diurnal-flow-box ;
+    s223:observes wbs:diurnal-flow-box-temperature .
+
+wbs:diurnal-flow-box-turbidity-sensor a watr:TurbidityMeter ;
+    s223:hasObservationLocation wbs:diurnal-flow-box ;
+    s223:observes wbs:diurnal-flow-box-turbidity .
+
+wbs:diurnal-flow-box-volume-sensor a watr:VolumeSensor ;
+    s223:hasObservationLocation wbs:diurnal-flow-box ;
+    s223:observes wbs:diurnal-flow-box-volume .
+
+wbs:effluent-pump-electric-current-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:effluent-pump ;
+    s223:observes wbs:effluent-pump-electric-current .
+
+wbs:effluent-pump-fault-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:effluent-pump ;
+    s223:observes wbs:effluent-pump-fault .
+
+wbs:effluent-pump-in-pressure-sensor a watr:PressureSensor ;
+    s223:hasObservationLocation wbs:effluent-pump-in ;
+    s223:observes wbs:effluent-pump-in-pressure .
+
+wbs:effluent-pump-out-biochemical-oxygen-demand-sensor a watr:ManualMeasurementPort ;
+    s223:hasObservationLocation wbs:effluent-pump-out ;
+    s223:observes wbs:effluent-pump-out-biochemical-oxygen-demand .
+
+wbs:effluent-pump-out-cl2-mgL-sensor a watr:ConcentrationSensor ;
+    s223:hasObservationLocation wbs:effluent-pump-out ;
+    s223:observes wbs:effluent-pump-out-cl2-mgL .
+
+wbs:effluent-pump-out-copper-sensor a watr:ConcentrationSensor ;
+    s223:hasObservationLocation wbs:effluent-pump-out ;
+    s223:observes wbs:effluent-pump-out-copper .
+
+wbs:effluent-pump-out-cyanide-sensor a watr:ManualMeasurementPort ;
+    s223:hasObservationLocation wbs:effluent-pump-out ;
+    s223:observes wbs:effluent-pump-out-cyanide .
+
+wbs:effluent-pump-out-flow-rate-sensor a watr:FlowSensor ;
+    s223:hasObservationLocation wbs:effluent-pump-out ;
+    s223:observes wbs:effluent-pump-out-flow-rate .
+
+wbs:effluent-pump-out-flow-rate-sensor-2 a watr:FlowSensor ;
+    s223:hasObservationLocation wbs:effluent-pump-out ;
+    s223:observes wbs:effluent-pump-out-flow-rate-2 .
+
+wbs:effluent-pump-out-nh4-mgL-sensor a watr:ConcentrationSensor ;
+    s223:hasObservationLocation wbs:effluent-pump-out ;
+    s223:observes wbs:effluent-pump-out-nh4-mgL .
+
+wbs:effluent-pump-out-ph-sensor a watr:pHSensor ;
+    s223:hasObservationLocation wbs:effluent-pump-out ;
+    s223:observes wbs:effluent-pump-out-ph .
+
+wbs:effluent-pump-out-pressure-sensor a watr:PressureSensor ;
+    s223:hasObservationLocation wbs:effluent-pump-out ;
+    s223:observes wbs:effluent-pump-out-pressure .
+
+wbs:effluent-pump-out-teq-dioxin-sensor a watr:ManualMeasurementPort ;
+    s223:hasObservationLocation wbs:effluent-pump-out ;
+    s223:observes wbs:effluent-pump-out-teq-dioxin .
+
+wbs:effluent-pump-out-tss-concentration-sensor a watr:ConcentrationSensor ;
+    s223:hasObservationLocation wbs:effluent-pump-out ;
+    s223:observes wbs:effluent-pump-out-tss-concentration .
+
+wbs:effluent-pump-status-onoff-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:effluent-pump ;
+    s223:observes wbs:effluent-pump-status-onoff .
+
+wbs:flow-return-pump-electric-current-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:flow-return-pump ;
+    s223:observes wbs:flow-return-pump-electric-current .
+
+wbs:flow-return-pump-fault-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:flow-return-pump ;
+    s223:observes wbs:flow-return-pump-fault .
+
+wbs:flow-return-pump-in-pressure-sensor a watr:PressureSensor ;
+    s223:hasObservationLocation wbs:flow-return-pump-in ;
+    s223:observes wbs:flow-return-pump-in-pressure .
+
+wbs:flow-return-pump-out-flow-rate-sensor a watr:FlowSensor ;
+    s223:hasObservationLocation wbs:flow-return-pump-out ;
+    s223:observes wbs:flow-return-pump-out-flow-rate .
+
+wbs:flow-return-pump-out-pressure-sensor a watr:PressureSensor ;
+    s223:hasObservationLocation wbs:flow-return-pump-out ;
+    s223:observes wbs:flow-return-pump-out-pressure .
+
+wbs:flow-return-pump-status-onoff-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:flow-return-pump ;
+    s223:observes wbs:flow-return-pump-status-onoff .
+
+wbs:grinder-electric-current-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:grinder ;
+    s223:observes wbs:grinder-electric-current .
+
+wbs:grinder-fault-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:grinder ;
+    s223:observes wbs:grinder-fault .
+
+wbs:grinder-status-onoff-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:grinder ;
+    s223:observes wbs:grinder-status-onoff .
+
+wbs:grit-chamber-in-flow-rate-sensor a watr:FlowSensor ;
+    s223:hasObservationLocation wbs:grit-chamber-in ;
+    s223:observes wbs:grit-chamber-in-flow-rate .
+
+wbs:grit-chamber-level-status-sensor a watr:LevelSensor ;
+    s223:hasObservationLocation wbs:grit-chamber ;
+    s223:observes wbs:grit-chamber-level-status .
+
+wbs:headworks-screen-electric-current-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:headworks-screen ;
+    s223:observes wbs:headworks-screen-electric-current .
+
+wbs:headworks-screen-fault-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:headworks-screen ;
+    s223:observes wbs:headworks-screen-fault .
+
+wbs:headworks-screen-status-onoff-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:headworks-screen ;
+    s223:observes wbs:headworks-screen-status-onoff .
+
+wbs:influent-pump-electric-current-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:influent-pump ;
+    s223:observes wbs:influent-pump-electric-current .
+
+wbs:influent-pump-fault-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:influent-pump ;
+    s223:observes wbs:influent-pump-fault .
+
+wbs:influent-pump-in-biochemical-oxygen-demand-sensor a watr:ManualMeasurementPort ;
+    s223:hasObservationLocation wbs:influent-pump-in ;
+    s223:observes wbs:influent-pump-in-biochemical-oxygen-demand .
+
+wbs:influent-pump-in-cyanide-sensor a watr:ManualMeasurementPort ;
+    s223:hasObservationLocation wbs:influent-pump-in ;
+    s223:observes wbs:influent-pump-in-cyanide .
+
+wbs:influent-pump-in-flow-rate-sensor a watr:FlowSensor ;
+    s223:hasObservationLocation wbs:influent-pump-in ;
+    s223:observes wbs:influent-pump-in-flow-rate .
+
+wbs:influent-pump-in-pressure-sensor a watr:PressureSensor ;
+    s223:hasObservationLocation wbs:influent-pump-in ;
+    s223:observes wbs:influent-pump-in-pressure .
+
+wbs:influent-pump-in-tss-concentration-sensor a watr:ConcentrationSensor ;
+    s223:hasObservationLocation wbs:influent-pump-in ;
+    s223:observes wbs:influent-pump-in-tss-concentration .
+
+wbs:influent-pump-out-flow-rate-sensor a watr:FlowSensor ;
+    s223:hasObservationLocation wbs:influent-pump-out ;
+    s223:observes wbs:influent-pump-out-flow-rate .
+
+wbs:influent-pump-out-pressure-sensor a watr:PressureSensor ;
+    s223:hasObservationLocation wbs:influent-pump-out ;
+    s223:observes wbs:influent-pump-out-pressure .
+
+wbs:influent-pump-status-onoff-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:influent-pump ;
+    s223:observes wbs:influent-pump-status-onoff .
+
+wbs:primary-clarifier-level-status-sensor a watr:LevelSensor ;
+    s223:hasObservationLocation wbs:primary-clarifier ;
+    s223:observes wbs:primary-clarifier-level-status .
+
+wbs:primary-clarifier-out-sludge-tss-concentration-sensor a watr:ConcentrationSensor ;
+    s223:hasObservationLocation wbs:primary-clarifier-out-sludge ;
+    s223:observes wbs:primary-clarifier-out-sludge-tss-concentration .
+
+wbs:primary-clarifier-out-tss-concentration-sensor a watr:ConcentrationSensor ;
+    s223:hasObservationLocation wbs:primary-clarifier-out ;
+    s223:observes wbs:primary-clarifier-out-tss-concentration .
+
+wbs:primary-clarifier-turbidity-sensor a watr:TurbidityMeter ;
+    s223:hasObservationLocation wbs:primary-clarifier ;
+    s223:observes wbs:primary-clarifier-turbidity .
+
+wbs:primary-clarifier-volume-sensor a watr:VolumeSensor ;
+    s223:hasObservationLocation wbs:primary-clarifier ;
+    s223:observes wbs:primary-clarifier-volume .
+
+wbs:rbc-secondary-clarifier-level-status-sensor a watr:LevelSensor ;
+    s223:hasObservationLocation wbs:rbc-secondary-clarifier ;
+    s223:observes wbs:rbc-secondary-clarifier-level-status .
+
+wbs:rbc-secondary-clarifier-out-sludge-tss-concentration-sensor a watr:ConcentrationSensor ;
+    s223:hasObservationLocation wbs:rbc-secondary-clarifier-out-sludge ;
+    s223:observes wbs:rbc-secondary-clarifier-out-sludge-tss-concentration .
+
+wbs:rbc-secondary-clarifier-out-tss-concentration-sensor a watr:ConcentrationSensor ;
+    s223:hasObservationLocation wbs:rbc-secondary-clarifier-out ;
+    s223:observes wbs:rbc-secondary-clarifier-out-tss-concentration .
+
+wbs:rbc-secondary-clarifier-out-turbidity-sensor a watr:TurbidityMeter ;
+    s223:hasObservationLocation wbs:rbc-secondary-clarifier-out ;
+    s223:observes wbs:rbc-secondary-clarifier-out-turbidity .
+
+wbs:rbc-secondary-clarifier-volume-sensor a watr:VolumeSensor ;
+    s223:hasObservationLocation wbs:rbc-secondary-clarifier ;
+    s223:observes wbs:rbc-secondary-clarifier-volume .
+
+wbs:rbc-unit-electric-current-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:rbc-unit ;
+    s223:observes wbs:rbc-unit-electric-current .
+
+wbs:rbc-unit-out-dissolved-o2-sensor a watr:ConcentrationSensor ;
+    s223:hasObservationLocation wbs:rbc-unit-out ;
+    s223:observes wbs:rbc-unit-out-dissolved-o2 .
+
+wbs:rbc-unit-status-onoff-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:rbc-unit ;
+    s223:observes wbs:rbc-unit-status-onoff .
+
+wbs:return-pump-electric-current-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:return-pump ;
+    s223:observes wbs:return-pump-electric-current .
+
+wbs:return-pump-fault-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:return-pump ;
+    s223:observes wbs:return-pump-fault .
+
+wbs:return-pump-in-pressure-sensor a watr:PressureSensor ;
+    s223:hasObservationLocation wbs:return-pump-in ;
+    s223:observes wbs:return-pump-in-pressure .
+
+wbs:return-pump-out-flow-rate-sensor a watr:FlowSensor ;
+    s223:hasObservationLocation wbs:return-pump-out ;
+    s223:observes wbs:return-pump-out-flow-rate .
+
+wbs:return-pump-out-pressure-sensor a watr:PressureSensor ;
+    s223:hasObservationLocation wbs:return-pump-out ;
+    s223:observes wbs:return-pump-out-pressure .
+
+wbs:return-pump-status-onoff-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:return-pump ;
+    s223:observes wbs:return-pump-status-onoff .
+
+wbs:sluice-gate-opening-ratio-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:sluice-gate ;
+    s223:observes wbs:sluice-gate-opening-ratio .
+
+wbs:sluice-gate-status-position-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:sluice-gate ;
+    s223:observes wbs:sluice-gate-status-position .
+
+wbs:storage-basin-level-status-sensor a watr:LevelSensor ;
+    s223:hasObservationLocation wbs:storage-basin ;
+    s223:observes wbs:storage-basin-level-status .
+
+wbs:storage-basin-outlet-cp-flow-rate-sensor a watr:FlowSensor ;
+    s223:hasObservationLocation wbs:storage-basin-outlet-cp ;
+    s223:observes wbs:storage-basin-outlet-cp-flow-rate .
+
+wbs:storage-basin-ph-sensor a watr:pHSensor ;
+    s223:hasObservationLocation wbs:storage-basin ;
+    s223:observes wbs:storage-basin-ph .
+
+wbs:storage-basin-temperature-sensor a watr:TemperatureSensor ;
+    s223:hasObservationLocation wbs:storage-basin ;
+    s223:observes wbs:storage-basin-temperature .
+
+wbs:storage-basin-turbidity-sensor a watr:TurbidityMeter ;
+    s223:hasObservationLocation wbs:storage-basin ;
+    s223:observes wbs:storage-basin-turbidity .
+
+wbs:storage-basin-volume-sensor a watr:VolumeSensor ;
+    s223:hasObservationLocation wbs:storage-basin ;
+    s223:observes wbs:storage-basin-volume .
+
+wbs:wet-weather-screen-in-flow-rate-sensor a watr:FlowSensor ;
+    s223:hasObservationLocation wbs:wet-weather-screen-in ;
+    s223:observes wbs:wet-weather-screen-in-flow-rate .
+
+wbs:wet-weather-screen-status-onoff-sensor a s223:Sensor ;
+    s223:hasObservationLocation wbs:wet-weather-screen ;
+    s223:observes wbs:wet-weather-screen-status-onoff .
+
+wbs:activated-sludge-system a s223:System ;
+    s223:hasMember wbs:as-aeration-basin,
+        wbs:as-secondary-clarifier .
+
+wbs:disinfection-system a s223:System ;
+    s223:hasBoundaryConnectionPoint wbs:chlorine-mixing-chamber-chem-in,
+        wbs:dechlorination-chem-in,
+        wbs:effluent-junction-outlet-cp ;
+    s223:hasMember wbs:chlorine-contact-tank,
+        wbs:chlorine-mixing-chamber,
+        wbs:dechlorination,
+        wbs:effluent-junction,
+        wbs:effluent-pump .
+
+wbs:flow-regulation-system a s223:System ;
+    s223:hasMember wbs:diurnal-flow-box,
+        wbs:flow-return-pump,
+        wbs:return-pump,
+        wbs:sluice-gate .
+
+wbs:headworks-system a s223:System ;
+    s223:hasBoundaryConnectionPoint wbs:influent-pump-in ;
+    s223:hasMember wbs:grinder,
+        wbs:grit-chamber,
+        wbs:headworks-screen,
+        wbs:influent-pump,
+        wbs:primary-clarifier,
+        wbs:primary-effluent-junction,
+        wbs:primary-feed-junction .
+
+wbs:rbc-system a s223:System ;
+    s223:hasMember wbs:rbc-secondary-clarifier,
+        wbs:rbc-unit .
+
+wbs:solids-system a s223:System ;
+    s223:hasBoundaryConnectionPoint wbs:belt-filter-press-out ;
+    s223:hasMember wbs:anaerobic-digester,
+        wbs:belt-filter-press,
+        wbs:daf-thickener,
+        wbs:thickener-feed-junction .
+
+wbs:wet-weather-system a s223:System ;
+    s223:hasBoundaryConnectionPoint wbs:wet-weather-screen-in ;
+    s223:hasMember wbs:storage-basin,
+        wbs:wet-weather-screen .
+
+wbs:anaerobic-digester-ph a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Acidity ;
+    qudt:hasUnit unit:PH .
+
+wbs:anaerobic-digester-temperature a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Temperature .
+
+wbs:anaerobic-digester-volume a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Volume ;
+    qudt:hasUnit unit:GAL_US .
+
+wbs:as-aeration-basin-dissolved-o2 a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance watr:Constituent-DissolvedOxygen ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:as-aeration-basin-mlss-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium watr:Sludge-MixedLiquor ;
+    s223:ofSubstance watr:Constituent-SuspendedSolids ;
+    qudt:hasQuantityKind qudtqk:Density ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:as-aeration-basin-out-nh4-mgL a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance watr:Constituent-Ammonia ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:as-aeration-basin-out-no3-mgL a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance watr:Constituent-Nitrate ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:as-aeration-basin-ph a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Acidity ;
+    qudt:hasUnit unit:PH .
+
+wbs:as-aeration-basin-temperature a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Temperature .
+
+wbs:as-aeration-basin-volume a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Volume ;
+    qudt:hasUnit unit:GAL_US .
+
+wbs:as-secondary-clarifier-level-status a s223:EnumeratedObservableProperty ;
+    s223:hasEnumerationKind s223:Binary-Logical .
+
+wbs:as-secondary-clarifier-out-sludge-tss-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium watr:Fluid-Sludge ;
+    s223:ofSubstance watr:Constituent-SuspendedSolids ;
+    qudt:hasQuantityKind qudtqk:Density ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:as-secondary-clarifier-out-tss-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance watr:Constituent-SuspendedSolids ;
+    qudt:hasQuantityKind qudtqk:Density ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:as-secondary-clarifier-out-turbidity a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Turbidity ;
+    qudt:hasUnit unit:NTU .
+
+wbs:as-secondary-clarifier-volume a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Volume ;
+    qudt:hasUnit unit:GAL_US .
+
+wbs:belt-filter-press-electric-current a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:ElectricCurrent ;
+    qudt:hasUnit unit:A .
+
+wbs:belt-filter-press-in-flow-rate a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate .
+
+wbs:belt-filter-press-out-tss-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium watr:Fluid-Sludge ;
+    s223:ofSubstance watr:Constituent-SuspendedSolids ;
+    qudt:hasQuantityKind qudtqk:Density ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:belt-filter-press-status-onoff a s223:EnumeratedObservableProperty ;
+    s223:hasEnumerationKind s223:Binary-OnOff ;
+    qudt:hasQuantityKind qudtqk:Dimensionless ;
+    qudt:hasUnit unit:UNITLESS .
+
+wbs:chlorine-contact-tank-cl2-mgL a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance watr:Disinfectant-Chlorine ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:chlorine-contact-tank-out-bacteria-enterococcus a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance watr:Constituent-Bacteria ;
+    qudt:hasQuantityKind qudtqk:MicrobialFormation .
+
+wbs:chlorine-contact-tank-out-flow-rate a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate .
+
+wbs:chlorine-contact-tank-ph a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Acidity ;
+    qudt:hasUnit unit:PH .
+
+wbs:chlorine-contact-tank-temperature a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Temperature .
+
+wbs:chlorine-contact-tank-volume a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Volume ;
+    qudt:hasUnit unit:GAL_US .
+
+wbs:chlorine-mixing-chamber-dosing-flow-rate a s223:QuantifiableObservableProperty ;
+    s223:ofMedium watr:Disinfectant-Chlorine ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate ;
+    qudt:hasUnit unit:MilliL-PER-MIN .
+
+wbs:chlorine-mixing-chamber-out-cl2-mgL a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance watr:Disinfectant-Chlorine ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:chlorine-mixing-chamber-out-ph a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Acidity ;
+    qudt:hasUnit unit:PH .
+
+wbs:daf-thickener-in-flow-rate a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate .
+
+wbs:daf-thickener-in-tss-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium watr:Fluid-Sludge ;
+    s223:ofSubstance watr:Constituent-SuspendedSolids ;
+    qudt:hasQuantityKind qudtqk:Density ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:daf-thickener-out-flow-rate a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate .
+
+wbs:daf-thickener-out-tss-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium watr:Fluid-Sludge ;
+    s223:ofSubstance watr:Constituent-SuspendedSolids ;
+    qudt:hasQuantityKind qudtqk:Density ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:dechlorination-dosing-flow-rate a s223:QuantifiableObservableProperty ;
+    s223:ofMedium watr:ReducingAgent ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate ;
+    qudt:hasUnit unit:MilliL-PER-MIN .
+
+wbs:dechlorination-out-cl2-mgL a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance watr:Disinfectant-Chlorine ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:diurnal-flow-box-level-status a s223:EnumeratedObservableProperty ;
+    s223:hasEnumerationKind s223:Binary-Logical .
+
+wbs:diurnal-flow-box-ph a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Acidity ;
+    qudt:hasUnit unit:PH .
+
+wbs:diurnal-flow-box-temperature a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Temperature .
+
+wbs:diurnal-flow-box-turbidity a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Turbidity ;
+    qudt:hasUnit unit:NTU .
+
+wbs:diurnal-flow-box-volume a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Volume ;
+    qudt:hasUnit unit:GAL_US .
+
+wbs:effluent-pump-electric-current a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:ElectricCurrent ;
+    qudt:hasUnit unit:A .
+
+wbs:effluent-pump-fault a s223:EnumeratedObservableProperty ;
+    s223:hasAspect s223:Aspect-Fault ;
+    s223:hasEnumerationKind s223:Binary-Logical .
+
+wbs:effluent-pump-in-pressure a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Pressure .
+
+wbs:effluent-pump-out-biochemical-oxygen-demand a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance watr:Constituent-Organics ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:effluent-pump-out-cl2-mgL a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance watr:Disinfectant-Chlorine ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:effluent-pump-out-copper a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance watr:Constituent-Metals ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
+    qudt:hasUnit unit:MicroGM-PER-L .
+
+wbs:effluent-pump-out-cyanide a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance watr:Constituent-Cyanide ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
+    qudt:hasUnit unit:MicroGM-PER-L .
+
+wbs:effluent-pump-out-flow-rate a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate .
+
+wbs:effluent-pump-out-flow-rate-2 a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate .
+
+wbs:effluent-pump-out-nh4-mgL a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance watr:Constituent-Ammonia ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:effluent-pump-out-ph a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Acidity ;
+    qudt:hasUnit unit:PH .
+
+wbs:effluent-pump-out-pressure a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Pressure .
+
+wbs:effluent-pump-out-teq-dioxin a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance watr:Constituent-Organics ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
+    qudt:hasUnit unit:MicroGM-PER-L .
+
+wbs:effluent-pump-out-tss-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance watr:Constituent-SuspendedSolids ;
+    qudt:hasQuantityKind qudtqk:Density ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:effluent-pump-speed-command a s223:QuantifiableActuatableProperty ;
+    qudt:hasQuantityKind qudtqk:OpeningRatio ;
+    qudt:hasUnit unit:PERCENT .
+
+wbs:effluent-pump-status-onoff a s223:EnumeratedObservableProperty ;
+    s223:hasEnumerationKind s223:Binary-OnOff ;
+    qudt:hasQuantityKind qudtqk:Dimensionless ;
+    qudt:hasUnit unit:UNITLESS .
+
+wbs:flow-return-pump-electric-current a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:ElectricCurrent ;
+    qudt:hasUnit unit:A .
+
+wbs:flow-return-pump-fault a s223:EnumeratedObservableProperty ;
+    s223:hasAspect s223:Aspect-Fault ;
+    s223:hasEnumerationKind s223:Binary-Logical .
+
+wbs:flow-return-pump-in-pressure a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Pressure .
+
+wbs:flow-return-pump-out-flow-rate a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate .
+
+wbs:flow-return-pump-out-pressure a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Pressure .
+
+wbs:flow-return-pump-speed-command a s223:QuantifiableActuatableProperty ;
+    qudt:hasQuantityKind qudtqk:OpeningRatio ;
+    qudt:hasUnit unit:PERCENT .
+
+wbs:flow-return-pump-status-onoff a s223:EnumeratedObservableProperty ;
+    s223:hasEnumerationKind s223:Binary-OnOff ;
+    qudt:hasQuantityKind qudtqk:Dimensionless ;
+    qudt:hasUnit unit:UNITLESS .
+
+wbs:grinder-electric-current a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:ElectricCurrent ;
+    qudt:hasUnit unit:A .
+
+wbs:grinder-fault a s223:EnumeratedObservableProperty ;
+    s223:hasAspect s223:Aspect-Fault ;
+    s223:hasEnumerationKind s223:Binary-Logical .
+
+wbs:grinder-status-onoff a s223:EnumeratedObservableProperty ;
+    s223:hasEnumerationKind s223:Binary-OnOff ;
+    qudt:hasQuantityKind qudtqk:Dimensionless ;
+    qudt:hasUnit unit:UNITLESS .
+
+wbs:grit-chamber-in-flow-rate a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate .
+
+wbs:grit-chamber-level-status a s223:EnumeratedObservableProperty ;
+    s223:hasEnumerationKind s223:Binary-Logical .
+
+wbs:headworks-screen-electric-current a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:ElectricCurrent ;
+    qudt:hasUnit unit:A .
+
+wbs:headworks-screen-fault a s223:EnumeratedObservableProperty ;
+    s223:hasAspect s223:Aspect-Fault ;
+    s223:hasEnumerationKind s223:Binary-Logical .
+
+wbs:headworks-screen-status-onoff a s223:EnumeratedObservableProperty ;
+    s223:hasEnumerationKind s223:Binary-OnOff ;
+    qudt:hasQuantityKind qudtqk:Dimensionless ;
+    qudt:hasUnit unit:UNITLESS .
+
+wbs:influent-pump-electric-current a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:ElectricCurrent ;
+    qudt:hasUnit unit:A .
+
+wbs:influent-pump-fault a s223:EnumeratedObservableProperty ;
+    s223:hasAspect s223:Aspect-Fault ;
+    s223:hasEnumerationKind s223:Binary-Logical .
+
+wbs:influent-pump-in-biochemical-oxygen-demand a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance watr:Constituent-Organics ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:influent-pump-in-cyanide a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance watr:Constituent-Cyanide ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
+    qudt:hasUnit unit:MicroGM-PER-L .
+
+wbs:influent-pump-in-flow-rate a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate .
+
+wbs:influent-pump-in-pressure a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Pressure .
+
+wbs:influent-pump-in-tss-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance watr:Constituent-SuspendedSolids ;
+    qudt:hasQuantityKind qudtqk:Density ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:influent-pump-out-flow-rate a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate .
+
+wbs:influent-pump-out-pressure a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Pressure .
+
+wbs:influent-pump-speed-command a s223:QuantifiableActuatableProperty ;
+    qudt:hasQuantityKind qudtqk:OpeningRatio ;
+    qudt:hasUnit unit:PERCENT .
+
+wbs:influent-pump-status-onoff a s223:EnumeratedObservableProperty ;
+    s223:hasEnumerationKind s223:Binary-OnOff ;
+    qudt:hasQuantityKind qudtqk:Dimensionless ;
+    qudt:hasUnit unit:UNITLESS .
+
+wbs:primary-clarifier-level-status a s223:EnumeratedObservableProperty ;
+    s223:hasEnumerationKind s223:Binary-Logical .
+
+wbs:primary-clarifier-out-sludge-tss-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium watr:Fluid-Sludge ;
+    s223:ofSubstance watr:Constituent-SuspendedSolids ;
+    qudt:hasQuantityKind qudtqk:Density ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:primary-clarifier-out-tss-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance watr:Constituent-SuspendedSolids ;
+    qudt:hasQuantityKind qudtqk:Density ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:primary-clarifier-turbidity a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Turbidity ;
+    qudt:hasUnit unit:NTU .
+
+wbs:primary-clarifier-volume a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Volume ;
+    qudt:hasUnit unit:GAL_US .
+
+wbs:rbc-secondary-clarifier-level-status a s223:EnumeratedObservableProperty ;
+    s223:hasEnumerationKind s223:Binary-Logical .
+
+wbs:rbc-secondary-clarifier-out-sludge-tss-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium watr:Fluid-Sludge ;
+    s223:ofSubstance watr:Constituent-SuspendedSolids ;
+    qudt:hasQuantityKind qudtqk:Density ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:rbc-secondary-clarifier-out-tss-concentration a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance watr:Constituent-SuspendedSolids ;
+    qudt:hasQuantityKind qudtqk:Density ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:rbc-secondary-clarifier-out-turbidity a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Turbidity ;
+    qudt:hasUnit unit:NTU .
+
+wbs:rbc-secondary-clarifier-volume a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Volume ;
+    qudt:hasUnit unit:GAL_US .
+
+wbs:rbc-unit-electric-current a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:ElectricCurrent ;
+    qudt:hasUnit unit:A .
+
+wbs:rbc-unit-out-dissolved-o2 a s223:QuantifiableObservableProperty ;
+    s223:ofMedium s223:Fluid-Water ;
+    s223:ofSubstance watr:Constituent-DissolvedOxygen ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+
+wbs:rbc-unit-status-onoff a s223:EnumeratedObservableProperty ;
+    s223:hasEnumerationKind s223:Binary-OnOff ;
+    qudt:hasQuantityKind qudtqk:Dimensionless ;
+    qudt:hasUnit unit:UNITLESS .
+
+wbs:return-pump-electric-current a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:ElectricCurrent ;
+    qudt:hasUnit unit:A .
+
+wbs:return-pump-fault a s223:EnumeratedObservableProperty ;
+    s223:hasAspect s223:Aspect-Fault ;
+    s223:hasEnumerationKind s223:Binary-Logical .
+
+wbs:return-pump-in-pressure a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Pressure .
+
+wbs:return-pump-out-flow-rate a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate .
+
+wbs:return-pump-out-pressure a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Pressure .
+
+wbs:return-pump-speed-command a s223:QuantifiableActuatableProperty ;
+    qudt:hasQuantityKind qudtqk:OpeningRatio ;
+    qudt:hasUnit unit:PERCENT .
+
+wbs:return-pump-status-onoff a s223:EnumeratedObservableProperty ;
+    s223:hasEnumerationKind s223:Binary-OnOff ;
+    qudt:hasQuantityKind qudtqk:Dimensionless ;
+    qudt:hasUnit unit:UNITLESS .
+
+wbs:sluice-gate-opening-command a s223:QuantifiableActuatableProperty ;
+    qudt:hasQuantityKind qudtqk:OpeningRatio .
+
+wbs:sluice-gate-opening-ratio a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:OpeningRatio .
+
+wbs:sluice-gate-status-position a s223:EnumeratedObservableProperty ;
+    s223:hasEnumerationKind s223:Binary-Position ;
+    qudt:hasQuantityKind qudtqk:Dimensionless ;
+    qudt:hasUnit unit:UNITLESS .
+
+wbs:storage-basin-level-status a s223:EnumeratedObservableProperty ;
+    s223:hasEnumerationKind s223:Binary-Logical .
+
+wbs:storage-basin-outlet-cp-flow-rate a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate .
+
+wbs:storage-basin-ph a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Acidity ;
+    qudt:hasUnit unit:PH .
+
+wbs:storage-basin-temperature a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Temperature .
+
+wbs:storage-basin-turbidity a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Turbidity ;
+    qudt:hasUnit unit:NTU .
+
+wbs:storage-basin-volume a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:Volume ;
+    qudt:hasUnit unit:GAL_US .
+
+wbs:wet-weather-screen-in-flow-rate a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qudtqk:VolumeFlowRate .
+
+wbs:wet-weather-screen-status-onoff a s223:EnumeratedObservableProperty ;
+    s223:hasEnumerationKind s223:Binary-OnOff ;
+    qudt:hasQuantityKind qudtqk:Dimensionless ;
+    qudt:hasUnit unit:UNITLESS .
+
+wbs:anaerobic-digester-in a s223:InletConnectionPoint ;
+    s223:cnx wbs:anaerobic-digester,
+        wbs:conn-daf-thickener-to-anaerobic-digester ;
+    s223:connectsThrough wbs:conn-daf-thickener-to-anaerobic-digester ;
+    s223:hasMedium watr:Fluid-Sludge ;
+    s223:isConnectionPointOf wbs:anaerobic-digester .
+
+wbs:anaerobic-digester-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:anaerobic-digester,
+        wbs:conn-anaerobic-digester-to-belt-filter-press ;
+    s223:connectsThrough wbs:conn-anaerobic-digester-to-belt-filter-press ;
+    s223:hasMedium watr:Fluid-Sludge ;
+    s223:isConnectionPointOf wbs:anaerobic-digester .
+
+wbs:as-aeration-basin-in a s223:InletConnectionPoint ;
+    s223:cnx wbs:as-aeration-basin,
+        wbs:conn-primary-effluent-junction-to-as-aeration-basin ;
+    s223:connectsThrough wbs:conn-primary-effluent-junction-to-as-aeration-basin ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:as-aeration-basin .
+
+wbs:as-secondary-clarifier-in a s223:InletConnectionPoint ;
+    s223:cnx wbs:as-secondary-clarifier,
+        wbs:conn-as-aeration-basin-to-as-secondary-clarifier ;
+    s223:connectsThrough wbs:conn-as-aeration-basin-to-as-secondary-clarifier ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:as-secondary-clarifier .
+
+wbs:chlorine-contact-tank-in a s223:InletConnectionPoint ;
+    s223:cnx wbs:chlorine-contact-tank,
+        wbs:conn-chlorine-mixing-chamber-to-chlorine-contact-tank ;
+    s223:connectsThrough wbs:conn-chlorine-mixing-chamber-to-chlorine-contact-tank ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:chlorine-contact-tank .
+
+wbs:chlorine-mixing-chamber-chem-in a s223:InletConnectionPoint ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:chlorine-mixing-chamber .
+
+wbs:chlorine-mixing-chamber-in a s223:InletConnectionPoint ;
+    s223:cnx wbs:chlorine-mixing-chamber,
+        wbs:conn-as-secondary-clarifier-to-chlorine-mixing-chamber ;
+    s223:connectsThrough wbs:conn-as-secondary-clarifier-to-chlorine-mixing-chamber ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:chlorine-mixing-chamber .
+
+wbs:chlorine-mixing-chamber-inlet-cp a s223:InletConnectionPoint ;
+    s223:cnx wbs:chlorine-mixing-chamber,
+        wbs:conn-rbc-secondary-clarifier-to-chlorine-mixing-chamber ;
+    s223:connectsThrough wbs:conn-rbc-secondary-clarifier-to-chlorine-mixing-chamber ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:chlorine-mixing-chamber .
+
+wbs:chlorine-mixing-chamber-inlet-cp-2 a s223:InletConnectionPoint ;
+    rdfs:label "MPB overflow inlet" ;
+    s223:cnx wbs:chlorine-mixing-chamber,
+        wbs:conn-storage-basin-to-chlorine-mixing-chamber ;
+    s223:connectsThrough wbs:conn-storage-basin-to-chlorine-mixing-chamber ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:chlorine-mixing-chamber .
+
+wbs:dechlorination-chem-in a s223:InletConnectionPoint ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:dechlorination .
+
+wbs:dechlorination-in a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-chlorine-contact-tank-to-dechlorination,
+        wbs:dechlorination ;
+    s223:connectsThrough wbs:conn-chlorine-contact-tank-to-dechlorination ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:dechlorination .
+
+wbs:diurnal-flow-box-in a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-sluice-gate-to-diurnal-flow-box,
+        wbs:diurnal-flow-box ;
+    s223:connectsThrough wbs:conn-sluice-gate-to-diurnal-flow-box ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:diurnal-flow-box .
+
+wbs:diurnal-flow-box-inlet-cp a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-storage-basin-to-diurnal-flow-box,
+        wbs:diurnal-flow-box ;
+    s223:connectsThrough wbs:conn-storage-basin-to-diurnal-flow-box ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:diurnal-flow-box .
+
+wbs:diurnal-flow-box-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-diurnal-flow-box-to-flow-return-pump,
+        wbs:diurnal-flow-box ;
+    s223:connectsThrough wbs:conn-diurnal-flow-box-to-flow-return-pump ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:diurnal-flow-box .
+
+wbs:diurnal-flow-box-outlet-cp a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-diurnal-flow-box-to-return-pump,
+        wbs:diurnal-flow-box ;
+    s223:connectsThrough wbs:conn-diurnal-flow-box-to-return-pump ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:diurnal-flow-box .
+
+wbs:diurnal-flow-box-outlet-cp-2 a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-diurnal-flow-box-to-storage-basin,
+        wbs:diurnal-flow-box ;
+    s223:connectsThrough wbs:conn-diurnal-flow-box-to-storage-basin ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:diurnal-flow-box .
+
+wbs:effluent-junction-inlet-cp a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-effluent-pump-to-effluent-junction,
+        wbs:effluent-junction ;
+    s223:connectsThrough wbs:conn-effluent-pump-to-effluent-junction ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:effluent-junction .
+
+wbs:effluent-junction-outlet-cp a s223:OutletConnectionPoint ;
+    s223:cnx wbs:effluent-junction ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:effluent-junction .
+
+wbs:effluent-junction-outlet-cp-2 a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-effluent-junction-to-storage-basin,
+        wbs:effluent-junction ;
+    s223:connectsThrough wbs:conn-effluent-junction-to-storage-basin ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:effluent-junction .
+
+wbs:grinder-in a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-headworks-screen-to-grinder,
+        wbs:grinder ;
+    s223:connectsThrough wbs:conn-headworks-screen-to-grinder ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:grinder .
+
+wbs:grinder-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-grinder-to-grit-chamber,
+        wbs:grinder ;
+    s223:connectsThrough wbs:conn-grinder-to-grit-chamber ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:grinder .
+
+wbs:grit-chamber-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-grit-chamber-to-primary-feed-junction,
+        wbs:grit-chamber ;
+    s223:connectsThrough wbs:conn-grit-chamber-to-primary-feed-junction ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:grit-chamber .
+
+wbs:headworks-screen-in a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-influent-pump-to-headworks-screen,
+        wbs:headworks-screen ;
+    s223:connectsThrough wbs:conn-influent-pump-to-headworks-screen ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:headworks-screen .
+
+wbs:headworks-screen-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-headworks-screen-to-grinder,
+        wbs:headworks-screen ;
+    s223:connectsThrough wbs:conn-headworks-screen-to-grinder ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:headworks-screen .
+
+wbs:primary-clarifier-in a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-primary-feed-junction-to-primary-clarifier,
+        wbs:primary-clarifier ;
+    s223:connectsThrough wbs:conn-primary-feed-junction-to-primary-clarifier ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:primary-clarifier .
+
+wbs:primary-effluent-junction-inlet-cp a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-primary-clarifier-to-primary-effluent-junction,
+        wbs:primary-effluent-junction ;
+    s223:connectsThrough wbs:conn-primary-clarifier-to-primary-effluent-junction ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:primary-effluent-junction .
+
+wbs:primary-effluent-junction-inlet-cp-2 a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-flow-return-pump-to-primary-effluent-junction,
+        wbs:primary-effluent-junction ;
+    s223:connectsThrough wbs:conn-flow-return-pump-to-primary-effluent-junction ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:primary-effluent-junction .
+
+wbs:primary-effluent-junction-outlet-cp a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-primary-effluent-junction-to-sluice-gate,
+        wbs:primary-effluent-junction ;
+    s223:connectsThrough wbs:conn-primary-effluent-junction-to-sluice-gate ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:primary-effluent-junction .
+
+wbs:primary-effluent-junction-outlet-cp-2 a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-primary-effluent-junction-to-as-aeration-basin,
+        wbs:primary-effluent-junction ;
+    s223:connectsThrough wbs:conn-primary-effluent-junction-to-as-aeration-basin ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:primary-effluent-junction .
+
+wbs:primary-effluent-junction-outlet-cp-3 a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-primary-effluent-junction-to-rbc-unit,
+        wbs:primary-effluent-junction ;
+    s223:connectsThrough wbs:conn-primary-effluent-junction-to-rbc-unit ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:primary-effluent-junction .
+
+wbs:primary-feed-junction-inlet-cp a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-grit-chamber-to-primary-feed-junction,
+        wbs:primary-feed-junction ;
+    s223:connectsThrough wbs:conn-grit-chamber-to-primary-feed-junction ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:primary-feed-junction .
+
+wbs:primary-feed-junction-inlet-cp-2 a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-return-pump-to-primary-feed-junction,
+        wbs:primary-feed-junction ;
+    s223:connectsThrough wbs:conn-return-pump-to-primary-feed-junction ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:primary-feed-junction .
+
+wbs:primary-feed-junction-outlet-cp a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-primary-feed-junction-to-primary-clarifier,
+        wbs:primary-feed-junction ;
+    s223:connectsThrough wbs:conn-primary-feed-junction-to-primary-clarifier ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:primary-feed-junction .
+
+wbs:rbc-secondary-clarifier-in a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-rbc-unit-to-rbc-secondary-clarifier,
+        wbs:rbc-secondary-clarifier ;
+    s223:connectsThrough wbs:conn-rbc-unit-to-rbc-secondary-clarifier ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:rbc-secondary-clarifier .
+
+wbs:rbc-unit-in a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-primary-effluent-junction-to-rbc-unit,
+        wbs:rbc-unit ;
+    s223:connectsThrough wbs:conn-primary-effluent-junction-to-rbc-unit ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:rbc-unit .
+
+wbs:sluice-gate-in a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-primary-effluent-junction-to-sluice-gate,
+        wbs:sluice-gate ;
+    s223:connectsThrough wbs:conn-primary-effluent-junction-to-sluice-gate ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:sluice-gate .
+
+wbs:sluice-gate-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-sluice-gate-to-diurnal-flow-box,
+        wbs:sluice-gate ;
+    s223:connectsThrough wbs:conn-sluice-gate-to-diurnal-flow-box ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:sluice-gate .
+
+wbs:storage-basin-in a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-effluent-junction-to-storage-basin,
+        wbs:storage-basin ;
+    s223:connectsThrough wbs:conn-effluent-junction-to-storage-basin ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:storage-basin .
+
+wbs:storage-basin-inlet-cp a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-wet-weather-screen-to-storage-basin,
+        wbs:storage-basin ;
+    s223:connectsThrough wbs:conn-wet-weather-screen-to-storage-basin ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:storage-basin .
+
+wbs:storage-basin-inlet-cp-2 a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-diurnal-flow-box-to-storage-basin,
+        wbs:storage-basin ;
+    s223:connectsThrough wbs:conn-diurnal-flow-box-to-storage-basin ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:storage-basin .
+
+wbs:storage-basin-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-storage-basin-to-diurnal-flow-box,
+        wbs:storage-basin ;
+    s223:connectsThrough wbs:conn-storage-basin-to-diurnal-flow-box ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:storage-basin .
+
+wbs:thickener-feed-junction-inlet-cp a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-primary-clarifier-to-thickener-feed-junction,
+        wbs:thickener-feed-junction ;
+    s223:connectsThrough wbs:conn-primary-clarifier-to-thickener-feed-junction ;
+    s223:hasMedium watr:Fluid-Sludge ;
+    s223:isConnectionPointOf wbs:thickener-feed-junction .
+
+wbs:thickener-feed-junction-inlet-cp-2 a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-as-secondary-clarifier-to-thickener-feed-junction,
+        wbs:thickener-feed-junction ;
+    s223:connectsThrough wbs:conn-as-secondary-clarifier-to-thickener-feed-junction ;
+    s223:hasMedium watr:Fluid-Sludge ;
+    s223:isConnectionPointOf wbs:thickener-feed-junction .
+
+wbs:thickener-feed-junction-inlet-cp-3 a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-rbc-secondary-clarifier-to-thickener-feed-junction,
+        wbs:thickener-feed-junction ;
+    s223:connectsThrough wbs:conn-rbc-secondary-clarifier-to-thickener-feed-junction ;
+    s223:hasMedium watr:Fluid-Sludge ;
+    s223:isConnectionPointOf wbs:thickener-feed-junction .
+
+wbs:thickener-feed-junction-outlet-cp a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-thickener-feed-junction-to-daf-thickener,
+        wbs:thickener-feed-junction ;
+    s223:connectsThrough wbs:conn-thickener-feed-junction-to-daf-thickener ;
+    s223:hasMedium watr:Fluid-Sludge ;
+    s223:isConnectionPointOf wbs:thickener-feed-junction .
+
+wbs:wet-weather-screen-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-wet-weather-screen-to-storage-basin,
+        wbs:wet-weather-screen ;
+    s223:connectsThrough wbs:conn-wet-weather-screen-to-storage-basin ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:isConnectionPointOf wbs:wet-weather-screen .
+
+wbs:as-secondary-clarifier-out-sludge a s223:OutletConnectionPoint ;
+    s223:cnx wbs:as-secondary-clarifier,
+        wbs:conn-as-secondary-clarifier-to-thickener-feed-junction ;
+    s223:connectsThrough wbs:conn-as-secondary-clarifier-to-thickener-feed-junction ;
+    s223:hasMedium watr:Fluid-Sludge ;
+    s223:hasProperty wbs:as-secondary-clarifier-out-sludge-tss-concentration ;
+    s223:isConnectionPointOf wbs:as-secondary-clarifier .
+
+wbs:belt-filter-press-in a s223:InletConnectionPoint ;
+    s223:cnx wbs:belt-filter-press,
+        wbs:conn-anaerobic-digester-to-belt-filter-press ;
+    s223:connectsThrough wbs:conn-anaerobic-digester-to-belt-filter-press ;
+    s223:hasMedium watr:Fluid-Sludge ;
+    s223:hasProperty wbs:belt-filter-press-in-flow-rate ;
+    s223:isConnectionPointOf wbs:belt-filter-press .
+
+wbs:belt-filter-press-out a s223:OutletConnectionPoint ;
+    s223:hasMedium watr:Fluid-Sludge ;
+    s223:hasProperty wbs:belt-filter-press-out-tss-concentration ;
+    s223:isConnectionPointOf wbs:belt-filter-press .
+
+wbs:dechlorination-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-dechlorination-to-effluent-pump,
+        wbs:dechlorination ;
+    s223:connectsThrough wbs:conn-dechlorination-to-effluent-pump ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty wbs:dechlorination-out-cl2-mgL ;
+    s223:isConnectionPointOf wbs:dechlorination .
+
+wbs:effluent-pump-in a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-dechlorination-to-effluent-pump,
+        wbs:effluent-pump ;
+    s223:connectsThrough wbs:conn-dechlorination-to-effluent-pump ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty wbs:effluent-pump-in-pressure ;
+    s223:isConnectionPointOf wbs:effluent-pump .
+
+wbs:flow-return-pump-in a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-diurnal-flow-box-to-flow-return-pump,
+        wbs:flow-return-pump ;
+    s223:connectsThrough wbs:conn-diurnal-flow-box-to-flow-return-pump ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty wbs:flow-return-pump-in-pressure ;
+    s223:isConnectionPointOf wbs:flow-return-pump .
+
+wbs:grit-chamber-in a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-grinder-to-grit-chamber,
+        wbs:grit-chamber ;
+    s223:connectsThrough wbs:conn-grinder-to-grit-chamber ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty wbs:grit-chamber-in-flow-rate ;
+    s223:isConnectionPointOf wbs:grit-chamber .
+
+wbs:primary-clarifier-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-primary-clarifier-to-primary-effluent-junction,
+        wbs:primary-clarifier ;
+    s223:connectsThrough wbs:conn-primary-clarifier-to-primary-effluent-junction ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty wbs:primary-clarifier-out-tss-concentration ;
+    s223:isConnectionPointOf wbs:primary-clarifier .
+
+wbs:primary-clarifier-out-sludge a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-primary-clarifier-to-thickener-feed-junction,
+        wbs:primary-clarifier ;
+    s223:connectsThrough wbs:conn-primary-clarifier-to-thickener-feed-junction ;
+    s223:hasMedium watr:Fluid-Sludge ;
+    s223:hasProperty wbs:primary-clarifier-out-sludge-tss-concentration ;
+    s223:isConnectionPointOf wbs:primary-clarifier .
+
+wbs:rbc-secondary-clarifier-out-sludge a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-rbc-secondary-clarifier-to-thickener-feed-junction,
+        wbs:rbc-secondary-clarifier ;
+    s223:connectsThrough wbs:conn-rbc-secondary-clarifier-to-thickener-feed-junction ;
+    s223:hasMedium watr:Fluid-Sludge ;
+    s223:hasProperty wbs:rbc-secondary-clarifier-out-sludge-tss-concentration ;
+    s223:isConnectionPointOf wbs:rbc-secondary-clarifier .
+
+wbs:rbc-unit-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-rbc-unit-to-rbc-secondary-clarifier,
+        wbs:rbc-unit ;
+    s223:connectsThrough wbs:conn-rbc-unit-to-rbc-secondary-clarifier ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty wbs:rbc-unit-out-dissolved-o2 ;
+    s223:isConnectionPointOf wbs:rbc-unit .
+
+wbs:return-pump-in a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-diurnal-flow-box-to-return-pump,
+        wbs:return-pump ;
+    s223:connectsThrough wbs:conn-diurnal-flow-box-to-return-pump ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty wbs:return-pump-in-pressure ;
+    s223:isConnectionPointOf wbs:return-pump .
+
+wbs:storage-basin-outlet-cp a s223:OutletConnectionPoint ;
+    rdfs:label "MPB overflow" ;
+    s223:cnx wbs:conn-storage-basin-to-chlorine-mixing-chamber,
+        wbs:storage-basin ;
+    s223:connectsThrough wbs:conn-storage-basin-to-chlorine-mixing-chamber ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty wbs:storage-basin-outlet-cp-flow-rate ;
+    s223:hasRole watr:Role-Overflow ;
+    s223:isConnectionPointOf wbs:storage-basin ;
+    rdfs:comment "Overflow of the multi-purpose storage basins, up to 6 mgd, to the chlorine mixing chamber" .
+
+wbs:wet-weather-screen-in a s223:InletConnectionPoint ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty wbs:wet-weather-screen-in-flow-rate ;
+    s223:isConnectionPointOf wbs:wet-weather-screen .
+
+wbs:as-aeration-basin-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:as-aeration-basin,
+        wbs:conn-as-aeration-basin-to-as-secondary-clarifier ;
+    s223:connectsThrough wbs:conn-as-aeration-basin-to-as-secondary-clarifier ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty wbs:as-aeration-basin-out-nh4-mgL,
+        wbs:as-aeration-basin-out-no3-mgL ;
+    s223:isConnectionPointOf wbs:as-aeration-basin .
+
+wbs:as-secondary-clarifier-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:as-secondary-clarifier,
+        wbs:conn-as-secondary-clarifier-to-chlorine-mixing-chamber ;
+    s223:connectsThrough wbs:conn-as-secondary-clarifier-to-chlorine-mixing-chamber ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty wbs:as-secondary-clarifier-out-tss-concentration,
+        wbs:as-secondary-clarifier-out-turbidity ;
+    s223:isConnectionPointOf wbs:as-secondary-clarifier .
+
+wbs:chlorine-contact-tank-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:chlorine-contact-tank,
+        wbs:conn-chlorine-contact-tank-to-dechlorination ;
+    s223:connectsThrough wbs:conn-chlorine-contact-tank-to-dechlorination ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty wbs:chlorine-contact-tank-out-bacteria-enterococcus,
+        wbs:chlorine-contact-tank-out-flow-rate ;
+    s223:isConnectionPointOf wbs:chlorine-contact-tank .
+
+wbs:chlorine-mixing-chamber-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:chlorine-mixing-chamber,
+        wbs:conn-chlorine-mixing-chamber-to-chlorine-contact-tank ;
+    s223:connectsThrough wbs:conn-chlorine-mixing-chamber-to-chlorine-contact-tank ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty wbs:chlorine-mixing-chamber-out-cl2-mgL,
+        wbs:chlorine-mixing-chamber-out-ph ;
+    s223:isConnectionPointOf wbs:chlorine-mixing-chamber .
+
+wbs:conn-anaerobic-digester-to-belt-filter-press a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:anaerobic-digester-out,
+        wbs:belt-filter-press-in ;
+    s223:connectsAt wbs:anaerobic-digester-out,
+        wbs:belt-filter-press-in ;
+    s223:connectsFrom wbs:anaerobic-digester ;
+    s223:connectsTo wbs:belt-filter-press ;
+    s223:hasMedium watr:Fluid-Sludge .
+
+wbs:conn-as-aeration-basin-to-as-secondary-clarifier a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:as-aeration-basin-out,
+        wbs:as-secondary-clarifier-in ;
+    s223:connectsAt wbs:as-aeration-basin-out,
+        wbs:as-secondary-clarifier-in ;
+    s223:connectsFrom wbs:as-aeration-basin ;
+    s223:connectsTo wbs:as-secondary-clarifier ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-as-secondary-clarifier-to-chlorine-mixing-chamber a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:as-secondary-clarifier-out,
+        wbs:chlorine-mixing-chamber-in ;
+    s223:connectsAt wbs:as-secondary-clarifier-out,
+        wbs:chlorine-mixing-chamber-in ;
+    s223:connectsFrom wbs:as-secondary-clarifier ;
+    s223:connectsTo wbs:chlorine-mixing-chamber ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-as-secondary-clarifier-to-thickener-feed-junction a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:as-secondary-clarifier-out-sludge,
+        wbs:thickener-feed-junction-inlet-cp-2 ;
+    s223:connectsAt wbs:as-secondary-clarifier-out-sludge,
+        wbs:thickener-feed-junction-inlet-cp-2 ;
+    s223:connectsFrom wbs:as-secondary-clarifier ;
+    s223:connectsTo wbs:thickener-feed-junction ;
+    s223:hasMedium watr:Fluid-Sludge .
+
+wbs:conn-chlorine-contact-tank-to-dechlorination a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:chlorine-contact-tank-out,
+        wbs:dechlorination-in ;
+    s223:connectsAt wbs:chlorine-contact-tank-out,
+        wbs:dechlorination-in ;
+    s223:connectsFrom wbs:chlorine-contact-tank ;
+    s223:connectsTo wbs:dechlorination ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-chlorine-mixing-chamber-to-chlorine-contact-tank a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:chlorine-contact-tank-in,
+        wbs:chlorine-mixing-chamber-out ;
+    s223:connectsAt wbs:chlorine-contact-tank-in,
+        wbs:chlorine-mixing-chamber-out ;
+    s223:connectsFrom wbs:chlorine-mixing-chamber ;
+    s223:connectsTo wbs:chlorine-contact-tank ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-daf-thickener-to-anaerobic-digester a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:anaerobic-digester-in,
+        wbs:daf-thickener-out ;
+    s223:connectsAt wbs:anaerobic-digester-in,
+        wbs:daf-thickener-out ;
+    s223:connectsFrom wbs:daf-thickener ;
+    s223:connectsTo wbs:anaerobic-digester ;
+    s223:hasMedium watr:Fluid-Sludge .
+
+wbs:conn-dechlorination-to-effluent-pump a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:dechlorination-out,
+        wbs:effluent-pump-in ;
+    s223:connectsAt wbs:dechlorination-out,
+        wbs:effluent-pump-in ;
+    s223:connectsFrom wbs:dechlorination ;
+    s223:connectsTo wbs:effluent-pump ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-diurnal-flow-box-to-flow-return-pump a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:diurnal-flow-box-out,
+        wbs:flow-return-pump-in ;
+    s223:connectsAt wbs:diurnal-flow-box-out,
+        wbs:flow-return-pump-in ;
+    s223:connectsFrom wbs:diurnal-flow-box ;
+    s223:connectsTo wbs:flow-return-pump ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-diurnal-flow-box-to-return-pump a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:diurnal-flow-box-outlet-cp,
+        wbs:return-pump-in ;
+    s223:connectsAt wbs:diurnal-flow-box-outlet-cp,
+        wbs:return-pump-in ;
+    s223:connectsFrom wbs:diurnal-flow-box ;
+    s223:connectsTo wbs:return-pump ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-diurnal-flow-box-to-storage-basin a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:diurnal-flow-box-outlet-cp-2,
+        wbs:storage-basin-inlet-cp-2 ;
+    s223:connectsAt wbs:diurnal-flow-box-outlet-cp-2,
+        wbs:storage-basin-inlet-cp-2 ;
+    s223:connectsFrom wbs:diurnal-flow-box ;
+    s223:connectsTo wbs:storage-basin ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-effluent-junction-to-storage-basin a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:effluent-junction-outlet-cp-2,
+        wbs:storage-basin-in ;
+    s223:connectsAt wbs:effluent-junction-outlet-cp-2,
+        wbs:storage-basin-in ;
+    s223:connectsFrom wbs:effluent-junction ;
+    s223:connectsTo wbs:storage-basin ;
+    s223:hasMedium s223:Fluid-Water ;
+    rdfs:comment "Wrap-around pipeline: up to 4 mgd of final effluent returned to the multi-purpose storage basins" .
+
+wbs:conn-effluent-pump-to-effluent-junction a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:effluent-junction-inlet-cp,
+        wbs:effluent-pump-out ;
+    s223:connectsAt wbs:effluent-junction-inlet-cp,
+        wbs:effluent-pump-out ;
+    s223:connectsFrom wbs:effluent-pump ;
+    s223:connectsTo wbs:effluent-junction ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-flow-return-pump-to-primary-effluent-junction a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:flow-return-pump-out,
+        wbs:primary-effluent-junction-inlet-cp-2 ;
+    s223:connectsAt wbs:flow-return-pump-out,
+        wbs:primary-effluent-junction-inlet-cp-2 ;
+    s223:connectsFrom wbs:flow-return-pump ;
+    s223:connectsTo wbs:primary-effluent-junction ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-grinder-to-grit-chamber a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:grinder-out,
+        wbs:grit-chamber-in ;
+    s223:connectsAt wbs:grinder-out,
+        wbs:grit-chamber-in ;
+    s223:connectsFrom wbs:grinder ;
+    s223:connectsTo wbs:grit-chamber ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-grit-chamber-to-primary-feed-junction a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:grit-chamber-out,
+        wbs:primary-feed-junction-inlet-cp ;
+    s223:connectsAt wbs:grit-chamber-out,
+        wbs:primary-feed-junction-inlet-cp ;
+    s223:connectsFrom wbs:grit-chamber ;
+    s223:connectsTo wbs:primary-feed-junction ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-headworks-screen-to-grinder a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:grinder-in,
+        wbs:headworks-screen-out ;
+    s223:connectsAt wbs:grinder-in,
+        wbs:headworks-screen-out ;
+    s223:connectsFrom wbs:headworks-screen ;
+    s223:connectsTo wbs:grinder ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-influent-pump-to-headworks-screen a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:headworks-screen-in,
+        wbs:influent-pump-out ;
+    s223:connectsAt wbs:headworks-screen-in,
+        wbs:influent-pump-out ;
+    s223:connectsFrom wbs:influent-pump ;
+    s223:connectsTo wbs:headworks-screen ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-primary-clarifier-to-primary-effluent-junction a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:primary-clarifier-out,
+        wbs:primary-effluent-junction-inlet-cp ;
+    s223:connectsAt wbs:primary-clarifier-out,
+        wbs:primary-effluent-junction-inlet-cp ;
+    s223:connectsFrom wbs:primary-clarifier ;
+    s223:connectsTo wbs:primary-effluent-junction ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-primary-clarifier-to-thickener-feed-junction a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:primary-clarifier-out-sludge,
+        wbs:thickener-feed-junction-inlet-cp ;
+    s223:connectsAt wbs:primary-clarifier-out-sludge,
+        wbs:thickener-feed-junction-inlet-cp ;
+    s223:connectsFrom wbs:primary-clarifier ;
+    s223:connectsTo wbs:thickener-feed-junction ;
+    s223:hasMedium watr:Fluid-Sludge .
+
+wbs:conn-primary-effluent-junction-to-as-aeration-basin a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:as-aeration-basin-in,
+        wbs:primary-effluent-junction-outlet-cp-2 ;
+    s223:connectsAt wbs:as-aeration-basin-in,
+        wbs:primary-effluent-junction-outlet-cp-2 ;
+    s223:connectsFrom wbs:primary-effluent-junction ;
+    s223:connectsTo wbs:as-aeration-basin ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-primary-effluent-junction-to-rbc-unit a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:primary-effluent-junction-outlet-cp-3,
+        wbs:rbc-unit-in ;
+    s223:connectsAt wbs:primary-effluent-junction-outlet-cp-3,
+        wbs:rbc-unit-in ;
+    s223:connectsFrom wbs:primary-effluent-junction ;
+    s223:connectsTo wbs:rbc-unit ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-primary-effluent-junction-to-sluice-gate a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:primary-effluent-junction-outlet-cp,
+        wbs:sluice-gate-in ;
+    s223:connectsAt wbs:primary-effluent-junction-outlet-cp,
+        wbs:sluice-gate-in ;
+    s223:connectsFrom wbs:primary-effluent-junction ;
+    s223:connectsTo wbs:sluice-gate ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-primary-feed-junction-to-primary-clarifier a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:primary-clarifier-in,
+        wbs:primary-feed-junction-outlet-cp ;
+    s223:connectsAt wbs:primary-clarifier-in,
+        wbs:primary-feed-junction-outlet-cp ;
+    s223:connectsFrom wbs:primary-feed-junction ;
+    s223:connectsTo wbs:primary-clarifier ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-rbc-secondary-clarifier-to-chlorine-mixing-chamber a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:chlorine-mixing-chamber-inlet-cp,
+        wbs:rbc-secondary-clarifier-out ;
+    s223:connectsAt wbs:chlorine-mixing-chamber-inlet-cp,
+        wbs:rbc-secondary-clarifier-out ;
+    s223:connectsFrom wbs:rbc-secondary-clarifier ;
+    s223:connectsTo wbs:chlorine-mixing-chamber ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-rbc-secondary-clarifier-to-thickener-feed-junction a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:rbc-secondary-clarifier-out-sludge,
+        wbs:thickener-feed-junction-inlet-cp-3 ;
+    s223:connectsAt wbs:rbc-secondary-clarifier-out-sludge,
+        wbs:thickener-feed-junction-inlet-cp-3 ;
+    s223:connectsFrom wbs:rbc-secondary-clarifier ;
+    s223:connectsTo wbs:thickener-feed-junction ;
+    s223:hasMedium watr:Fluid-Sludge .
+
+wbs:conn-rbc-unit-to-rbc-secondary-clarifier a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:rbc-secondary-clarifier-in,
+        wbs:rbc-unit-out ;
+    s223:connectsAt wbs:rbc-secondary-clarifier-in,
+        wbs:rbc-unit-out ;
+    s223:connectsFrom wbs:rbc-unit ;
+    s223:connectsTo wbs:rbc-secondary-clarifier ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-return-pump-to-primary-feed-junction a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:primary-feed-junction-inlet-cp-2,
+        wbs:return-pump-out ;
+    s223:connectsAt wbs:primary-feed-junction-inlet-cp-2,
+        wbs:return-pump-out ;
+    s223:connectsFrom wbs:return-pump ;
+    s223:connectsTo wbs:primary-feed-junction ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-sluice-gate-to-diurnal-flow-box a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:diurnal-flow-box-in,
+        wbs:sluice-gate-out ;
+    s223:connectsAt wbs:diurnal-flow-box-in,
+        wbs:sluice-gate-out ;
+    s223:connectsFrom wbs:sluice-gate ;
+    s223:connectsTo wbs:diurnal-flow-box ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-storage-basin-to-chlorine-mixing-chamber a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:chlorine-mixing-chamber-inlet-cp-2,
+        wbs:storage-basin-outlet-cp ;
+    s223:connectsAt wbs:chlorine-mixing-chamber-inlet-cp-2,
+        wbs:storage-basin-outlet-cp ;
+    s223:connectsFrom wbs:storage-basin ;
+    s223:connectsTo wbs:chlorine-mixing-chamber ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-storage-basin-to-diurnal-flow-box a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:diurnal-flow-box-inlet-cp,
+        wbs:storage-basin-out ;
+    s223:connectsAt wbs:diurnal-flow-box-inlet-cp,
+        wbs:storage-basin-out ;
+    s223:connectsFrom wbs:storage-basin ;
+    s223:connectsTo wbs:diurnal-flow-box ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:conn-thickener-feed-junction-to-daf-thickener a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:daf-thickener-in,
+        wbs:thickener-feed-junction-outlet-cp ;
+    s223:connectsAt wbs:daf-thickener-in,
+        wbs:thickener-feed-junction-outlet-cp ;
+    s223:connectsFrom wbs:thickener-feed-junction ;
+    s223:connectsTo wbs:daf-thickener ;
+    s223:hasMedium watr:Fluid-Sludge .
+
+wbs:conn-wet-weather-screen-to-storage-basin a s223:Connection,
+        s223:Pipe ;
+    s223:cnx wbs:storage-basin-inlet-cp,
+        wbs:wet-weather-screen-out ;
+    s223:connectsAt wbs:storage-basin-inlet-cp,
+        wbs:wet-weather-screen-out ;
+    s223:connectsFrom wbs:wet-weather-screen ;
+    s223:connectsTo wbs:storage-basin ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:daf-thickener-in a s223:InletConnectionPoint ;
+    s223:cnx wbs:conn-thickener-feed-junction-to-daf-thickener,
+        wbs:daf-thickener ;
+    s223:connectsThrough wbs:conn-thickener-feed-junction-to-daf-thickener ;
+    s223:hasMedium watr:Fluid-Sludge ;
+    s223:hasProperty wbs:daf-thickener-in-flow-rate,
+        wbs:daf-thickener-in-tss-concentration ;
+    s223:isConnectionPointOf wbs:daf-thickener .
+
+wbs:daf-thickener-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-daf-thickener-to-anaerobic-digester,
+        wbs:daf-thickener ;
+    s223:connectsThrough wbs:conn-daf-thickener-to-anaerobic-digester ;
+    s223:hasMedium watr:Fluid-Sludge ;
+    s223:hasProperty wbs:daf-thickener-out-flow-rate,
+        wbs:daf-thickener-out-tss-concentration ;
+    s223:isConnectionPointOf wbs:daf-thickener .
+
+wbs:flow-return-pump-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-flow-return-pump-to-primary-effluent-junction,
+        wbs:flow-return-pump ;
+    s223:connectsThrough wbs:conn-flow-return-pump-to-primary-effluent-junction ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty wbs:flow-return-pump-out-flow-rate,
+        wbs:flow-return-pump-out-pressure ;
+    s223:isConnectionPointOf wbs:flow-return-pump .
+
+wbs:influent-pump-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-influent-pump-to-headworks-screen,
+        wbs:influent-pump ;
+    s223:connectsThrough wbs:conn-influent-pump-to-headworks-screen ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty wbs:influent-pump-out-flow-rate,
+        wbs:influent-pump-out-pressure ;
+    s223:isConnectionPointOf wbs:influent-pump .
+
+wbs:rbc-secondary-clarifier-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-rbc-secondary-clarifier-to-chlorine-mixing-chamber,
+        wbs:rbc-secondary-clarifier ;
+    s223:connectsThrough wbs:conn-rbc-secondary-clarifier-to-chlorine-mixing-chamber ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty wbs:rbc-secondary-clarifier-out-tss-concentration,
+        wbs:rbc-secondary-clarifier-out-turbidity ;
+    s223:isConnectionPointOf wbs:rbc-secondary-clarifier .
+
+wbs:return-pump-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-return-pump-to-primary-feed-junction,
+        wbs:return-pump ;
+    s223:connectsThrough wbs:conn-return-pump-to-primary-feed-junction ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty wbs:return-pump-out-flow-rate,
+        wbs:return-pump-out-pressure ;
+    s223:isConnectionPointOf wbs:return-pump .
+
+wbs:influent-pump-in a s223:InletConnectionPoint ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty wbs:influent-pump-in-biochemical-oxygen-demand,
+        wbs:influent-pump-in-cyanide,
+        wbs:influent-pump-in-flow-rate,
+        wbs:influent-pump-in-pressure,
+        wbs:influent-pump-in-tss-concentration ;
+    s223:isConnectionPointOf wbs:influent-pump .
+
+wbs:wet-weather-screen a watr:Screen ;
+    rdfs:label "Wet Weather Screening Structure" ;
+    s223:cnx wbs:wet-weather-screen-in,
+        wbs:wet-weather-screen-out ;
+    s223:connected wbs:storage-basin ;
+    s223:connectedThrough wbs:conn-wet-weather-screen-to-storage-basin ;
+    s223:connectedTo wbs:storage-basin ;
+    s223:hasConnectionPoint wbs:wet-weather-screen-in,
+        wbs:wet-weather-screen-out ;
+    s223:hasProperty wbs:wet-weather-screen-status-onoff ;
+    rdfs:comment "Screens the influent wet weather relief sewer, maximum wet weather flow 19 mgd, into the multi-purpose storage basins" ;
+    watr:hasProcess watr:Process-Screening ;
+    watr:hasTreatmentObjective watr:TreatmentObjective-SuspendedSolidsRemoval .
+
+wbs:belt-filter-press a watr:BeltFilterPress ;
+    rdfs:label "Belt Filter Press" ;
+    s223:cnx wbs:belt-filter-press-in,
+        wbs:belt-filter-press-out ;
+    s223:connected wbs:anaerobic-digester ;
+    s223:connectedFrom wbs:anaerobic-digester ;
+    s223:connectedThrough wbs:conn-anaerobic-digester-to-belt-filter-press ;
+    s223:hasConnectionPoint wbs:belt-filter-press-in,
+        wbs:belt-filter-press-out ;
+    s223:hasProperty wbs:belt-filter-press-electric-current,
+        wbs:belt-filter-press-status-onoff ;
+    rdfs:comment "Dewatering; the cake outlet is the plant boundary for sludge disposal (hauled offsite)" ;
+    watr:hasProcess watr:Process-Filtration ;
+    watr:hasTreatmentObjective watr:TreatmentObjective-Dewatering .
+
+wbs:influent-pump a watr:Pump ;
+    rdfs:label "Influent Pump Station" ;
+    s223:actuatedByProperty wbs:influent-pump-speed-command ;
+    s223:cnx wbs:influent-pump-out ;
+    s223:connected wbs:headworks-screen ;
+    s223:connectedThrough wbs:conn-influent-pump-to-headworks-screen ;
+    s223:connectedTo wbs:headworks-screen ;
+    s223:hasConnectionPoint wbs:influent-pump-in,
+        wbs:influent-pump-out ;
+    s223:hasProperty wbs:influent-pump-electric-current,
+        wbs:influent-pump-fault,
+        wbs:influent-pump-speed-command,
+        wbs:influent-pump-status-onoff ;
+    rdfs:comment "Influent pump station, firm capacity 12 mgd, lifting the domestic and industrial influent sewers into the plant headworks; monitoring location INF-001 is its inlet" .
+
+wbs:daf-thickener a watr:DissolvedAirFlotationThickener ;
+    rdfs:label "DAF Thickener" ;
+    s223:cnx wbs:daf-thickener-in,
+        wbs:daf-thickener-out ;
+    s223:connected wbs:anaerobic-digester,
+        wbs:thickener-feed-junction ;
+    s223:connectedFrom wbs:thickener-feed-junction ;
+    s223:connectedThrough wbs:conn-daf-thickener-to-anaerobic-digester,
+        wbs:conn-thickener-feed-junction-to-daf-thickener ;
+    s223:connectedTo wbs:anaerobic-digester ;
+    s223:hasConnectionPoint wbs:daf-thickener-in,
+        wbs:daf-thickener-out ;
+    watr:hasProcess watr:Process-Flotation ;
+    watr:hasTreatmentObjective watr:TreatmentObjective-Thickening .
+
+wbs:grit-chamber a watr:GritChamber ;
+    rdfs:label "Grit Chamber" ;
+    s223:cnx wbs:grit-chamber-in,
+        wbs:grit-chamber-out ;
+    s223:connected wbs:grinder,
+        wbs:primary-feed-junction ;
+    s223:connectedFrom wbs:grinder ;
+    s223:connectedThrough wbs:conn-grinder-to-grit-chamber,
+        wbs:conn-grit-chamber-to-primary-feed-junction ;
+    s223:connectedTo wbs:primary-feed-junction ;
+    s223:hasConnectionPoint wbs:grit-chamber-in,
+        wbs:grit-chamber-out ;
+    s223:hasProperty wbs:grit-chamber-level-status ;
+    rdfs:comment "Plant headworks grit removal" ;
+    watr:hasProcess watr:Process-Settling ;
+    watr:hasTreatmentObjective watr:TreatmentObjective-SuspendedSolidsRemoval .
+
+wbs:dechlorination a watr:Reactor ;
+    rdfs:label "Dechlorination" ;
+    s223:cnx wbs:dechlorination-chem-in,
+        wbs:dechlorination-in,
+        wbs:dechlorination-out ;
+    s223:connected wbs:chlorine-contact-tank,
+        wbs:effluent-pump ;
+    s223:connectedFrom wbs:chlorine-contact-tank ;
+    s223:connectedThrough wbs:conn-chlorine-contact-tank-to-dechlorination,
+        wbs:conn-dechlorination-to-effluent-pump ;
+    s223:connectedTo wbs:effluent-pump ;
+    s223:hasConnectionPoint wbs:dechlorination-chem-in,
+        wbs:dechlorination-in,
+        wbs:dechlorination-out ;
+    s223:hasProperty wbs:dechlorination-dosing-flow-rate ;
+    rdfs:comment "Sodium bisulfite dosing point downstream of the chlorine contact tanks; chem-in is the bisulfite feed" ;
+    watr:hasProcess watr:Process-SulfiteDosing ;
+    watr:hasTreatmentObjective watr:TreatmentObjective-ChlorineResidualRemoval .
+
+wbs:effluent-junction a s223:Junction ;
+    rdfs:label "Effluent pump discharge split" ;
+    s223:cnx wbs:effluent-junction-inlet-cp,
+        wbs:effluent-junction-outlet-cp,
+        wbs:effluent-junction-outlet-cp-2 ;
+    s223:connected wbs:effluent-pump,
+        wbs:storage-basin ;
+    s223:connectedFrom wbs:effluent-pump ;
+    s223:connectedThrough wbs:conn-effluent-junction-to-storage-basin,
+        wbs:conn-effluent-pump-to-effluent-junction ;
+    s223:connectedTo wbs:storage-basin ;
+    s223:hasConnectionPoint wbs:effluent-junction-inlet-cp,
+        wbs:effluent-junction-outlet-cp,
+        wbs:effluent-junction-outlet-cp-2 ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:rbc-unit a watr:RotatingBiologicalContactor ;
+    rdfs:label "RBC (1 train)" ;
+    s223:cnx wbs:rbc-unit-in,
+        wbs:rbc-unit-out ;
+    s223:connected wbs:primary-effluent-junction,
+        wbs:rbc-secondary-clarifier ;
+    s223:connectedFrom wbs:primary-effluent-junction ;
+    s223:connectedThrough wbs:conn-primary-effluent-junction-to-rbc-unit,
+        wbs:conn-rbc-unit-to-rbc-secondary-clarifier ;
+    s223:connectedTo wbs:rbc-secondary-clarifier ;
+    s223:hasConnectionPoint wbs:rbc-unit-in,
+        wbs:rbc-unit-out ;
+    s223:hasProperty wbs:rbc-unit-electric-current,
+        wbs:rbc-unit-status-onoff ;
+    rdfs:comment "Rotating biological contactor, one train, maximum flow 3 mgd; takes primary effluent over the 8 mgd activated sludge capacity" ;
+    watr:hasProcess watr:Process-Biofiltration ;
+    watr:hasTreatmentObjective watr:TreatmentObjective-OrganicsRemoval .
+
+wbs:sluice-gate a watr:SluiceGate ;
+    rdfs:label "Diurnal Flow Box Sluice Gate" ;
+    s223:actuatedByProperty wbs:sluice-gate-opening-command ;
+    s223:cnx wbs:sluice-gate-in,
+        wbs:sluice-gate-out ;
+    s223:connected wbs:diurnal-flow-box,
+        wbs:primary-effluent-junction ;
+    s223:connectedFrom wbs:primary-effluent-junction ;
+    s223:connectedThrough wbs:conn-primary-effluent-junction-to-sluice-gate,
+        wbs:conn-sluice-gate-to-diurnal-flow-box ;
+    s223:connectedTo wbs:diurnal-flow-box ;
+    s223:hasConnectionPoint wbs:sluice-gate-in,
+        wbs:sluice-gate-out ;
+    s223:hasProperty wbs:sluice-gate-opening-command,
+        wbs:sluice-gate-opening-ratio,
+        wbs:sluice-gate-status-position ;
+    rdfs:comment "Gate on the primary effluent line into the diurnal flow box" .
+
+wbs:anaerobic-digester a watr:AnaerobicDigester ;
+    rdfs:label "Anaerobic Digesters" ;
+    s223:cnx wbs:anaerobic-digester-in,
+        wbs:anaerobic-digester-out ;
+    s223:connected wbs:belt-filter-press,
+        wbs:daf-thickener ;
+    s223:connectedFrom wbs:daf-thickener ;
+    s223:connectedThrough wbs:conn-anaerobic-digester-to-belt-filter-press,
+        wbs:conn-daf-thickener-to-anaerobic-digester ;
+    s223:connectedTo wbs:belt-filter-press ;
+    s223:hasConnectionPoint wbs:anaerobic-digester-in,
+        wbs:anaerobic-digester-out ;
+    s223:hasProperty wbs:anaerobic-digester-ph,
+        wbs:anaerobic-digester-temperature,
+        wbs:anaerobic-digester-volume ;
+    watr:hasProcess watr:Process-AnaerobicDigestion ;
+    watr:hasTreatmentObjective watr:TreatmentObjective-Stabilization .
+
+wbs:effluent-pump a watr:Pump ;
+    rdfs:label "Effluent Pumps" ;
+    s223:actuatedByProperty wbs:effluent-pump-speed-command ;
+    s223:cnx wbs:effluent-pump-in,
+        wbs:effluent-pump-out ;
+    s223:connected wbs:dechlorination,
+        wbs:effluent-junction ;
+    s223:connectedFrom wbs:dechlorination ;
+    s223:connectedThrough wbs:conn-dechlorination-to-effluent-pump,
+        wbs:conn-effluent-pump-to-effluent-junction ;
+    s223:connectedTo wbs:effluent-junction ;
+    s223:hasConnectionPoint wbs:effluent-pump-in,
+        wbs:effluent-pump-out ;
+    s223:hasProperty wbs:effluent-pump-electric-current,
+        wbs:effluent-pump-fault,
+        wbs:effluent-pump-speed-command,
+        wbs:effluent-pump-status-onoff ;
+    rdfs:comment "Final effluent pump station, 24 mgd maximum capacity; monitoring location EFF-001 is its outlet" .
+
+wbs:flow-return-pump a watr:Pump ;
+    rdfs:label "Flow Return Pump" ;
+    s223:actuatedByProperty wbs:flow-return-pump-speed-command ;
+    s223:cnx wbs:flow-return-pump-in,
+        wbs:flow-return-pump-out ;
+    s223:connected wbs:diurnal-flow-box,
+        wbs:primary-effluent-junction ;
+    s223:connectedFrom wbs:diurnal-flow-box ;
+    s223:connectedThrough wbs:conn-diurnal-flow-box-to-flow-return-pump,
+        wbs:conn-flow-return-pump-to-primary-effluent-junction ;
+    s223:connectedTo wbs:primary-effluent-junction ;
+    s223:hasConnectionPoint wbs:flow-return-pump-in,
+        wbs:flow-return-pump-out ;
+    s223:hasProperty wbs:flow-return-pump-electric-current,
+        wbs:flow-return-pump-fault,
+        wbs:flow-return-pump-speed-command,
+        wbs:flow-return-pump-status-onoff ;
+    rdfs:comment "Returns flow from the diurnal flow box to the primary-effluent split feeding the secondary trains" .
+
+wbs:grinder a watr:Grinder ;
+    rdfs:label "Headworks Grinder" ;
+    s223:cnx wbs:grinder-in,
+        wbs:grinder-out ;
+    s223:connected wbs:grit-chamber,
+        wbs:headworks-screen ;
+    s223:connectedFrom wbs:headworks-screen ;
+    s223:connectedThrough wbs:conn-grinder-to-grit-chamber,
+        wbs:conn-headworks-screen-to-grinder ;
+    s223:connectedTo wbs:grit-chamber ;
+    s223:hasConnectionPoint wbs:grinder-in,
+        wbs:grinder-out ;
+    s223:hasProperty wbs:grinder-electric-current,
+        wbs:grinder-fault,
+        wbs:grinder-status-onoff ;
+    rdfs:comment "Plant headworks grinding" ;
+    watr:hasProcess watr:Process-Comminution .
+
+wbs:headworks-screen a watr:Screen ;
+    rdfs:label "Headworks Screen" ;
+    s223:cnx wbs:headworks-screen-in,
+        wbs:headworks-screen-out ;
+    s223:connected wbs:grinder,
+        wbs:influent-pump ;
+    s223:connectedFrom wbs:influent-pump ;
+    s223:connectedThrough wbs:conn-headworks-screen-to-grinder,
+        wbs:conn-influent-pump-to-headworks-screen ;
+    s223:connectedTo wbs:grinder ;
+    s223:hasConnectionPoint wbs:headworks-screen-in,
+        wbs:headworks-screen-out ;
+    s223:hasProperty wbs:headworks-screen-electric-current,
+        wbs:headworks-screen-fault,
+        wbs:headworks-screen-status-onoff ;
+    rdfs:comment "Plant headworks screening" ;
+    watr:hasProcess watr:Process-Screening ;
+    watr:hasTreatmentObjective watr:TreatmentObjective-SuspendedSolidsRemoval .
+
+wbs:return-pump a watr:Pump ;
+    rdfs:label "Return Pump" ;
+    s223:actuatedByProperty wbs:return-pump-speed-command ;
+    s223:cnx wbs:return-pump-in,
+        wbs:return-pump-out ;
+    s223:connected wbs:diurnal-flow-box,
+        wbs:primary-feed-junction ;
+    s223:connectedFrom wbs:diurnal-flow-box ;
+    s223:connectedThrough wbs:conn-diurnal-flow-box-to-return-pump,
+        wbs:conn-return-pump-to-primary-feed-junction ;
+    s223:connectedTo wbs:primary-feed-junction ;
+    s223:hasConnectionPoint wbs:return-pump-in,
+        wbs:return-pump-out ;
+    s223:hasProperty wbs:return-pump-electric-current,
+        wbs:return-pump-fault,
+        wbs:return-pump-speed-command,
+        wbs:return-pump-status-onoff ;
+    rdfs:comment "Returns up to 6 mgd from the diurnal flow box to the headworks line ahead of the primary sedimentation tanks" .
+
+wbs:chlorine-contact-tank a watr:ChlorinationUnit ;
+    rdfs:label "Chlorine Contact Tanks (2)" ;
+    s223:cnx wbs:chlorine-contact-tank-in,
+        wbs:chlorine-contact-tank-out ;
+    s223:connected wbs:chlorine-mixing-chamber,
+        wbs:dechlorination ;
+    s223:connectedFrom wbs:chlorine-mixing-chamber ;
+    s223:connectedThrough wbs:conn-chlorine-contact-tank-to-dechlorination,
+        wbs:conn-chlorine-mixing-chamber-to-chlorine-contact-tank ;
+    s223:connectedTo wbs:dechlorination ;
+    s223:hasConnectionPoint wbs:chlorine-contact-tank-in,
+        wbs:chlorine-contact-tank-out ;
+    s223:hasProperty wbs:chlorine-contact-tank-cl2-mgL,
+        wbs:chlorine-contact-tank-ph,
+        wbs:chlorine-contact-tank-temperature,
+        wbs:chlorine-contact-tank-volume ;
+    rdfs:comment "Two chlorine contact tanks giving the disinfection contact time; monitoring location EFF-001D is their outlet" ;
+    watr:hasProcess watr:Process-Chlorination ;
+    watr:hasTreatmentObjective watr:TreatmentObjective-Disinfection .
+
+wbs:effluent-pump-out a s223:OutletConnectionPoint ;
+    s223:cnx wbs:conn-effluent-pump-to-effluent-junction,
+        wbs:effluent-pump ;
+    s223:connectsThrough wbs:conn-effluent-pump-to-effluent-junction ;
+    s223:hasMedium s223:Fluid-Water ;
+    s223:hasProperty wbs:effluent-pump-out-biochemical-oxygen-demand,
+        wbs:effluent-pump-out-cl2-mgL,
+        wbs:effluent-pump-out-copper,
+        wbs:effluent-pump-out-cyanide,
+        wbs:effluent-pump-out-flow-rate,
+        wbs:effluent-pump-out-flow-rate-2,
+        wbs:effluent-pump-out-nh4-mgL,
+        wbs:effluent-pump-out-ph,
+        wbs:effluent-pump-out-pressure,
+        wbs:effluent-pump-out-teq-dioxin,
+        wbs:effluent-pump-out-tss-concentration ;
+    s223:isConnectionPointOf wbs:effluent-pump .
+
+wbs:as-aeration-basin a watr:AerationBasin ;
+    rdfs:label "Aeration Basins (2)" ;
+    s223:cnx wbs:as-aeration-basin-in,
+        wbs:as-aeration-basin-out ;
+    s223:connected wbs:as-secondary-clarifier,
+        wbs:primary-effluent-junction ;
+    s223:connectedFrom wbs:primary-effluent-junction ;
+    s223:connectedThrough wbs:conn-as-aeration-basin-to-as-secondary-clarifier,
+        wbs:conn-primary-effluent-junction-to-as-aeration-basin ;
+    s223:connectedTo wbs:as-secondary-clarifier ;
+    s223:hasConnectionPoint wbs:as-aeration-basin-in,
+        wbs:as-aeration-basin-out ;
+    s223:hasProperty wbs:as-aeration-basin-dissolved-o2,
+        wbs:as-aeration-basin-mlss-concentration,
+        wbs:as-aeration-basin-ph,
+        wbs:as-aeration-basin-temperature,
+        wbs:as-aeration-basin-volume ;
+    s223:hasRole watr:Role-Aerobic ;
+    rdfs:comment "Two aeration basins of the activated sludge train, maximum flow 8 mgd" ;
+    watr:hasProcess watr:Process-Aeration ;
+    watr:hasTreatmentObjective watr:TreatmentObjective-OrganicsRemoval .
+
+wbs:primary-feed-junction a s223:Junction ;
+    rdfs:label "Primary feed header" ;
+    s223:cnx wbs:primary-feed-junction-inlet-cp,
+        wbs:primary-feed-junction-inlet-cp-2,
+        wbs:primary-feed-junction-outlet-cp ;
+    s223:connected wbs:grit-chamber,
+        wbs:primary-clarifier,
+        wbs:return-pump ;
+    s223:connectedFrom wbs:grit-chamber,
+        wbs:return-pump ;
+    s223:connectedThrough wbs:conn-grit-chamber-to-primary-feed-junction,
+        wbs:conn-primary-feed-junction-to-primary-clarifier,
+        wbs:conn-return-pump-to-primary-feed-junction ;
+    s223:connectedTo wbs:primary-clarifier ;
+    s223:hasConnectionPoint wbs:primary-feed-junction-inlet-cp,
+        wbs:primary-feed-junction-inlet-cp-2,
+        wbs:primary-feed-junction-outlet-cp ;
+    s223:hasMedium s223:Fluid-Water .
+
+wbs:as-secondary-clarifier a watr:Clarifier ;
+    rdfs:label "A/S Secondary Clarifiers (2)" ;
+    s223:cnx wbs:as-secondary-clarifier-in,
+        wbs:as-secondary-clarifier-out,
+        wbs:as-secondary-clarifier-out-sludge ;
+    s223:connected wbs:as-aeration-basin,
+        wbs:chlorine-mixing-chamber,
+        wbs:thickener-feed-junction ;
+    s223:connectedFrom wbs:as-aeration-basin ;
+    s223:connectedThrough wbs:conn-as-aeration-basin-to-as-secondary-clarifier,
+        wbs:conn-as-secondary-clarifier-to-chlorine-mixing-chamber,
+        wbs:conn-as-secondary-clarifier-to-thickener-feed-junction ;
+    s223:connectedTo wbs:chlorine-mixing-chamber,
+        wbs:thickener-feed-junction ;
+    s223:hasConnectionPoint wbs:as-secondary-clarifier-in,
+        wbs:as-secondary-clarifier-out,
+        wbs:as-secondary-clarifier-out-sludge ;
+    s223:hasProperty wbs:as-secondary-clarifier-level-status,
+        wbs:as-secondary-clarifier-volume ;
+    s223:hasRole watr:Role-Secondary ;
+    rdfs:comment "Two secondary clarifiers of the activated sludge train; waste activated sludge goes to the thickener" ;
+    watr:hasProcess watr:Process-Settling ;
+    watr:hasTreatmentObjective watr:TreatmentObjective-Clarification .
+
+wbs:rbc-secondary-clarifier a watr:Clarifier ;
+    rdfs:label "RBC Secondary Clarifiers (3)" ;
+    s223:cnx wbs:rbc-secondary-clarifier-in,
+        wbs:rbc-secondary-clarifier-out,
+        wbs:rbc-secondary-clarifier-out-sludge ;
+    s223:connected wbs:chlorine-mixing-chamber,
+        wbs:rbc-unit,
+        wbs:thickener-feed-junction ;
+    s223:connectedFrom wbs:rbc-unit ;
+    s223:connectedThrough wbs:conn-rbc-secondary-clarifier-to-chlorine-mixing-chamber,
+        wbs:conn-rbc-secondary-clarifier-to-thickener-feed-junction,
+        wbs:conn-rbc-unit-to-rbc-secondary-clarifier ;
+    s223:connectedTo wbs:chlorine-mixing-chamber,
+        wbs:thickener-feed-junction ;
+    s223:hasConnectionPoint wbs:rbc-secondary-clarifier-in,
+        wbs:rbc-secondary-clarifier-out,
+        wbs:rbc-secondary-clarifier-out-sludge ;
+    s223:hasProperty wbs:rbc-secondary-clarifier-level-status,
+        wbs:rbc-secondary-clarifier-volume ;
+    s223:hasRole watr:Role-Secondary ;
+    rdfs:comment "Three secondary clarifiers following the rotating biological contactor" ;
+    watr:hasProcess watr:Process-Settling ;
+    watr:hasTreatmentObjective watr:TreatmentObjective-Clarification .
+
+wbs:primary-clarifier a watr:Clarifier ;
+    rdfs:label "Primary Sedimentation Tanks (4)" ;
+    s223:cnx wbs:primary-clarifier-in,
+        wbs:primary-clarifier-out,
+        wbs:primary-clarifier-out-sludge ;
+    s223:connected wbs:primary-effluent-junction,
+        wbs:primary-feed-junction,
+        wbs:thickener-feed-junction ;
+    s223:connectedFrom wbs:primary-feed-junction ;
+    s223:connectedThrough wbs:conn-primary-clarifier-to-primary-effluent-junction,
+        wbs:conn-primary-clarifier-to-thickener-feed-junction,
+        wbs:conn-primary-feed-junction-to-primary-clarifier ;
+    s223:connectedTo wbs:primary-effluent-junction,
+        wbs:thickener-feed-junction ;
+    s223:hasConnectionPoint wbs:primary-clarifier-in,
+        wbs:primary-clarifier-out,
+        wbs:primary-clarifier-out-sludge ;
+    s223:hasProperty wbs:primary-clarifier-level-status,
+        wbs:primary-clarifier-turbidity,
+        wbs:primary-clarifier-volume ;
+    s223:hasRole watr:Role-Primary ;
+    rdfs:comment "Four primary sedimentation tanks, maximum hydraulic flow 18 mgd; primary sludge goes to the thickener" ;
+    watr:hasProcess watr:Process-Settling ;
+    watr:hasTreatmentObjective watr:TreatmentObjective-Clarification .
+
+wbs:thickener-feed-junction a s223:Junction ;
+    rdfs:label "Thickener feed header" ;
+    s223:cnx wbs:thickener-feed-junction-inlet-cp,
+        wbs:thickener-feed-junction-inlet-cp-2,
+        wbs:thickener-feed-junction-inlet-cp-3,
+        wbs:thickener-feed-junction-outlet-cp ;
+    s223:connected wbs:as-secondary-clarifier,
+        wbs:daf-thickener,
+        wbs:primary-clarifier,
+        wbs:rbc-secondary-clarifier ;
+    s223:connectedFrom wbs:as-secondary-clarifier,
+        wbs:primary-clarifier,
+        wbs:rbc-secondary-clarifier ;
+    s223:connectedThrough wbs:conn-as-secondary-clarifier-to-thickener-feed-junction,
+        wbs:conn-primary-clarifier-to-thickener-feed-junction,
+        wbs:conn-rbc-secondary-clarifier-to-thickener-feed-junction,
+        wbs:conn-thickener-feed-junction-to-daf-thickener ;
+    s223:connectedTo wbs:daf-thickener ;
+    s223:hasConnectionPoint wbs:thickener-feed-junction-inlet-cp,
+        wbs:thickener-feed-junction-inlet-cp-2,
+        wbs:thickener-feed-junction-inlet-cp-3,
+        wbs:thickener-feed-junction-outlet-cp ;
+    s223:hasMedium watr:Fluid-Sludge .
+
+wbs:chlorine-mixing-chamber a watr:StaticMixer ;
+    rdfs:label "Chlorine Mixing Chamber" ;
+    s223:cnx wbs:chlorine-mixing-chamber-chem-in,
+        wbs:chlorine-mixing-chamber-in,
+        wbs:chlorine-mixing-chamber-inlet-cp,
+        wbs:chlorine-mixing-chamber-inlet-cp-2,
+        wbs:chlorine-mixing-chamber-out ;
+    s223:connected wbs:as-secondary-clarifier,
+        wbs:chlorine-contact-tank,
+        wbs:rbc-secondary-clarifier,
+        wbs:storage-basin ;
+    s223:connectedFrom wbs:as-secondary-clarifier,
+        wbs:rbc-secondary-clarifier,
+        wbs:storage-basin ;
+    s223:connectedThrough wbs:conn-as-secondary-clarifier-to-chlorine-mixing-chamber,
+        wbs:conn-chlorine-mixing-chamber-to-chlorine-contact-tank,
+        wbs:conn-rbc-secondary-clarifier-to-chlorine-mixing-chamber,
+        wbs:conn-storage-basin-to-chlorine-mixing-chamber ;
+    s223:connectedTo wbs:chlorine-contact-tank ;
+    s223:hasConnectionPoint wbs:chlorine-mixing-chamber-chem-in,
+        wbs:chlorine-mixing-chamber-in,
+        wbs:chlorine-mixing-chamber-inlet-cp,
+        wbs:chlorine-mixing-chamber-inlet-cp-2,
+        wbs:chlorine-mixing-chamber-out ;
+    s223:hasProperty wbs:chlorine-mixing-chamber-dosing-flow-rate ;
+    rdfs:comment "Static mixing chamber where chlorine is dosed into the combined secondary effluent; chem-in is the chlorine feed" ;
+    watr:hasProcess watr:Process-Chlorination,
+        watr:Process-Mixing .
+
+wbs:primary-effluent-junction a s223:Junction ;
+    rdfs:label "Primary effluent split" ;
+    s223:cnx wbs:primary-effluent-junction-inlet-cp,
+        wbs:primary-effluent-junction-inlet-cp-2,
+        wbs:primary-effluent-junction-outlet-cp,
+        wbs:primary-effluent-junction-outlet-cp-2,
+        wbs:primary-effluent-junction-outlet-cp-3 ;
+    s223:connected wbs:as-aeration-basin,
+        wbs:flow-return-pump,
+        wbs:primary-clarifier,
+        wbs:rbc-unit,
+        wbs:sluice-gate ;
+    s223:connectedFrom wbs:flow-return-pump,
+        wbs:primary-clarifier ;
+    s223:connectedThrough wbs:conn-flow-return-pump-to-primary-effluent-junction,
+        wbs:conn-primary-clarifier-to-primary-effluent-junction,
+        wbs:conn-primary-effluent-junction-to-as-aeration-basin,
+        wbs:conn-primary-effluent-junction-to-rbc-unit,
+        wbs:conn-primary-effluent-junction-to-sluice-gate ;
+    s223:connectedTo wbs:as-aeration-basin,
+        wbs:rbc-unit,
+        wbs:sluice-gate ;
+    s223:hasConnectionPoint wbs:primary-effluent-junction-inlet-cp,
+        wbs:primary-effluent-junction-inlet-cp-2,
+        wbs:primary-effluent-junction-outlet-cp,
+        wbs:primary-effluent-junction-outlet-cp-2,
+        wbs:primary-effluent-junction-outlet-cp-3 ;
+    s223:hasMedium s223:Fluid-Water ;
+    rdfs:comment "Primary effluent plus the flow return pump stream, split to the activated sludge train (8 mgd), the RBC train (3 mgd) and the diurnal flow box" .
+
+wbs:diurnal-flow-box a watr:Tank ;
+    rdfs:label "Diurnal Flow Box" ;
+    s223:cnx wbs:diurnal-flow-box-in,
+        wbs:diurnal-flow-box-inlet-cp,
+        wbs:diurnal-flow-box-out,
+        wbs:diurnal-flow-box-outlet-cp,
+        wbs:diurnal-flow-box-outlet-cp-2 ;
+    s223:connected wbs:flow-return-pump,
+        wbs:return-pump,
+        wbs:sluice-gate,
+        wbs:storage-basin ;
+    s223:connectedFrom wbs:sluice-gate,
+        wbs:storage-basin ;
+    s223:connectedThrough wbs:conn-diurnal-flow-box-to-flow-return-pump,
+        wbs:conn-diurnal-flow-box-to-return-pump,
+        wbs:conn-diurnal-flow-box-to-storage-basin,
+        wbs:conn-sluice-gate-to-diurnal-flow-box,
+        wbs:conn-storage-basin-to-diurnal-flow-box ;
+    s223:connectedTo wbs:flow-return-pump,
+        wbs:return-pump,
+        wbs:storage-basin ;
+    s223:hasConnectionPoint wbs:diurnal-flow-box-in,
+        wbs:diurnal-flow-box-inlet-cp,
+        wbs:diurnal-flow-box-out,
+        wbs:diurnal-flow-box-outlet-cp,
+        wbs:diurnal-flow-box-outlet-cp-2 ;
+    s223:hasProperty wbs:diurnal-flow-box-level-status,
+        wbs:diurnal-flow-box-ph,
+        wbs:diurnal-flow-box-temperature,
+        wbs:diurnal-flow-box-turbidity,
+        wbs:diurnal-flow-box-volume ;
+    s223:hasRole watr:Role-Equalization ;
+    rdfs:comment "Flow equalization box between the primary effluent split and the multi-purpose storage basins" .
+
+wbs:storage-basin a watr:Tank ;
+    rdfs:label "Multi-purpose Storage Basins (7)" ;
+    s223:cnx wbs:storage-basin-in,
+        wbs:storage-basin-inlet-cp,
+        wbs:storage-basin-inlet-cp-2,
+        wbs:storage-basin-out,
+        wbs:storage-basin-outlet-cp ;
+    s223:connected wbs:chlorine-mixing-chamber,
+        wbs:diurnal-flow-box,
+        wbs:effluent-junction,
+        wbs:wet-weather-screen ;
+    s223:connectedFrom wbs:diurnal-flow-box,
+        wbs:effluent-junction,
+        wbs:wet-weather-screen ;
+    s223:connectedThrough wbs:conn-diurnal-flow-box-to-storage-basin,
+        wbs:conn-effluent-junction-to-storage-basin,
+        wbs:conn-storage-basin-to-chlorine-mixing-chamber,
+        wbs:conn-storage-basin-to-diurnal-flow-box,
+        wbs:conn-wet-weather-screen-to-storage-basin ;
+    s223:connectedTo wbs:chlorine-mixing-chamber,
+        wbs:diurnal-flow-box ;
+    s223:hasConnectionPoint wbs:storage-basin-in,
+        wbs:storage-basin-inlet-cp,
+        wbs:storage-basin-inlet-cp-2,
+        wbs:storage-basin-out,
+        wbs:storage-basin-outlet-cp ;
+    s223:hasProperty wbs:storage-basin-level-status,
+        wbs:storage-basin-ph,
+        wbs:storage-basin-temperature,
+        wbs:storage-basin-turbidity,
+        wbs:storage-basin-volume ;
+    s223:hasRole watr:Role-Equalization,
+        watr:Role-Storage ;
+    rdfs:comment "Seven flow equalization and storage basins, 1 million gallons in all, that take wet-weather flow, diurnal flow box exchange and returned final effluent and overflow to the chlorine mixing chamber" .
+
