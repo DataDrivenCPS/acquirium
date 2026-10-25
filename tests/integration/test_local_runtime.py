@@ -49,6 +49,13 @@ def test_concurrent_start_attach_exit_and_restart(tmp_path, monkeypatch, configu
             info.append(json.loads(line))
         assert sum(item["owner"] for item in info) == 1
         assert info[0]["address"] == info[1]["address"]
+        # Discovery trusts a registry only when its server answers with the same token.
+        registry = json.loads((root / ".runtime" / "server.json").read_text())
+        assert runtime._discover(root / ".runtime") == registry
+        forged = tmp_path / "forged"
+        forged.mkdir()
+        (forged / "server.json").write_text(json.dumps({**registry, "token": "other"}))
+        assert runtime._discover(forged) is None
         owner = processes[next(i for i, item in enumerate(info) if item["owner"])]
         attached = processes[next(i for i, item in enumerate(info) if not item["owner"])]
         attached.communicate("exit\n", timeout=45)
