@@ -7,21 +7,29 @@ import polars as pl
 import pytest
 from requests import HTTPError
 
-from tests.local_server import local_acquirium_server, reset_experiments
+import acquirium as aq
+from tests.local_server import acquirium_without_experiments, local_server_storage
 
 WHEN = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
 @pytest.fixture(scope="module", params=["duckdb", "timescale"])
-def backend_server(request, tmp_path_factory):
-    with local_acquirium_server(tmp_path_factory.mktemp(request.param), request.param) as ac:
-        yield ac
+def backend(request, local_acquirium, tmp_path_factory):
+    """Options for the shared DuckDB server, or for one on a Timescale schema."""
+    if request.param == "duckdb":
+        yield local_acquirium
+        return
+    with local_server_storage(tmp_path_factory.mktemp("timescale"), "timescale") as (options, _):
+        aq.shutdown()
+        try:
+            yield options
+        finally:
+            aq.shutdown()
 
 
 @pytest.fixture
-def ac(backend_server):
-    reset_experiments(backend_server.client)
-    return backend_server
+def ac(backend):
+    return acquirium_without_experiments(backend)
 
 
 def _declare(client, template_id, label, role, kind, metadata=None):

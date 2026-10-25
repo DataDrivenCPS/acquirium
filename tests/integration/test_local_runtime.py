@@ -8,6 +8,8 @@ import pytest
 import acquirium as aq
 from acquirium import runtime
 
+pytestmark = pytest.mark.usefixtures("separate_server")
+
 
 SCRIPT = """
 import json, sys

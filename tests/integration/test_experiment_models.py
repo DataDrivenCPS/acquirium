@@ -7,6 +7,8 @@ from requests import HTTPError
 
 import acquirium as aq
 
+pytestmark = pytest.mark.usefixtures("separate_server")
+
 
 @pytest.mark.integration
 def test_model_sweep_roundtrip_request_budget_and_keyed_deletion(tmp_path, monkeypatch):

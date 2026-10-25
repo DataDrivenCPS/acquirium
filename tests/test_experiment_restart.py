@@ -15,7 +15,7 @@ def _declare(client, template_id, label, role, kind, metadata=None):
 
 
 @pytest.fixture(params=["duckdb", "timescale"])
-def storage(request, tmp_path):
+def storage(request, tmp_path, separate_server):
     with local_server_storage(tmp_path, request.param) as storage:
         yield storage
 

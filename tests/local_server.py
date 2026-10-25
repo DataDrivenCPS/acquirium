@@ -46,16 +46,18 @@ def local_server_storage(directory, backend="duckdb"):
             conn.execute(f'DROP SCHEMA "{schema}" CASCADE')
 
 
-@contextmanager
-def local_acquirium_server(directory, backend="duckdb"):
-    """Run a local server started with aq.init(), the way scripts do."""
+def acquirium_without_experiments(options):
+    """The local server for ``options``, with no Studies or runs.
+
+    aq.init() returns the server already running for these options, or starts
+    it again on the same data after a test that needed its own server stopped
+    it.
+    """
     import acquirium as aq
 
-    with local_server_storage(directory, backend) as (options, _):
-        try:
-            yield aq.init(**options)
-        finally:
-            aq.shutdown()
+    ac = aq.init(**options)
+    reset_experiments(ac.client)
+    return ac
 
 
 def reset_experiments(client):
