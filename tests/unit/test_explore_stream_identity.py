@@ -1,4 +1,4 @@
-"""Stream identity columns, ``measurement(ref=)``, and deferred stats (no server)."""
+"""Stream identity columns, ``measurement(ref=)``, and skipped stats (no server)."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -101,19 +101,22 @@ class TestBindings:
         assert client.timeseries_info_batch.call_count == 1
         assert {b.row_count for b in d.bindings} == {5}
 
-    def test_stats_off_defers_until_read(self):
+    def test_stats_off_leaves_stats_none(self):
         client = _client(ROWS)
         d = q(client).measurement().data(stats=False)
-        assert {(b.row_count, b.earliest, b.latest) for b in d.bindings} == {(0, None, None)}
+        assert {(b.row_count, b.earliest, b.latest) for b in d.bindings} == {(None, None, None)}
         d.metadata(include_ref_uris=True)
         assert "stats not fetched" in repr(d)
         client.timeseries_info_batch.assert_not_called()
 
-        assert d.total_rows == 10
-        assert d.time_range == (T0, T0)
-        assert not d.is_empty()
-        assert client.timeseries_info_batch.call_count == 1
-        assert {b.row_count for b in d.bindings} == {5}
+    @pytest.mark.parametrize("read", [
+        lambda d: d.total_rows, lambda d: d.time_range, lambda d: d.is_empty()])
+    def test_stats_off_readers_raise_without_scanning(self, read):
+        client = _client(ROWS)
+        d = q(client).measurement().data(stats=False)
+        with pytest.raises(RuntimeError, match="stats=True"):
+            read(d)
+        client.timeseries_info_batch.assert_not_called()
 
     def test_stats_off_carries_through_by_and_convert_to(self):
         client = _client(ROWS)
@@ -123,8 +126,10 @@ class TestBindings:
         d = q(client).measurement().data(stats=False)
         converted = d.convert_to("urn:unit#W", from_unit="urn:unit#KW")
         assert converted._stats_loaded is False
-        assert converted.total_rows == 10
-        client.timeseries_info_batch.assert_called_once()
+        with pytest.raises(RuntimeError):
+            converted.total_rows
+        assert all(b.row_count is None for b in converted.bindings)
+        client.timeseries_info_batch.assert_not_called()
 
     def test_metadata_ref_columns(self):
         d = q(_client(ROWS)).measurement().data(stats=False)

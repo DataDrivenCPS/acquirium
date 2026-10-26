@@ -294,8 +294,9 @@ class BindingInfo:
     """Lightweight metadata for a single (nid, point_uri, ref_uri) data binding.
 
     ``row_count`` / ``earliest`` / ``latest`` come from the time-series
-    store; after ``Query.data(stats=False)`` they stay ``0`` / ``None``
-    (unknown, not empty). ``source_id`` / ``ref_name`` are the reference's
+    store, as a snapshot taken when ``Query.data()`` ran; after
+    ``Query.data(stats=False)`` all three are ``None`` (not fetched, which
+    is not the same as empty). ``source_id`` / ``ref_name`` are the reference's
     ``acq:sourceId`` / ``acq:refName``, the pair ``ac.stream(source_id,
     ref_name)`` takes; ``None`` on a reference written without them.
     """
@@ -304,7 +305,7 @@ class BindingInfo:
     ref_uri: str
     alias: str
     entity_contexts: list[dict[str, str]]
-    row_count: int = 0
+    row_count: int | None = 0           # None: stats not fetched
     earliest: datetime | None = None
     latest: datetime | None = None
     property_unit: str | None = None    # unit URI from qudt:hasUnit on the property
@@ -334,11 +335,12 @@ class DataObject:
     """Lazy, alias-driven structured access to sensor data.
 
     On construction only SPARQL metadata and per-series stats (row count,
-    time range) are fetched; with ``Query.data(stats=False)`` the stats
-    are fetched the first time ``total_rows``, ``time_range`` or
-    ``is_empty()`` needs them.  The actual time-series data is materialized
-    on demand when ``__getitem__``, ``dataframe()``, ``iter()``, or
-    ``latest()`` are called.
+    time range) are fetched.  The stats are a snapshot taken at that point
+    and are never refreshed; ``Query.data(stats=False)`` skips them, and
+    then ``total_rows``, ``time_range`` and (before materialization)
+    ``is_empty()`` raise rather than scan the samples.  The actual
+    time-series data is materialized on demand when ``__getitem__``,
+    ``dataframe()``, ``iter()``, or ``latest()`` are called.
 
     Lightweight operations such as ``aliases``, ``metadata()``,
     ``is_empty()``, ``total_rows``, ``time_range``, and ``by()`` all work
@@ -359,7 +361,7 @@ class DataObject:
     _metadata_df: pl.DataFrame | None = field(default=None, repr=False)
 
     # False after Query.data(stats=False): the bindings' row_count /
-    # earliest / latest are unknown until _ensure_stats() fetches them
+    # earliest / latest are None and the stats readers raise
     _stats_loaded: bool = field(default=True, repr=False)
 
     # Pending unit conversions: list of (alias_pattern, from_unit, to_unit)
@@ -444,10 +446,11 @@ class DataObject:
                 point_label=point_labels.get(key),
                 source_id=source_ids.get(key),
                 ref_name=ref_names.get(key),
+                row_count=0 if stats else None,
             ))
 
         # Fetch stats for all ref_uris in one batch request (a scan of every
-        # matched stream's samples), unless the caller deferred them
+        # matched stream's samples), unless the caller skipped them
         if stats:
             bindings = _with_stats(bindings, query.client)
 
@@ -469,13 +472,13 @@ class DataObject:
             _stats_loaded=stats,
         )
 
-    def _ensure_stats(self) -> None:
-        """Fetch the bindings' row_count / earliest / latest if deferred. Idempotent."""
-        if self._stats_loaded:
-            return
-        if self._bindings and self._client is not None:
-            self._bindings = _with_stats(self._bindings, self._client)
-        self._stats_loaded = True
+    def _require_stats(self, what: str) -> None:
+        """Raise if the stats were skipped; never fetches them (a full sample scan)."""
+        if not self._stats_loaded:
+            raise RuntimeError(
+                f"{what} needs stream statistics, which were not fetched "
+                f"(Query.data(stats=False)); call Query.data() with stats=True"
+            )
 
     # ------------------------------------------------------------------
     # Materialization
@@ -1042,10 +1045,15 @@ class DataObject:
         return subset.sort("time", descending=True).head(1).select("time", "value")
 
     def is_empty(self) -> bool:
-        """Check if there is any data (fetches deferred stats when not materialized)."""
+        """Check if there is any data.
+
+        Before materialization this reads the stats, so it raises after
+        ``Query.data(stats=False)``; once the data is materialized it checks
+        the loaded rows.
+        """
         if self._materialized:
             return self._tall.is_empty()
-        self._ensure_stats()
+        self._require_stats("is_empty()")
         return all(b.row_count == 0 for b in self._bindings)
 
     # ------------------------------------------------------------------
@@ -1056,18 +1064,20 @@ class DataObject:
     def total_rows(self) -> int:
         """Total row count across all bindings (from stats, no materialization).
 
-        After ``Query.data(stats=False)`` the first read fetches the stats.
+        A snapshot from when ``Query.data()`` ran; raises after
+        ``Query.data(stats=False)``.
         """
-        self._ensure_stats()
+        self._require_stats("total_rows")
         return sum(b.row_count for b in self._bindings)
 
     @property
     def time_range(self) -> tuple[datetime | None, datetime | None]:
         """Overall (earliest, latest) across all bindings.
 
-        After ``Query.data(stats=False)`` the first read fetches the stats.
+        A snapshot from when ``Query.data()`` ran; raises after
+        ``Query.data(stats=False)``.
         """
-        self._ensure_stats()
+        self._require_stats("time_range")
         earliests = [b.earliest for b in self._bindings if b.earliest is not None]
         latests = [b.latest for b in self._bindings if b.latest is not None]
         return (min(earliests) if earliests else None, max(latests) if latests else None)
@@ -1076,9 +1086,8 @@ class DataObject:
     def bindings(self) -> list[BindingInfo]:
         """Read-only access to binding metadata.
 
-        Never fetches stats: after ``Query.data(stats=False)`` each binding's
-        ``row_count`` / ``earliest`` / ``latest`` are ``0`` / ``None`` until
-        ``total_rows``, ``time_range`` or ``is_empty()`` has loaded them.
+        After ``Query.data(stats=False)`` each binding's ``row_count`` /
+        ``earliest`` / ``latest`` are ``None``.
         """
         return list(self._bindings)
 
@@ -1231,7 +1240,6 @@ class DataObject:
             return f"DataObject({n_rows} rows, aliases={aliases}, entities={self.entity_aliases})"
 
         if not self._stats_loaded:
-            # a repr never scans the samples the caller chose not to count
             return f"DataObject(lazy, stats not fetched, aliases={aliases}, entities={self.entity_aliases})"
         total = self.total_rows
         earliest, latest = self.time_range

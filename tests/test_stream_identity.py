@@ -76,7 +76,7 @@ def test_stats_off_makes_no_stats_call(ac, no_stats):
         "urn:test:feed", "feed flow", "hist", "FT_feed")
     assert b.ref_uri == feed
     assert _unit(b).endswith("/unit/M3-PER-HR")
-    assert (b.row_count, b.earliest, b.latest) == (0, None, None)
+    assert (b.row_count, b.earliest, b.latest) == (None, None, None)
     d.metadata(include_ref_uris=True)
     repr(d)
     assert no_stats == []
@@ -89,11 +89,14 @@ def test_stats_off_still_materializes(ac, no_stats):
     assert no_stats == []
 
 
-def test_stats_off_fetches_stats_lazily(ac):
+def test_stats_off_readers_raise_until_materialized(ac, no_stats):
     d = ac.query().measurement(label="feed flow").data(stats=False)
-    assert d.total_rows == 3
-    assert d.time_range == (T0, T0 + timedelta(minutes=2))
-    assert not d.is_empty()
+    for read in (lambda: d.total_rows, lambda: d.time_range, d.is_empty):
+        with pytest.raises(RuntimeError, match="stats=True"):
+            read()
+    d.dataframe()
+    assert not d.is_empty()  # checks the loaded rows, not the stats
+    assert no_stats == []
 
 
 @pytest.mark.parametrize("names", [["FT_feed"], ["FT_feed", "bare"]])

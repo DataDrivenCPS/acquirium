@@ -1664,10 +1664,11 @@ class Query:
         ``source_id`` / ``ref_name``, all read from the graph. With
         ``stats=True`` (default) the per-stream ``row_count`` / ``earliest``
         / ``latest`` are fetched up front, which counts every sample of every
-        matched stream. ``stats=False`` skips that: the bindings keep
-        ``row_count=0`` and ``earliest`` / ``latest`` of ``None``, and the
-        DataObject fetches the statistics the first time ``total_rows``,
-        ``time_range`` or ``is_empty()`` needs them. Reading the data
+        matched stream; they are a snapshot of that moment and are not
+        refreshed as data arrives. ``stats=False`` skips that: the bindings'
+        ``row_count`` / ``earliest`` / ``latest`` are ``None``, and
+        ``total_rows``, ``time_range`` and ``is_empty()`` (before
+        materialization) raise instead of scanning. Reading the data
         (``dataframe()``, ``iter()``, ``latest()``) works either way.
         """
         from acquirium.Client.data_object import DataObject
