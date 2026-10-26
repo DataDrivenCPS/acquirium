@@ -237,8 +237,3 @@ def update_text(writes: Iterable[Write]) -> str:
         body = "\n".join(f"  {s.n3()} {p.n3()} {o.n3()} ." for s, p, o in triples)
         ops.append(f"INSERT DATA {{\n{body}\n}}")
     return " ;\n".join(ops)
-
-
-# Fields a stream registration already takes at top level; a ``metadata``
-# key naming one of them is merged into the stream (see register_streams).
-STREAM_FIELDS = frozenset({"unit", "quantity_kind", "medium", "substance", "data_source", "label"})
