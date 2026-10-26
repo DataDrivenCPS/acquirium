@@ -645,7 +645,7 @@ def _leaf_selects(graph: QueryGraph, registry: Mapping) -> List[tuple]:
 def _attr_select_clause(v: str, nid: int, name: str, required: bool,
                         registry: Mapping = REGISTRY) -> tuple:
     """The WHERE clause projecting attribute ``name`` of node ``nid`` and the
-    variables it binds.
+    variable it binds.
 
     A scalar attribute binds one variable over the OR-union of its
     predicates. List attributes (see ``attributes.is_list_attr``) are
@@ -657,10 +657,10 @@ def _attr_select_clause(v: str, nid: int, name: str, required: bool,
         # always bound: the saved id, else the node itself
         saved = f"{avar}_s"
         return (f"OPTIONAL {{ {v} <{ATTR_NS}id> {saved} . }} BIND(COALESCE({saved}, {v}) AS {avar})",
-                [avar])
+                avar)
     pred_path = "|".join(f"<{p}>" for p in attr.predicates)
     clause = f"{v} ({pred_path}) {avar} ."
-    return (clause if required else f"OPTIONAL {{ {clause} }}"), [avar]
+    return (clause if required else f"OPTIONAL {{ {clause} }}"), avar
 
 
 def _list_select_clause(v: str, nid: int, items: List[tuple], registry: Mapping) -> str:
@@ -701,9 +701,9 @@ def _select_clauses(var_map: Mapping[int, str], selects: Iterable[tuple],
             lists.setdefault(nid, []).append((name, required))
             pairs.extend([(nid, attr_var(nid, name)), (nid, attr_var(nid, name, pred=True))])
             continue
-        clause, avars = _attr_select_clause(var_map[nid], nid, name, required, registry)
+        clause, avar = _attr_select_clause(var_map[nid], nid, name, required, registry)
         clauses.append(clause)
-        pairs.extend((nid, avar) for avar in avars)
+        pairs.append((nid, avar))
     clauses.extend(_list_select_clause(var_map[nid], nid, items, registry)
                    for nid, items in lists.items())
     return clauses, pairs

@@ -33,7 +33,6 @@ from datetime import date, datetime
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from rdflib import Literal, URIRef
-from rdflib.namespace import RDF, RDFS
 
 from acquirium.Client.explore.attributes import (
     ATTR_NS,
@@ -47,7 +46,6 @@ from acquirium.Client.explore.relations import RELATIONS
 from acquirium.internals.internals_namespaces import (
     HAS_MEDIUM,
     OF_MEDIUM,
-    WATR,
 )
 
 # Built-ins whose write predicate depends on the node: s223 gives a
@@ -80,7 +78,7 @@ def to_term(value: Any, namespaces: Iterable[str] = ()) -> "Literal | URIRef":
     """
     if isinstance(value, URIRef):
         return value
-    if isinstance(value, bool) or isinstance(value, (int, float, datetime, date)):
+    if isinstance(value, (int, float, datetime, date)):  # bool is an int
         return Literal(value)
     if isinstance(value, str):
         return (URIRef(value) if looks_like_uri(value) and in_namespace(value, namespaces)

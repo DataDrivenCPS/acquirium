@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime, timezone
-from typing import Any, Callable, Iterable, List, Optional, Tuple
+from typing import Any, Iterable, List, Optional, Tuple
 
 import polars as pl
 
@@ -159,13 +159,6 @@ def _text(v: Any) -> str:
     if isinstance(v, (date, datetime)):
         return v.isoformat()
     return str(v)
-
-
-def typed_column(values: List[Any], datatypes: List[Optional[str]]) -> Tuple[List[Any], pl.DataType]:
-    """Parse one column's cells and return ``(values, dtype)`` ready for polars."""
-    parsed = [parse_cell(v, d) for v, d in zip(values, datatypes)]
-    dtype = column_dtype(parsed)
-    return coerce(parsed, dtype), dtype
 
 
 # ---- casts asked for with include(type=...) -------------------------------

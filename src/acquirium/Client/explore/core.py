@@ -34,7 +34,7 @@ from acquirium.Client.explore.expr import ORDERING, BoolOp, Compare, Expr
 from acquirium.Client.explore.expr import attr_name as _path_name
 from acquirium.Client.explore.relations import RELATIONS
 from acquirium.Client.explore.typed import (
-    IRI, cast_values, coerce, column_dtype, dtype_for_datatypes, normalize_type, parse_cell, typed_column,
+    IRI, cast_values, coerce, column_dtype, dtype_for_datatypes, normalize_type, parse_cell,
 )
 from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
 from acquirium.internals.internals_namespaces import S223
@@ -337,7 +337,7 @@ class Query:
         measurement node; a list attribute once, under its collapsed name."""
         if nid in g.data_nodes:
             return self.registry.for_role("data", summary=True)
-        return [a for a in self.registry.for_role("entity", summary=True)] + [
+        return self.registry.for_role("entity", summary=True) + [
             a for a in self.registry.for_role("data", summary=True) if "entity" not in a.roles]
 
     def _check_applies(self, g: QueryGraph, nid: int, name: str, verb: str = "") -> None:
@@ -362,7 +362,6 @@ class Query:
     def _apply_exprs(self, g: QueryGraph, node_ids: List[int], exprs: "tuple[Expr, ...]") -> QueryGraph:
         """Store expressions on the given nodes (role-checked)."""
         ptr = g.current_pointer
-        registry = self.registry
         for nid in node_ids:
             is_data = nid in g.data_nodes
             for e in exprs:
@@ -381,7 +380,6 @@ class Query:
     def _apply_attrs(self, g: QueryGraph, node_ids: List[int], resolved: Dict[str, Any]) -> QueryGraph:
         """Store resolved attribute constraints on the given nodes (role-checked)."""
         ptr = g.current_pointer
-        registry = self.registry
         for nid in node_ids:
             is_data = nid in g.data_nodes
             for name in resolved:
@@ -938,7 +936,6 @@ class Query:
             q.include("all", of="ro")               # every attr of another node
         """
         if type is not None:
-            from acquirium.Client.explore.typed import normalize_type
             normalize_type(type)  # fail here, not at metadata()
         if not names:
             raise ValueError('include: provide at least one column name, e.g. include("medium")')
@@ -1589,15 +1586,16 @@ class Query:
                     members = {}
                     for k in keys:
                         vals = [v.get(k) if isinstance(v, dict) else None for v in cast]
-                        members[k] = pl.Series(k, coerce(vals, column_dtype(vals)), dtype=column_dtype(vals))
+                        kdtype = column_dtype(vals)
+                        members[k] = pl.Series(k, coerce(vals, kdtype), dtype=kdtype)
                     columns[col] = (_struct_series(col, members) if members
                                     else pl.Series(col, [None] * len(cast), dtype=pl.Null))
                 else:
-                    dtype = column_dtype(cast if not any(isinstance(v, list) for v in cast)
-                                         else [e for v in cast if v for e in v])
+                    has_lists = any(isinstance(v, list) for v in cast)
+                    dtype = column_dtype([e for v in cast if v for e in v] if has_lists else cast)
                     if target == "object":
                         dtype = pl.Object
-                    elif target != "object" and any(isinstance(v, list) for v in cast):
+                    elif has_lists:
                         dtype = pl.List(dtype)
                     columns[col] = pl.Series(col, cast, dtype=dtype)
             pl_table = pl.DataFrame(columns) if columns else pl.DataFrame()
@@ -1752,9 +1750,10 @@ class Query:
 
         groups: Dict[tuple, Dict[str, Any]] = {}
         for r, d in zip(rows, datatypes):
-            record = groups.get(tuple(r[i] for i in key_cols))
+            key = tuple(r[i] for i in key_cols)
+            record = groups.get(key)
             if record is None:
-                record = groups[tuple(r[i] for i in key_cols)] = {}
+                record = groups[key] = {}
                 for alias, i in nodes:
                     if r[i] is not None:
                         record.setdefault(alias, {})["id"] = str(r[i])
