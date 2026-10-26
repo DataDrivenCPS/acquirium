@@ -42,6 +42,56 @@ def test_publication_rejects_deletion(tmp_path):
         store.close()
 
 
+def test_batch_reset_uses_one_revision_and_joins_caller_transaction(materialization_store):
+    from acquirium.Storage.metadata_outbox import execute
+    store = materialization_store
+    publisher = RevisionPublisher(store)
+    stamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    refs = [str(store.ensure_stream_ref(None, "reset-test", name)) for name in ("a", "b", "other")]
+    for ref in refs:
+        store.upsert_rows(ref, [(stamp, ref)])
+    # Tombstones must be physically cleared, although deletion counts exclude them.
+    with store._lock, store._write_conn() as conn:
+        execute(conn, "UPDATE timeseries SET deleted=TRUE WHERE ref_id=(SELECT ref_id FROM ref_ids WHERE ref_uri=?)", [refs[1]])
+    before = _snapshot(store)
+    with store._lock, store._write_conn() as conn:
+        assert publisher.reset(conn, []) is None
+    assert _snapshot(store) == before
+    with pytest.raises(RuntimeError, match="caller failure"):
+        with store._lock, store._write_conn() as conn:
+            revision = publisher.reset(conn, [*refs[:2], refs[0]])
+            assert revision == before[0] + 1
+            assert execute(conn, "SELECT count(*) FROM timeseries").fetchone()[0] == 1
+            raise RuntimeError("caller failure")
+    assert _snapshot(store) == before
+    with store._lock, store._write_conn() as conn:
+        revision = publisher.reset(conn, [*refs[:2], refs[0]])
+    after = _snapshot(store)
+    assert after[0] == before[0] + 1 == revision
+    assert after[2] == sorted((ref, revision) for ref in refs[:2])
+    assert len(after[1]) == 1
+    assert store.timeseries_info(refs[2]).row_count == 1
+    with store._own_conn() as conn:
+        assert execute(conn, "SELECT count(*) FROM streams WHERE source_id=?", ["reset-test"]).fetchone()[0] == 3
+
+
+def test_publication_preserves_instants_in_non_utc_session(materialization_store):
+    store = materialization_store
+    if not isinstance(store, DuckDBStore):
+        store.conn.execute("SET TIME ZONE 'America/Denver'")
+    # Both sides of the spring transition and the repeated autumn hour.
+    stamps = [datetime(2026, 3, 8, hour, tzinfo=timezone.utc) for hour in (8, 9)]
+    stamps += [datetime(2026, 11, 1, hour, tzinfo=timezone.utc) for hour in (7, 8)]
+    rows = [dict(operation="upsert", ref_uri="urn:timezone", ts=stamp,
+                 numeric_value=float(index), text_value=None) for index, stamp in enumerate(stamps)]
+    publisher = RevisionPublisher(store)
+    request = PublicationRequest("timezone", pa.Table.from_pylist(rows, schema=MUTATION_SCHEMA))
+    for write in (lambda: publisher.publish(request), lambda: publisher.replace(request, "urn:timezone")):
+        assert write().row_count == 4
+        actual = [stamp for batch in store.timeseries("urn:timezone") for stamp in batch.column("ts").to_pylist()]
+        assert sorted(actual) == stamps
+
+
 def test_duckdb_schema_contains_revision_frontier_tables(tmp_path):
     store = DuckDBStore(tmp_path / "publication.duckdb", recreate=True)
     try:

@@ -11,12 +11,109 @@ change in any release.
 ## [Unreleased]
 
 ### Added
+- `object` experiment variables save any Python object through a codec class
+  and rebuild it with `observation.load()`. A codec has a `media_type`,
+  `dumps(value) -> bytes`, and `loads(data)`; the declaration stores its
+  import path and the server never decodes the bytes. `PickleCodec`,
+  `CloudpickleCodec`, `JsonCodec`, and `BytesCodec` are built in, and model
+  adapters declare object components with `adapter.object(label, read=...,
+  codec=...)`.
+- Recording a batch of experiment values is one request and one transaction:
+  if any value is rejected, nothing from the batch is saved.
+- Experiment metadata is stored in the graph and keeps its exact form: nested
+  JSON, nulls, empty containers, dates, and the text of semantic values such as
+  units. `variable.metadata` holds only user metadata; the unit, `observed`
+  property, and other semantic fields are their own properties. A metadata
+  write interrupted by a crash completes when the server restarts. Back up the
+  SQL store and the graph together.
+- Model adapters declare a model's scalar, text, JSON, table, and time-series
+  values with reader functions, under `input` and `output`.
+  `sample(at=..., model_time=...)` records the time series and
+  `record_values()` the rest; `preview()` shows what would be recorded. The
+  optional Pyomo wrapper takes units and descriptions from the selected
+  components and refuses a unit override that would need a conversion.
+- `insert_metadata()` attaches a value map to a node: on `Acquirium` for one
+  node, on a `Query` for every matched node, and as the `metadata` key of a
+  stream in `register_streams()`. Built-in keys write their own predicate
+  after text resolution, and any other key becomes a user attribute under
+  `urn:acquirium:attr#`, nested values and lists flattened to one predicate
+  per leaf path. Writing a key replaces it; `None` removes it. The update
+  runs in the reserved `metadata` source graph, which the server prunes of
+  triples about nodes no other graph mentions.
+- User attributes are discovered from the graph and accepted wherever an
+  attribute name is: `where()`, `include()` (including `"all"`), `options()`
+  and `facets()`, by key or dotted path (`product_info.year`).
+- `acq.attr` builds attribute expressions for `where()`: the six comparison
+  operators, `.is_in()` and `.exists()` on a path, combined with `&`, `|`
+  and `~`. Bound to the server, so `dir(acq.attr)` lists the attributes and
+  an unknown name raises where it is written.
+- `hide()` and `unhide()` accept a namespace (a string ending in `#` or `/`);
+  `urn:acquirium:attr#` is hidden from `via="any"` traversal by default.
 - Text resolution has a `role` kind: the s223 role enumeration, the NAWI roles
   that extend it, and whatever a loaded model uses with `s223:hasRole`. A role
   is found by its bare name, so `resolve_text("backwash", kind="role")` returns
   `nawi:Role-Backwash`.
+- Studies and Experiments record a calculation's inputs, results, and events.
+  `ac.study.define(name)` declares a reusable Study. `study.input(label)`,
+  `study.output(label)`, and `study.log(label)` declare variables whose type
+  selects storage: `.scalar(unit=...)`, `.text()`, `.json()`, `.file()`,
+  `.table()` (Parquet, read back as Polars), and `.timeseries(observed=...)`.
+  `study.start(metadata)` starts a run, `variable.record(value)` writes to it,
+  and `finish()`, `fail(error)`, and `study.resume(run_id)` manage it. Studies
+  need a server, which `aq.init()` starts. Records live in a SQL ledger beside
+  the time-series storage, and files, tables, and objects are stored there too,
+  saved and deleted with their run. Studies, variables,
+  runs, and annotations also get graph nodes, so `study.experiments.where()`
+  and `study.variables.where()` take the same filters and `acq.attr`
+  expressions as plant queries.
+- `record()` converts NumPy values, tuples, and dates to JSON and rejects NaN.
+  `aq.register_value_handler(cls, handler)` adds other types. Each variable
+  type accepts one kind of value, such as a finite number or boolean for a
+  scalar and a string for text; the client and the server both check.
+- Each run's time-series output is a stream under source `experiment/<run_id>`
+  with its own point carrying `study_id`, `run_id`, and `variable_id`, so
+  `ac.query().measurement(run_id=...)` finds it. A declared `observed`
+  property is an attribute of that point; plant queries on the property
+  return site data only.
+- `ac.stream(source_id, name)` and `ac.stream(ref_uri)` return a `Stream`
+  handle, and `stream.between(start, end)` selects a range. Recording a range
+  to a time-series variable stores a reference whose reads see later data;
+  recording its `.dataframe()` stores a copy with the run.
+- `.frame()` lists declarations, runs, or observations. `runs.scalars()`
+  returns one row per run and one column per scalar variable.
+  `observation.dataframe()` reads samples or a table, and
+  `observation.read_bytes()` a file.
+- `run.annotate_stream(ref_uri, start=..., end=None)` associates an existing
+  stream interval with a run, open-ended if needed, and
+  `ac.study.stream_annotations()` finds annotations by stream and overlapping
+  time.
+- `run.delete()`, `runs.delete()`, and `study.delete()` remove runs with
+  their observations, samples, and unshared files. `ac.study.clear(confirm=True)`
+  removes every Study and nothing else. Running runs, and runs whose streams
+  another run uses, are refused. `usage()` reports counts and estimated bytes.
+- HTTP endpoints for experiments under `/experiments/`.
+- Docs: the "Your first experiment" tutorial, how-to guides for recording
+  experiments and comparing runs, and the `examples/pump-tank` example.
+- Currency codes such as `USD` resolve as units (`unit:CCY_USD`).
+
+### Fixed
+- App outputs keep their timestamps on TimescaleDB when the PostgreSQL
+  session's time zone isn't UTC. They were shifted by the session's offset.
+- Inserting a TriX graph stores its triples. They were parsed into a plain
+  graph, which drops TriX's named graphs, so the insert succeeded and stored
+  nothing.
+- `validate_graph()` on a server with no ontology shapes, such as one
+  `aq.init()` started without a plant model, reports a conforming graph
+  instead of failing on an empty shapes graph.
 
 ### Changed
+- DuckDB and TimescaleDB databases from earlier releases upgrade in place the
+  first time the server opens them. A large DuckDB database briefly needs room
+  for a second copy of its samples table.
+- A SPARQL update no longer forces the ontology closure to be recomputed
+  unless it changed the graph's `owl:imports` or `owl:Ontology` triples.
+- The query compiler renders `int`, `float`, `bool`, `date` and `datetime`
+  filter values as typed literals, so a numeric attribute compares as a number.
 - Roles are no longer part of `kind="class"`. `resolve_text("condenser",
   kind="class")` returns the equipment class only; the role needs
   `kind="role"`.

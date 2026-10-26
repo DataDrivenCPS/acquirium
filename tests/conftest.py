@@ -12,6 +12,7 @@ import pytest
 from acquirium import Acquirium
 from acquirium.Storage.timescale_store import TimescaleStore
 from acquirium.Storage.values import assign_stream_value_kind
+from tests.local_server import acquirium_without_experiments, local_server_storage
 
 
 PG_DSN = os.getenv(
@@ -141,6 +142,11 @@ def materialization_store(request, tmp_path):
         # TimescaleStore qualifies the extension function it needs from public.
         isolated_dsn = make_conninfo(dsn, options=f"-c search_path={schema}")
         store = TimescaleStore(dsn=isolated_dsn, recreate=True)
+        # Historical contract samples must not race automatic chunk compression
+        # while exercising transaction rollback. Only this test schema is affected.
+        store.conn.execute("SELECT public.alter_job(job_id, scheduled => false) "
+                           "FROM timescaledb_information.jobs WHERE hypertable_schema = %s "
+                           "AND proc_name = 'policy_compression'", [schema])
     try:
         yield store
     finally:
@@ -148,3 +154,35 @@ def materialization_store(request, tmp_path):
         if request.param == "timescale":
             with psycopg.connect(dsn, autocommit=True) as conn:
                 conn.execute(f'DROP SCHEMA "{schema}" CASCADE')
+
+
+@pytest.fixture(scope="session")
+def local_acquirium(tmp_path_factory):
+    """Options for the one local server the whole run shares."""
+    import acquirium as aq
+
+    with local_server_storage(tmp_path_factory.mktemp("acquirium")) as (options, _):
+        try:
+            yield options
+        finally:
+            aq.shutdown()
+
+
+@pytest.fixture
+def ac(local_acquirium):
+    """The shared local server, with no Studies or runs."""
+    return acquirium_without_experiments(local_acquirium)
+
+
+@pytest.fixture
+def separate_server():
+    """Stop the shared server so a test can start its own with aq.init().
+
+    aq.init() runs one server per process. The next test that uses the shared
+    server starts it again on the same data.
+    """
+    import acquirium as aq
+
+    aq.shutdown()
+    yield
+    aq.shutdown()

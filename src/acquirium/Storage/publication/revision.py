@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import polars as pl
 
+from acquirium.Storage.metadata_outbox import execute
 from acquirium.Storage.publication import ids
 from acquirium.Storage.publication.types import PublicationReceipt, PublicationRequest
 
@@ -24,13 +25,18 @@ class RevisionPublisher:
         frame = pl.from_arrow(mutations)
         if (frame["operation"] != "upsert").any():
             raise ValueError("deletion is not supported by incremental materialization")
-        writes = frame.select(["ref_uri", "ts", "numeric_value", "text_value"]).with_columns(
-            pl.col("ts").dt.convert_time_zone("UTC").dt.replace_time_zone(None)
-        ).unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
+        writes = self._store._prepare_frame(frame)
         with self._store._lock, self._store._write_conn() as conn:
-            revision = self._store._next_revision(conn)
-            self._store._insert_frame(conn, writes, revision)
+            self.publish_frame(conn, writes)
         return PublicationReceipt(request.publication_id, ids.payload_hash(mutations), writes.height, {})
+
+    def publish_frame(self, conn, writes: pl.DataFrame) -> int | None:
+        """Publish prepared samples in an existing transaction without commit."""
+        if writes.is_empty():
+            return None
+        revision = self._store._next_revision(conn)
+        self._store._insert_frame(conn, writes, revision)
+        return revision
 
     def replace(self, request: PublicationRequest, ref_uri: str) -> PublicationReceipt:
         """Replace one stream, including empty requests, at one atomic revision."""
@@ -48,3 +54,22 @@ class RevisionPublisher:
         writes = self._store._prepare_frame(pl.from_arrow(mutations))
         row_count = self._store._replace_frame(ref_uri, writes)
         return PublicationReceipt(request.publication_id, ids.payload_hash(mutations), row_count, {})
+
+    def reset(self, conn, refs, *, revision=None) -> int | None:
+        """Physically clear streams at one revision in the caller's transaction.
+
+        The caller owns the writer lock and connection, commits or rolls back,
+        and retains responsibility for registrations and other domain records.
+        Empty batches do nothing; empty streams still receive reset markers.
+        Pass an existing revision to join other writes at the same frontier.
+        """
+        refs = list(dict.fromkeys(refs))
+        if not refs:
+            return None
+        revision = self._store._next_revision(conn) if revision is None else revision
+        marks = ",".join("?" for _ in refs)
+        execute(conn, f"DELETE FROM timeseries WHERE ref_id IN (SELECT ref_id FROM ref_ids WHERE ref_uri IN ({marks}))", refs)
+        for ref in refs:
+            execute(conn, "INSERT INTO stream_resets (ref_uri, last_revision) VALUES (?, ?) "
+                    "ON CONFLICT (ref_uri) DO UPDATE SET last_revision=EXCLUDED.last_revision", [ref, revision])
+        return revision

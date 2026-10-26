@@ -1,4 +1,4 @@
-# Acquirium driver config for the WaterTAP seawater-ro-fouled
+# Acquirium server config for the WaterTAP seawater-ro model
 
 [server]
 enabled = true            # connect to an already-running Acquirium server
@@ -10,10 +10,10 @@ interval    = 10.0
 data_dir    = ".acquirium"
 
 # ===========================================================================
-# 1) Parquet ingest, WaterTAP-aware (seawater-ro-fouled).
-#    Own namespace (urn:swro-fouled/, prefix wbsf:) so it ingests alongside
-#    the healthy seawater-ro model below without colliding ontology points.
-#    Used by notebooks/watertap/soft-sensor.ipynb (clean-vs-fouled anomaly demo).
+# 1) Live simulation.
+#    Generates fresh feed inputs every tick, re-solves the flowsheet and
+#    ingests the mapped outputs. Needs the watertap extra:
+#    uv sync --extra watertap && uv run idaes get-extensions
 # ===========================================================================
 [[drivers]]
 spec                        = "../../scripts/simulation_driver.py:SimulationDriver"
@@ -29,17 +29,15 @@ watertap_generate_spec      = "deployments/WATERTAP/models/seawater-ro/generate-
 watertap_seed               = 42
 
 # ===========================================================================
-# 2) seawater-ro self-driving simulation.
-#    Generates fresh feed inputs every tick, solves, ingests mapped outputs.
-#    (Disabled: the enabled block below replays parquet snapshots instead.
-#    Both share source_id "watertap-seawater-ro", so you can enable both to
-#    merge live-sim and historical parquet data onto the same points.)
+# 2) Parquet replay.
+#    Replays the snapshots in data/ written by ../../scripts/data-generator.py.
+#    Both drivers share source_id "watertap-seawater-ro", so live and
+#    historical data land on the same points.
 # ===========================================================================
-# [[drivers]]
 [[drivers]]
 spec                   = "../../scripts/parquet_driver.py:WaterTAPParquetDriver"
 interval               = 120.0
-watch_dir              = "../models/seawater-ro/data"
+watch_dir              = "data"
 glob                   = ["*.parquet", "*.pq"]
 format                 = "wide"
 time_col               = "timestamp"
