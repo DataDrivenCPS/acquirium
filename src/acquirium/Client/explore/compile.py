@@ -541,7 +541,12 @@ def _node_constraint_clauses(v: str, node, registry: Mapping = REGISTRY) -> List
         # a sub-SELECT. This fences the property path so Oxigraph
         # evaluates it *backward* from <class> (a handful of nodes)
         # instead of driving it *forward* from every ?v_typ bound by
-        # rdf:type (catastrophic with QUDT in the union graph).
+        # rdf:type. The naive `?v rdf:type ?t . ?t subClassOf* <class>`
+        # form lets the planner re-walk the whole subclass forest above
+        # each typed individual — catastrophic when a deep-hierarchy
+        # ontology (e.g. QUDT, with owl:Restriction skeletons over
+        # ~16k unit/quantitykind individuals) is in the union graph
+        # (~6s vs ~0.03s for this same query).
         typ = f"{v}_typ"
         clauses.append(f"{v} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> {typ} .")
         clauses.append(
@@ -719,38 +724,12 @@ def compile_parts(graph: QueryGraph, registry: Mapping = REGISTRY) -> tuple:
         return _compile_parts_multi(graph, registry)
     # node id -> ?v{id}
     var_map = {nid: f"?v{nid}" for nid in graph.nodes}
-    ext_vars = {}
 
     where_clauses: List[str] = []
 
     # rdf:type constraints and instance constraints
     for nid, node in graph.nodes.items():
-        v = var_map[nid]
-        instance_uri = (node.constraints or {}).get("instance_uri")
-        rdf_class = (node.constraints or {}).get("rdf_class")
-        if instance_uri is not None:
-            where_clauses.append(f"VALUES {v} {{ <{instance_uri}> }}")
-        if rdf_class:
-            # Anchor the subClassOf* traversal at the constant class inside
-            # a sub-SELECT. This fences the property path so Oxigraph
-            # evaluates it *backward* from <class> (a handful of nodes)
-            # instead of driving it *forward* from every ?v_typ bound by
-            # rdf:type. The naive `?v rdf:type ?t . ?t subClassOf* <class>`
-            # form lets the planner re-walk the whole subclass forest above
-            # each typed individual — catastrophic when a deep-hierarchy
-            # ontology (e.g. QUDT, with owl:Restriction skeletons over
-            # ~16k unit/quantitykind individuals) is in the union graph
-            # (~6s vs ~0.03s for this same query).
-            typ = f"{v}_typ"
-            where_clauses.append(f"{v} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> {typ} .")
-            where_clauses.append(
-                f"{{ SELECT DISTINCT {typ} WHERE {{ "
-                f"{typ} <http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{rdf_class}> . "
-                f"}} }}"
-            )
-        for name, aval in ((node.constraints or {}).get("attrs") or {}).items():
-            where_clauses.extend(_attr_clauses(v, registry[name], aval))
-        where_clauses.extend(_expr_clauses(v, (node.constraints or {}).get("exprs"), registry))
+        where_clauses.extend(_node_constraint_clauses(var_map[nid], node, registry))
 
     # edge constraints
     for edge_idx, edge in enumerate(graph.edges):
@@ -761,68 +740,9 @@ def compile_parts(graph: QueryGraph, registry: Mapping = REGISTRY) -> tuple:
             is_data_edge=edge.target_id in graph.data_nodes,
         ))
 
-    # data node constraints
-    unit_vars = {}
-    extunit_vars = {}
-    lbl_vars = {}
+    # data node constraints: ext-ref, OPTIONAL unit/label, filters
     for nid, info in graph.data_nodes.items():
-        v = var_map[nid]
-        ext = f"?ext{nid}"
-        ext_vars[nid] = ext
-        where_clauses.append(f"{v} <{HAS_EXTERNAL_REFERENCE}> {ext} .")
-
-        # OPTIONAL unit and label metadata for property and external reference
-        uvar = f"?unit{nid}"
-        euvar = f"?extunit{nid}"
-        lvar = f"?lbl{nid}"
-        unit_vars[nid] = uvar
-        extunit_vars[nid] = euvar
-        lbl_vars[nid] = lvar
-        where_clauses.append(f"OPTIONAL {{ {v} <{HAS_UNIT}> {uvar} . }}")
-        where_clauses.append(f"OPTIONAL {{ {ext} <{HAS_UNIT}> {euvar} . }}")
-        where_clauses.append(f"OPTIONAL {{ {v} <{RDFS.label}> {lvar} . }}")
-
-        for pred, val in (info.filters or {}).items():
-            if val is None:
-                continue
-
-            # Registry-attribute keys expand via the attribute definition;
-            # anything else is a raw predicate URI (legacy-shaped filters).
-            if isinstance(pred, str) and pred in registry:
-                where_clauses.extend(_attr_clauses(v, registry[pred], val))
-                continue
-
-            # Unwrap negation marker
-            negate = isinstance(val, Not)
-            if negate:
-                val = val.value
-
-            # Build the triple pattern(s)
-            if isinstance(val, str) and ("://" in val or val.startswith("urn:")):
-                if negate:
-                    where_clauses.append(f"FILTER NOT EXISTS {{ {v} <{pred}> <{val}> . }}")
-                else:
-                    where_clauses.append(f"{v} <{pred}> <{val}> .")
-
-            elif isinstance(val, list):
-                items = [x for x in val if x is not None]
-                if negate:
-                    # Exclude any that match: FILTER NOT EXISTS with UNION
-                    if len(items) == 1:
-                        where_clauses.append(f"FILTER NOT EXISTS {{ {v} <{pred}> {_term(items[0])} . }}")
-                    else:
-                        union_block = " UNION ".join(f"{{ {v} <{pred}> {_term(x)} . }}" for x in items)
-                        where_clauses.append(f"FILTER NOT EXISTS {{ {union_block} }}")
-                else:
-                    union_block = " UNION ".join(f"{{ {v} <{pred}> {_term(x)} . }}" for x in items)
-                    where_clauses.append(f"{{ {union_block} }}")
-
-            else:
-                if negate:
-                    where_clauses.append(f'FILTER NOT EXISTS {{ {v} <{pred}> "{val}" . }}')
-                else:
-                    where_clauses.append(f'{v} <{pred}> "{val}" .')
-        where_clauses.extend(_expr_clauses(v, getattr(info, "exprs", ()), registry))
+        where_clauses.extend(_data_node_clauses(var_map[nid], nid, info, registry))
 
     # projected attribute columns (?attr<N>_<name>, OPTIONAL so rows without
     # the attribute survive; the prefix is disjoint from v/ext/unit/extunit
@@ -841,12 +761,8 @@ def compile_parts(graph: QueryGraph, registry: Mapping = REGISTRY) -> tuple:
         if nid not in dropped:
             select_parts.append(v)
         select_parts.extend(avar for anid, avar in attr_var_pairs if anid == nid)
-    select_parts += (
-        [v for nid, v in ext_vars.items() if nid not in dropped]
-        + [v for nid, v in unit_vars.items() if nid not in dropped]
-        + [v for nid, v in extunit_vars.items() if nid not in dropped]
-        + [v for nid, v in lbl_vars.items() if nid not in dropped]
-    )
+    data_ids = [nid for nid in graph.data_nodes if nid not in dropped]
+    select_parts += [f"?{p}{nid}" for p in ("ext", "unit", "extunit", "lbl") for nid in data_ids]
     if not select_parts:
         raise ValueError("drop(): every node is dropped — nothing left to select")
     return var_map, select_parts, where_clauses
