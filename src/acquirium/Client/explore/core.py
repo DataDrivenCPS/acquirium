@@ -26,7 +26,8 @@ import polars as pl
 from rdflib import URIRef
 
 from acquirium.Client.explore.attributes import (
-    ATTR_NS, NOT_IN_ALL, Not, Registry, attributes_doc, is_list_attr, list_index, normalize_value,
+    ATTR_NS, NOT_IN_ALL, RESOLVE_MIN_SCORE, Not, Registry, attributes_doc, is_list_attr, list_index,
+    normalize_value,
 )
 from acquirium.Client.explore.compile import attr_var, compile_parts, compile_sparql
 from acquirium.Client.explore.directions import EQUIPMENT_STEPS, PROPERTY_STEPS
@@ -89,7 +90,7 @@ class Query:
         """Coerce a class/predicate input to a URI: passthrough or text-resolve."""
         if isinstance(value, URIRef) or _is_uri(value):
             return str(value)
-        uri = self.client.resolve(str(value), kind, min_score=0.4)
+        uri = self.client.resolve(str(value), kind, min_score=RESOLVE_MIN_SCORE)
         if uri is None:
             raise ValueError(f"Could not resolve {value!r} as {kind}")
         return uri
@@ -169,7 +170,7 @@ class Query:
         if not core:
             raise ValueError("related: empty via predicate")
         if not _is_uri(core):
-            resolved = self.client.resolve(core, "predicate", min_score=0.4)
+            resolved = self.client.resolve(core, "predicate", min_score=RESOLVE_MIN_SCORE)
             if resolved is None:
                 raise ValueError(
                     f"related: could not resolve via predicate {core!r} "
@@ -198,37 +199,40 @@ class Query:
         if unknown:
             raise ValueError(f"unknown attribute(s) {unknown}; known: {sorted(registry)}")
 
-        record: Dict[str, Any] = {}
-        for name, raw in attrs.items():
-            attr = registry[name]
-            values, _ = normalize_value(raw)
-            for i, v in enumerate(values):
-                if attr.literal or isinstance(v, URIRef) or _is_uri(v):
-                    continue
-                record[f"{name}_{i}"] = (str(v), attr.kind)
-        resolved_uris = self.client.resolve(record, min_score=0.4) if record else {}
+        resolved = self._resolve_texts({
+            f"{name}_{i}": (registry[name], v)
+            for name, raw in attrs.items()
+            for i, v in enumerate(normalize_value(raw)[0])
+        })
 
         out: Dict[str, Any] = {}
         for name, raw in attrs.items():
-            attr = registry[name]
             values, negated = normalize_value(raw)
             if not values:
                 continue
             coerced: List[Any] = []
             for i, v in enumerate(values):
-                if name == "id":
-                    coerced.extend(self._id_alternatives(v))
-                elif attr.literal:
-                    coerced.append(v)
-                elif isinstance(v, URIRef) or _is_uri(v):
-                    coerced.append(str(v))
-                else:
-                    uri = resolved_uris.get(f"{name}_{i}")
-                    if uri is None:
-                        raise ValueError(f"Could not resolve {v!r} as {attr.kind} for attribute {name!r}")
-                    coerced.append(uri)
+                coerced.extend(self._id_alternatives(v) if name == "id" else [resolved[f"{name}_{i}"]])
             value = coerced[0] if len(coerced) == 1 else coerced
             out[name] = Not(value) if negated else value
+        return out
+
+    def _resolve_texts(self, items: Dict[str, tuple]) -> Dict[str, Any]:
+        """``{key: (attr, value)}`` -> ``{key: value}``, text on a URI-valued
+        attribute resolved to a URI in one joint ``client.resolve`` call so
+        siblings disambiguate each other. Literal attributes keep their
+        value; URIs pass through as strings."""
+        record = {k: (str(v), attr.kind) for k, (attr, v) in items.items()
+                  if not (attr.literal or isinstance(v, URIRef) or _is_uri(v))}
+        found = self.client.resolve(record, min_score=RESOLVE_MIN_SCORE) if record else {}
+        out: Dict[str, Any] = {}
+        for k, (attr, v) in items.items():
+            if k not in record:
+                out[k] = v if attr.literal else str(v)
+            elif found.get(k) is None:
+                raise ValueError(f"Could not resolve {v!r} as {attr.kind} for attribute {attr.name!r}")
+            else:
+                out[k] = found[k]
         return out
 
     def _id_alternatives(self, value: Any) -> List[Any]:
@@ -291,35 +295,22 @@ class Query:
         for e in exprs:
             walk(e, False)
 
-        record: Dict[str, Any] = {}
-        for i, e in enumerate(leaves):
-            attr = registry[e.attr]
-            if attr.literal or e.op in ("exists",) or e.op in ORDERING:
-                continue
-            values = e.value if e.op == "in" else [e.value]
-            for j, v in enumerate(values):
-                if not (isinstance(v, URIRef) or _is_uri(v)):
-                    record[f"{i}_{j}"] = (str(v), attr.kind)
-        resolved = self.client.resolve(record, min_score=0.4) if record else {}
+        # ordering comparisons are on literals (checked above) and exists has
+        # no value: only equality and membership carry text to resolve
+        resolved = self._resolve_texts({
+            f"{i}_{j}": (registry[e.attr], v)
+            for i, e in enumerate(leaves) if e.op in ("==", "!=", "in")
+            for j, v in enumerate(e.value if e.op == "in" else [e.value])
+        })
 
-        def coerce(i: int, e: Compare) -> Compare:
-            attr = registry[e.attr]
+        def resolve_leaf(i: int, e: Compare) -> Compare:
             if e.attr == "id" and e.op in ("==", "in"):
                 values = [a for v in (e.value if e.op == "in" else [e.value])
                           for a in self._id_alternatives(v)]
                 return replace(e, op="in", value=tuple(values)) if len(values) > 1 else e
-            if attr.literal or e.op == "exists" or e.op in ORDERING:
+            if registry[e.attr].literal or e.op not in ("==", "!=", "in"):
                 return e
-            values = e.value if e.op == "in" else [e.value]
-            out = []
-            for j, v in enumerate(values):
-                if isinstance(v, URIRef) or _is_uri(v):
-                    out.append(str(v))
-                    continue
-                uri = resolved.get(f"{i}_{j}")
-                if uri is None:
-                    raise ValueError(f"Could not resolve {v!r} as {attr.kind} for attribute {e.attr!r}")
-                out.append(uri)
+            out = [resolved[f"{i}_{j}"] for j in range(len(e.value) if e.op == "in" else 1)]
             return Compare(e.attr, e.op, out if e.op == "in" else out[0])
 
         counter = iter(range(len(leaves)))
@@ -327,7 +318,7 @@ class Query:
         def rebuild(e: Expr) -> Expr:
             if isinstance(e, BoolOp):
                 return BoolOp(e.op, tuple(rebuild(o) for o in e.operands))
-            return coerce(next(counter), e)
+            return resolve_leaf(next(counter), e)
 
         return tuple(rebuild(e) for e in exprs)
 
@@ -698,7 +689,7 @@ class Query:
             if not core:
                 raise ValueError("context: empty via predicate")
             if not _is_uri(core):
-                resolved = self.client.resolve(core, "predicate", min_score=0.4)
+                resolved = self.client.resolve(core, "predicate", min_score=RESOLVE_MIN_SCORE)
                 if resolved is None:
                     raise ValueError(
                         f"context: {via!r} is neither a registered relation "

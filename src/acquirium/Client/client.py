@@ -17,6 +17,7 @@ from acquirium.internals.models import (
     looks_like_uri,
 )
 from acquirium.internals.internals_namespaces import *
+from acquirium.Client.explore.attributes import RESOLVE_MIN_SCORE
 from acquirium.Storage.values import normalize_value_kind
 from acquirium.Grafana.grafana_dashboard_creator import GrafanaDashboardCreator
 from rdflib import Graph, URIRef, Literal
@@ -989,7 +990,7 @@ class AcquiriumClient:
 
     def _resolve_one(self, text: str, kind: str) -> Optional[str]:
         """Resolve one text value of the given kind to a URI, or None."""
-        hits = self.resolve({"v": (text, kind)}, min_score=0.4) or {}
+        hits = self.resolve({"v": (text, kind)}, min_score=RESOLVE_MIN_SCORE) or {}
         return hits.get("v")
 
     def node_roles(self, uris: Iterable[str]) -> dict[str, str]:

@@ -140,6 +140,10 @@ ATTR_NS = str(ACQUIRIUM_ATTR_NS)
 
 RAW_SUFFIX = "raw"
 
+# Text resolver threshold for attribute values, classes and via predicates,
+# on reads (where/entity) and writes (insert_metadata) alike.
+RESOLVE_MIN_SCORE = 0.4
+
 
 def raw_predicate(key: str) -> str:
     """Where the free text a built-in value was resolved from is kept:
