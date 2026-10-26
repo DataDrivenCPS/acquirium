@@ -108,6 +108,22 @@ def test_select_by_ref(ac, no_stats, names):
     assert no_stats == []
 
 
+def test_select_by_source_and_ref_name(ac):
+    """(source_id, ref_name) -> stream: ac.stream computes the ref URI locally."""
+    d = ac.query().measurement(ref=ac.stream("hist", "FT_feed")).data()
+    [b] = d.bindings
+    assert (b.source_id, b.ref_name, b.point_uri) == ("hist", "FT_feed", "urn:test:feed")
+    assert d.total_rows == 3
+    assert d.dataframe(shape="narrow", compact=False).height == 3
+
+
+def test_query_dataframe_by_name_skips_stats(ac, no_stats):
+    df = ac.query().measurement(ref=ac.stream("hist", "FT_feed")).dataframe(
+        shape="narrow", compact=False)
+    assert df.height == 3
+    assert no_stats == []
+
+
 def test_select_by_unknown_ref_is_empty(ac, no_stats):
     unknown = str(ac.stream("hist", "no-such-stream"))
     assert ac.query().measurement(ref=[unknown]).data(stats=False).bindings == []

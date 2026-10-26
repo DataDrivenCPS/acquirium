@@ -1707,7 +1707,8 @@ class Query:
         itself; on a DataObject they filter the already-fetched data. Only
         the fetch/parse-time keywords (``include_dependencies``,
         ``cast_value``, ``value_mode``) have no DataObject counterpart —
-        they are fixed at ``data()`` time.
+        they are fixed at ``data()`` time. The stream statistics are never
+        fetched: building the frame does not need them.
         """
         return self.data(
             start=start,
@@ -1717,6 +1718,7 @@ class Query:
             include_dependencies=include_dependencies,
             cast_value=cast_value,
             value_mode=value_mode,
+            stats=False,
         ).dataframe(shape=shape, include_ref=include_ref, compact=compact)
 
     # ---------- display helpers ----------
