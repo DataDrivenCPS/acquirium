@@ -18,33 +18,20 @@ change in any release.
   `CloudpickleCodec`, `JsonCodec`, and `BytesCodec` are built in, and model
   adapters declare object components with `adapter.object(label, read=...,
   codec=...)`.
-- Experiment recordings now use one request and SQL transaction for stream
-  registration, revisioned samples, artifact ownership, observations, and durable
-  graph intent. Rejected batches leave no new recorded SQL state.
-- Hand and model variable declarations share normalization. `.metadata` contains
-  user JSON; semantic/source fields have explicit properties. Legacy descriptive
-  query paths move under `metadata`. Conflicting legacy duplicates require repair;
-  interrupted graph upgrades replay through the outbox delivery frontier.
-- Experiment metadata consistency has one component, with explicit backend
-  capabilities. HTTP reads hydrate each batch once,
-  and object queries assemble saved user values directly from documents.
-
-- Shared lossless metadata documents retain arbitrary namespaced JSON, null
-  positions, nested empty containers, dates, and original semantic values.
-  Queryable attributes are written alongside their complete documents.
-- Experiment metadata is graph-authoritative. A versioned migration moves old
-  SQL snapshots and pinned resolutions into a transactional outbox, removing
-  permanent SQL metadata copies. Resolved writes replay after interruption;
-  lifecycle updates preserve descriptive metadata. Backups include SQL and graph.
-- Explicit model adapters declare scalar, text, JSON, table, and time-series
-  values with reader functions. `input`/`output` namespaces choose roles;
-  `sample(at=..., model_time=...)` records time series and `record_values()`
-  records other values. Builders support local inspection and preview.
-  The optional Pyomo wrapper extracts units and descriptions from selected
-  components and rejects unit overrides requiring conversion. Arbitrary nested
-  JSON metadata is preserved across graph reads and reopening, separately from
-  semantic fields. Declarations and observations use atomic batch endpoints;
-  advanced keyed time series expose observation keys.
+- Recording a batch of experiment values is one request and one transaction:
+  if any value is rejected, nothing from the batch is saved.
+- Experiment metadata is stored in the graph and keeps its exact form: nested
+  JSON, nulls, empty containers, dates, and the text of semantic values such as
+  units. `variable.metadata` holds only user metadata; the unit, `observed`
+  property, and other semantic fields are their own properties. A metadata
+  write interrupted by a crash completes when the server restarts. Back up the
+  SQL store and the graph together.
+- Model adapters declare a model's scalar, text, JSON, table, and time-series
+  values with reader functions, under `input` and `output`.
+  `sample(at=..., model_time=...)` records the time series and
+  `record_values()` the rest; `preview()` shows what would be recorded. The
+  optional Pyomo wrapper takes units and descriptions from the selected
+  components and refuses a unit override that would need a conversion.
 - `insert_metadata()` attaches a value map to a node: on `Acquirium` for one
   node, on a `Query` for every matched node, and as the `metadata` key of a
   stream in `register_streams()`. Built-in keys write their own predicate
@@ -72,8 +59,10 @@ change in any release.
   selects storage: `.scalar(unit=...)`, `.text()`, `.json()`, `.file()`,
   `.table()` (Parquet, read back as Polars), and `.timeseries(observed=...)`.
   `study.start(metadata)` starts a run, `variable.record(value)` writes to it,
-  and `finish()`, `fail(error)`, and `study.resume(run_id)` manage it. Records
-  live in a SQL ledger beside the time-series storage. Studies, variables,
+  and `finish()`, `fail(error)`, and `study.resume(run_id)` manage it. Studies
+  need a server, which `aq.init()` starts. Records live in a SQL ledger beside
+  the time-series storage, and files, tables, and objects are stored there too,
+  saved and deleted with their run. Studies, variables,
   runs, and annotations also get graph nodes, so `study.experiments.where()`
   and `study.variables.where()` take the same filters and `acq.attr`
   expressions as plant queries.
@@ -108,16 +97,8 @@ change in any release.
 - Currency codes such as `USD` resolve as units (`unit:CCY_USD`).
 
 ### Fixed
-- Recording a narrow query frame rejects multiple point or reference URIs,
-  preventing samples from different streams from being merged silently.
-- Single-observation HTTP requests use the batch range validation and reject
-  a start without an end, or an end without a start, before recording anything.
-- Declaring an experiment variable no longer slows as a Study grows. A
-  declaration reads only the labels it names, and experiment metadata reaches
-  the graph through Oxigraph's own update engine rather than rdflib's parser,
-  which was superlinear in update size. Metadata deletes name their subject
-  instead of joining a list against every triple, and the orphan-metadata
-  prune that follows every server graph write runs natively as well.
+- App outputs keep their timestamps on TimescaleDB when the PostgreSQL
+  session's time zone isn't UTC. They were shifted by the session's offset.
 - Inserting a TriX graph stores its triples. They were parsed into a plain
   graph, which drops TriX's named graphs, so the insert succeeded and stored
   nothing.
@@ -126,12 +107,9 @@ change in any release.
   instead of failing on an empty shapes graph.
 
 ### Changed
-- Experiments always go through a server: start one with `aq.init()`.
-  `ExperimentStore.standalone()` and its embedded metadata graph are removed.
-- Experiment artifact bytes are stored in the SQL store, split into chunks,
-  instead of in an `experiment_artifacts/` directory. They commit and delete
-  with the observations that reference them. `ExperimentStore` no longer takes
-  an artifact directory. Existing artifact files are not migrated.
+- DuckDB and TimescaleDB databases from earlier releases upgrade in place the
+  first time the server opens them. A large DuckDB database briefly needs room
+  for a second copy of its samples table.
 - A SPARQL update no longer forces the ontology closure to be recomputed
   unless it changed the graph's `owl:imports` or `owl:Ontology` triples.
 - The query compiler renders `int`, `float`, `bool`, `date` and `datetime`
@@ -204,19 +182,6 @@ change in any release.
   model download grows from 66 MB to 133 MB.
 
 ### Fixed
-- Explicit user metadata edits use the same values in graph filters, tables,
-  and document reads while preserving source assertions. Object selections and
-  exclusions handle list paths without shifting positions or restoring dropped
-  fields.
-- Existing DuckDB and TimescaleDB databases upgrade in place through a shared,
-  versioned migration ledger before dependent views and indexes are created.
-- Published timestamps retain their instants with non-UTC PostgreSQL sessions.
-- Experiment stream identities derive from variable IDs and typed keys through
-  the reference URI helper, preventing collisions with literal variable labels.
-  Earlier observations retain their original references.
-- Artifact cleanup rechecks ownership under the writer lock, preserving files
-  attached by another experiment after deletion commits. File registration and
-  its observation now commit together.
 - CURIEs such as `watr:UltrafiltrationUnit` or `quantitykind:Pressure` given as
   a class, relation or attribute value are expanded with the server's prefix
   table, in `client.resolve()` as well. They were sent to text matching
