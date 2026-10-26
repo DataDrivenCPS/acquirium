@@ -46,7 +46,8 @@ class TestSelectStorage:
             base().include("flavour")
         with pytest.raises(ValueError, match="unknown alias"):
             base().include("medium", of="nope")
-        base().include("quantity_kind", of="ro")   # entity nodes accept any attribute
+        with pytest.raises(ValueError, match="does not apply to entity"):
+            base().include("quantity_kind", of="ro")
         with pytest.raises(ValueError, match="does not apply to data"):
             base().include("process")
 
@@ -158,9 +159,7 @@ class TestColumnControl:
 class TestIncludeAll:
     DATA_ATTRS = ["medium", "substance", "quantity_kind", "unit",
                   "enumeration_kind", "data_source"]
-    # every attribute except type and cp_type, entity ones first
-    ENTITY_ATTRS = ["process", "medium", "label", "substance", "quantity_kind", "unit",
-                    "enumeration_kind", "data_source", "app"]
+    ENTITY_ATTRS = ["process", "medium", "label"]
 
     def test_measurement_node(self):
         b = base().include("all")

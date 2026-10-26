@@ -66,9 +66,9 @@ class TestWhereErrors:
         with pytest.raises(ValueError, match="at least one"):
             base().where()
 
-    def test_entity_node_accepts_measurement_attributes(self):
-        b = q().entity(CLS_A, alias="ro").where(quantity_kind=QK_URI)
-        assert b.query_graph.nodes[0].constraints["attrs"] == {"quantity_kind": QK_URI}
+    def test_role_mismatch_entity(self):
+        with pytest.raises(ValueError, match="does not apply to entity"):
+            q().entity(CLS_A, alias="ro").where(quantity_kind=QK_URI)
 
     def test_role_mismatch_data(self):
         with pytest.raises(ValueError, match="does not apply to data"):

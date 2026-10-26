@@ -1,11 +1,10 @@
-from typing import Optional, Iterator, Iterable, Any, Callable, Mapping, TYPE_CHECKING
+from typing import Optional, Iterator, Iterable, Any, Callable, TYPE_CHECKING
 from datetime import datetime, timezone
 import json
 import re
 import requests
 from requests import HTTPError
 from pathlib import Path
-from urllib.parse import quote
 import warnings
 import polars as pl
 import pyarrow.ipc as ipc
@@ -60,33 +59,163 @@ RDF_FORMATS = {
     ".trix": "trix",
 }
 
-from acquirium.StreamMetadata import (
-    POINT_FIELD_KINDS, POINT_FIELD_PREDICATES, _add_triple, _coerce_resolved, _build_stream_triples,
-)
+# Known point-metadata fields → the resolver ``kind`` each is resolved as.
+# The field name is the semantic role, so callers supply no ``kind``.
+POINT_FIELD_KINDS: dict[str, str] = {
+    "unit": "unit",
+    "quantity_kind": "quantity_kind",
+    "medium": "substance",
+    "substance": "substance",
+}
 
-def _split_stream_metadata(stream: dict) -> tuple[dict, dict]:
-    """Return ``(stream with metadata fields merged in, remaining metadata)``.
+# The same fields → the predicate each is written under on the point. Extend
+# both maps together when adding a semantic field; ``data_source`` is a plain
+# literal and stays outside (it is not resolved).
+POINT_FIELD_PREDICATES: dict[str, URIRef] = {
+    "unit": HAS_UNIT,
+    "quantity_kind": HAS_QUANTITY_KIND,
+    "medium": HAS_MEDIUM,
+    "substance": OF_SUBSTANCE,
+}
 
-    A ``metadata`` key naming a top-level stream field (``unit``, ``label``,
-    ...) is the same declaration and merges into the stream; giving both
-    with different values is an error. Everything else (user attributes,
-    other built-ins) is written on the point by the metadata builder.
+
+def _add_triple(g: Graph, subj: URIRef, pred: URIRef, value: "str | URIRef | None") -> None:
+    if value is None:
+        return
+    if isinstance(value, URIRef):
+        g.add((subj, pred, value))
+    elif "://" in str(value) or str(value).startswith("urn:"):
+        g.add((subj, pred, URIRef(str(value))))
+    else:
+        g.add((subj, pred, Literal(value)))
+
+
+def _coerce_resolved(
+    resolved: dict[str, "str | None"], name: str, value: Any,
+) -> "str | URIRef | None":
+    """Map a raw field value to its resolved URIRef.
+
+    Passes ``None``/``URIRef`` through; warns and returns ``None`` when
+    plain text did not resolve, so the field is skipped as if it had not
+    been supplied.
     """
-    from acquirium.Client.metadata import STREAM_FIELDS
+    if value is None:
+        return None
+    if isinstance(value, URIRef):
+        return value
+    uri = resolved.get(name)
+    if uri is None:
+        warnings.warn(
+            f"Could not resolve {name!r} value {value!r} to a QUDT URI; "
+            "skipping",
+            stacklevel=3,
+        )
+        return None
+    return URIRef(uri)
 
-    meta = dict(stream.get("metadata") or {})
-    merged = {k: v for k, v in stream.items() if k != "metadata"}
-    rest: dict = {}
-    for key, value in meta.items():
-        if key in STREAM_FIELDS:
-            current = merged.get(key)
-            if current is not None and str(current) != str(value):
-                raise ValueError(
-                    f"stream gives {key}={current!r} and metadata gives {key}={value!r}")
-            merged[key] = value
+
+def _build_stream_triples(
+    g: Graph, stream: dict, resolved: dict[str, "str | None"],
+    existing: dict[str, "str | None"],
+    units_compatible: "Callable[[Any, Any], bool]",
+) -> None:
+    """Write one stream's reference/point/metadata triples into ``g``.
+
+    ``resolved`` is the precomputed ``field -> URI-or-None`` map for this
+    stream's semantic fields (typically from ``resolve_point_metadata``);
+    pass ``{}`` when there is nothing to resolve.
+
+    ``existing`` is the metadata the point already carries in the server
+    graph (from ``AcquiriumClient._point_metadata``); pass ``{}`` for a
+    point that does not exist yet. A provided field the point lacks is
+    added; a conflicting value raises ``ValueError``. Units are the one
+    exception: a provided unit that differs from the point's is accepted
+    when ``units_compatible`` says the two are convertible, and is written
+    on the external reference as the unit the raw rows are stored in.
+    """
+    point_uri_raw = stream.get("point_uri")
+    label = stream.get("label")
+    source_id = stream.get("source_id")
+    ref_name = stream.get("ref_name")
+    ref_uri = None
+    if ref_name is not None and source_id is not None:
+        ref_uri = compute_ref_uri(source_id, ref_name)
+        g.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
+        g.add((ref_uri, ACQUIRIUM_REF_NAME,  Literal(ref_name)))
+        # Only assert a value kind the caller supplied; a default would
+        # contradict a later data-derived kind on the same reference node.
+        if stream.get("value_kind") is not None:
+            g.add((
+                ref_uri,
+                ACQUIRIUM_VALUE_KIND,
+                Literal(normalize_value_kind(stream["value_kind"])),
+            ))
+        g.add((ref_uri, STORED_AT,           ACQUIRIUM_DB_URI))
+        g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
+
+    if point_uri_raw is not None:
+        subj = URIRef(str(point_uri_raw))
+    else:
+        if ref_uri is None:
+            raise ValueError(
+                "a stream registration needs a point_uri or a "
+                "(source_id, ref_name) pair to mint one"
+            )
+        subj = URIRef(f"{ref_uri}__point")
+        if label is None:
+            label = ref_name
+
+    g.add((subj, RDF.type, VIRTUAL_POINT))
+    if label is not None:
+        g.add((subj, RDFS.label, Literal(label)))
+
+    for field, pred in POINT_FIELD_PREDICATES.items():
+        provided = _coerce_resolved(resolved, field, stream.get(field))
+        if provided is None:
+            continue
+        current = existing.get(field)
+        if current is None:
+            _add_triple(g, subj, pred, provided)
+        elif str(current) == str(provided):
+            if field == "unit" and ref_uri is not None:
+                _add_triple(g, ref_uri, HAS_UNIT, provided)
+        elif field != "unit":
+            raise ValueError(
+                f"{field} mismatch for point <{subj}>: the point has "
+                f"<{current}>, the stream provided <{provided}>"
+            )
+        elif not units_compatible(provided, current):
+            raise ValueError(
+                f"unit mismatch for point <{subj}>: the point has <{current}>, "
+                f"the stream provided <{provided}> and they are not convertible"
+            )
+        elif ref_uri is None:
+            raise ValueError(
+                f"stream for point <{subj}> stores data in <{provided}> but has "
+                "no (source_id, ref_name) reference to record the storage unit on"
+            )
         else:
-            rest[key] = value
-    return merged, rest
+            # Convertible: the provided unit is what the raw rows are stored
+            # in; data access defaults to the point's unit and converts.
+            _add_triple(g, ref_uri, HAS_UNIT, provided)
+
+    data_source = stream.get("data_source")
+    if data_source is not None:
+        current = existing.get("data_source")
+        if current is None:
+            _add_triple(g, subj, DATA_SOURCE, data_source)
+        elif str(current) != str(data_source):
+            raise ValueError(
+                f"data_source mismatch for point <{subj}>: the point has "
+                f"{current!r}, the stream provided {data_source!r}"
+            )
+
+    if ref_uri is not None:
+        g.add((subj, HAS_EXTERNAL_REFERENCE, ref_uri))
+
+    target = ref_uri if ref_uri is not None else subj
+    for pred, value in (stream.get("properties") or {}).items():
+        _add_triple(g, target, pred, value)
 
 
 class AcquiriumClient:
@@ -112,90 +241,6 @@ class AcquiriumClient:
     def address(self) -> str:
         """The HTTP(S) address of the server this client uses."""
         return self.base_url
-
-    # These intentionally thin methods are transport only. The public client
-    # turns them into Study/Experiment/Variable objects in Experiments.py.
-    def define_experiment(self, name: str) -> dict: return self._experiment_post("/experiments/templates", {"name": name})
-    def sync_experiment_metadata(self) -> dict:
-        try:
-            return self._experiment_post("/experiments/metadata/sync", {})
-        except HTTPError as error:
-            if error.response is not None and error.response.status_code == 404:
-                raise RuntimeError(
-                    f"The server at {self.base_url} does not support experiment metadata. "
-                    "Restart the Acquirium server with the current checkout. "
-                    "Then restart the notebook kernel and rerun its cells."
-                ) from error
-            raise
-    def declare_experiment_variable(self, template_id: str, **body: Any) -> dict: return self._experiment_post(f"/experiments/templates/{template_id}/variables", body)
-    def declare_experiment_variables(self, template_id: str, declarations: list[dict]) -> list[dict]:
-        return self._experiment_post(f"/experiments/templates/{template_id}/variables/batch", declarations)
-    def list_experiment_studies(self, name: str | None = None) -> list[dict]:
-        return self._experiment_get("/experiments/templates", {"name": name})
-    def get_experiment_study(self, identifier: str) -> dict:
-        return self._experiment_get("/experiments/templates/lookup", {"identifier": identifier})
-    def list_experiment_variables(self, template_id: str) -> list[dict]:
-        return self._experiment_get(f"/experiments/templates/{template_id}/variables")
-    def start_experiment(self, template_id: str, metadata: dict | None = None) -> dict: return self._experiment_post(f"/experiments/templates/{template_id}/runs", {"metadata": metadata or {}})
-    def list_experiments(self, template_id: str, **filters: Any) -> list[dict]:
-        if "run_ids" in filters:
-            return self._experiment_post(f"/experiments/templates/{template_id}/runs/query", self._experiment_params(filters))
-        return self._experiment_get(f"/experiments/templates/{template_id}/runs", self._experiment_params(filters))
-    def get_experiment(self, run_id: str) -> dict:
-        return self._experiment_get(f"/experiments/runs/{run_id}")
-    def record_experiment_batch(self, run_id: str, entries: list[dict]) -> list[dict]:
-        return self._experiment_post(f"/experiments/runs/{run_id}/record", entries)
-
-    def observe_experiment(self, run_id: str, variable_id: str, **body: Any) -> dict: return self._experiment_post(f"/experiments/runs/{run_id}/variables/{quote(variable_id, safe='')}/observations", body)
-    def observe_experiment_batch(self, run_id: str, observations: list[dict]) -> list[dict]:
-        return self._experiment_post(f"/experiments/runs/{run_id}/observations/batch", observations)
-    def annotate_experiment_stream(self, run_id: str, ref_uri: str, *, start: str, end: str | None = None, metadata: dict | None = None) -> dict:
-        return self._experiment_post(f"/experiments/runs/{run_id}/stream-annotations", {"ref_uri": ref_uri, "start": start, "end": end, "metadata": {} if metadata is None else metadata})
-    def close_experiment_stream_annotation(self, annotation_id: str, *, end: str) -> dict:
-        return self._experiment_post(f"/experiments/stream-annotations/{annotation_id}/close", {"end": end})
-    def list_experiment_stream_annotations(self, **filters: Any) -> list[dict]:
-        return self._experiment_get("/experiments/stream-annotations", self._experiment_params(filters))
-    def list_experiment_observations(self, template_id: str, **filters: Any) -> list[dict]:
-        if "run_ids" in filters:
-            return self._experiment_post(f"/experiments/templates/{template_id}/observations/query", self._experiment_params(filters))
-        return self._experiment_get(f"/experiments/templates/{template_id}/observations", self._experiment_params(filters))
-    def finish_experiment(self, run_id: str, failed: bool = False, error: Any = None) -> dict: return self._experiment_post(f"/experiments/runs/{run_id}/{'fail' if failed else 'finish'}", {"error": error})
-    def delete_experiments(self, run_ids: list[str]) -> dict: return self._experiment_post("/experiments/runs/delete", {"run_ids": list(run_ids)})
-    def delete_experiment_study(self, template_id: str) -> dict: return self._experiment_post(f"/experiments/templates/{template_id}/delete", {})
-    def clear_experiments(self, *, confirm: bool = False) -> dict: return self._experiment_post("/experiments/clear", {"confirm": confirm})
-    def experiment_usage(self, *, template_id: str | None = None, run_ids: list[str] | None = None) -> dict:
-        return self._experiment_post("/experiments/usage", {"template_id": template_id, "run_ids": run_ids})
-    def attach_experiment_file(self, run_id: str, variable_id: str, path: str | Path, media_type: str | None = None) -> dict:
-        # Send bytes, not a client-local filename. The server owns the durable
-        # artifact copy so experiments survive the originating machine.
-        source = Path(path)
-        return self.attach_experiment_bytes(run_id, variable_id, source.read_bytes(), filename=source.name, media_type=media_type)
-    def attach_experiment_bytes(self, run_id: str, variable_id: str, data: bytes, *, filename: str, media_type: str | None = None) -> dict:
-        from acquirium.ExperimentValues import artifact_entry
-        from hashlib import sha256
-        self.record_experiment_batch(run_id, [artifact_entry(variable_id, data, filename=filename, media_type=media_type)])
-        return {"digest": sha256(data).hexdigest(), "filename": filename, "byte_length": len(data)}
-    def experiment_artifact(self, digest: str) -> bytes:
-        response = self._http.get(f"{self.base_url}/experiments/artifacts/{digest}"); _raise_for_status(response); return response.content
-    def _experiment_post(self, path: str, body: dict | list) -> Any:
-        response = self._http.post(f"{self.base_url}{path}", json=body); _raise_for_status(response); return response.json()
-    def _experiment_get(self, path: str, params: dict[str, Any] | None = None):
-        response = self._http.get(
-            f"{self.base_url}{path}",
-            params={key: value for key, value in (params or {}).items() if value is not None},
-        )
-        _raise_for_status(response)
-        return response.json()
-    @staticmethod
-    def _experiment_params(filters: dict[str, Any]) -> dict[str, Any]:
-        params = dict(filters)
-        if params.get("metadata") is not None:
-            params["metadata"] = json.dumps(params["metadata"], sort_keys=True)
-        for key in ("started_after", "started_before"):
-            value = params.get(key)
-            if isinstance(value, datetime):
-                params[key] = value.isoformat()
-        return params
 
     def insert_graph(
         self,
@@ -232,8 +277,6 @@ class AcquiriumClient:
         data["source_id"] = source_id
         response = self._http.post(url, json=data)
         _raise_for_status(response)
-        # the graph may bind new prefixes: read the list again when next needed
-        self._namespaces_cache = None
 
     def insert_graph_file(
         self,
@@ -454,9 +497,9 @@ class AcquiriumClient:
     def expand_uri(self, text: Any) -> str:
         """Expand a ``prefix:local`` CURIE to a full URI using bound namespaces.
 
-        Accepts a CURIE only: a full URI (``urn:``, ``http://``, ...) or an
-        unbound prefix raises ``ValueError``. Non-string inputs are cast to
-        ``str``. Use :meth:`node_uri` where either form is acceptable.
+        Passes already-full URIs (``urn:``, ``http://``, ``https://``)
+        through unchanged. Non-string inputs are cast to ``str``. Returns
+        the input unchanged if the prefix is not bound.
         """
         s = str(text)
         nm = self.namespace_manager()
@@ -464,13 +507,6 @@ class AcquiriumClient:
             return str(nm.expand_curie(s))
         except Exception as e:
             raise ValueError(f"Cannot expand '{s}': no matching namespace for CURIE and not a full URI")
-
-    def node_uri(self, text: Any) -> str:
-        """A node given as a full URI or a bound CURIE, as a full URI string."""
-        s = str(text)
-        if s.startswith(("urn:", "http://", "https://")):
-            return s
-        return self.expand_uri(s)
 
     def _expand_curie(self, text: str) -> Optional[str]:
         """Expand ``prefix:local`` when the server binds the prefix, else None."""
@@ -863,15 +899,8 @@ class AcquiriumClient:
         the same ``source_id`` and source-local ``ref_name``. Acquirium resolves
         those inserts to the same canonical reference URI internally.
         """
-        from acquirium.Client.metadata import plan_write, update_text
-        from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
-
         graphs: dict[str, Graph] = {}
-        # the ``metadata`` maps per point; a later stream on the same point
-        # wins key by key
-        extras: dict[str, dict[str, Any]] = {}
         for stream in streams:
-            stream, extra = _split_stream_metadata(stream)
             source_id = stream.get("source_id")
             if not isinstance(source_id, str) or not source_id:
                 raise ValueError("each stream registration requires a non-empty source_id")
@@ -884,15 +913,7 @@ class AcquiriumClient:
             resolved = self.resolve_point_metadata(meta) if meta else {}
             point_uri = stream.get("point_uri")
             existing = self._point_metadata(str(point_uri)) if point_uri is not None else {}
-            subj = _build_stream_triples(graph, stream, resolved, existing, self._units_compatible)
-            if extra:
-                extras.setdefault(str(subj), {}).update(extra)
-        # Plan the metadata before writing anything, so a bad key or a value
-        # that does not resolve fails the whole registration.
-        namespaces = self._namespace_uris() if extras else ()
-        writes = [plan_write(subj, extra, role="data", resolve=self._resolve_one,
-                             namespaces=namespaces)
-                  for subj, extra in extras.items()]
+            _build_stream_triples(graph, stream, resolved, existing, self._units_compatible)
         for source_id, graph in graphs.items():
             if len(graph):
                 self.insert_graph(
@@ -901,99 +922,6 @@ class AcquiriumClient:
                     replace=False,
                     source_id=source_id,
                 )
-        # Same map and same update as insert_metadata: each key is replaced
-        # in the metadata graph, so registering again with a changed value
-        # leaves only the new one. Runs after the stream triples, which make
-        # the point a node the metadata graph may describe.
-        update = update_text(writes)
-        if update:
-            self.sparql_update(update, source_id=METADATA_SOURCE_ID)
-
-    def _resolve_one(self, text: str, kind: str) -> Optional[str]:
-        """Resolve one text value of the given kind to a URI, or None."""
-        hits = self.resolve({"v": (text, kind)}, min_score=0.4) or {}
-        return hits.get("v")
-
-    def node_roles(self, uris: Iterable[str]) -> dict[str, str]:
-        """``{uri: "data" | "entity"}`` for the nodes the data graphs know.
-
-        A node is a data node when it carries an external reference, the
-        same rule the explore layer's measurement nodes follow. A URI the
-        graphs do not mention (as subject or object) is left out, and so is
-        one only user attributes mention.
-        """
-        from acquirium.Client.explore.attributes import ATTR_NS
-
-        uris = list(dict.fromkeys(str(u) for u in uris))
-        roles: dict[str, str] = {}
-        for i in range(0, len(uris), 500):
-            chunk = " ".join(f"<{u}>" for u in uris[i:i + 500])
-            # a URI that only user attributes mention (a link saved as a
-            # value) is not a node: metadata on it would be pruned at once
-            sparql = (
-                "SELECT DISTINCT ?s ?ref\nWHERE {\n"
-                f"  VALUES ?s {{ {chunk} }}\n"
-                f'  {{ ?s ?p ?o . FILTER(!STRSTARTS(STR(?p), "{ATTR_NS}")) }}\n'
-                f'  UNION {{ ?x ?q ?s . FILTER(!STRSTARTS(STR(?q), "{ATTR_NS}")) }}\n'
-                f"  OPTIONAL {{ ?s <{HAS_EXTERNAL_REFERENCE}> ?ref . }}\n}}"
-            )
-            res = self.sparql_query(sparql, include_dependencies=False)
-            cols = res.get("columns", [])
-            si = cols.index("s") if "s" in cols else 0
-            ri = cols.index("ref") if "ref" in cols else 1
-            for row in res.get("rows", []):
-                s = str(row[si])
-                if row[ri] is not None or s not in roles:
-                    roles[s] = "data" if row[ri] is not None else "entity"
-        return roles
-
-    def _namespace_uris(self) -> tuple[str, ...]:
-        """The namespace URIs the server binds, from the cached prefix list:
-        a URI-looking metadata value under one of them is written as a URI
-        (see :func:`acquirium.Client.metadata.to_term`)."""
-        return tuple(str(ns) for _, ns in self.namespace_manager().namespaces())
-
-    def insert_metadata(self, records: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
-        """Write value maps on nodes: ``{node_uri: {key: value}}``.
-
-        See :mod:`acquirium.Client.metadata` for what a value map may hold.
-        Subjects may be CURIEs. Every subject must already exist in a data
-        graph; text on a URI-valued built-in is resolved. A URI-looking
-        string is written as a URI when it falls under a namespace the
-        server binds, else as text; pass a ``URIRef`` to write a URI
-        regardless. Writes land in the
-        reserved metadata source graph as one SPARQL update, so each key is
-        replaced atomically and nothing outside that graph is touched.
-        """
-        from acquirium.Client.metadata import plan_write, update_text
-        from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
-
-        subjects = {self.node_uri(uri): values for uri, values in records.items()}
-        if not subjects:
-            return {"ok": True, "nodes": 0}
-        roles = self.node_roles(subjects)
-        missing = sorted(set(subjects) - set(roles))
-        if missing:
-            raise ValueError(f"unknown node(s), not in any data graph: {missing}")
-        namespaces = self._namespace_uris()
-        writes = [
-            plan_write(uri, values, role=roles[uri], resolve=self._resolve_one,
-                       namespaces=namespaces)
-            for uri, values in subjects.items()
-        ]
-        update = update_text(writes)
-        if not update:
-            return {"ok": True, "nodes": len(writes)}
-        result = self.sparql_update(update, source_id=METADATA_SOURCE_ID)
-        return {**result, "nodes": len(writes)}
-
-    def metadata_documents(self, subjects: Iterable[str]) -> dict[str, dict]:
-        """Read complete typed metadata from the authoritative source graph."""
-        from acquirium.Metadata import loads
-
-        response = self._http.post(f"{self.base_url}/metadata/documents", json=list(subjects))
-        _raise_for_status(response)
-        return {subject: loads(document) for subject, document in response.json().items()}
 
     def insert_timeseries(
         self,

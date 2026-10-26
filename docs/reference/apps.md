@@ -251,9 +251,7 @@ threshold = 40.0
 ```
 
 `spec` is `module:Class` or `path/to/file.py:Class`; relative file paths are
-resolved against the configuration file. A file imports under its name without
-`.py`, so that name must be unique: a file named like an installed module, or
-like another app file in a different directory, is rejected. Other keys except the optional
+resolved against the configuration file. Other keys except the optional
 display `name` are passed to the app constructor as `parameters`. The class
 must remain importable from the same module whenever the server recompiles or
 restarts, and its source must match the deployment digest. A deployment error

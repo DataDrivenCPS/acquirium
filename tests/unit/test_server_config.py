@@ -18,7 +18,7 @@ def test_repository_config_uses_the_supported_exact_only_key():
     assert "exact_match" not in loaded.data["server"]
 
 
-def test_local_config_without_a_file_uses_a_copy_of_the_defaults(monkeypatch, tmp_path):
+def test_local_config_has_explicit_safe_defaults(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
 
     loaded = load_local_config(discover=False)

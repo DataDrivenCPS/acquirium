@@ -1,280 +1,400 @@
-"""AcquiriumClient against a local server started with aq.init().
-
-Calls that must not reach a server use a client pointed at a port nobody
-listens on, so any request fails the test.
-"""
-import socket
-from datetime import datetime, timezone
-from hashlib import sha256
-from unittest.mock import patch
-from uuid import uuid4
+"""Tests for AcquiriumClient HTTP methods with mocked requests."""
 
 import pytest
-import requests
-from rdflib import Dataset, Graph
-from requests import HTTPError
+from unittest.mock import patch, MagicMock
+from datetime import datetime, timezone
 
-from acquirium import Acquirium
 from acquirium.Client.client import AcquiriumClient
 
 
 @pytest.fixture
-def client(ac):
-    return ac.client
+def http():
+    """Stand-in for the client's requests.Session."""
+    return MagicMock()
 
 
 @pytest.fixture
-def offline():
-    """A client whose server is not there."""
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
-    return AcquiriumClient(server_url="127.0.0.1", server_port=port)
+def client(http):
+    c = AcquiriumClient(server_url="localhost", server_port=8000, use_ssl=False)
+    c._http = http
+    return c
 
 
 @pytest.fixture
-def ns():
-    """A namespace no other test writes to."""
-    return f"urn:client-test:{uuid4().hex}/"
+def ssl_client():
+    return AcquiriumClient(server_url="example.com", server_port=443, use_ssl=True)
 
 
-def _objects(client, subject, predicate):
-    query = f"SELECT ?o WHERE {{ <{subject}> <{predicate}> ?o }}"
-    return [row[0] for row in client.sparql_query(query, wait_for_fresh=True)["rows"]]
-
-
-# ── Without a server ───────────────────────────────────────
+# ── Constructor ────────────────────────────────────────────
 
 
 class TestClientInit:
-    def test_http_url(self):
-        c = AcquiriumClient(server_url="localhost", server_port=8000, use_ssl=False)
-        assert c.base_url == "http://localhost:8000"
-        assert c.address == "http://localhost:8000"
+    def test_http_url(self, client):
+        assert client.base_url == "http://localhost:8000"
+        assert client.address == "http://localhost:8000"
 
-    def test_https_url(self):
-        assert AcquiriumClient(server_url="example.com", server_port=443, use_ssl=True).base_url == "https://example.com:443"
+    def test_https_url(self, ssl_client):
+        assert ssl_client.base_url == "https://example.com:443"
 
     def test_custom_port(self):
-        assert AcquiriumClient(server_url="myhost", server_port=9999).base_url == "http://myhost:9999"
-
-
-def test_missing_graph_file_raises(offline):
-    with pytest.raises(FileNotFoundError):
-        offline.insert_graph_file("no/such/file.ttl", source_id="plant")
-
-
-def test_insert_graph_file_unknown_suffix_requires_format(offline, tmp_path):
-    path = tmp_path / "model.unknown"
-    path.write_text("@prefix ex: <urn:ex#> .")
-    with pytest.raises(ValueError, match="cannot infer RDF format"):
-        offline.insert_graph_file(path, source_id="s")
-
-
-def test_insert_graph_rejects_path_objects(offline, tmp_path):
-    path = tmp_path / "model.ttl"
-    path.write_text("@prefix ex: <urn:ex#> .")
-    with pytest.raises(TypeError, match="insert_graph_file"):
-        offline.insert_graph(path, source_id="s")
-
-
-def test_unreachable_server_errors_propagate(offline):
-    with pytest.raises(requests.ConnectionError):
-        offline.sparql_query("SELECT * WHERE { ?s ?p ?o }")
-
-
-class TestConstructorHealthGate:
-    def test_healthy_server_constructs_immediately(self, client):
-        host, port = client.base_url.removeprefix("http://").split(":")
-        aq = Acquirium(server_url=host, server_port=int(port))
-        assert aq.address == client.base_url
-
-    def test_unreachable_server_raises_connectionerror(self, offline):
-        port = int(offline.base_url.rsplit(":", 1)[1])
-        with pytest.raises(ConnectionError, match=r"did not answer /health.*Is the server"):
-            Acquirium(server_url="127.0.0.1", server_port=port, health_timeout=0.3)
-
-    def test_health_timeout_none_skips_check(self, offline):
-        port = int(offline.base_url.rsplit(":", 1)[1])
-        assert Acquirium(server_url="127.0.0.1", server_port=port, health_timeout=None).address == offline.base_url
-
-
-class TestResolveWithoutServer:
-    def test_uri_passthrough_skips_server(self, offline):
-        assert offline.resolve("urn:a", "class") == "urn:a"
-        assert offline.resolve("urn:a", top_k=3)[0]["match_stage"] == "passthrough"
-
-    def test_pinned_and_empty_fields_never_reach_the_server(self, offline):
-        assert offline.resolve({"pinned": ("urn:x", "unit"), "empty": (None, "unit")}) == {"pinned": "urn:x", "empty": None}
-
-
-# ── Experiments ────────────────────────────────────────────
-
-
-class TestExperimentTransport:
-    @pytest.fixture(autouse=True)
-    def no_module_requests(self):
-        # Every call must reuse the client's pooled session.
-        with patch("requests.post", side_effect=AssertionError("use the client session")), \
-                patch("requests.get", side_effect=AssertionError("use the client session")):
-            yield
-
-    def _run(self, client, name="transport"):
-        study = client.define_experiment(name)
-        variable = client.declare_experiment_variable(study["template_id"], label="x", role="output", kind="scalar", metadata={})
-        return study, variable, client.start_experiment(study["template_id"], {})
-
-    def test_observations_and_finish_reuse_client_session(self, client):
-        study, variable, run = self._run(client)
-        client.observe_experiment(run["run_id"], variable["variable_id"], value=12.5)
-        client.finish_experiment(run["run_id"])
-        assert [item["value"] for item in client.list_experiment_observations(study["template_id"])] == [12.5]
-        assert client.get_experiment(run["run_id"])["status"] == "succeeded"
-
-    @pytest.mark.parametrize("media_type", [None, "application/json"])
-    def test_file_upload_uses_session_and_preserves_bytes(self, client, tmp_path, media_type):
-        study = client.define_experiment("upload")
-        variable = client.declare_experiment_variable(study["template_id"], label="input", role="input", kind="file", metadata={})
-        run = client.start_experiment(study["template_id"], {})
-        source = tmp_path / "input.json"
-        source.write_bytes(b'{"power": 42}')
-        saved = client.attach_experiment_file(run["run_id"], variable["variable_id"], source, media_type)
-        assert saved == {"digest": sha256(source.read_bytes()).hexdigest(), "filename": source.name, "byte_length": 13}
-        assert client.experiment_artifact(saved["digest"]) == source.read_bytes()
-
-    @pytest.mark.parametrize("upload", [False, True])
-    def test_session_errors_keep_server_details(self, client, tmp_path, upload):
-        _, _, run = self._run(client, "first")
-        _, foreign, _ = self._run(client, "second")
-        source = tmp_path / "input.txt"
-        source.write_text("input")
-        with pytest.raises(HTTPError, match="different study"):
-            if upload:
-                client.attach_experiment_file(run["run_id"], foreign["variable_id"], source)
-            else:
-                client.observe_experiment(run["run_id"], foreign["variable_id"], value=42)
-
-
-# ── Graph ──────────────────────────────────────────────────
+        c = AcquiriumClient(server_url="myhost", server_port=9999)
+        assert c.base_url == "http://myhost:9999"
 
 
 class TestInsertGraph:
-    def test_text_content_defaults_to_turtle(self, client, ns):
-        # Regression: multiline text without prefix markers raised NameError.
-        client.insert_graph(f"PREFIX ex: <{ns}>\nex:s ex:p ex:o .", replace=False, source_id="plant")
-        assert _objects(client, f"{ns}s", f"{ns}p") == [f"{ns}o"]
+    def test_insert_graph_does_not_scan_external_references(self, http, client):
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        http.post.return_value = mock_resp
 
-    def test_source_id_owns_what_replace_replaces(self, client, ns):
-        client.insert_graph(f"<{ns}a> <{ns}p> <{ns}one> .", source_id="driver/a")
-        client.insert_graph(f"<{ns}b> <{ns}p> <{ns}one> .", source_id="driver/b")
-        client.insert_graph(f"<{ns}a> <{ns}p> <{ns}two> .", replace=True, source_id="driver/a")
-        assert _objects(client, f"{ns}a", f"{ns}p") == [f"{ns}two"]
-        assert _objects(client, f"{ns}b", f"{ns}p") == [f"{ns}one"]
+        client.insert_graph("@prefix ex: <urn:ex/> .", replace=False, source_id="plant")
 
-    @pytest.mark.parametrize("suffix,format", [
-        (".ttl", "turtle"), (".n3", "n3"), (".xml", "xml"), (".rdf", "xml"), (".trix", "trix")])
-    def test_insert_graph_infers_format_from_a_path(self, client, ns, tmp_path, suffix, format):
-        path = tmp_path / f"model{suffix}"
-        # TriX serializes named graphs, so rdflib needs a dataset for it.
-        graph = Dataset() if format == "trix" else Graph()
-        path.write_text(graph.parse(data=f"<{ns}a> <{ns}p> <{ns}b> .", format="turtle").serialize(format=format))
-        client.insert_graph_file(path, source_id="s")
-        assert _objects(client, f"{ns}a", f"{ns}p") == [f"{ns}b"]
+        http.post.assert_called_once()
+        assert http.post.call_args.args[0] == "http://localhost:8000/insert_graph"
 
-    def test_insert_graph_explicit_format_is_not_overridden(self, client, ns, tmp_path):
-        path = tmp_path / "model.xml"
-        path.write_text(f"<{ns}a> <{ns}p> <{ns}b> .")
-        client.insert_graph_file(path, format="turtle", source_id="s")
-        assert _objects(client, f"{ns}a", f"{ns}p") == [f"{ns}b"]
+    def test_multiline_text_without_markers_is_content(self, http, client):
+        ## regression: used to raise NameError (undefined `p`)
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        http.post.return_value = mock_resp
 
-    def test_validate_graph_without_ontology_shapes(self, client):
-        # A server with no plant model loads no shapes; there is nothing to violate.
+        rdf = "PREFIX ex: <urn:ex/>\nex:s ex:p ex:o ."
+        client.insert_graph(rdf, replace=False, source_id="plant")
+
+        assert http.post.call_args.kwargs["json"]["rdf_graph"] == rdf
+
+    def test_source_id_is_sent_when_graph_has_an_owner(self, http, client):
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        http.post.return_value = mock_resp
+
+        client.insert_graph("@prefix ex: <urn:ex/> .", source_id="driver/a")
+
+        assert http.post.call_args.kwargs["json"]["source_id"] == "driver/a"
+
+    def test_missing_graph_file_raises(self, client):
+        with pytest.raises(FileNotFoundError):
+            client.insert_graph_file("no/such/file.ttl", source_id="plant")
+
+    def test_validate_graph_posts_to_validation_endpoint(self, http, client):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"conforms": True, "report": "", "results_text": ""}
+        mock_resp.raise_for_status = MagicMock()
+        http.post.return_value = mock_resp
+
         assert client.validate_graph()["conforms"] is True
+        assert http.post.call_args.args[0] == "http://localhost:8000/validate_graph"
 
 
-class TestSparql:
-    def test_query_returns_columns_and_rows(self, client, ns):
-        client.insert_graph(f"<{ns}s> <{ns}p> <{ns}o> .", source_id="plant")
-        result = client.sparql_query(f"SELECT ?o WHERE {{ <{ns}s> <{ns}p> ?o }}", wait_for_fresh=True)
-        assert (result["columns"], result["rows"]) == (["o"], [[f"{ns}o"]])
-
-    def test_long_queries_fit_in_the_request(self, client):
-        # Queries go in a POST body: VALUES-heavy queries exceed URL length limits.
-        values = " ".join(f"<urn:client-test:x{i}>" for i in range(3000))
-        assert len(client.sparql_query(f"SELECT ?x WHERE {{ VALUES ?x {{ {values} }} }}")["rows"]) == 3000
-
-    def test_update_source_id_targets_an_owned_graph(self, client, ns):
-        triple = f"<{ns}a> <{ns}p> <{ns}b>"
-        client.sparql_update(f"INSERT DATA {{ {triple} }}", source_id="app:demo")
-        client.sparql_update(f"INSERT DATA {{ {triple} }}", source_id="app:other")
-        client.sparql_update(f"DELETE WHERE {{ <{ns}a> ?p ?o }}", source_id="app:demo")
-        assert _objects(client, f"{ns}a", f"{ns}p") == [f"{ns}b"]  # still in app:other
-        client.sparql_update(f"DELETE WHERE {{ <{ns}a> ?p ?o }}", source_id="app:other")
-        assert _objects(client, f"{ns}a", f"{ns}p") == []
-
-    def test_graph_status_and_compatibility_version(self, client, ns):
-        before = client.graph_status()
-        assert {"source_version", "published_version", "is_current", "rebuild_in_progress"} <= before.keys()
-        client.insert_graph(f"<{ns}s> <{ns}p> <{ns}o> .", source_id="plant")
-        assert client.graph_version() == client.graph_status()["source_version"] > before["source_version"]
+# ── sparql_query ───────────────────────────────────────────
 
 
-# ── Resolve ────────────────────────────────────────────────
+class TestSparqlQuery:
+    def test_success_posts_json_body(self, http, client):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "head": {"vars": ["s"]},
+            "results": {"bindings": [{"s": {"type": "uri", "value": "urn:test"}}]},
+        }
+        mock_resp.raise_for_status = MagicMock()
+        http.post.return_value = mock_resp
+
+        result = client.sparql_query("SELECT * WHERE { ?s ?p ?o }")
+        assert result == {"columns": ["s"], "rows": [["urn:test"]]}
+        # POST with a JSON body: VALUES-heavy queries exceed URL length limits
+        call = http.post.call_args
+        assert call.args[0].endswith("/sparql_json")
+        assert call.kwargs["json"] == {
+            "query": "SELECT * WHERE { ?s ?p ?o }",
+            "include_dependencies": True,
+            "wait_for_fresh": False,
+        }
+
+    def test_wait_for_fresh_is_sent_when_requested(self, http, client):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"columns": [], "rows": []}
+        mock_resp.raise_for_status = MagicMock()
+        http.post.return_value = mock_resp
+
+        client.sparql_query("SELECT * WHERE { ?s ?p ?o }", wait_for_fresh=True)
+
+        assert http.post.call_args.kwargs["json"]["wait_for_fresh"] is True
+
+    def test_error_propagation(self, http, client):
+        http.post.side_effect = Exception("Connection refused")
+        with pytest.raises(Exception, match="Connection refused"):
+            client.sparql_query("SELECT * WHERE { ?s ?p ?o }")
+
+
+class TestSparqlUpdate:
+    def test_source_id_targets_an_owned_graph(self, http, client):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"ok": True}
+        mock_resp.raise_for_status = MagicMock()
+        http.post.return_value = mock_resp
+
+        client.sparql_update("DELETE WHERE { ?s ?p ?o }", source_id="app:demo")
+
+        assert http.post.call_args.kwargs["json"] == {
+            "update": "DELETE WHERE { ?s ?p ?o }",
+            "source_id": "app:demo",
+        }
+
+
+class TestGraphStatus:
+    def test_graph_status_and_compatibility_version(self, http, client):
+        http.get.return_value = _get_resp({
+            "source_version": 7,
+            "published_version": 6,
+            "is_current": False,
+            "rebuild_in_progress": True,
+        })
+
+        status = client.graph_status()
+
+        assert status["published_version"] == 6
+        assert client.graph_version() == 7
+        assert http.get.call_args.args[0].endswith("/graph_version")
+
+
+# ── resolve ────────────────────────────────────────────────
+
+
+def _get_resp(payload):
+    resp = MagicMock()
+    resp.json.return_value = payload
+    resp.raise_for_status = MagicMock()
+    resp.ok = True
+    return resp
 
 
 class TestResolve:
-    def test_single_text_returns_best_uri(self, client):
-        assert client.resolve("pump", "class") == "http://data.ashrae.org/standard223#Pump"
+    def test_single_text_returns_best_uri(self, http, client):
+        http.get.return_value = _get_resp(
+            {"matches": [{"uri": "urn:a", "score": 0.9}]})
+        assert client.resolve("pump", "class") == "urn:a"
+        assert "resolve_text" in http.get.call_args.args[0]
 
-    def test_single_text_no_match_is_none(self, client):
+    def test_single_text_no_match_is_none(self, http, client):
+        http.get.return_value = _get_resp({"matches": []})
         assert client.resolve("zzzznonexistent") is None
 
-    def test_top_k_returns_candidates(self, client):
-        matches = client.resolve("pump", "class", top_k=3)
-        assert 1 < len(matches) <= 3
-        assert matches[0]["uri"] == "http://data.ashrae.org/standard223#Pump"
+    def test_top_k_returns_candidates(self, http, client):
+        matches = [{"uri": "urn:a", "score": 0.9}, {"uri": "urn:b", "score": 0.5}]
+        http.get.return_value = _get_resp({"matches": matches})
+        assert client.resolve("pump", "class", top_k=3) == matches
 
-    def test_record_form_joint_resolution(self, client):
-        assert client.resolve({"eu": ("gal/min", "unit"), "qty": ("zzzznonexistent", "quantity_kind"),
-                               "pinned": ("urn:x", "unit"), "empty": (None, "unit")}) == {
-            "eu": "http://qudt.org/vocab/unit/GAL_US-PER-MIN", "qty": None, "pinned": "urn:x", "empty": None}
+    def test_uri_passthrough_skips_server(self, http, client):
+        assert client.resolve("urn:a", "class") == "urn:a"
+        assert client.resolve("urn:a", top_k=3)[0]["match_stage"] == "passthrough"
+        http.get.assert_not_called()
 
-    def test_bound_curies_expand(self, client):
-        assert client.resolve("watr:UltrafiltrationUnit", "class") == "urn:nawi-water-ontology#UltrafiltrationUnit"
+    def test_record_form_joint_resolution(self, http, client):
+        http.post.return_value = _get_resp(
+            {"matches": {"eu": [{"uri": "urn:gpm"}], "qty": []}})
+        out = client.resolve({"eu": ("gal/min", "unit"),
+                              "qty": ("flow", "quantity_kind"),
+                              "pinned": ("urn:x", "unit"),
+                              "empty": (None, "unit")})
+        assert out == {"eu": "urn:gpm", "qty": None,
+                       "pinned": "urn:x", "empty": None}
+        body = http.post.call_args.kwargs["json"]
+        # pinned/None fields never reach the server
+        assert {f["name"] for f in body["fields"]} == {"eu", "qty"}
+
+    def test_kind_param_forwarded(self, http, client):
+        http.get.return_value = _get_resp({"matches": []})
+        client.resolve("pump", "class")
+        assert http.get.call_args.kwargs["params"]["kind"] == "class"
+
+
+class TestResolveConversion:
+    def test_success(self, http, client):
+        payload = {"from": {"uri": "urn:mgL"}, "to": {"uri": "urn:gL"},
+                   "factors": {"from_uri": "urn:mgL", "to_uri": "urn:gL",
+                               "compatible": True}}
+        http.post.return_value = _get_resp(payload)
+        out = client.resolve_conversion("mg/l", "grams per liter")
+        assert out == payload
+        assert "resolve_conversion" in http.post.call_args.args[0]
+
+    def test_error_becomes_valueerror(self, http, client):
+        resp = MagicMock()
+        resp.ok = False
+        resp.headers = {"content-type": "application/json"}
+        resp.json.return_value = {"detail": "no convertible pair"}
+        http.post.return_value = resp
+        with pytest.raises(ValueError, match="no convertible pair"):
+            client.resolve_conversion("mg/l", "volts")
+
+
+# ── insert_log ─────────────────────────────────────────────
+
+
+class TestInsertLog:
+    def test_insert_log_full(self, http, client):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"status": "ok"}
+        mock_resp.raise_for_status = MagicMock()
+        http.post.return_value = mock_resp
+
+        result = client.insert_log(
+            point_uri="urn:test:p1",
+            log_time=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            observation_start=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            observation_end=datetime(2025, 1, 2, tzinfo=timezone.utc),
+            log_message="test log",
+        )
+        assert result["status"] == "ok"
+
+    def test_insert_log_minimal(self, http, client):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"status": "ok"}
+        mock_resp.raise_for_status = MagicMock()
+        http.post.return_value = mock_resp
+
+        result = client.insert_log(
+            point_uri="urn:test:p1",
+            log_message="minimal log",
+        )
+        assert result["status"] == "ok"
+
+
+class TestConstructorHealthGate:
+    @pytest.fixture(autouse=True)
+    def _session(self, http):
+        with patch("acquirium.Client.client.requests.Session", return_value=http):
+            yield
+
+    def test_healthy_server_constructs_immediately(self, http):
+        from acquirium import Acquirium
+        resp = MagicMock()
+        resp.json.return_value = {"status": "ok"}
+        resp.raise_for_status = MagicMock()
+        http.get.return_value = resp
+        aq = Acquirium(server_url="localhost", server_port=8000)
+        assert "health" in http.get.call_args.args[0]
+        assert aq.client.base_url == "http://localhost:8000"
+        assert aq.address == "http://localhost:8000"
+        assert http.get.call_args.kwargs["timeout"] <= 30.0
+
+    def test_unreachable_server_raises_connectionerror(self, http):
+        from acquirium import Acquirium
+        http.get.side_effect = OSError("connection refused")
+        with pytest.raises(ConnectionError, match=r"did not answer /health.*Is the server"):
+            Acquirium(server_url="localhost", server_port=9999, health_timeout=0.3)
+
+    def test_health_timeout_none_skips_check(self, http):
+        from acquirium import Acquirium
+        Acquirium(server_url="localhost", server_port=9999, health_timeout=None)
+        http.get.assert_not_called()
+
+
+def test_health_uses_expanded_default_timeout(http, client):
+    response = MagicMock()
+    response.json.return_value = {"ok": True}
+    http.get.return_value = response
+
+    assert client.health() == {"ok": True}
+    http.get.assert_called_once_with("http://localhost:8000/health", timeout=30.0)
+
+
+# ------------------------------------------------------------------ insert_graph
+
+
+@pytest.mark.parametrize("suffix,expected", [
+    (".ttl", "turtle"),
+    (".n3", "n3"),
+    (".xml", "xml"),
+    (".rdf", "xml"),
+    (".trix", "trix"),
+])
+def test_insert_graph_infers_format_from_a_path(tmp_path, suffix, expected):
+    path = tmp_path / f"model{suffix}"
+    path.write_text("@prefix ex: <urn:ex#> .\nex:a a ex:B .\n")
+    client = AcquiriumClient()
+
+    with patch.object(client._http, "post") as post:
+        post.return_value = MagicMock(status_code=200)
+        client.insert_graph_file(path, source_id="s")
+
+    body = post.call_args.kwargs["json"]
+    assert body["format"] == expected
+    assert body["rdf_graph"] == path.read_text()
+
+
+def test_insert_graph_explicit_format_is_not_overridden(tmp_path):
+    path = tmp_path / "model.ttl"
+    path.write_text("@prefix ex: <urn:ex#> .\nex:a a ex:B .\n")
+    client = AcquiriumClient()
+
+    with patch.object(client._http, "post") as post:
+        post.return_value = MagicMock(status_code=200)
+        client.insert_graph_file(path, format="n3", source_id="s")
+
+    assert post.call_args.kwargs["json"]["format"] == "n3"
+
+
+def test_insert_graph_file_unknown_suffix_requires_format(tmp_path):
+    path = tmp_path / "model.unknown"
+    path.write_text("@prefix ex: <urn:ex#> .")
+    with pytest.raises(ValueError, match="cannot infer RDF format"):
+        AcquiriumClient().insert_graph_file(path, source_id="s")
+
+
+def test_insert_graph_text_content_defaults_to_turtle():
+    client = AcquiriumClient()
+    turtle = "@prefix ex: <urn:ex#> .\nex:a a ex:B .\n"
+
+    with patch.object(client._http, "post") as post:
+        post.return_value = MagicMock(status_code=200)
+        client.insert_graph(turtle, source_id="s")
+
+    body = post.call_args.kwargs["json"]
+    assert body["format"] == "turtle"
+    assert body["rdf_graph"] == turtle
+
+
+def test_insert_graph_rejects_path_objects(tmp_path):
+    path = tmp_path / "model.ttl"
+    path.write_text("@prefix ex: <urn:ex#> .")
+    with pytest.raises(TypeError, match="insert_graph_file"):
+        AcquiriumClient().insert_graph(path, source_id="s")
+
+
+class TestResolveCurie:
+    @pytest.fixture(autouse=True)
+    def namespaces(self, http):
+        prefixes = MagicMock()
+        prefixes.json.return_value = {
+            "watr": "urn:nawi-water-ontology#",
+            "quantitykind": "http://qudt.org/vocab/quantitykind/",
+        }
+        http.get.return_value = prefixes
+
+    def test_bound_curie_expands_without_matching(self, http, client):
+        assert client.resolve("watr:UltrafiltrationUnit", "class") == (
+            "urn:nawi-water-ontology#UltrafiltrationUnit"
+        )
         assert client.resolve("quantitykind:Pressure", "quantity_kind", top_k=2) == [{
             "uri": "http://qudt.org/vocab/quantitykind/Pressure",
             "kind": "quantity_kind", "score": 1.0, "match_stage": "passthrough",
         }]
-        assert client.resolve({"qk": ("quantitykind:Pressure", "quantity_kind"), "u": ("mg/l", "unit")}) == {
-            "qk": "http://qudt.org/vocab/quantitykind/Pressure", "u": "http://qudt.org/vocab/unit/MilliGM-PER-L"}
+        http.get.assert_called_once_with("http://localhost:8000/namespace/list")
+
+    def test_record_expands_bound_curies_only(self, http, client):
+        response = MagicMock()
+        response.json.return_value = {"matches": {"u": [{"uri": "urn:unit"}]}}
+        http.post.return_value = response
+        out = client.resolve({
+            "qk": ("quantitykind:Pressure", "quantity_kind"),
+            "u": ("mg/l", "unit"),
+        })
+        assert out == {"qk": "http://qudt.org/vocab/quantitykind/Pressure", "u": "urn:unit"}
+        fields = http.post.call_args.kwargs["json"]["fields"]
+        assert [f["name"] for f in fields] == ["u"]
 
     @pytest.mark.parametrize("text", ["nope:Pump", "flow: water", "a:b:c"])
-    def test_other_text_is_matched_not_passed_through(self, client, text):
-        assert client.resolve(text, "class") != text
-
-
-class TestResolveConversion:
-    def test_success(self, client):
-        out = client.resolve_conversion("mg/l", "g/l")
-        assert (out["from"]["uri"], out["to"]["uri"]) == (
-            "http://qudt.org/vocab/unit/MilliGM-PER-L", "http://qudt.org/vocab/unit/GM-PER-L")
-        assert out["factors"]["compatible"] is True
-
-    def test_error_becomes_valueerror(self, client):
-        with pytest.raises(ValueError, match="no convertible pair"):
-            client.resolve_conversion("mg/l", "psi")
-
-
-# ── Logs ───────────────────────────────────────────────────
-
-
-class TestInsertLog:
-    def test_insert_log_full_and_minimal(self, client, ns):
-        point = f"{ns}p1"
-        start, end = datetime(2025, 1, 1, tzinfo=timezone.utc), datetime(2025, 1, 2, tzinfo=timezone.utc)
-        assert client.insert_log(point_uri=point, log_time=start, observation_start=start,
-                                 observation_end=end, log_message="test log")["ok"]
-        assert client.insert_log(point_uri=point, log_message="minimal log")["ok"]
-        logs = {entry.message: entry for entry in client.query_logs(point_uri=point)}
-        assert logs.keys() == {"test log", "minimal log"}
-        assert (logs["test log"].period.start, logs["test log"].period.end) == (start, end)
+    def test_other_text_is_matched(self, http, client, text):
+        client.resolve(text, "class")
+        assert http.get.call_args.kwargs["params"]["text"] == text

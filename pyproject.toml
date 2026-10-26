@@ -50,7 +50,7 @@ dependencies = [
     "pydantic>=2.12.5",
     "pyontoenv>=0.6.0,<0.7",
     "pyoxigraph>=0.5.2",
-    "pyshifty==0.5.1",
+    "pyshifty>=0.4.0,<0.5",
     "python-dateutil>=2.9.0.post0",
     "python-multipart>=0.0.21",
     "requests>=2.32.5",
@@ -61,7 +61,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-pyomo = ["pyomo>=6", "pint>=0.24"]
 # these provide support for different drivers, which
 # often require external dependencies.
 mqtt = [

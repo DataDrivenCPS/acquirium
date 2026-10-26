@@ -17,7 +17,6 @@ from rdflib import URIRef
 import warnings
 
 from acquirium.Client.explore.core import Query
-from acquirium.Client.explore.expr import AttrProxy
 from acquirium.Client.query import Q
 from acquirium.Materialization.api import App
 from acquirium.Materialization.planner import Deployment
@@ -30,8 +29,6 @@ def _dt_to_iso(v: "str | datetime | None") -> "str | None":
 
 
 from acquirium.Client.client import AcquiriumClient, DEFAULT_HEALTH_REQUEST_TIMEOUT
-from acquirium.Client.streams import Stream
-from acquirium.Experiments import Point, StudyService
 from acquirium.internals.models import compute_ref_uri
 
 
@@ -76,9 +73,6 @@ class Acquirium:
             use_ssl=use_ssl,
         )
         self.insert_batch_rows = int(insert_batch_rows)
-        # Study owns user-facing declarations; the raw HTTP client remains
-        # available below for ordinary Acquirium APIs.
-        self.study = StudyService(self)
         if self.insert_batch_rows <= 0:
             raise ValueError("insert_batch_rows must be greater than zero")
         if health_timeout:
@@ -159,29 +153,6 @@ class Acquirium:
             source_id=source_id,
         )
 
-    def insert_metadata(self, uri: str | URIRef, values: Mapping[str, Any]) -> dict[str, Any]:
-        """Attach metadata to one node (entity or measurement) by URI or CURIE.
-
-        ``values`` is a plain map. A key that names a built-in attribute
-        (``unit``, ``medium``, ``label``, ``type``, ...) is written with that
-        attribute's predicate, text resolved to a URI. Any other key is a
-        user attribute, nested dicts and lists flattened to dotted paths,
-        that ``where``/``include``/``options``/``facets`` then accept, and
-        ``aq.attr`` completes. Relations of the plant model (``entity``,
-        ``measurement``, ...) are not written here::
-
-            aq.insert_metadata("dpr:valve-1", {
-                "last_cleaned": "03-12-1999",
-                "product_info": {"manufacturer": "Siemens", "year": 2019},
-                "tags": ["lab", "critical"],
-            })
-            aq.query().measurement().where(aq.attr.product_info.year >= 2015)
-
-        Writing a key replaces its previous value; ``None`` removes it. Keys
-        not mentioned stay. Metadata lives as long as the node does.
-        """
-        return self.client.insert_metadata({str(uri): values})
-
     def sparql_update(self, update: str, *, source_id: str) -> dict[str, Any]:
         """Execute a SPARQL update against one explicitly owned data graph.
 
@@ -193,17 +164,6 @@ class Acquirium:
     def query(self) -> Query:
         """Create a new empty Query (the explore builder) bound to this instance."""
         return Query(client=self.client)
-
-    @property
-    def attr(self) -> AttrProxy:
-        """Attribute paths for ``where``: ``aq.attr.unit``, ``aq.attr.product_info.year``.
-
-        Bound to this server, so ``aq.attr.<TAB>`` lists the built-in
-        attributes and those written with ``insert_metadata``, and an
-        unknown name fails here rather than inside the query. Comparisons
-        and ``&``/``|``/``~`` build the expressions ``Query.where`` takes.
-        """
-        return AttrProxy(self.client)
 
     def explore(self) -> Query:
         """Alias of :meth:`query`."""
@@ -390,33 +350,6 @@ class Acquirium:
     def reference_uri(self, source_id: str, ref_name: str) -> URIRef:
         """Return the canonical Acquirium reference URI for ``(source_id, ref_name)``."""
         return compute_ref_uri(source_id, ref_name)
-
-    def stream(self, source_id_or_uri: str | URIRef, name: str | None = None) -> Stream:
-        """Return a handle for one stored stream.
-
-        ``ac.stream(source_id, name)`` names a stream by the source and stream
-        name its driver writes with; ``ac.stream(ref_uri)`` wraps a reference
-        URI. Use ``stream.between(start, end)`` to select a time range.
-        """
-        ref_uri = compute_ref_uri(str(source_id_or_uri), name) if name is not None else source_id_or_uri
-        return Stream(str(ref_uri), self.client)
-
-    def point(self, uri: str) -> Point:
-        """Return a lightweight semantic point handle for experiment variables."""
-        return Point(uri)
-
-    def resolve(self, text: str, *, kind: str | None = None, min_score: float = 0.6) -> Point:
-        """Resolve vocabulary text to an ontology concept for experiment metadata.
-
-        Free text searches the ontology indexes. Use plant queries to discover
-        modeled property instances, then pass their URIs to ``point()``.
-        """
-        # Keep text matching at the boundary. Persisted variable metadata is
-        # always the resolved URI, never an ambiguous natural-language string.
-        uri = self.client.resolve(text, kind=kind, top_k=1, min_score=min_score)
-        if uri is None:
-            raise ValueError(f"could not resolve graph resource {text!r}")
-        return Point(str(uri))
 
     def register_streams(
         self,

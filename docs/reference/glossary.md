@@ -70,9 +70,6 @@ two.
 | data node | a node holding measurements | `measurement()` |
 | alias | the name of a node, used as its column name and as its handle in `frm=`, `target=` and `of=` | `entity("pump", alias="p1")` |
 | attribute | a property of a node the interface exposes by name instead of by predicate | `unit`, `medium`, `substance`, `quantity_kind`, `process`, `type`, `cp_type`, `enumeration_kind`, `data_source`, `app`, `label` |
-| user attribute | an attribute written with `insert_metadata()`, named by its key or its dotted path into a nested value; a predicate under `urn:acquirium:attr#` | `last_cleaned`, `product_info.year`, `tags` |
-| attribute expression | a comparison on an `acq.attr` path, or a combination of comparisons with `&`, `\|`, `~`, passed to `where()` | `acq.attr.product_info.year >= 2015` |
-| metadata graph | the reserved `metadata` source graph that `insert_metadata()` writes to; pruned of triples about nodes that no other graph mentions | `urn:acquirium:graph:data:source:metadata` |
 | pointer | the node the chain is currently on, which is what a bare `where()` or `measurement()` applies to | moved by `refocus()` |
 | hidden predicate | an edge that generic traversal never follows, because it describes a node rather than connects the plant | `rdf:type`, `s223:hasProperty`, `s223:hasConnectionPoint`, `s223:cnx` |
 | `max_depth` | how many hops a traversal may take | `related("tank", max_depth=1)` |
@@ -90,19 +87,6 @@ two.
 | wide | one column per point, aligned on the timestamp | `time, m__wbs:RO-in-pressure, ...` |
 | narrow | one row per reading, with its point in its own column | `data_alias, point_id, time, value_numeric, ...` |
 
-
-## Experiments
-
-| term | meaning | example |
-|---|---|---|
-| Study | reusable declarations of inputs, outputs, and logs | `acq.study.define("operating-scenarios")` |
-| Experiment | one execution of a Study, with metadata and lifecycle state | `study.start(metadata={"scenario": "baseline"})` |
-| experiment variable | a named recording handle with a role, value type, and metadata | `study.output("cost").scalar(unit="USD")` |
-| experiment observation | one saved value, event, artifact, or stream reference, ordered within its run | `cost.record(12.5)` |
-| stream annotation | an association between a run and an existing stream's time interval | `experiment.annotate_stream(ref_uri, start=t0)` |
-
-Experiment metadata uses the shared attribute registry and `.where()` syntax.
-See the [experiment reference](experiments.md) for the interface and read formats.
 
 ## The platform
 

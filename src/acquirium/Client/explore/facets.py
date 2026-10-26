@@ -131,8 +131,6 @@ class FacetSummary:
     node_alias: str
     frames: Dict[str, pl.DataFrame] = field(default_factory=dict)
     scopes: Dict[str, str] = field(default_factory=dict)
-    # the column dtype of each user attribute (built-ins have none)
-    dtypes: Dict[str, str] = field(default_factory=dict)
 
     def __getitem__(self, attr_name: str) -> pl.DataFrame:
         return self.frames[attr_name]
@@ -143,40 +141,17 @@ class FacetSummary:
     def attrs(self) -> list:
         return list(self.frames)
 
-    def _line(self, name: str, label: str, indent: str) -> str:
-        df = self.frames[name]
-        scope = self.scopes.get(name, "matched")
-        dtype = self.dtypes.get(name)
-        typed = f" <{dtype}>" if dtype else ""
-        if df.height == 0:
-            return f"{indent}{label}{typed}: (no values)"
-        mixed = dtype == "Object"
-        shown = [
-            (repr(v) if mixed else str(v)) + (f" ({c})" if scope != "vocabulary" else "")
-            for v, c in zip(df[name].head(5).to_list(), df["count"].head(5).to_list())
-        ]
-        more = f", … +{df.height - 5}" if df.height > 5 else ""
-        return f"{indent}{label}{typed} [{scope}]: " + ", ".join(shown) + more
-
     def __repr__(self) -> str:
-        """Built-in attributes first, as before; then user attributes sorted
-        by name with the keys under one parent grouped below it, each with
-        its column type. A mixed (``Object``) attribute shows values with
-        ``repr`` so ``'2019'`` and ``2019`` read differently."""
         lines = [f"FacetSummary({self.node_alias!r})"]
-        user = sorted(n for n in self.frames if n in self.dtypes)
-        for name in self.frames:
-            if name not in self.dtypes:
-                lines.append(self._line(name, name, "  "))
-        parent_shown = None
-        for name in user:
-            parent, _, leaf = name.rpartition(".")
-            if not parent:
-                lines.append(self._line(name, name, "  "))
-                parent_shown = None
+        for name, df in self.frames.items():
+            scope = self.scopes.get(name, "matched")
+            if df.height == 0:
+                lines.append(f"  {name}: (no values)")
                 continue
-            if parent != parent_shown:
-                lines.append(f"  {parent}")
-                parent_shown = parent
-            lines.append(self._line(name, "." + leaf, "    "))
+            shown = [
+                f"{v} ({c})" if scope != "vocabulary" else str(v)
+                for v, c in zip(df[name].head(5).to_list(), df["count"].head(5).to_list())
+            ]
+            more = f", … +{df.height - 5}" if df.height > 5 else ""
+            lines.append(f"  {name} [{scope}]: " + ", ".join(shown) + more)
         return "\n".join(lines)
