@@ -382,9 +382,9 @@ read formats and [metadata rules](../reference/experiments.md#metadata-rules).
 
 ## Connect a time-series result to the facility
 
-Set `observed` to the URI of the observable property that the values describe.
-To find properties in a loaded plant model, query the model's property links.
-For example, this lists the properties on the seawater RO model's outlet:
+Set `observed` to the URI of the plant property the values describe. To find
+that URI, query the plant model. This query lists the properties of the RO
+outlet:
 
 ```python
 S223 = "http://data.ashrae.org/standard223#"
@@ -410,9 +410,9 @@ property_uris = outlet_properties.resolved_nodes(alias="property")
 print(property_uris)
 ```
 
-This works before any streams are registered. `metadata()` displays matches;
-`resolved_nodes()` returns full URIs. Select the property for your output.
-Here, water mass flow is `urn:swro/RO-out-flow-mass-water`:
+You can run this query before registering any streams. `metadata()` shows the
+matching properties. `resolved_nodes()` returns their URIs. Here, water mass
+flow is `urn:swro/RO-out-flow-mass-water`:
 
 ```python
 permeate_property_uri = "urn:swro/RO-out-flow-mass-water"
@@ -436,7 +436,10 @@ experiment.finish()
 frame = recorded_flow.dataframe()
 ```
 
-To read this result later, reopen the Study and retrieve the run by its saved ID:
+You set `observed` once, when you declare the variable. The URI stays the same
+across the Study, so later experiments can be related to one another.
+
+To read the result later, reopen the Study and get the run by its ID:
 
 ```python
 flow_study = ac.study.get("operating-scenarios")
@@ -447,35 +450,32 @@ flow_recording = flow_recordings.latest()
 saved_flow_samples = flow_recording.dataframe()
 ```
 
-This example saves one flow batch. `.latest()` selects that recording; with
-incremental writes it selects only the last batch's interval.
+`.latest()` returns the most recent recording. If the run recorded in several
+batches, it returns only the last batch.
 
-`observed` takes a property URI, either as a string or `ac.point(uri)`.
-`ac.resolve(text)` searches ontology concepts such as classes and quantity
-kinds. Use plant queries to find property instances.
+`observed` takes a property URI as a string or as `ac.point(uri)`. Use a plant
+query to find property URIs. `ac.resolve(text)` only searches ontology
+concepts, such as classes and quantity kinds.
 
-Each run writes under `experiment/<run_id>`, keeping scenario results separate.
-The run's samples get their own stream point with `observed` as an attribute,
-so plant queries on the property still return only site measurements. Find
-every run that simulated the property through the stream query API:
+Each run stores its samples under `experiment/<run_id>`. Plant queries on the
+property don't return them. To find them, query by `observed`:
 
 ```python
 simulated_flows = ac.query().measurement(alias="flow", observed=permeate_property_uri)
 simulated_flows.include("run_id", "study_id").metadata_objects()
 ```
 
-If there is no plant model or known property URI, omit `observed`:
+Without a plant model, leave out `observed`:
 
 ```python
 simulated_power = study.output("simulated power").timeseries(unit="kW")
 ```
 
-The run source and variable label identify the stream. `record()` returns a
-`Stream` handle; call `.dataframe()` to read its samples as `time` and
-`value` columns.
+`record()` returns the run's stream. `.dataframe()` reads its samples as `time`
+and `value` columns.
 
-For example, this finds mass-flow streams connected to the RO stage, including
-the recorded output:
+To compare runs with site data, find the site's streams. This query finds the
+mass-flow streams on the RO stage:
 
 ```python
 mass_flow_kind = "http://qudt.org/vocab/quantitykind/MassFlowRate"
@@ -491,8 +491,18 @@ flow_streams = flow_data.metadata(include_ref_uris=True)
 flow_streams
 ```
 
-A shared property lets queries find related streams. Select scenarios, align
-timestamps, and convert units yourself when comparing them.
+Acquirium doesn't currently line up run and site samples for you. This converts
+the site data to the run's unit, then pairs each run sample with the nearest
+site sample:
+
+```python
+site = flow_query.data().convert_to("KiloGM-PER-SEC").dataframe()  # time, flow
+run_samples = recorded_flow.dataframe()                            # time, value
+
+compared = run_samples.join_asof(
+    site, on="time", strategy="nearest", tolerance="10m",
+).rename({"value": "run", "flow": "site"})
+```
 
 See [Load a plant model](load-a-plant-model.md) and
 [A driver against an existing plant model](../tutorials/driver-with-a-plant-model.md)
