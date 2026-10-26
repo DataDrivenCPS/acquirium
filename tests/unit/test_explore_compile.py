@@ -39,17 +39,24 @@ def norm(s: str) -> str:
 
 
 def strip_labels(s: str) -> str:
-    """Drop the point-label optionals the explore compiler adds.
+    """Drop the point-label and stream-identity optionals the explore compiler adds.
 
-    The frozen legacy builder does not fetch ``rdfs:label``, so parity is
-    asserted modulo the ``?lbl<N>`` select vars and their OPTIONAL clauses.
+    The frozen legacy builder does not fetch ``rdfs:label`` or the
+    reference's ``acq:sourceId`` / ``acq:refName``, so parity is asserted
+    modulo the ``?lbl<N>`` / ``?extsid<N>`` / ``?extrname<N>`` select vars
+    and their OPTIONAL clauses.
     """
     s = re.sub(
         r"OPTIONAL \{ \?\w+ <http://www\.w3\.org/2000/01/rdf-schema#label> \?lbl\d+ \. \} ?",
         "",
         s,
     )
-    return norm(re.sub(r" \?lbl\d+", "", s))
+    s = re.sub(
+        r"OPTIONAL \{ \?ext\d+ <urn:acquirium#(?:sourceId|refName)> \?ext(?:sid|rname)\d+ \. \} ?",
+        "",
+        s,
+    )
+    return norm(re.sub(r" \?(?:lbl|extsid|extrname)\d+", "", s))
 
 
 _DATA_EDGE = re.compile(

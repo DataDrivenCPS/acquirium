@@ -11,6 +11,19 @@ change in any release.
 ## [Unreleased]
 
 ### Added
+- Each `BindingInfo` now carries `source_id` and `ref_name`, the pair
+  `ac.stream(source_id, ref_name)` takes, read from the reference's
+  `acq:sourceId` / `acq:refName`. `DataObject.metadata(include_ref_uris=True)`
+  adds them as columns after `ref_uri`; without that flag the output is
+  unchanged.
+- `Query.data(stats=False)` describes the matched streams without counting
+  their samples. The bindings keep `row_count=0` and no `earliest` / `latest`,
+  and the DataObject fetches the statistics the first time `total_rows`,
+  `time_range`, or `is_empty()` needs them. Reading the data works as before.
+- `measurement(ref=...)` keeps only the streams with the given reference URIs
+  or `Stream` handles (one or a list; an empty list matches nothing). With
+  `data(stats=False)` it looks up known streams from the graph alone:
+  `aq.query().measurement(ref=refs).data(stats=False).bindings`.
 - `object` experiment variables save any Python object through a codec class
   and rebuild it with `observation.load()`. A codec has a `media_type`,
   `dumps(value) -> bytes`, and `loads(data)`; the declaration stores its

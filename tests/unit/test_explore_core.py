@@ -229,9 +229,10 @@ class TestRefocus:
 def canon(s: str) -> str:
     """Normalize whitespace, point-label optionals, and node-id numbering.
 
-    The explore compiler also fetches point ``rdfs:label``s; the frozen
-    legacy builder does not, so ``?lbl<N>`` select vars and their OPTIONAL
-    clauses are stripped before comparing. The legacy builder's id counter
+    The explore compiler also fetches point ``rdfs:label``s and each
+    reference's ``acq:sourceId`` / ``acq:refName``; the frozen legacy
+    builder does not, so ``?lbl<N>`` / ``?extsid<N>`` / ``?extrname<N>``
+    select vars and their OPTIONAL clauses are stripped before comparing. The legacy builder's id counter
     skips numbers (its ``_new_id`` + ``bump_id`` both increment), so
     equivalent graphs get different node ids. Renumber
     ``?v<N>/?ext<N>/?unit<N>/?extunit<N>`` by order of first appearance so
@@ -256,6 +257,13 @@ def canon(s: str) -> str:
         s,
     )
     s = re.sub(r" \?lbl\d+", "", s)
+    # stream-identity optionals (acq:sourceId / acq:refName), also explore-only
+    s = re.sub(
+        r"OPTIONAL \{ \?ext\d+ <urn:acquirium#(?:sourceId|refName)> \?ext(?:sid|rname)\d+ \. \} ?",
+        "",
+        s,
+    )
+    s = re.sub(r" \?ext(?:sid|rname)\d+", "", s)
     s = norm(s)
     mapping: dict[str, str] = {}
 

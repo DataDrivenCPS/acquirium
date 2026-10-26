@@ -542,7 +542,7 @@ class Query:
     def measurement(self, *, frm: "str | list | tuple | None" = None, alias: Optional[str] = None,
                     direction: Optional[str] = None, max_depth: int = 3,
                     nearest: Optional[bool] = None, include_connection_points: bool = True,
-                    **attrs: Any) -> "Query":
+                    ref: Any = None, **attrs: Any) -> "Query":
         """Attach a measurement point (data node) to the pattern and point at it.
 
         Matches nodes carrying an external reference one hop from the source.
@@ -582,7 +582,17 @@ class Query:
         measurement node(s), same as ``where()``::
 
             q.measurement(quantity_kind="mass flow rate", medium=Not("brine"))
+
+        ``ref`` keeps only the streams with the given reference URIs: one
+        URI, a :class:`~acquirium.Client.streams.Stream`, or a list of
+        either (an empty list matches nothing). It compiles to a ``VALUES``
+        on the reference, so describing known streams needs no other
+        filter; pair it with ``data(stats=False)`` to skip the sample scan::
+
+            feed = ac.stream("hist", "FT_feed")
+            aq.query().measurement(ref=[feed]).data(stats=False).bindings
         """
+        refs = self._normalize_refs(ref)
         g = self.query_graph
 
         if isinstance(frm, (list, tuple)) and direction is not None:
@@ -627,7 +637,7 @@ class Query:
                                       constraints={"is_data_node": True}))
             g = g.with_edge(QueryEdge(source_id=mid_id, target_id=data_id, hops=1),
                             new_pointer=data_id)
-            g = g.with_data_node(DataNodeInfo(node_id=data_id))
+            g = g.with_data_node(DataNodeInfo(node_id=data_id, refs=refs))
             if attrs:
                 g = self._apply_attrs(g, [data_id], self._resolve_attr_values(attrs))
             return self._with_graph(g)
@@ -641,7 +651,7 @@ class Query:
                 self._require_free_alias(g, alias, verb="measurement")
             g = g.with_node(QueryNode(id=new_id, alias=alias if alias is not None else "data",
                                       constraints={"is_data_node": True}))
-            g = g.with_data_node(DataNodeInfo(node_id=new_id))
+            g = g.with_data_node(DataNodeInfo(node_id=new_id, refs=refs))
             if attrs:
                 g = self._apply_attrs(g, [new_id], self._resolve_attr_values(attrs))
             return self._with_graph(g)
@@ -676,12 +686,24 @@ class Query:
             g = g.with_edge(QueryEdge(source_id=src_id, target_id=new_id, hops=1,
                                       cp_union=include_connection_points),
                             new_pointer=new_id)
-            g = g.with_data_node(DataNodeInfo(node_id=new_id))
+            g = g.with_data_node(DataNodeInfo(node_id=new_id, refs=refs))
             created.append(new_id)
 
         if attrs:
             g = self._apply_attrs(g, created, self._resolve_attr_values(attrs))
         return self._with_graph(g)
+
+    @staticmethod
+    def _normalize_refs(ref: Any) -> Optional[tuple]:
+        """``measurement(ref=)`` as a tuple of unique reference URIs (None: no filter)."""
+        if ref is None:
+            return None
+        items = list(ref) if isinstance(ref, (list, tuple, set, frozenset)) else [ref]
+        refs = tuple(dict.fromkeys(str(r) for r in items))
+        bad = [r for r in refs if not _is_uri(r) or any(c in r for c in '<>" {}|\\^`')]
+        if bad:
+            raise ValueError(f"measurement: ref must be stream reference URIs, got {bad[0]!r}")
+        return refs
 
     def _lower_context_via(self, via: Any) -> tuple:
         """Turn ``context(via=...)`` into ``(chains, name)``.
@@ -1397,6 +1419,7 @@ class Query:
                     "alias": g.aliases_reverse.get(nid, f"v{nid}"),
                     "filters": safe(dict(info.filters or {})),
                     "exprs": safe(list(info.exprs or ())),
+                    "refs": list(info.refs) if info.refs is not None else None,
                 }
                 for nid, info in g.data_nodes.items()
             ],
@@ -1458,8 +1481,8 @@ class Query:
         (``medium``) keeps one row per value.
 
         The internal SPARQL columns driving ``data()`` (``ext<nid>``,
-        ``unit<nid>``, ``extunit<nid>``) are hidden unless
-        ``include_internals=True``.
+        ``unit<nid>``, ``extunit<nid>``, ``extsid<nid>``, ``extrname<nid>``)
+        are hidden unless ``include_internals=True``.
 
         ``drop_empty_cols=True`` leaves out columns that are null on every
         row; the result then has fewer columns than ``schema()`` lists. An
@@ -1633,8 +1656,20 @@ class Query:
         include_dependencies: bool = True,
         cast_value: str | None = "float",
         value_mode: str = "default",
+        stats: bool = True,
     ) -> "DataObject":
-        """Return a lazy DataObject with alias-driven access to the matched streams."""
+        """Return a lazy DataObject with alias-driven access to the matched streams.
+
+        Each binding carries the point, label, units, and the reference's
+        ``source_id`` / ``ref_name``, all read from the graph. With
+        ``stats=True`` (default) the per-stream ``row_count`` / ``earliest``
+        / ``latest`` are fetched up front, which counts every sample of every
+        matched stream. ``stats=False`` skips that: the bindings keep
+        ``row_count=0`` and ``earliest`` / ``latest`` of ``None``, and the
+        DataObject fetches the statistics the first time ``total_rows``,
+        ``time_range`` or ``is_empty()`` needs them. Reading the data
+        (``dataframe()``, ``iter()``, ``latest()``) works either way.
+        """
         from acquirium.Client.data_object import DataObject
         return DataObject._from_query(
             self,
@@ -1645,6 +1680,7 @@ class Query:
             include_dependencies=include_dependencies,
             cast_value=cast_value,
             value_mode=value_mode,
+            stats=stats,
         )
 
     def dataframe(

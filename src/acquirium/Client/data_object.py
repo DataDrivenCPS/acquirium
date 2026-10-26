@@ -23,6 +23,9 @@ def _parse_sparql_bindings(
     dict[tuple[int, str, str], list[dict[str, str]]],  # data_key -> list of entity context dicts
     dict[tuple[int, str, str], str | None],  # data_key -> property unit URI
     dict[tuple[int, str, str], str | None],  # data_key -> ext ref unit URI
+    dict[tuple[int, str, str], str | None],  # data_key -> point rdfs:label
+    dict[tuple[int, str, str], str | None],  # data_key -> ext ref acq:sourceId
+    dict[tuple[int, str, str], str | None],  # data_key -> ext ref acq:refName
 ]:
     """Parse SPARQL result columns to extract data-node bindings, entity context, and unit metadata.
 
@@ -34,6 +37,8 @@ def _parse_sparql_bindings(
         property_units: mapping from data key to property unit URI (or None)
         ref_units: mapping from data key to external reference unit URI (or None)
         point_labels: mapping from data key to the point's rdfs:label (or None)
+        source_ids: mapping from data key to the reference's acq:sourceId (or None)
+        ref_names: mapping from data key to the reference's acq:refName (or None)
     """
     res = query.execute(include_dependencies=include_dependencies)
     cols: list[str] = res.get("columns", [])
@@ -43,11 +48,13 @@ def _parse_sparql_bindings(
     data_node_ids = set(qg.data_nodes.keys())
 
     # Map column index -> node id for v<N>, ext<N>, unit<N>, extunit<N>,
-    # lbl<N> columns
+    # extsid<N>, extrname<N>, lbl<N> columns
     col_to_id: dict[int, int] = {}
     ext_ref_col_to_id: dict[int, int] = {}
     unit_col_to_id: dict[int, int] = {}
     extunit_col_to_id: dict[int, int] = {}
+    extsid_col_to_id: dict[int, int] = {}
+    extrname_col_to_id: dict[int, int] = {}
     lbl_col_to_id: dict[int, int] = {}
     for i, c in enumerate(cols):
         if not isinstance(c, str):
@@ -55,6 +62,16 @@ def _parse_sparql_bindings(
         if c.startswith("extunit"):
             try:
                 extunit_col_to_id[i] = int(c[7:])
+            except ValueError:
+                pass
+        elif c.startswith("extsid"):
+            try:
+                extsid_col_to_id[i] = int(c[6:])
+            except ValueError:
+                pass
+        elif c.startswith("extrname"):
+            try:
+                extrname_col_to_id[i] = int(c[8:])
             except ValueError:
                 pass
         elif c.startswith("ext"):
@@ -81,6 +98,8 @@ def _parse_sparql_bindings(
     nid_to_ext_ref_col: dict[int, int] = {v: k for k, v in ext_ref_col_to_id.items()}
     nid_to_unit_col: dict[int, int] = {v: k for k, v in unit_col_to_id.items()}
     nid_to_extunit_col: dict[int, int] = {v: k for k, v in extunit_col_to_id.items()}
+    nid_to_extsid_col: dict[int, int] = {v: k for k, v in extsid_col_to_id.items()}
+    nid_to_extrname_col: dict[int, int] = {v: k for k, v in extrname_col_to_id.items()}
     nid_to_lbl_col: dict[int, int] = {v: k for k, v in lbl_col_to_id.items()}
 
     data_col_indices = [i for i, nid in col_to_id.items() if nid in data_node_ids]
@@ -99,9 +118,11 @@ def _parse_sparql_bindings(
     property_units: dict[tuple[int, str, str], str | None] = {}
     ref_units: dict[tuple[int, str, str], str | None] = {}
     point_labels: dict[tuple[int, str, str], str | None] = {}
+    source_ids: dict[tuple[int, str, str], str | None] = {}
+    ref_names: dict[tuple[int, str, str], str | None] = {}
 
     if not data_col_indices or not ref_col_indices:
-        return [], {}, {}, {}, {}
+        return [], {}, {}, {}, {}, {}, {}
 
     for r in rows:
         # Build entity context for this row
@@ -141,6 +162,16 @@ def _parse_sparql_bindings(
                     ref_units[key] = str(r[extunit_col])
                 else:
                     ref_units[key] = None
+                extsid_col = nid_to_extsid_col.get(nid)
+                if extsid_col is not None and extsid_col < len(r) and r[extsid_col] is not None:
+                    source_ids[key] = str(r[extsid_col])
+                else:
+                    source_ids[key] = None
+                extrname_col = nid_to_extrname_col.get(nid)
+                if extrname_col is not None and extrname_col < len(r) and r[extrname_col] is not None:
+                    ref_names[key] = str(r[extrname_col])
+                else:
+                    ref_names[key] = None
                 lbl_col = nid_to_lbl_col.get(nid)
                 if lbl_col is not None and lbl_col < len(r) and r[lbl_col] is not None:
                     point_labels[key] = str(r[lbl_col])
@@ -148,7 +179,7 @@ def _parse_sparql_bindings(
                     point_labels[key] = None
             entity_context.setdefault(key, []).append(row_entities)
 
-    return point_ref_uris, entity_context, property_units, ref_units, point_labels
+    return point_ref_uris, entity_context, property_units, ref_units, point_labels, source_ids, ref_names
 
 
 def _deduplicate_contexts(contexts: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -260,7 +291,14 @@ def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
 
 @dataclass(frozen=True)
 class BindingInfo:
-    """Lightweight metadata for a single (nid, point_uri, ref_uri) data binding."""
+    """Lightweight metadata for a single (nid, point_uri, ref_uri) data binding.
+
+    ``row_count`` / ``earliest`` / ``latest`` come from the time-series
+    store; after ``Query.data(stats=False)`` they stay ``0`` / ``None``
+    (unknown, not empty). ``source_id`` / ``ref_name`` are the reference's
+    ``acq:sourceId`` / ``acq:refName``, the pair ``ac.stream(source_id,
+    ref_name)`` takes; ``None`` on a reference written without them.
+    """
     nid: int
     point_uri: str
     ref_uri: str
@@ -272,6 +310,23 @@ class BindingInfo:
     property_unit: str | None = None    # unit URI from qudt:hasUnit on the property
     ref_unit: str | None = None         # unit URI from qudt:hasUnit on the ext reference
     point_label: str | None = None      # rdfs:label on the property (display name)
+    source_id: str | None = None        # acq:sourceId on the ext reference
+    ref_name: str | None = None         # acq:refName on the ext reference
+
+
+def _with_stats(bindings: list[BindingInfo], client: "AcquiriumClient") -> list[BindingInfo]:
+    """``bindings`` with row_count / earliest / latest from one batch stats request."""
+    stats = client.timeseries_info_batch(list({b.ref_uri for b in bindings}))
+    out: list[BindingInfo] = []
+    for b in bindings:
+        info = stats.get(b.ref_uri)
+        out.append(replace(
+            b,
+            row_count=info.row_count if info else 0,
+            earliest=info.earliest if info else None,
+            latest=info.latest if info else None,
+        ))
+    return out
 
 
 @dataclass
@@ -279,7 +334,9 @@ class DataObject:
     """Lazy, alias-driven structured access to sensor data.
 
     On construction only SPARQL metadata and per-series stats (row count,
-    time range) are fetched.  The actual time-series data is materialized
+    time range) are fetched; with ``Query.data(stats=False)`` the stats
+    are fetched the first time ``total_rows``, ``time_range`` or
+    ``is_empty()`` needs them.  The actual time-series data is materialized
     on demand when ``__getitem__``, ``dataframe()``, ``iter()``, or
     ``latest()`` are called.
 
@@ -300,6 +357,10 @@ class DataObject:
     _tall: pl.DataFrame | None = field(default=None, repr=False)
     _materialized: bool = field(default=False, repr=False)
     _metadata_df: pl.DataFrame | None = field(default=None, repr=False)
+
+    # False after Query.data(stats=False): the bindings' row_count /
+    # earliest / latest are unknown until _ensure_stats() fetches them
+    _stats_loaded: bool = field(default=True, repr=False)
 
     # Pending unit conversions: list of (alias_pattern, from_unit, to_unit)
     # alias_pattern is "*" for all aliases, or a specific alias name
@@ -342,13 +403,15 @@ class DataObject:
         include_dependencies: bool = True,
         cast_value: str | None = "float",
         value_mode: str = "default",
+        stats: bool = True,
     ) -> DataObject:
         qg = query.query_graph
 
         if not getattr(qg, "data_nodes", None):
             return cls._empty(qg, cast_value=cast_value, client=query.client)
 
-        point_ref_uris, entity_context, prop_units, ext_ref_units, point_labels = _parse_sparql_bindings(
+        (point_ref_uris, entity_context, prop_units, ext_ref_units, point_labels,
+         source_ids, ref_names) = _parse_sparql_bindings(
             query,
             include_dependencies=include_dependencies,
         )
@@ -363,10 +426,6 @@ class DataObject:
                 all_entity_cols.update(ctx.keys())
         entity_columns = sorted(all_entity_cols)
 
-        # Fetch stats for all ref_uris in one batch request
-        ref_uris = list({ref_uri for _, _, ref_uri in point_ref_uris})
-        stats = query.client.timeseries_info_batch(ref_uris)
-
         # Build BindingInfo for each binding
         bindings: list[BindingInfo] = []
         for nid, point_uri, ref_uri in point_ref_uris:
@@ -374,20 +433,23 @@ class DataObject:
             key = (nid, point_uri, ref_uri)
             contexts = entity_context.get(key, [{}])
             unique_contexts = _deduplicate_contexts(contexts)
-            info = stats.get(ref_uri)
             bindings.append(BindingInfo(
                 nid=nid,
                 point_uri=point_uri,
                 ref_uri=ref_uri,
                 alias=alias,
                 entity_contexts=unique_contexts,
-                row_count=info.row_count if info else 0,
-                earliest=info.earliest if info else None,
-                latest=info.latest if info else None,
                 property_unit=prop_units.get(key),
                 ref_unit=ext_ref_units.get(key),
                 point_label=point_labels.get(key),
+                source_id=source_ids.get(key),
+                ref_name=ref_names.get(key),
             ))
+
+        # Fetch stats for all ref_uris in one batch request (a scan of every
+        # matched stream's samples), unless the caller deferred them
+        if stats:
+            bindings = _with_stats(bindings, query.client)
 
         return cls(
             _bindings=bindings,
@@ -404,7 +466,16 @@ class DataObject:
             },
             _tall=None,
             _materialized=False,
+            _stats_loaded=stats,
         )
+
+    def _ensure_stats(self) -> None:
+        """Fetch the bindings' row_count / earliest / latest if deferred. Idempotent."""
+        if self._stats_loaded:
+            return
+        if self._bindings and self._client is not None:
+            self._bindings = _with_stats(self._bindings, self._client)
+        self._stats_loaded = True
 
     # ------------------------------------------------------------------
     # Materialization
@@ -666,6 +737,7 @@ class DataObject:
                     _query_params=self._query_params,
                     _tall=sub_tall,
                     _materialized=True,
+                    _stats_loaded=self._stats_loaded,
                 )
             return
 
@@ -688,6 +760,7 @@ class DataObject:
                 _tall=None,
                 _materialized=False,
                 _pending_conversions=list(self._pending_conversions),
+                _stats_loaded=self._stats_loaded,
             )
 
     # ------------------------------------------------------------------
@@ -881,15 +954,23 @@ class DataObject:
         none). By default the UUID ``ref_uri`` column is hidden — multiple
         ref_uris sharing the same point are folded into one row. Pass
         ``include_ref_uris=True`` to keep the per-ref breakdown (useful for
-        per-ref filtering and debugging).
+        per-ref filtering and debugging); it adds ``ref_uri`` and, right
+        after it, the reference's ``source_id`` and ``ref_name`` (null on a
+        reference written without them).
         """
         ref_col = ["ref_uri"] if include_ref_uris else []
+        ident_cols = ["source_id", "ref_name"] if include_ref_uris else []
         label_map = {b.point_uri: b.point_label for b in self._bindings if b.point_label}
+        ident_map = {b.ref_uri: {"source_id": b.source_id, "ref_name": b.ref_name}
+                     for b in self._bindings}
 
         if self._materialized and self._tall is not None:
             meta_cols = ["data_alias", "point_uri"] + ref_col + self._entity_columns
             existing = [c for c in meta_cols if c in self._tall.columns]
             out_cols = existing[:1] + ["point_label"] + existing[1:]
+            if "ref_uri" in out_cols:
+                at = out_cols.index("ref_uri") + 1
+                out_cols[at:at] = ident_cols
             if self._tall.is_empty():
                 return pl.DataFrame(schema={c: pl.Utf8 for c in out_cols})
             return (
@@ -897,7 +978,14 @@ class DataObject:
                 .with_columns(
                     pl.col("point_uri")
                     .map_elements(lambda u: label_map.get(u), return_dtype=pl.Utf8, skip_nulls=False)
-                    .alias("point_label")
+                    .alias("point_label"),
+                    *[
+                        pl.col("ref_uri")
+                        .map_elements(lambda u, c=c: ident_map.get(u, {}).get(c),
+                                      return_dtype=pl.Utf8, skip_nulls=False)
+                        .alias(c)
+                        for c in ident_cols
+                    ],
                 )
                 .select(out_cols)
                 .sort("data_alias")
@@ -914,13 +1002,18 @@ class DataObject:
                 }
                 if include_ref_uris:
                     row["ref_uri"] = b.ref_uri
+                    row["source_id"] = b.source_id
+                    row["ref_name"] = b.ref_name
                 for ec in self._entity_columns:
                     row[ec] = ctx.get(ec)
                 rows.append(row)
-        cols = ["data_alias", "point_label", "point_uri"] + ref_col + self._entity_columns
+        cols = ["data_alias", "point_label", "point_uri"] + ref_col + ident_cols + self._entity_columns
         if not rows:
             return pl.DataFrame(schema={c: pl.Utf8 for c in cols})
-        return pl.DataFrame(rows).unique().sort("data_alias")
+        out = pl.DataFrame(rows)
+        if ident_cols:
+            out = out.with_columns([pl.col(c).cast(pl.Utf8) for c in ident_cols])
+        return out.unique().sort("data_alias")
 
     @property
     def aliases(self) -> list[str]:
@@ -949,9 +1042,10 @@ class DataObject:
         return subset.sort("time", descending=True).head(1).select("time", "value")
 
     def is_empty(self) -> bool:
-        """Check if there is any data."""
+        """Check if there is any data (fetches deferred stats when not materialized)."""
         if self._materialized:
             return self._tall.is_empty()
+        self._ensure_stats()
         return all(b.row_count == 0 for b in self._bindings)
 
     # ------------------------------------------------------------------
@@ -960,19 +1054,32 @@ class DataObject:
 
     @property
     def total_rows(self) -> int:
-        """Total row count across all bindings (from stats, no materialization)."""
+        """Total row count across all bindings (from stats, no materialization).
+
+        After ``Query.data(stats=False)`` the first read fetches the stats.
+        """
+        self._ensure_stats()
         return sum(b.row_count for b in self._bindings)
 
     @property
     def time_range(self) -> tuple[datetime | None, datetime | None]:
-        """Overall (earliest, latest) across all bindings."""
+        """Overall (earliest, latest) across all bindings.
+
+        After ``Query.data(stats=False)`` the first read fetches the stats.
+        """
+        self._ensure_stats()
         earliests = [b.earliest for b in self._bindings if b.earliest is not None]
         latests = [b.latest for b in self._bindings if b.latest is not None]
         return (min(earliests) if earliests else None, max(latests) if latests else None)
 
     @property
     def bindings(self) -> list[BindingInfo]:
-        """Read-only access to binding metadata."""
+        """Read-only access to binding metadata.
+
+        Never fetches stats: after ``Query.data(stats=False)`` each binding's
+        ``row_count`` / ``earliest`` / ``latest`` are ``0`` / ``None`` until
+        ``total_rows``, ``time_range`` or ``is_empty()`` has loaded them.
+        """
         return list(self._bindings)
 
     # ------------------------------------------------------------------
@@ -1086,6 +1193,7 @@ class DataObject:
                 _query_params=self._query_params,
                 _tall=tall,
                 _materialized=True,
+                _stats_loaded=self._stats_loaded,
             )
 
         # Lazy path: store pending conversions to apply during _materialize()
@@ -1109,6 +1217,7 @@ class DataObject:
             _tall=None,
             _materialized=False,
             _pending_conversions=pending,
+            _stats_loaded=self._stats_loaded,
         )
 
     # ------------------------------------------------------------------
@@ -1121,6 +1230,9 @@ class DataObject:
             n_rows = len(self._tall) if self._tall is not None else 0
             return f"DataObject({n_rows} rows, aliases={aliases}, entities={self.entity_aliases})"
 
+        if not self._stats_loaded:
+            # a repr never scans the samples the caller chose not to count
+            return f"DataObject(lazy, stats not fetched, aliases={aliases}, entities={self.entity_aliases})"
         total = self.total_rows
         earliest, latest = self.time_range
         time_str = ""
