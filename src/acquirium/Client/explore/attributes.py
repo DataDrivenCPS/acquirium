@@ -199,7 +199,8 @@ DISCOVERY_SPARQL = (
     "  BIND(COALESCE(STR(DATATYPE(?o)), IF(isIRI(?o), \"iri\", \"\")) AS ?dt)\n}"
 )
 
-# (server_key, graph_version) -> {name: Attr}
+# (server_key, graph_version) -> {name: Attr}; one entry per server, since
+# every write bumps the version and an older one is never asked for again
 _DISCOVERED_CACHE: Dict[tuple, Dict[str, Attr]] = {}
 
 
@@ -312,6 +313,8 @@ class Registry(Mapping):
                 [str(r[pi]) for r in rows],
                 [r[di] if di is not None and di < len(r) else None for r in rows],
             )
+            for stale in [k for k in _DISCOVERED_CACHE if k[0] == key[0]]:
+                del _DISCOVERED_CACHE[stale]
             _DISCOVERED_CACHE[key] = found
         self._found = found
         return found
