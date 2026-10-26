@@ -437,6 +437,15 @@ class TestStore:
         store.sparql_update("DELETE WHERE { ?s ?p ?o }", graph_uri=PLANT)
         assert len(store.source_dataset.graph(META)) == 0  # every subject gone with the plant
 
+    def test_sparql_update_prunes_only_after_a_removal_elsewhere(self):
+        store = self.make_store(dataset_with_orphans())
+        store._prune_orphan_metadata = MagicMock()
+        store.sparql_update("INSERT DATA { <urn:x#new> a <urn:w#Valve> }", graph_uri=PLANT)
+        store.sparql_update(f"DELETE WHERE {{ <urn:x#kept> <{ATTR_NS}a> ?o }}", graph_uri=META)
+        store._prune_orphan_metadata.assert_not_called()
+        store.sparql_update("delete where { <urn:x#new> ?p ?o }", graph_uri=PLANT)
+        store._prune_orphan_metadata.assert_called_once()
+
     def test_replace_insert_prunes_but_append_does_not(self):
         store = self.make_store(dataset_with_orphans())
         store._prune_orphan_metadata = MagicMock()
