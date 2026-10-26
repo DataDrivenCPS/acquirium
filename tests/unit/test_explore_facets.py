@@ -15,6 +15,8 @@ from acquirium.Client.explore.facets import (
 from acquirium.Client.explore.attributes import REGISTRY
 
 CLS_A = "urn:test#TypeA"
+OF_MEDIUM = "http://data.ashrae.org/standard223#ofMedium"
+HAS_QUANTITY_KIND = "http://qudt.org/schema/qudt/hasQuantityKind"
 
 DATA_ATTRS = ["type", "medium", "substance", "quantity_kind", "unit",
               "enumeration_kind", "data_source", "app", "label"]
@@ -64,11 +66,9 @@ class TestFallbackChain:
         nodes = [f"urn:p#m{i}" for i in range(4)]
 
         def responder(sparql, include_dependencies=True):
-            if sparql.startswith("SELECT ?v ?opt"):
-                if "ofMedium" in sparql:  # medium lookup: all four carry Water
-                    return {"columns": ["v", "opt"],
-                            "rows": [[n, "urn:m#Water"] for n in nodes]}
-                return {"columns": ["v", "opt"], "rows": []}
+            if sparql.startswith("SELECT ?v ?opt"):  # one lookup for every attribute
+                return {"columns": ["v", "opt", "p"],  # all four carry Water
+                        "rows": [[n, "urn:m#Water", OF_MEDIUM] for n in nodes]}
             if sparql.startswith("SELECT DISTINCT ?v0"):  # pattern execute
                 return {"columns": ["v0", "v1"],
                         "rows": [["urn:p#ro", n] for n in nodes]}
@@ -78,6 +78,9 @@ class TestFallbackChain:
         assert f.scopes["medium"] == "matched"
         assert f["medium"]["medium"].to_list() == ["Water"]
         assert f["medium"]["count"].to_list() == [4]
+        lookups = [c.args[0] for c in client.sparql_query.call_args_list
+                   if c.args[0].startswith("SELECT ?v ?opt")]
+        assert len(lookups) == 1  # every attribute in one lookup
 
     def test_model_fallback_when_pattern_empty(self):
         def responder(sparql, include_dependencies=True):
@@ -133,10 +136,8 @@ class TestSummaryObject:
 
         def responder(sparql, include_dependencies=True):
             if sparql.startswith("SELECT ?v ?opt"):
-                if "hasQuantityKind" in sparql:
-                    return {"columns": ["v", "opt"],
-                            "rows": [[n, "urn:qk#PH"] for n in nodes]}
-                return {"columns": ["v", "opt"], "rows": []}
+                return {"columns": ["v", "opt", "p"],
+                        "rows": [[n, "urn:qk#PH", HAS_QUANTITY_KIND] for n in nodes]}
             if sparql.startswith("SELECT DISTINCT ?v0"):
                 return {"columns": ["v0", "v1"],
                         "rows": [["urn:p#ro", n] for n in nodes]}

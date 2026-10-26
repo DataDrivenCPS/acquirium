@@ -1077,62 +1077,78 @@ class Query:
 
         cache_key = f"options:{attr_name}:{nid}:{include_dependencies}"
         if self.cache.get(cache_key) is None:
-            # Two-phase: the pattern runs once through execute() (program
-            # edges BFS-resolved, result cached and shared with metadata());
-            # attribute values come from a flat VALUES-anchored lookup and
-            # the counting happens here. The store only does index lookups —
-            # no server-side GROUP BY over the whole pattern.
-            res = self.execute(include_dependencies=include_dependencies)
-            cols = res.get("columns", [])
-            col = f"v{nid}"
-            uris: List[str] = []
-            if col in cols:
-                idx = cols.index(col)
-                seen: set = set()
-                for r in res.get("rows", []):
-                    val = r[idx]
-                    if val is None:
-                        continue
-                    s = str(val)
-                    if s not in seen and _is_uri(s):
-                        seen.add(s)
-                        uris.append(s)
+            self._fill_options([attr], nid, include_dependencies)
+        return self.cache[cache_key]
 
-            pred_path = "|".join(f"<{p}>" for p in attr.predicates)
-            # keyed by (value, its Python type): the date 2024-03-12 and the
-            # string "2024-03-12" are two values, as they are in the graph
-            counts_by_value: Dict[tuple, set] = {}
-            for i in range(0, len(uris), 500):
-                chunk = " ".join(f"<{u}>" for u in uris[i:i + 500])
-                sparql = (
-                    f"SELECT ?v ?opt\nWHERE {{\n  VALUES ?v {{ {chunk} }}\n"
-                    f"  ?v ({pred_path}) ?opt .\n}}"
-                )
-                lookup = self.client.sparql_query(
-                    sparql,
-                    include_dependencies=include_dependencies,
-                )
-                lcols = lookup.get("columns", [])
-                vi = lcols.index("v") if "v" in lcols else 0
-                oi = lcols.index("opt") if "opt" in lcols else 1
-                for r, d in zip(lookup.get("rows", []), result_datatypes(lookup)):
-                    if r[oi] is None or r[vi] is None:
-                        continue
-                    dt = d[oi] if oi < len(d) else None
-                    if dt == IRI or (dt is None and _is_uri(str(r[oi]))):
-                        value: Any = self._compact_uri_safe(str(r[oi]))
-                    else:
-                        value = parse_cell(r[oi], dt)
-                    counts_by_value.setdefault((value, type(value).__name__), set()).add(str(r[vi]))
+    def _fill_options(self, attrs: List[Any], nid: int, include_dependencies: bool) -> None:
+        """Compute the ``options()`` frames of ``attrs`` on node ``nid`` into
+        the cache, with one lookup per 500 matched nodes however many
+        attributes there are (``facets()`` asks for all of them at once).
 
-            ranked = sorted(counts_by_value.items(), key=lambda kv: (-len(kv[1]), str(kv[0][0]), kv[0][1]))
+        Two-phase: the pattern runs once through execute() (program edges
+        BFS-resolved, result cached and shared with metadata()); attribute
+        values come from a flat VALUES-anchored lookup and the counting
+        happens here. The store only does index lookups — no server-side
+        GROUP BY over the whole pattern.
+        """
+        res = self.execute(include_dependencies=include_dependencies)
+        cols = res.get("columns", [])
+        col = f"v{nid}"
+        uris: List[str] = []
+        if col in cols:
+            idx = cols.index(col)
+            seen: set = set()
+            for r in res.get("rows", []):
+                val = r[idx]
+                if val is None:
+                    continue
+                s = str(val)
+                if s not in seen and _is_uri(s):
+                    seen.add(s)
+                    uris.append(s)
+
+        # predicate -> the attributes it feeds (tags.0 feeds tags.0 and tags)
+        by_pred: Dict[str, List[str]] = {}
+        for attr in attrs:
+            for p in attr.predicates:
+                by_pred.setdefault(str(p), []).append(attr.name)
+        preds = " ".join(f"<{p}>" for p in by_pred)
+        # per attribute, keyed by (value, its Python type): the date
+        # 2024-03-12 and the string "2024-03-12" are two values, as they are
+        # in the graph
+        counts: Dict[str, Dict[tuple, set]] = {attr.name: {} for attr in attrs}
+        for i in range(0, len(uris), 500):
+            chunk = " ".join(f"<{u}>" for u in uris[i:i + 500])
+            sparql = (
+                f"SELECT ?v ?opt ?p\nWHERE {{\n  VALUES ?v {{ {chunk} }}\n"
+                f"  VALUES ?p {{ {preds} }}\n  ?v ?p ?opt .\n}}"
+            )
+            lookup = self.client.sparql_query(sparql, include_dependencies=include_dependencies)
+            lcols = lookup.get("columns", [])
+            vi = lcols.index("v") if "v" in lcols else 0
+            oi = lcols.index("opt") if "opt" in lcols else 1
+            pi = lcols.index("p") if "p" in lcols else None
+            for r, d in zip(lookup.get("rows", []), result_datatypes(lookup)):
+                if r[oi] is None or r[vi] is None:
+                    continue
+                dt = d[oi] if oi < len(d) else None
+                if dt == IRI or (dt is None and _is_uri(str(r[oi]))):
+                    value: Any = self._compact_uri_safe(str(r[oi]))
+                else:
+                    value = parse_cell(r[oi], dt)
+                # a result without ?p (a test double) answers for every attribute
+                names = by_pred.get(str(r[pi]), ()) if pi is not None else counts
+                for name in names:
+                    counts[name].setdefault((value, type(value).__name__), set()).add(str(r[vi]))
+
+        for name, by_value in counts.items():
+            ranked = sorted(by_value.items(), key=lambda kv: (-len(kv[1]), str(kv[0][0]), kv[0][1]))
             values = [v for (v, _), _ in ranked]
             dtype = column_dtype(values)
-            self.cache[cache_key] = pl.DataFrame(
-                {attr_name: pl.Series(attr_name, coerce(values, dtype), dtype=dtype),
+            self.cache[f"options:{name}:{nid}:{include_dependencies}"] = pl.DataFrame(
+                {name: pl.Series(name, coerce(values, dtype), dtype=dtype),
                  "count": pl.Series("count", [len(nodes) for _, nodes in ranked], dtype=pl.Int64)},
             )
-        return self.cache[cache_key]
 
     def facets(self, *, of: Optional[str] = None, include_dependencies: bool = True) -> "FacetSummary":
         """Value counts for every attribute applicable to a node, with fallback.
@@ -1159,10 +1175,13 @@ class Query:
         version = self.client.graph_version()
 
         summary = FacetSummary(node_alias=alias)
-        for attr in self._node_attrs(g, nid):
+        # id: one value per node, nothing to count
+        attrs = [a for a in self._node_attrs(g, nid) if a.name != "id"]
+        missing = [a for a in attrs if f"options:{a.name}:{nid}:{include_dependencies}" not in self.cache]
+        if missing:
+            self._fill_options(missing, nid, include_dependencies)
+        for attr in attrs:
             name = attr.name
-            if name == "id":
-                continue          # one value per node, nothing to count
             if attr.datatypes:          # a user attribute: show its type
                 summary.dtypes[name] = str(self._leaf_dtype(name))
             df = self.options(name, of=alias, include_dependencies=include_dependencies)
