@@ -35,7 +35,7 @@ from acquirium.Client.explore.expr import ORDERING, BoolOp, Compare, Expr
 from acquirium.Client.explore.expr import attr_name as _path_name
 from acquirium.Client.explore.relations import RELATIONS
 from acquirium.Client.explore.typed import (
-    IRI, cast_values, coerce, column_dtype, dtype_for_datatypes, normalize_type, parse_cell,
+    CAST_DTYPES, IRI, cast_values, coerce, column_dtype, dtype_for_datatypes, normalize_type, parse_cell,
     result_datatypes,
 )
 from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
@@ -1215,85 +1215,53 @@ class Query:
         g = self.query_graph
         _, select_parts, _ = compile_parts(g, registry)
         leaf_selects, group_selects = self._expanded_selects()
-        casts = {(nid, name): (type_, strict) for nid, name, type_, strict in g.casts}
+        casts = {(nid, name): type_ for nid, name, type_, _ in g.casts}
+        explicit = {(nid, name) for nid, name, _ in g.selects}
+        leaf_of_var = {attr_var(nid, name)[1:]: (nid, name) for nid, name, _ in leaf_selects}
 
-        leaf_dtype = self._leaf_dtype
+        def typed(nid: int, name: str, dtype: pl.DataType) -> pl.DataType:
+            return _cast_dtype(dtype, casts[(nid, name)]) if (nid, name) in casts else dtype
 
         def group_dtype(gname: str, children: List[str]) -> pl.DataType:
             if gname in registry:
                 return pl.Object   # a plain value on some nodes, a dict on others
-            tree: Dict[str, Any] = {}
-            for child in children:
-                node = tree
-                parts = child[len(gname) + 1:].split(".")
-                for part in parts[:-1]:
-                    node = node.setdefault(part, {})
-                node[parts[-1]] = leaf_dtype(child)
 
             def build(sub: Any) -> pl.DataType:
                 if not isinstance(sub, dict):
                     return sub
-                fields = [pl.Field(k, build(v)) for k, v in sorted(sub.items())]
-                if any(f.dtype == pl.Object for f in fields):
-                    return pl.Object
-                return pl.Struct(fields)
+                fields = [pl.Field(k, build(v)) for k, v in sub.items()]
+                return pl.Object if any(f.dtype == pl.Object for f in fields) else pl.Struct(fields)
 
-            return build(tree)
-
-        def cast_dtype(dtype: pl.DataType, type_: Any) -> pl.DataType:
-            target = normalize_type(type_)
-            scalar = {"string": pl.String, "int": pl.Int64, "float": pl.Float64, "bool": pl.Boolean,
-                      "date": pl.Date, "datetime": pl.Datetime("us", "UTC"), "object": pl.Object}
-            if target == "struct":
-                return dtype if isinstance(dtype, pl.Struct) else pl.Object
-            if target in ("string", "object"):
-                return scalar[target]
-            return pl.List(scalar[target]) if isinstance(dtype, pl.List) else scalar[target]
+            return build(_path_tree({c[len(gname) + 1:]: self._leaf_dtype(c) for c in children}))
 
         out: Dict[str, pl.DataType] = {}
-        explicit = {(nid, name) for nid, name, _ in g.selects}
         for var in select_parts:
             col = var.lstrip("?")
-            if col.startswith(("ext", "unit", "attrp")):
-                continue
+            if col.startswith(("ext", "unit", "attrp", "lbl")):
+                continue   # internals; a label is placed right after its node
             alias = self._col_name_to_alias(col)
-            if col.startswith("lbl"):
-                continue   # placed right after its node below
             if col.startswith("v"):
                 out[alias] = pl.String
-                nid = int(col[1:])
-                if nid in g.data_nodes:
+                if int(col[1:]) in g.data_nodes:
                     out[f"{alias}.label"] = pl.String
                 continue
-            # an attribute column: which select produced it?
-            nid, lname = next(((n, l) for n, l, _ in leaf_selects
-                               if self._col_name_to_alias(attr_var(n, l)[1:]) == alias), (None, None))
-            if lname is None:
+            if col not in leaf_of_var:
                 out[alias] = pl.String
                 continue
+            nid, lname = leaf_of_var[col]
             node_alias = g.aliases_reverse.get(nid, f"v{nid}")
-            # a child of a parent key: the struct stands where its first child is
+            # a child of a parent key: the struct stands where its first
+            # child is, and the child keeps a column only when included itself
             for gnid, gname, children in group_selects:
-                if gnid == nid and lname in children or (gnid == nid and lname == gname):
-                    struct_col = f"{node_alias}.{gname}"
-                    if struct_col not in out:
-                        dtype = group_dtype(gname, children)
-                        if (gnid, gname) in casts:
-                            dtype = cast_dtype(dtype, casts[(gnid, gname)][0])
-                        out[struct_col] = dtype
-                    if (nid, lname) not in explicit or lname == gname:
-                        break
+                if gnid != nid or (lname != gname and lname not in children):
+                    continue
+                struct_col = f"{node_alias}.{gname}"
+                if struct_col not in out:
+                    out[struct_col] = typed(gnid, gname, group_dtype(gname, children))
+                if (nid, lname) not in explicit or lname == gname:
+                    break
             else:
-                dtype = leaf_dtype(lname)
-                if (nid, lname) in casts:
-                    dtype = cast_dtype(dtype, casts[(nid, lname)][0])
-                out[alias] = dtype
-                continue
-            if (nid, lname) in explicit and lname != gname:
-                dtype = leaf_dtype(lname)
-                if (nid, lname) in casts:
-                    dtype = cast_dtype(dtype, casts[(nid, lname)][0])
-                out[alias] = dtype
+                out[alias] = typed(nid, lname, self._leaf_dtype(lname))
         return pl.Schema(out)
 
     def to_sparql(self) -> str:
@@ -1496,14 +1464,15 @@ class Query:
                 # list, the other list columns null; lists of different
                 # nodes still multiply, and the index map undoes that)
                 groups: Dict[tuple, Dict[str, dict]] = {}
+                pred_idx = {n: cols.index(p) if p in cols else None for n, p in list_names.items()}
                 for r_i, r in enumerate(rows):
                     key = tuple(parsed[n][r_i] for n in scalar_names)
                     bucket = groups.setdefault(key, {n: {} for n in list_names})
-                    for n, pcol in list_names.items():
+                    for n, pi in pred_idx.items():
                         v = parsed[n][r_i]
                         if v is None:
                             continue
-                        pred = r[cols.index(pcol)] if pcol in cols else None
+                        pred = r[pi] if pi is not None else None
                         bucket[n][list_index(pred) if pred else (r_i,)] = v
                 keys = list(groups)
                 parsed = {n: [k[j] for k in keys] for j, n in enumerate(scalar_names)}
@@ -1773,7 +1742,11 @@ class Query:
     def _expanded_selects(self) -> tuple:
         """``(leaf_selects, group_selects)``: the query's selects with every
         parent key replaced by its child leaves, and the parent keys listed
-        as ``(nid, name, [children])`` so ``metadata()`` can fold them back."""
+        as ``(nid, name, [children])`` so ``metadata()`` can fold them back.
+        Cached on the query: every column lookup needs it."""
+        cached = self.cache.get("_expanded_selects")
+        if cached is not None:
+            return cached
         registry = self.registry
         leaves: List[tuple] = []
         groups: List[tuple] = []
@@ -1786,7 +1759,18 @@ class Query:
                 leaves.extend((nid, c, req) for c in children)
             else:
                 leaves.append((nid, name, req))
+        self.cache["_expanded_selects"] = (leaves, groups)
         return leaves, groups
+
+    def _attr_var_names(self) -> Dict[str, str]:
+        """Projected attribute variable (without ``?``) -> the attribute path
+        it encodes, for every leaf select. A user attribute's variable is an
+        encoding of its path, so the column name maps back through this."""
+        names = self.cache.get("_attr_var_names")
+        if names is None:
+            names = self.cache["_attr_var_names"] = {
+                attr_var(nid, name)[1:]: name for nid, name, _ in self._expanded_selects()[0]}
+        return names
 
     def _col_name_to_alias(self, col_name: str) -> str:
         if col_name.startswith("attr"):
@@ -1796,13 +1780,7 @@ class Query:
             except ValueError:
                 return col_name
             base_alias = self.query_graph.aliases_reverse.get(node_id, f"v{node_id}")
-            # a user attribute's variable is an encoding of its path; the
-            # select entry (or the parent key's child) that produced it
-            # holds the path itself
-            for snid, name, _ in self._expanded_selects()[0]:
-                if snid == node_id and attr_var(snid, name) == f"?{col_name}":
-                    return f"{base_alias}.{name}"
-            return f"{base_alias}.{attr_name}"
+            return f"{base_alias}.{self._attr_var_names().get(col_name, attr_name)}"
         if col_name.startswith("lbl"):
             try:
                 node_id = int(col_name[3:])
@@ -1884,6 +1862,31 @@ def _cast_at(value: Any, segments: List[str], cast: Any) -> Any:
     return value
 
 
+def _path_tree(leaves: Dict[str, Any]) -> Dict[str, Any]:
+    """Nest ``{"year": a, "limits.max": b}`` into ``{"limits": {"max": b},
+    "year": a}``, keys sorted by name like ``Registry.children``."""
+    tree: Dict[str, Any] = {}
+    for rel, leaf in sorted(leaves.items()):
+        node = tree
+        parts = rel.split(".")
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = leaf
+    return tree
+
+
+def _cast_dtype(dtype: pl.DataType, type_: Any) -> pl.DataType:
+    """The dtype a column of ``dtype`` takes under ``include(type=type_)``:
+    a list is cast element-wise, ``struct`` keeps a struct (else Object)."""
+    target = normalize_type(type_)
+    if target == "struct":
+        return dtype if isinstance(dtype, pl.Struct) else pl.Object
+    scalar = CAST_DTYPES[target]
+    if target in ("string", "object") or not isinstance(dtype, pl.List):
+        return scalar
+    return pl.List(scalar)
+
+
 def _struct_series(name: str, members: Dict[str, pl.Series], *,
                    scalar: Optional[pl.Series] = None) -> pl.Series:
     """One struct column from child columns keyed by their path under the
@@ -1893,13 +1896,7 @@ def _struct_series(name: str, members: Dict[str, pl.Series], *,
     When a member is itself ``Object`` (mixed element kinds), or ``scalar``
     holds the same key as a plain value on other nodes, no struct dtype
     fits: the column is ``Object`` and each cell is a dict or that value."""
-    tree: Dict[str, Any] = {}
-    for rel, series in sorted(members.items()):   # field order is by name, like Registry.children
-        node = tree
-        parts = rel.split(".")
-        for part in parts[:-1]:
-            node = node.setdefault(part, {})
-        node[parts[-1]] = series
+    tree = _path_tree(members)
 
     def dtype_of(sub: Any) -> pl.DataType:
         if isinstance(sub, pl.Series):

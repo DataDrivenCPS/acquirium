@@ -149,8 +149,9 @@ _TYPE_NAMES = {
     "struct": "struct", dict: "struct",
     "object": "object", object: "object", pl.Object: "object",
 }
-_TARGET_DTYPE = {"string": pl.String, "int": pl.Int64, "float": pl.Float64, "bool": pl.Boolean,
-                 "date": pl.Date, "datetime": pl.Datetime("us"), "object": pl.Object}
+# The column dtype of each scalar cast target (struct depends on the column).
+CAST_DTYPES = {"string": pl.String, "int": pl.Int64, "float": pl.Float64, "bool": pl.Boolean,
+               "date": pl.Date, "datetime": pl.Datetime("us", "UTC"), "object": pl.Object}
 
 
 class CastError(ValueError):
