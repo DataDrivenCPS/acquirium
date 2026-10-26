@@ -62,6 +62,12 @@ def parse_cell(value: Any, datatype: Optional[str]) -> Any:
     return value
 
 
+def result_datatypes(res: dict) -> List[List[Optional[str]]]:
+    """The ``datatypes`` matrix of a row result, or all ``None`` (every cell
+    unknown) from a server or test double that sends none."""
+    return res.get("datatypes") or [[None] * len(res.get("columns", [])) for _ in res.get("rows", [])]
+
+
 def column_dtype(values: Iterable[Any]) -> pl.DataType:
     """The polars dtype for a column of parsed cells.
 

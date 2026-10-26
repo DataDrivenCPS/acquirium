@@ -25,6 +25,7 @@ from typing import Dict, List, Optional, Set, Tuple
 from acquirium.Client.explore.attributes import Registry
 from acquirium.Client.explore.compile import compile_sparql
 from acquirium.Client.explore.traverse import _fetch_source_uris, _fetch_target_accept, _prune_target_subtree
+from acquirium.Client.explore.typed import result_datatypes
 from acquirium.Client.query_graph import QueryEdge, QueryGraph, QueryNode
 from acquirium.internals.internals_namespaces import CONNECTED_THROUGH, CONNECTS_FROM, CONNECTS_TO, S223
 
@@ -148,7 +149,7 @@ def execute_placed(graph: QueryGraph, client, include_dependencies: bool = True)
             hit = {r[si] for r in rows if r[si] is not None}
             pending.difference_update(hit)
         rows_out.extend(rows)
-        datatypes_out.extend(res.get("datatypes") or [[None] * len(cols) for _ in rows])
+        datatypes_out.extend(result_datatypes(res))
 
     # place: the source's own connection points
     if own_map:

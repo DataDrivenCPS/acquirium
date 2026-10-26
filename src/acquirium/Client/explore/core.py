@@ -36,6 +36,7 @@ from acquirium.Client.explore.expr import attr_name as _path_name
 from acquirium.Client.explore.relations import RELATIONS
 from acquirium.Client.explore.typed import (
     IRI, cast_values, coerce, column_dtype, dtype_for_datatypes, normalize_type, parse_cell,
+    result_datatypes,
 )
 from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
 from acquirium.internals.internals_namespaces import S223
@@ -1114,8 +1115,7 @@ class Query:
                 lcols = lookup.get("columns", [])
                 vi = lcols.index("v") if "v" in lcols else 0
                 oi = lcols.index("opt") if "opt" in lcols else 1
-                ldts = lookup.get("datatypes") or [[None] * len(lcols) for _ in lookup.get("rows", [])]
-                for r, d in zip(lookup.get("rows", []), ldts):
+                for r, d in zip(lookup.get("rows", []), result_datatypes(lookup)):
                     if r[oi] is None or r[vi] is None:
                         continue
                     dt = d[oi] if oi < len(d) else None
@@ -1459,7 +1459,7 @@ class Query:
             # a URI-looking string is then taken for a node; one that does
             # marks nodes "iri", so a literal that looks like a URI stays text
             typed = bool(res.get("datatypes"))
-            datatypes = res.get("datatypes") or [[None] * len(cols) for _ in rows]
+            datatypes = result_datatypes(res)
             # list attributes: value column -> column holding each element's predicate
             registry = self.registry
             selects = list(self.query_graph.selects)
@@ -1706,7 +1706,7 @@ class Query:
         res = q.execute(include_dependencies=include_dependencies)
         cols = [str(c) for c in res.get("columns", [])]
         rows = res.get("rows", [])
-        datatypes = res.get("datatypes") or [[None] * len(cols) for _ in rows]
+        datatypes = result_datatypes(res)
         g = q.query_graph
         registry = q.registry
         index = {c: i for i, c in enumerate(cols)}

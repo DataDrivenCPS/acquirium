@@ -46,10 +46,6 @@ def _format_pred(p: str) -> str:
     return f"<{p}>"
 
 
-def _is_iri(x: object) -> bool:
-    return looks_like_uri(x)
-
-
 def _term(x: object) -> str:
     """Return the SPARQL term for a Python value.
 
@@ -62,7 +58,7 @@ def _term(x: object) -> str:
     """
     if isinstance(x, (bool, int, float, datetime, date)):
         return Literal(x).n3()
-    if _is_iri(x) and not isinstance(x, _Text):
+    if looks_like_uri(x) and not isinstance(x, _Text):
         return f"<{x}>"
     text = str(x).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
     return f'"{text}"'
@@ -78,7 +74,7 @@ def _value_terms(values, attr: Optional[Attr] = None) -> List[str]:
     either = attr is None or attr.name not in REGISTRY or attr.literal
     terms: List[str] = []
     for x in values:
-        both = either and _is_iri(x) and not isinstance(x, (URIRef, _Text))
+        both = either and looks_like_uri(x) and not isinstance(x, (URIRef, _Text))
         for t in (_term(x), _term(_Text(x)) if both else None):
             if t is not None and t not in terms:
                 terms.append(t)
