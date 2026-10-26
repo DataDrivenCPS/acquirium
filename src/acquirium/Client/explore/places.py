@@ -109,8 +109,14 @@ def _with_pairs(graph: QueryGraph, edge: QueryEdge, pairs: List[Tuple[str, str]]
     )
 
 
-def execute_placed(graph: QueryGraph, client, include_dependencies: bool = True) -> dict:
-    """Run a query holding one nearest directional edge; return ``{"columns", "rows"}``."""
+def execute_placed(graph: QueryGraph, client, include_dependencies: bool = True,
+                   registry: Optional[Registry] = None) -> dict:
+    """Run a query holding one nearest directional edge; return ``{"columns", "rows"}``.
+
+    ``registry`` is the calling query's, so the per-place queries share one
+    graph-version check."""
+    if registry is None:
+        registry = Registry(client)
     edge = _placed_edge(graph)
     src_node = graph.nodes[edge.source_id]
     src_dropped = bool((src_node.constraints or {}).get("dropped"))
@@ -118,11 +124,11 @@ def execute_placed(graph: QueryGraph, client, include_dependencies: bool = True)
     version = client.graph_version()
     ent_map, conn_map, own_map = _steps(client, edge.direction, edge.own_cp_class, version)
 
-    sources = _fetch_source_uris(client, _prune_target_subtree(graph, edge), edge.source_id)
+    sources = _fetch_source_uris(client, _prune_target_subtree(graph, edge), edge.source_id, registry)
     # nodes that can satisfy the target's own constraints (class, attributes);
     # a place whose candidates all fall outside needs no query. None when the
     # target node is unconstrained (a measurement's intermediate node).
-    accept = _fetch_target_accept(client, graph, edge)
+    accept = _fetch_target_accept(client, graph, edge, registry)
     pending: Set[str] = set(sources)
     frontier: Dict[str, Set[str]] = {s: {s} for s in sources}
     visited: Dict[str, Set[str]] = {s: {s} for s in sources}
@@ -138,7 +144,7 @@ def execute_placed(graph: QueryGraph, client, include_dependencies: bool = True)
         if not pairs:
             return
         g = _with_pairs(graph, edge, pairs, undrop=src_dropped)
-        res = client.sparql_query(compile_sparql(g, Registry(client)),
+        res = client.sparql_query(compile_sparql(g, registry),
                                   include_dependencies=include_dependencies)
         cols = res.get("columns", [])
         if columns is None:
@@ -176,7 +182,7 @@ def execute_placed(graph: QueryGraph, client, include_dependencies: bool = True)
     if columns is None:
         # nothing was ever queried: fall back to an empty result with the
         # ordinary column set
-        probe = compile_sparql(_with_pairs(graph, edge, [], undrop=src_dropped), Registry(client))
+        probe = compile_sparql(_with_pairs(graph, edge, [], undrop=src_dropped), registry)
         columns = [c.lstrip("?") for c in probe.split("\n", 1)[0].split()[2:]]
     if src_dropped and src_col in columns:
         si = columns.index(src_col)

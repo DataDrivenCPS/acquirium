@@ -1281,10 +1281,10 @@ class Query:
             g = self.query_graph
             if any(getattr(e, "patterns", None) and e.value_pairs is None for e in g.edges):
                 from acquirium.Client.explore.traverse import resolve_program_edges
-                g = resolve_program_edges(g, self.client)
+                g = resolve_program_edges(g, self.client, self.registry)
             if any(e.direction is not None and e.nearest for e in g.edges):
                 from acquirium.Client.explore.places import execute_placed
-                self.cache[cache_key] = execute_placed(g, self.client, include_dependencies)
+                self.cache[cache_key] = execute_placed(g, self.client, include_dependencies, self.registry)
             else:
                 self.cache[cache_key] = self.client.sparql_query(
                     compile_sparql(g, self.registry),
