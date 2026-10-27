@@ -109,6 +109,10 @@ dev = [
     "pytest>=9.0.2",
     "pytest-cov>=6.0",
 ]
+docs = [
+    "jupyter-book>=1.0.4,<2",
+    "linkify-it-py>=2.0",
+]
 
 [tool.uv]
 no-build-isolation-package = ["pygit2"]

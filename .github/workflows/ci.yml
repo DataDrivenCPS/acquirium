@@ -28,7 +28,7 @@ jobs:
       # site navigation at watermetadata.org/acquirium.
       - name: Build docs and check table of contents
         run: |
-          uvx --from jupyter-book==1.0.4.post1 --with linkify-it-py jupyter-book build docs 2>&1 | tee docs-build.log
+          uv run --locked --only-group docs jupyter-book build docs 2>&1 | tee docs-build.log
           if grep "isn't included in any toctree" docs-build.log; then
             echo "::error::Add the pages above to docs/_toc.yml"
             exit 1
