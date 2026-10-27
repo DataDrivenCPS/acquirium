@@ -21,6 +21,7 @@ import pyarrow.compute as pc
 from acquirium.Materialization.models import (
     UTC, Batch, Binding, InputBatch, StreamDescriptor, StreamSet, TimeWindow,
 )
+from acquirium.Storage.publication.revision import RevisionPublisher
 
 
 class RevisionBackend(Protocol):
@@ -439,9 +440,7 @@ class RevisionStore:
                     if revision is None:
                         revision = self.store._next_revision(conn)
                     if batch.context.full_reset:
-                        self._execute(conn, f"DELETE FROM timeseries WHERE {ref_filter}", [port.ref_uri])
-                        self._execute(conn, "INSERT INTO stream_resets (ref_uri, last_revision) VALUES (?, ?) ON CONFLICT (ref_uri) DO UPDATE SET last_revision=EXCLUDED.last_revision",
-                                      [port.ref_uri, revision])
+                        RevisionPublisher(self.store).reset(conn, [port.ref_uri], revision=revision)
                     else:
                         self._execute(conn, f"UPDATE timeseries SET deleted=TRUE, last_revision=? WHERE {ref_filter} AND ts>=? AND ts<=? AND NOT deleted",
                                       [revision, port.ref_uri, self._time(window.start), self._time(window.end)])

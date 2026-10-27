@@ -76,6 +76,8 @@ class QUDTStore:
             QUDT.symbol, QUDT.ucumCode,  # noqa: F405
             QUDT.hasQuantityKind if is_unit else QUDT.applicableUnit,  # noqa: F405
         ]
+        if is_unit:
+            preds.append(QUDT.currencyCode)  # noqa: F405
         values = " ".join(f"<{p}>" for p in preds)
         return f"""
         SELECT ?s ?p ?o ?lang WHERE {{
@@ -132,6 +134,13 @@ class QUDTStore:
             ucum = ucums[0] if ucums else None
 
             surfaces, exact_surfaces = _build_surfaces(uri, labels, symbol, ucum, is_unit)
+            if is_unit:
+                # Currency codes are exact spellings, like unit symbols. They
+                # should resolve through the shared unit index, not app aliases.
+                codes = sorted({o for o, _ in by_pred.get(str(QUDT.currencyCode), ())})  # noqa: F405
+                for code in codes:
+                    if code not in surfaces and code not in exact_surfaces:
+                        exact_surfaces.append(code)
             if not surfaces:
                 continue
 

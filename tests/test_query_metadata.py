@@ -29,6 +29,7 @@ def test_entity(acquirium_client: Acquirium):
     assert len(entity_A.query_graph.edges) == 0
 
     result_A = entity_A.execute()
+    assert set(result_A) == {"columns", "rows", "datatypes"}
     assert len(result_A["rows"]) == 4
 
     entity_B = acq.query().entity(ACQUIRIUM_NS.B, alias="b")

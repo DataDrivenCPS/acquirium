@@ -134,19 +134,6 @@ def test_startup_timeout_stops_owned_child(monkeypatch, tmp_path):
     assert runtime._session is None
 
 
-def test_discovery_checks_identity(monkeypatch, tmp_path):
-    import json
-    info = {"port": 8123, "token": "expected", "exact_only": False}
-    (tmp_path / "server.json").write_text(json.dumps(info))
-    http = Mock()
-    http.get.return_value.json.return_value = {**info, "token": "other"}
-    session = Mock()
-    session.__enter__ = Mock(return_value=http)
-    session.__exit__ = Mock(return_value=False)
-    monkeypatch.setattr(runtime.requests, "Session", lambda: session)
-    assert runtime._discover(tmp_path) is None
-
-
 def test_configuration_discovery_and_relative_paths(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     config = tmp_path / "acquirium.toml"

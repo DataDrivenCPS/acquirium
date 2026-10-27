@@ -15,6 +15,8 @@ import logging
 import pyarrow as pa
 import polars as pl
 from rdflib import URIRef
+from acquirium.Storage.migrations import TIMESERIES_MIGRATIONS, migrate
+from acquirium.Storage.publication.revision import RevisionPublisher
 from acquirium.Storage.values import (
     normalize_value_kind,
     normalize_value_mode,
@@ -70,7 +72,19 @@ class TimescaleStore(TimeseriesStore):
             logger.debug("TimescaleStore.__init__: dropping existing tables/views")
             with self.conn.cursor() as cur:
                 cur.execute(sql.SQL("DROP VIEW IF EXISTS {} CASCADE").format(sql.Identifier(TIMESERIES_STREAMS_VIEW)))
-                for table in ("stream_resets", "materialization_work", "materialization_lineage", "materialization_deployments", BINDING_PROGRESS_TABLE, SYSTEM_STATE_TABLE, TIMESERIES_TABLE, REF_IDS_TABLE, STREAMS_TABLE, LOGS_TABLE):
+                for table in (
+                    "experiment_metadata_outbox",
+                    "experiment_metadata_state",
+                    "experiment_observations",
+                    "experiment_artifacts",
+                    "experiment_artifact_chunks",
+                    "experiment_runs",
+                    "experiment_variables",
+                    "experiment_templates",
+                    "experiment_metadata_resolutions",
+                    "schema_migrations", "stream_resets", "materialization_work", "materialization_lineage", "materialization_deployments",
+                    BINDING_PROGRESS_TABLE, SYSTEM_STATE_TABLE, TIMESERIES_TABLE, REF_IDS_TABLE, STREAMS_TABLE, LOGS_TABLE,
+                ):
                     cur.execute(sql.SQL("DROP TABLE IF EXISTS {} CASCADE").format(sql.Identifier(table)))
         self.ensure_table()
         logger.debug("TimescaleStore.__init__: ready")
@@ -116,6 +130,9 @@ class TimescaleStore(TimeseriesStore):
                 );
                 """
             )
+            with self._write_conn() as migration_conn:
+                migrate(migration_conn, backend="postgres", component="timeseries",
+                        migrations=TIMESERIES_MIGRATIONS)
             cur.execute(f"CREATE INDEX IF NOT EXISTS idx_timeseries_last_revision ON {TIMESERIES_TABLE} (last_revision);")
             # Every query filters by ref_id first, so the unique (ref_id, ts)
             # index below serves the read path. Avoid Timescale's redundant
@@ -298,18 +315,8 @@ class TimescaleStore(TimeseriesStore):
     def _replace_frame(self, ref_uri: str, frame: pl.DataFrame) -> int:
         """Physically replace a stream and record its latest reset atomically."""
         with self._lock, self._write_conn() as conn:
-            revision = self._next_revision(conn)
-            conn.execute(
-                f"""DELETE FROM {TIMESERIES_TABLE}
-                WHERE ref_id = (SELECT ref_id FROM {REF_IDS_TABLE} WHERE ref_uri = %s)""",
-                [ref_uri],
-            )
+            revision = RevisionPublisher(self).reset(conn, [ref_uri])
             self._insert_frame(conn, frame, revision)
-            conn.execute(
-                "INSERT INTO stream_resets (ref_uri, last_revision) VALUES (%s, %s) "
-                "ON CONFLICT (ref_uri) DO UPDATE SET last_revision=EXCLUDED.last_revision",
-                [ref_uri, revision],
-            )
         return frame.height
 
     def bulk_insert_polars(self, df: pl.DataFrame) -> int:
@@ -440,41 +447,15 @@ class TimescaleStore(TimeseriesStore):
 
         Returns the ref URI.
         """
-        if ref_uri is None:
-            ref_uri = compute_ref_uri(source_id, ref_name)
-        value_kind = normalize_value_kind(value_kind)
-        # logger.debug(
-        #     "ensure_stream_ref source=%s ref_name=%s point_uri=%s kind=%s",
-        #     source_id, ref_name, point_uri, value_kind,
-        # )
-        with self.conn.cursor() as cur:
-            cur.execute(
-                f"""
-                INSERT INTO {STREAMS_TABLE} (ref_uri, point_uri, source_id, ref_name, value_kind)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (ref_uri) DO UPDATE
-                    SET
-                        point_uri = COALESCE(EXCLUDED.point_uri, {STREAMS_TABLE}.point_uri),
-                        source_id = EXCLUDED.source_id,
-                        ref_name = EXCLUDED.ref_name,
-                        value_kind = EXCLUDED.value_kind
-                """,
-                (str(ref_uri), point_uri, source_id, ref_name, value_kind),
-            )
-        return ref_uri
+        return URIRef(self.ensure_stream_refs([(point_uri, source_id, ref_name, str(ref_uri) if ref_uri is not None else None, value_kind)])[0])
 
-    def ensure_stream_refs(
-        self,
-        refs: Iterable[tuple[str | None, str, str, str | None, str]],
-    ) -> list[str]:
-        """Batch form of :meth:`ensure_stream_ref`.
+    def ensure_stream_refs(self, refs) -> list[str]:
+        """Register a batch using its own transaction."""
+        with self._lock, self._write_conn() as conn:
+            return self._ensure_stream_refs(conn, refs)
 
-        Each entry is ``(point_uri, source_id, ref_name, ref_uri, value_kind)``.
-
-        COPY into a staging table and upsert from it in one statement, rather
-        than a statement per row: COPY streams the whole batch over the wire in
-        a single command, which beats even a pipelined executemany.
-        """
+    def _ensure_stream_refs(self, conn, refs) -> list[str]:
+        """Register references in the caller's transaction; never commit it."""
         prepared: dict[str, tuple[Any, ...]] = {}
         for point_uri, source_id, ref_name, ref_uri, value_kind in refs:
             key = str(ref_uri if ref_uri is not None else compute_ref_uri(source_id, ref_name))
@@ -491,32 +472,31 @@ class TimescaleStore(TimeseriesStore):
         # staging table name is fixed, so concurrent graph synchronizations must
         # serialize just like timeseries writers; otherwise one request can
         # nest a transaction or collide with the other request's temp table.
-        with self._lock, timed_debug(logger, "ensure_stream_refs rows=%d", len(prepared)), self._write_conn() as conn:
-            with conn.cursor() as cur:
-                # A caller-controlled transaction can synchronize references
-                # more than once before commit; remove the prior staging table
-                # because ON COMMIT DROP has not fired yet.
-                cur.execute("DROP TABLE IF EXISTS _acquirium_incoming_refs")
-                cur.execute(
-                    f"CREATE TEMP TABLE _acquirium_incoming_refs "
-                    f"(LIKE {STREAMS_TABLE}) ON COMMIT DROP"
-                )
-                with cur.copy(f"COPY _acquirium_incoming_refs {cols} FROM STDIN") as copy:
-                    for row in prepared.values():
-                        copy.write_row(row)
-                cur.execute(
-                    f"""
-                    INSERT INTO {STREAMS_TABLE} {cols}
-                    SELECT ref_uri, point_uri, source_id, ref_name, value_kind
-                    FROM _acquirium_incoming_refs
-                    ON CONFLICT (ref_uri) DO UPDATE
-                        SET
-                            point_uri = COALESCE(EXCLUDED.point_uri, {STREAMS_TABLE}.point_uri),
-                            source_id = EXCLUDED.source_id,
-                            ref_name = EXCLUDED.ref_name,
-                            value_kind = EXCLUDED.value_kind
-                    """
-                )
+        with conn.cursor() as cur:
+            # A caller-controlled transaction can synchronize references
+            # more than once before commit; remove the prior staging table
+            # because ON COMMIT DROP has not fired yet.
+            cur.execute("DROP TABLE IF EXISTS _acquirium_incoming_refs")
+            cur.execute(
+                f"CREATE TEMP TABLE _acquirium_incoming_refs "
+                f"(LIKE {STREAMS_TABLE}) ON COMMIT DROP"
+            )
+            with cur.copy(f"COPY _acquirium_incoming_refs {cols} FROM STDIN") as copy:
+                for row in prepared.values():
+                    copy.write_row(row)
+            cur.execute(
+                f"""
+                INSERT INTO {STREAMS_TABLE} {cols}
+                SELECT ref_uri, point_uri, source_id, ref_name, value_kind
+                FROM _acquirium_incoming_refs
+                ON CONFLICT (ref_uri) DO UPDATE
+                    SET
+                        point_uri = COALESCE(EXCLUDED.point_uri, {STREAMS_TABLE}.point_uri),
+                        source_id = EXCLUDED.source_id,
+                        ref_name = EXCLUDED.ref_name,
+                        value_kind = EXCLUDED.value_kind
+                """
+            )
         return list(prepared.keys())
 
     def resolve_storage_key(self, point_uri: str) -> str:

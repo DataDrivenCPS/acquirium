@@ -17,8 +17,8 @@ store is not a Ray actor.
 The backend separates three kinds of data:
 
 - **Deployment data** is the plant model and the RDF asserted by Acquirium and
-  drivers, including materialization output metadata and lineage. It is
-  persisted and is the input to inference and validation.
+  drivers, including materialization output metadata, experiment metadata, and
+  lineage. It is persisted and is the input to inference and validation.
 - **Ontology and shape data** defines vocabulary, `owl:imports`, SHACL shapes,
   and SHACL-AF rules. It is managed by OntoEnv, usually from bundled ontologies
   and configured ontology sources.
@@ -56,6 +56,8 @@ namespaces (e.g. `https://qudt.org/...`).
 | Plant data graph | source dataset | The shared plant model; it is the reserved `plant` source. | `insert_graph(..., source_id="plant")` or `sparql_update(..., source_id="plant")`. |
 | Acquirium data graph | source dataset | Acquirium-owned bookkeeping, such as logs and materialization lineage. | Server internals only. |
 | Source data graph | source dataset | RDF owned by one driver or external metadata source. | `insert_graph(..., source_id="...")`; source-scoped SPARQL update. |
+| Metadata graph | source dataset | Values attached to nodes with `insert_metadata()`; the reserved `metadata` source, an ordinary source graph by URI. Pruned of triples whose subject no other graph mentions. | `insert_metadata()`, which sends one SPARQL update scoped to it. |
+| Experiment graph | source dataset | Authoritative Study, variable, run, and stream-annotation metadata documents and their attributes; the `experiments` source. | Experiment recording APIs through the transactional SQL outbox. |
 | Ontology/shape graph | source dataset | Ontologies, shapes, rules, and imports managed through OntoEnv. | Server configuration/startup; not application or driver writes. |
 | Dependency cache | memory | Imports closure minus asserted deployment data. | Backend only. |
 | Inferred-data graph | query dataset | `shifty.infer` output. Replaced after every derived rebuild. | Backend only. |
@@ -66,6 +68,16 @@ also stable. A source graph URI is a pure function of its `source_id`; asking
 for a source graph computes that URI without any lookup, and the graph itself
 comes into existence in Oxigraph on first write.
 This means a source ID is an ownership boundary, not just a timeseries label.
+
+Experiment metadata uses the shared value-map writer and query compiler.
+The ledger creates its graph nodes automatically. Complete metadata documents
+are authoritative in the source dataset; queryable attributes are written
+alongside them. The shared document reader uses source quads, so it does not
+wait for or read inferred projections. SQL retains pending resolved operations
+until graph delivery succeeds, then removes them. Backup and restore include
+both the graph and the SQL recording ledger.
+See [Experiments](experiments.md#storage) for storage behavior and the
+[integration plan](../plans/experiment-metadata-integration.md) for the dependency.
 
 ### Public graph views
 
@@ -168,7 +180,8 @@ the current generation. Neither mode ever exposes a partially replaced graph.
 | Append ordinary data triples | increments | remains valid | stale; one background rebuild is scheduled. |
 | Replace a data graph | increments | marked stale | stale; one background rebuild is scheduled. |
 | Add data containing `owl:imports` or an `owl:Ontology` declaration | increments | marked stale | stale; one background rebuild is scheduled. |
-| SPARQL UPDATE of a data graph | increments | conservatively marked stale | stale; one background rebuild is scheduled. |
+| SPARQL UPDATE of a data graph | increments | marked stale only when the graph's `owl:imports` or `owl:Ontology` triples changed | stale; one background rebuild is scheduled. |
+| SPARQL UPDATE or replace of a data graph, as a consequence | unchanged by the pruning itself | unchanged | the metadata graph is pruned in the same write: a triple whose subject no longer appears in any other graph of the source dataset is removed before the write is finalized. Only the subject is checked; a URI value may point anywhere. |
 | OntoEnv adds/removes/replaces an ontology graph | increments | invalidated and rebuilt when needed | stale; rebuilt on the next query that needs a query view. |
 | Call `validate_graph` | unchanged | brought current if needed | not required; validation uses source data and shapes directly. |
 
