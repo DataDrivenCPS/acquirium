@@ -115,9 +115,8 @@ class ExperimentStore:
         self.metadata_graph = self.metadata.writer
         # Serialize graph delivery with metadata reads and lifecycle writes.
         # The store's separate writer lock remains available during graph I/O.
-        # Keep the experiment ledger beside canonical time-series storage.  The
-        # ledger stores provenance records and artifact bytes; time-series
-        # samples continue to live in the normal Acquirium tables.
+        # The ledger stores provenance records and artifact bytes; time-series
+        # samples are Escapement streams (``store.samples``).
         with store._lock, store._write_conn() as conn:
             self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_templates (template_id VARCHAR PRIMARY KEY, name VARCHAR UNIQUE NOT NULL, created_at TIMESTAMP NOT NULL)")
             self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_variables (variable_id VARCHAR PRIMARY KEY, template_id VARCHAR NOT NULL, label VARCHAR NOT NULL, role VARCHAR NOT NULL, kind VARCHAR NOT NULL, metadata_json VARCHAR NOT NULL, created_at TIMESTAMP NOT NULL, UNIQUE(template_id, label))")
@@ -134,6 +133,8 @@ class ExperimentStore:
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_observations_variable_idx ON experiment_observations(variable_id, run_id, sequence)")
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_observations_ref_idx ON experiment_observations(ref_uri, range_start, range_end)")
         self._resolutions = {}
+        # Finish any deletion a crash interrupted.
+        self._cleanup_streams()
 
     def _resolve(self, text, kind):
         key = (text, kind)
@@ -398,22 +399,25 @@ class ExperimentStore:
         return batch
 
     def _write_recording(self, run_id, batch):
-        """Commit prepared data with authoritative SQL state checks.
+        """Write samples, then commit the observations that point at them.
 
-        Samples go to Escapement last, after every SQL write succeeded, so a
-        failed recording leaves no ledger rows behind. Escapement cannot roll
-        back with the SQL transaction: if the commit itself fails after the
-        samples published, a retry rewrites the same sample keys.
+        1. Reserve the recording's streams in `experiment_streams`, so a run's
+           deletion finds every stream it may have written.
+        2. Write the samples to Escapement and wait until they are published.
+        3. Commit observations, artifacts, and graph intent in one transaction.
+
+        An observation therefore never points at missing samples. A failure
+        after step 2 leaves samples no observation names; a retry rewrites
+        the same keys, and deleting the run clears them.
         """
+        if batch.frame is not None:
+            with self.store._lock, self.store._write_conn() as conn:
+                self._check_recording(conn, run_id, batch)
+                self._own_streams(conn, run_id, batch.registrations)
+            self._write_samples(f"experiment/{run_id}", batch.frame)
         results = []
         with self.store._lock, self.store._write_conn() as conn:
-            self._recording_variables(conn, run_id, (item.variable_id for item in batch.observations))
-            for item in batch.observations:
-                if item.artifact_digest and item.attachment is None and self._execute(conn,
-                        "SELECT 1 FROM experiment_artifacts WHERE digest=?", [item.artifact_digest]).fetchone() is None:
-                    raise ValueError("unknown artifact digest")
-            if batch.registrations:
-                self._own_streams(conn, batch.registrations)
+            self._check_recording(conn, run_id, batch)
             sequence, recorded = self._next_observation(conn, run_id)
             for offset, item in enumerate(batch.observations):
                 if item.attachment is not None:
@@ -425,20 +429,43 @@ class ExperimentStore:
                 results.append(receipt)
             for update in batch.updates:
                 self.metadata.enqueue(conn, update)
-            if batch.frame is not None:
-                self._write_samples(f"experiment/{run_id}", batch.frame)
         return results
 
-    def _own_streams(self, conn, registrations):
-        """Record the streams this recording creates, in its transaction."""
+    def _check_recording(self, conn, run_id, batch):
+        """Authoritative SQL state checks, repeated in each transaction."""
+        self._recording_variables(conn, run_id, (item.variable_id for item in batch.observations))
+        for item in batch.observations:
+            if item.artifact_digest and item.attachment is None and self._execute(conn,
+                    "SELECT 1 FROM experiment_artifacts WHERE digest=?", [item.artifact_digest]).fetchone() is None:
+                raise ValueError("unknown artifact digest")
+
+    def _own_streams(self, conn, run_id, registrations):
+        """Reserve the streams a recording writes, before any sample is."""
         for _point, source, name, ref, _kind in registrations:
-            self._execute(conn, "INSERT INTO experiment_streams (ref_uri, source_id, ref_name) VALUES (?, ?, ?) "
-                          "ON CONFLICT (ref_uri) DO NOTHING", [ref, source, name])
+            self._execute(conn, "INSERT INTO experiment_streams (ref_uri, run_id, source_id, ref_name) VALUES (?, ?, ?, ?) "
+                          "ON CONFLICT (ref_uri) DO NOTHING", [ref, run_id, source, name])
 
     def _write_samples(self, source, frame):
         if self.store.samples is None:
             raise RuntimeError("this experiment ledger has no sample store")
         self.store.samples.write(source, frame)
+
+    def _cleanup_streams(self) -> int:
+        """Clear the samples of streams whose run is gone, then forget them.
+
+        A stream's row outlives its run until its samples are cleared, so this
+        finishes every deletion, including one a crash interrupted. Running it
+        again does nothing new. Returns how many samples were cleared.
+        """
+        with self.store._own_conn() as conn:
+            refs = [row[0] for row in self._execute(conn, "SELECT ref_uri FROM experiment_streams "
+                    "WHERE run_id NOT IN (SELECT run_id FROM experiment_runs)").fetchall()]
+        if not refs:
+            return 0
+        cleared = self.store.samples.clear(refs) if self.store.samples is not None else 0
+        with self.store._lock, self.store._write_conn() as conn:
+            self._execute(conn, f"DELETE FROM experiment_streams WHERE ref_uri IN ({self._marks(refs)})", refs)
+        return cleared
 
     def _store_artifact(self, conn, digest, artifact, data, recorded):
         # Identical bytes are stored once, under the first name they arrived with.
@@ -784,23 +811,16 @@ class ExperimentStore:
         """Streams a run's recording created, as opposed to streams it used."""
         if not run_ids:
             return []
-        sources = self._run_sources(run_ids)
-        rows = self._execute(conn, f"SELECT ref_uri FROM experiment_streams WHERE source_id IN ({self._marks(sources)})", sources).fetchall()
+        rows = self._execute(conn, f"SELECT ref_uri FROM experiment_streams WHERE run_id IN ({self._marks(run_ids)})", run_ids).fetchall()
         return [row[0] for row in rows]
 
-    def _clear_samples(self, result):
-        refs = result.pop("_sample_refs", [])
-        if refs and self.store.samples is not None:
-            result["samples"] = self.store.samples.clear(refs)
-
     def _delete_runs(self, conn, run_ids, *, sweep=False) -> dict[str, Any]:
-        """Remove runs, their observations, samples, and unshared files in `conn`.
+        """Remove runs, their observations, and unshared files in `conn`.
 
         Returns the counts removed; graph node deletions are queued in the same
-        transaction. With `sweep`, every experiment stream and unreferenced
-        artifact goes too. The samples themselves live in Escapement: the
-        caller passes the result to `_clear_samples` as its transaction's last
-        step, so a failed deletion leaves them in place.
+        transaction. With `sweep`, every unreferenced artifact goes too. The
+        runs' stream rows stay: the caller runs `_cleanup_streams` after the
+        commit, which clears their samples in Escapement and then the rows.
         """
         run_ids = list(dict.fromkeys(run_ids))
         removed = {"runs": len(run_ids), "observations": 0, "annotations": 0, "samples": 0, "files": 0}
@@ -831,18 +851,10 @@ class ExperimentStore:
                 WHERE run_id IN ({marks}) AND artifact_digest IS NOT NULL""", run_ids).fetchall()]
             self._execute(conn, f"DELETE FROM experiment_observations WHERE run_id IN ({marks})", run_ids)
             self._execute(conn, f"DELETE FROM experiment_runs WHERE run_id IN ({marks})", run_ids)
-        else:
-            refs = []
         sweep_sources = []
         if sweep:
-            sweep_sources = [row[0] for row in self._execute(conn, "SELECT DISTINCT source_id FROM experiment_streams WHERE source_id LIKE ?", ["experiment/%"]).fetchall()]
-            refs = [row[0] for row in self._execute(conn, "SELECT ref_uri FROM experiment_streams WHERE source_id LIKE ?", ["experiment/%"]).fetchall()]
+            sweep_sources = [row[0] for row in self._execute(conn, "SELECT DISTINCT source_id FROM experiment_streams").fetchall()]
             digests = [row[0] for row in self._execute(conn, "SELECT digest FROM experiment_artifacts").fetchall()]
-        if refs:
-            ref_marks = self._marks(refs)
-            self._execute(conn, f"DELETE FROM experiment_streams WHERE ref_uri IN ({ref_marks})", refs)
-            # Cleared by the caller once the rest of its transaction succeeded.
-            removed["_sample_refs"] = refs
         if digests:
             # Identical bytes are stored once, so keep a file another run still uses.
             unused = [row[0] for row in self._execute(conn, f"""
@@ -864,8 +876,11 @@ class ExperimentStore:
         return removed
 
     def _after_delete(self, removed) -> dict[str, Any]:
-        """Deliver the deleted records' graph changes after the SQL commit."""
+        """After the SQL commit: deliver the graph changes, then clear the
+        deleted runs' samples. An error clearing them leaves the deletion
+        complete; the next cleanup finishes it."""
         self.sync_metadata_graph()
+        removed["samples"] = self._cleanup_streams()
         return removed
 
     def _refuse_running(self, conn, clause, parameters) -> None:
@@ -889,7 +904,6 @@ class ExperimentStore:
                 raise KeyError(missing[0])
             self._refuse_running(conn, f"run_id IN ({marks})", run_ids)
             result = self._delete_runs(conn, run_ids)
-            self._clear_samples(result)
         return self._after_delete(result)
 
     @_publishes
@@ -906,7 +920,6 @@ class ExperimentStore:
             self._execute(conn, "DELETE FROM experiment_templates WHERE template_id=?", [template_id])
             for uri in [study_uri(template_id), *map(variable_uri, variables)]:
                 enqueue(conn, {"operation": "delete", "subject": uri})
-            self._clear_samples(result)
         return {"studies": 1, "variables": len(variables), **self._after_delete(result)}
 
     @_publishes
@@ -924,7 +937,6 @@ class ExperimentStore:
                 enqueue(conn, {"operation": "delete", "subject": uri})
             for table in ("experiment_variables", "experiment_templates"):
                 self._execute(conn, f"DELETE FROM {table}")
-            self._clear_samples(result)
         self._resolutions = {}
         return {"studies": studies, "variables": variables, **self._after_delete(result)}
 

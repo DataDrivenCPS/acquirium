@@ -48,7 +48,7 @@ def test_outbox_failure_rolls_back_lifecycle_write(ledger, monkeypatch):
 
 
 @pytest.mark.parametrize("failure", ["registration", "insertion", "observation", "outbox"])
-def test_recording_batch_failure_leaves_nothing_behind(ledger, monkeypatch, failure):
+def test_failed_recording_leaves_no_observation_and_a_retry_succeeds(ledger, monkeypatch, failure):
     study = ledger.define("atomic recording")
     level = ledger.declare(study["template_id"], "level", "output", "timeseries", {})
     cost = ledger.declare(study["template_id"], "cost", "output", "scalar", {})
@@ -76,43 +76,57 @@ def test_recording_batch_failure_leaves_nothing_behind(ledger, monkeypatch, fail
             patch.setattr(ledger, "_execute", insert)
         with pytest.raises(RuntimeError, match="temporary"):
             ledger.record_batch(run["run_id"], entries)
+    # No observation points at anything. Samples written before the failure
+    # sit in the reserved stream, unreferenced, until a retry or a deletion.
     assert ledger.observations(study["template_id"]) == []
-    for table in ("experiment_streams", "experiment_metadata_outbox"):
-        assert _count(ledger.store, table) == 0
-    assert _samples(ledger.store) == []
+    assert _count(ledger.store, "experiment_metadata_outbox") == 0
+    written = failure in {"observation", "outbox"}
+    assert len(_samples(ledger.store)) == (1 if written else 0)
+    assert _count(ledger.store, "experiment_streams") == (0 if failure == "registration" else 1)
     assert len(ledger.record_batch(run["run_id"], entries)) == 2
     assert len(_samples(ledger.store)) == 1
 
 
-def test_failed_batch_deletion_keeps_ledger_and_samples(ledger, monkeypatch):
-    store = ledger.store
+def _recorded_runs(ledger, count):
     study = ledger.define("batch reset")
     variable = ledger.declare(study["template_id"], "level", "output", "timeseries", {})
     runs = []
-    for value in (1.0, 2.0):
+    for value in range(count):
         run = ledger.start(study["template_id"], {})
         ledger.record_batch(run["run_id"], [dict(form="samples", variable_id=variable["variable_id"],
-                                                 samples=[[WHEN.isoformat(), value]])])
+                                                 samples=[[WHEN.isoformat(), float(value)]])])
         ledger.finish(run["run_id"], "succeeded")
         runs.append(run["run_id"])
-    ledger.sync_metadata_graph()
-    before = _samples(store)
-    assert len(before) == 2
+    return study, runs
 
-    # Samples are cleared last, so a failure before then rolls back the
-    # ledger and leaves them in place.
-    def fail(result):
+
+def test_deleting_runs_clears_their_samples_after_the_commit(ledger):
+    study, runs = _recorded_runs(ledger, 2)
+    assert len(_samples(ledger.store)) == 2
+    assert ledger.delete_runs(runs) == {"runs": 2, "observations": 2, "annotations": 0, "samples": 2, "files": 0}
+    assert ledger.runs(study["template_id"]) == []
+    assert _samples(ledger.store) == []
+    assert _count(ledger.store, "experiment_streams") == 0
+
+
+def test_interrupted_cleanup_finishes_at_the_next_start(experiment_ledger, ledger, monkeypatch):
+    store = ledger.store
+    study, runs = _recorded_runs(ledger, 2)
+
+    # The deletion commits first; a failure clearing the samples afterwards
+    # leaves the runs deleted and their stream rows in place.
+    def fail(refs):
         raise RuntimeError("clear failure")
     with monkeypatch.context() as patch:
-        patch.setattr(ledger, "_clear_samples", fail)
+        patch.setattr(store.samples, "clear", fail)
         with pytest.raises(RuntimeError, match="clear failure"):
             ledger.delete_runs(runs)
-    assert _samples(store) == before
-    assert {run["run_id"] for run in ledger.runs(study["template_id"])} == set(runs)
-    assert _count(store, "experiment_observations") == 2
+    assert ledger.runs(study["template_id"]) == []
+    assert _count(store, "experiment_observations") == 0
     assert _count(store, "experiment_streams") == 2
-    assert _count(store, "experiment_metadata_outbox") == 0
-    assert ledger.delete_runs(runs) == {"runs": 2, "observations": 2, "annotations": 0, "samples": 2, "files": 0}
+    assert len(_samples(store)) == 2
+
+    ExperimentStore(experiment_ledger, graph_store=ledger.metadata_graph.graph_store)
     assert _samples(store) == []
     assert _count(store, "experiment_streams") == 0
 

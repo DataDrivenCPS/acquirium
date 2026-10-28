@@ -34,7 +34,7 @@ def counts(store):
 
 
 @pytest.mark.parametrize("failure", ["registration", "samples", "artifact", "observation", "outbox"])
-def test_recording_rolls_back_every_sql_owner(experiment_ledger, tmp_path, monkeypatch, failure):
+def test_failed_recording_commits_no_observation(experiment_ledger, tmp_path, monkeypatch, failure):
     store = experiment_ledger
     ledger, graph, study = ledger_for(store, tmp_path)
     series = ledger.declare(study, "power", "output", "timeseries", {"unit": "power"})
@@ -47,7 +47,6 @@ def test_recording_rolls_back_every_sql_owner(experiment_ledger, tmp_path, monke
                 "artifact": {"filename": "report.txt", "data": base64.b64encode(b"report").decode()}}]
     with monkeypatch.context() as patch:
         if failure == "samples":
-            # Samples are written last; an ingest that fails publishes nothing.
             def fail(*args, **kwargs):
                 raise OSError("injected failure")
             patch.setattr(store.samples, "write", fail)
@@ -69,13 +68,20 @@ def test_recording_rolls_back_every_sql_owner(experiment_ledger, tmp_path, monke
             patch.setattr(ledger, "_execute", fail)
         with pytest.raises(OSError, match="injected"):
             ledger.record_batch(run, entries)
-    assert counts(store) == before
+    # Observations, artifacts, and graph intent commit together or not at
+    # all. Samples precede them: once written they stay, unreferenced, in a
+    # stream reserved for the run.
+    after = counts(store)
+    for table in ("experiment_observations", "experiment_artifacts", "experiment_artifact_chunks", "experiment_metadata_outbox"):
+        assert after[table] == before[table]
+    assert after["samples"] == (0 if failure in {"registration", "samples"} else 1)
+    assert after["experiment_streams"] == (0 if failure == "registration" else 1)
     receipts = ledger.record_batch(run, entries)
     assert [r["sequence"] for r in receipts] == [1, 2]
     assert counts(store)["samples"] == 1
     ledger.finish(run, "succeeded")
     assert ledger.clear()["samples"] == 1
-    assert counts(store)["experiment_artifact_chunks"] == 0
+    assert counts(store)["experiment_artifact_chunks"] == counts(store)["experiment_streams"] == counts(store)["samples"] == 0
 
 
 def legacy_document(ledger, graph, study, *, conflicting=False):

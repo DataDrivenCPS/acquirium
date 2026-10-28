@@ -62,13 +62,19 @@ replays pending changes before returning normalized declarations. Pending
 older outbox formats remain readable. Missing acknowledged graphs require
 restoring the matching graph backup; pending new updates cannot replace it.
 
-Experiment schema version 4 adds `experiment_streams`, the streams a run's
-recordings own. A recording commits stream ownership, artifacts, observations,
-and graph intent in one SQL transaction, and writes its samples to Escapement
-as the transaction's last step: a recording that fails before then leaves
-nothing behind. Escapement cannot roll back with SQL, so if the commit itself
-fails after the samples were published, a retry rewrites the same sample keys.
-Deleting runs clears their samples the same way, last. Outbox events may target a run-owned source graph;
+Experiment schema version 4 adds `experiment_streams`: every stream a run may
+have written samples to. Samples live in Escapement, which cannot roll back
+with SQL, so the ledger orders its writes so it never points at missing data:
+
+1. A recording reserves its streams in `experiment_streams` and commits.
+2. It writes the samples to Escapement and waits until they are published.
+3. It commits observations, artifacts, and graph intent in one transaction.
+
+A failure after step 2 leaves samples no observation names; a retry rewrites
+the same keys. Deleting runs commits first and keeps their stream rows; the
+samples are then cleared, and only after that are the rows removed. Any
+stream row whose run is gone is cleared again at the next deletion or server
+start, which finishes a deletion a crash interrupted. Outbox events may target a run-owned source graph;
 older events retain the experiment graph as their default target. Source
 clears are ordering barriers. Delivery does not perform another SQL reference
 registration. Artifact bytes are stored in the SQL store, content-addressed
