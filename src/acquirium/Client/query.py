@@ -756,7 +756,7 @@ class Q:
                     native = fetch(timedelta(0)).native_series(points)
                 except ValueError as e:
                     raise ValueError(f"reconcile: {e}") from e
-                target = DataObject._infer_resolution(list(native.values()))
+                target = DataObject.infer_resolution(list(native.values()))
             data = fetch(target / 2)
 
         df = data.reconcile(

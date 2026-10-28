@@ -1192,13 +1192,13 @@ class DataObject:
                 raise ValueError("reconcile: resolution must be a positive duration")
             return resolution
         if isinstance(resolution, str):
-            m = cls._DURATION_RE.match(resolution)
+            m = cls.DURATION_RE.match(resolution)
             if not m:
                 raise ValueError(
                     f"reconcile: could not parse resolution '{resolution}'. "
                     "Use a timedelta, or a string like '10s', '5m', '1h', '2d', '1w'."
                 )
-            td = timedelta(seconds=float(m.group(1)) * cls._DURATION_UNIT_SECONDS[m.group(2)])
+            td = timedelta(seconds=float(m.group(1)) * cls.DURATION_UNIT_SECONDS[m.group(2)])
             if td <= timedelta(0):
                 raise ValueError("reconcile: resolution must be a positive duration")
             return td
@@ -1486,15 +1486,15 @@ class DataObject:
         """
         self._materialize()
 
-        if upsample is not None and upsample not in self._UPSAMPLE_METHODS:
+        if upsample is not None and upsample not in self.UPSAMPLE_METHODS:
             raise ValueError(
                 f"reconcile: unknown upsample method '{upsample}'; "
-                f"choose from {sorted(self._UPSAMPLE_METHODS)}"
+                f"choose from {sorted(self.UPSAMPLE_METHODS)}"
             )
-        if downsample is not None and downsample not in self._DOWNSAMPLE_METHODS:
+        if downsample is not None and downsample not in self.DOWNSAMPLE_METHODS:
             raise ValueError(
                 f"reconcile: unknown downsample method '{downsample}'; "
-                f"choose from {sorted(self._DOWNSAMPLE_METHODS)}"
+                f"choose from {sorted(self.DOWNSAMPLE_METHODS)}"
             )
         if upsample == "default_value" and fill_value is None:
             raise ValueError(
@@ -1528,7 +1528,7 @@ class DataObject:
         target = (
             self.parse_resolution(resolution)
             if resolution is not None
-            else self._infer_resolution(with_data)
+            else self.infer_resolution(with_data)
         )
 
         global_min = min(original_data["time"].min() for original_data in with_data)
@@ -1556,7 +1556,7 @@ class DataObject:
                     f"{snapped_data.height} grid times at resolution {target}, but upsample=None"
                 )
 
-            if upsample in self._EXACT_TIME_UPSAMPLE_METHODS:
+            if upsample in self.EXACT_TIME_UPSAMPLE_METHODS:
                 # grid times reduced from several measurements keep their downsampled value
                 counts = self._snap_to_grid(original_data, origin, target).group_by("time").len()
                 crowded = grid_df.join(counts, on="time", how="left")["len"].fill_null(0) > 1
@@ -1624,10 +1624,10 @@ class DataObject:
             raise ValueError("difference: df must have a 'time' column")
 
         value_cols = [c for c in df.columns if c != "time"]
-        if len(value_cols) > self._MAX_DIFFERENCE_POINTS:
+        if len(value_cols) > self.MAX_DIFFERENCE_POINTS:
             raise ValueError(
-                f"difference: at most {self._MAX_DIFFERENCE_POINTS} columns supported "
-                f"(got {len(value_cols)}); a {self._MAX_DIFFERENCE_POINTS}-way difference "
+                f"difference: at most {self.MAX_DIFFERENCE_POINTS} columns supported "
+                f"(got {len(value_cols)}); a {self.MAX_DIFFERENCE_POINTS}-way difference "
                 f"already yields {len(value_cols) * (len(value_cols) - 1) // 2} columns"
             )
         if len(value_cols) < 2:
