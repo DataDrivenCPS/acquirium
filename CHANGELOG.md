@@ -188,6 +188,13 @@ change in any release.
   at, as `observation.epoch`; it includes everything written to Escapement
   before the recording. `observation.dataframe(epoch=observation.epoch)`
   reads the samples as recorded, after later corrections.
+- Recording samples does not wait for Escapement to publish them: the
+  observation commits with the receipt, and reading observations waits for
+  it instead. Runs record without waiting on each other.
+- `GET /timeseries` accepts `after=<sequence>` to wait for a receipt; a
+  stream handle returned by `add()` uses it to read its own samples.
+- A recording refused because Escapement's inbox is full returns 503 before
+  anything commits, and the client resends it.
 - Deleting runs reports only their own samples and clears them a request at a
   time; `usage()` counts samples without reading them. A failed clear at
   server start is logged and retried later instead of stopping the server.

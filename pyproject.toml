@@ -37,7 +37,7 @@ dependencies = [
     # The experiment ledger runs on DuckDB or PostgreSQL.
     "duckdb>=0.10.0",
     "psycopg[binary]>=3.3.1",
-    "escapement-db @ git+ssh://git@github.com/gtfierro/escapement.git@2ba07bd9f1e50c48f1a51645e365eb52b4a5522f",
+    "escapement-db @ git+ssh://git@github.com/gtfierro/escapement.git@64e6712060e60fd0edc1a458ba1d258764be305c",
     "typer>=0.12.0",
     "fastembed>=0.4.0",
     "filelock>=3.15",

@@ -78,8 +78,8 @@ EXPERIMENT_MIGRATIONS += (Migration(3, "declaration_upgrade_frontier", (
 # stream's samples are cleared.
 EXPERIMENT_MIGRATIONS += (Migration(4, "experiment_streams", (
     "CREATE TABLE IF NOT EXISTS experiment_streams (ref_uri VARCHAR PRIMARY KEY, run_id VARCHAR NOT NULL, source_id VARCHAR NOT NULL, ref_name VARCHAR NOT NULL)",
-    # The Escapement epoch each time-series observation was recorded at. A
-    # separate table: DuckDB cannot alter experiment_observations in the
+    # The Escapement request sequence each time-series observation's data
+    # was accepted at; its epoch is looked up from it. A separate table: DuckDB cannot alter experiment_observations in the
     # transaction where migration 2 updates it.
-    "CREATE TABLE IF NOT EXISTS experiment_observation_epochs (run_id VARCHAR NOT NULL, sequence BIGINT NOT NULL, published_epoch BIGINT NOT NULL, PRIMARY KEY (run_id, sequence))",
+    "CREATE TABLE IF NOT EXISTS experiment_observation_accepted (run_id VARCHAR NOT NULL, sequence BIGINT NOT NULL, accepted BIGINT NOT NULL, PRIMARY KEY (run_id, sequence))",
 )),)

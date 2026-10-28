@@ -14,6 +14,8 @@ from time import perf_counter
 from rdflib import Graph, URIRef, Literal, RDF, RDFS
 from rdflib.namespace import NamespaceManager
 from acquirium.Storage.graph_store import OxigraphGraphStore
+from escapement import Receipt
+
 from acquirium.core import Core
 from acquirium.apps import Apps
 from acquirium.Storage.graph_store import select_values
@@ -587,8 +589,12 @@ class Manager:
         return result
 
     def timeseries_batch(self, uri, start=None, end=None, limit=None, order="asc",
-                         batch_size=10_000, value_mode="default", epoch=None):
+                         batch_size=10_000, value_mode="default", epoch=None, after=None):
+        """``after`` is a request sequence, such as a receipt's, that the read
+        must include; it waits until that request is published."""
         stream = self.resolve_storage_keys([uri])[uri]
+        if after is not None:
+            self.core.wait(Receipt(after))
         mode = normalize_value_mode(value_mode)
         if mode == "default":
             # A stream reads as its declared kind; derived streams are numeric.

@@ -274,8 +274,11 @@ def record_experiment_batch(run_id: str, request: list[ExperimentRecordEntry]):
         return app.state.manager.experiments.record_batch(run_id, [item.model_dump(exclude_unset=True) for item in request])
     except KeyError:
         raise HTTPException(status_code=404, detail="unknown experiment run or variable")
-    except (TypeError, ValueError) as error:
+    except TypeError as error:
         raise HTTPException(status_code=400, detail=str(error))
+    except Exception as error:
+        # A full inbox fails before the observations commit, so a retry is safe.
+        raise _engine_http_error(error) from error
 
 def annotate_experiment_stream(run_id: str, request: ExperimentStreamAnnotationRequest):
     try:
@@ -1093,6 +1096,7 @@ def get_timeseries(
     epoch: int | None = None,
     start_ns: int | None = None,
     end_ns: int | None = None,
+    after: int | None = None,
     ):
     try:
         if order not in ("asc", "desc"):
@@ -1103,6 +1107,7 @@ def get_timeseries(
             start=start_ns if start_ns is not None else start,
             end=end_ns if end_ns is not None else end,
             epoch=epoch,
+            after=after,
             limit=limit,
             order=order,        # type: ignore[arg-type]
             batch_size=request.app.state.read_batch_size,

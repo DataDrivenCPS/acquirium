@@ -31,10 +31,13 @@ class Stream:
 
     The handle reads the stream's current samples; it holds no data itself.
     Handles compare equal when their reference URIs do, and ``str()`` returns
-    the URI.
+    the URI. A handle returned for samples just written reads them even
+    before they publish.
     """
     ref_uri: str
     _client: Any = field(default=None, repr=False, compare=False)
+    # The request sequence of samples written through this handle.
+    _after: int | None = field(default=None, repr=False, compare=False)
 
     def between(self, start: datetime | str, end: datetime | str) -> "StreamInterval":
         """Select the samples from ``start`` to ``end``, inclusive."""
@@ -55,6 +58,7 @@ class Stream:
             start=_utc(start).isoformat() if start is not None else None,
             # Reads are half-open, so read up to just after the end.
             end_ns=_after_ns(end) if end is not None else None,
+            **({"after": self._after} if self._after is not None else {}),
             **options,
         )
         return samples_frame(frame)

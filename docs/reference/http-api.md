@@ -21,7 +21,7 @@ The server exposes semantic graph operations and one Escapement timeseries engin
 | `POST /insert_timeseries` | JSON list of `{source_id, ref_name, request_id, values}` |
 | `POST /insert_timeseries_arrow` | Arrow `source_id, ref_name, ts, value`; required `X-Acquirium-Request-Id` |
 | `POST /delete_timeseries` | `{source_id, ref_name, timestamps: [UTC-ns], request_id}` |
-| `GET /timeseries` | Arrow `ts: timestamp[ns, UTC], value: float64, uri: utf8` |
+| `GET /timeseries` | Arrow `ts: timestamp[ns, UTC], value: float64, uri: utf8`; `after=<sequence>` waits until that receipt is published |
 | `POST /timeseries_info` | `{uris: [...]}` to counts and UTC bounds |
 | `GET /engine/status` | Accepted/applied frontiers, backlog, paused error, timings, worker queue/RSS, server PID and peak RSS |
 | `GET /engine/snapshot` | Published epoch, applied sequence, complete active plan |

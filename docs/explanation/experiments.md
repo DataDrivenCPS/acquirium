@@ -102,20 +102,21 @@ The ledger and Escapement commit separately, so three rules keep them
 consistent:
 
 - **Data before pointer.** A recording reserves its streams in the ledger,
-  writes its samples and waits until Escapement publishes them, then commits
-  its observations. An observation never names missing samples. A recording
-  that fails after writing leaves samples no observation names; a retry
-  rewrites them, and deleting the run removes them.
-- **One epoch per recording.** Each time-series observation stores the
-  Escapement epoch the recording waited for. It includes everything written
-  to Escapement before the recording, so a reference sees data a driver sent
-  just before it.
+  sends its samples to Escapement, then commits its observations. Escapement's
+  receipt means the samples are durable, so the recording does not wait for
+  them to publish. A recording that fails after sending leaves samples no
+  observation names; a retry rewrites them, and deleting the run removes them.
+- **Readers wait, writers don't.** Each time-series observation stores the
+  receipt sequence: its samples and everything written to Escapement before
+  the recording, including data a driver sent just before a reference.
+  Reading observations waits for that sequence to publish, usually not at
+  all, and reports the epoch that published it.
 - **Deletion clears afterwards.** Deleting runs commits in the ledger first.
   Their samples are cleared next, and a clear interrupted by an error or a
   crash is finished by the next deletion or server start.
 
-Recordings with samples, finishing a run, and deleting runs take turns, so a
-run cannot end or disappear while one of its recordings is writing.
+A run's recordings and its finish take turns, so a run cannot end while one of
+its recordings is writing. Different runs never wait on each other.
 
 The ledger stores JSON, text, scalar, and log observations directly.
 For other data it stores references:

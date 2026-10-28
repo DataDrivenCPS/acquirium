@@ -240,22 +240,47 @@ def test_time_series_observations_record_their_epoch(ledger):
     assert epochs == {"level": published, "used": published, "cost": None}
 
 
-def test_a_reference_records_an_epoch_that_includes_earlier_writes(ledger):
-    study = ledger.define("read your writes")
+def test_recording_does_not_wait_for_escapement_to_publish(ledger):
+    study = ledger.define("no wait")
+    level = ledger.declare(study["template_id"], "level", "output", "timeseries", {})
     used = ledger.declare(study["template_id"], "used", "input", "timeseries", {})
     run = ledger.start(study["template_id"], {})["run_id"]
     core = ledger.store.samples.core
-    # Accepted but not yet published when the reference is recorded: the
-    # processor resumes only while the recording waits.
+    # With Escapement publishing nothing, recordings still commit.
     core.processor.stop(drain=False)
     core.ingest("plant", "flow-1", sample_frame("urn:plant:flow", [(WHEN, 2.0)]))
-    resume = threading.Timer(0.3, lambda: setattr(core, "processor", core.engine.start()))
-    resume.start()
+    ledger.record_batch(run, [dict(form="samples", variable_id=level["variable_id"], samples=[[WHEN.isoformat(), 1.0]])])
     ledger.record_batch(run, [dict(form="reference", variable_id=used["variable_id"], ref_uri="urn:plant:flow",
                                    interval=[WHEN.isoformat(), WHEN.isoformat()])])
-    resume.join()
-    [observation] = ledger.observations(study["template_id"])
-    assert [r.value for r in core.engine.query("urn:plant:flow", epoch=observation["epoch"])] == [2.0]
+    assert core.engine.snapshot().applied == 0
+    # Reading the observations waits for their data to publish; the
+    # reference's epoch includes the plant data written before it.
+    core.processor = core.engine.start()
+    epochs = {item["variable"]: item["epoch"] for item in ledger.observations(study["template_id"])}
+    assert epochs["level"] is not None and epochs["used"] >= epochs["level"]
+    assert [r.value for r in core.engine.query("urn:plant:flow", epoch=epochs["used"])] == [2.0]
+
+
+def test_runs_record_without_waiting_on_each_other(ledger, monkeypatch):
+    study = ledger.define("concurrent")
+    level = ledger.declare(study["template_id"], "level", "output", "timeseries", {})
+    first, second = (ledger.start(study["template_id"], {})["run_id"] for _ in range(2))
+    write, other = ledger.store.samples.write, []
+
+    def record_other_meanwhile(source, frame):
+        # The first run is mid-recording; the second records and finishes.
+        if source == f"experiment/{first}":
+            other.append(threading.Thread(target=lambda: (
+                ledger.record_batch(second, [dict(form="samples", variable_id=level["variable_id"],
+                                                  samples=[[WHEN.isoformat(), 2.0]])]),
+                ledger.finish(second, "succeeded"))))
+            other[0].start()
+            other[0].join(5)
+            assert not other[0].is_alive()
+        return write(source, frame)
+    monkeypatch.setattr(ledger.store.samples, "write", record_other_meanwhile)
+    ledger.record_batch(first, [dict(form="samples", variable_id=level["variable_id"], samples=[[WHEN.isoformat(), 1.0]])])
+    assert len(ledger.observations(study["template_id"])) == 2
 
 
 def test_finishing_a_run_waits_for_a_recording_in_progress(ledger, monkeypatch):

@@ -8,7 +8,7 @@ from hashlib import sha256
 import functools
 import math
 from copy import deepcopy
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 import base64
 from fnmatch import fnmatchcase
 import io
@@ -16,6 +16,7 @@ import json
 import logging
 import re
 import reprlib
+import threading
 import warnings
 from pathlib import Path
 from typing import Any
@@ -93,7 +94,7 @@ class _PreparedObservation:
     interval: tuple[datetime, datetime] | None = None
     attachment: tuple[dict, bytes] | None = None
     sample_ref: str | None = None
-    epoch: int | None = None
+    accepted: int | None = None
 
 
 @dataclass
@@ -136,6 +137,12 @@ class ExperimentStore:
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_observations_variable_idx ON experiment_observations(variable_id, run_id, sequence)")
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_observations_ref_idx ON experiment_observations(ref_uri, range_start, range_end)")
         self._resolutions = {}
+        # A recording holds its run's lock from reserving streams to
+        # committing, so finishing the run waits for it; runs never wait on
+        # each other. Lock order: run locks, then the metadata lock, then SQL.
+        self._run_locks: dict[str, threading.RLock] = {}
+        self._run_locks_guard = threading.Lock()
+        self._cleanup_lock = threading.Lock()
         # Finish any deletion a crash interrupted. A failure leaves the rows
         # for the next deletion or start; it must not keep the server down.
         try:
@@ -304,11 +311,15 @@ class ExperimentStore:
             entries.append({**item, "form": forms[field], field: value})
         return self.record_batch(run_id, entries)
 
+    @contextmanager
+    def _holding_run(self, run_id):
+        with self._run_locks_guard:
+            lock = self._run_locks.setdefault(run_id, threading.RLock())
+        with lock:
+            yield
+
     def record_batch(self, run_id: str, entries: list[dict]) -> list[dict]:
-        # A batch with samples holds the metadata lock from reserving its
-        # streams to committing, so finishing or deleting the run waits for it.
-        # Other batches write no samples and need only the SQL lock.
-        with self.metadata.lock if any(e.get("form") == "samples" for e in entries) else nullcontext():
+        with self._holding_run(run_id):
             return self._write_recording(run_id, self._prepare_recording(run_id, entries))
 
     def _prepare_recording(self, run_id, entries):
@@ -411,15 +422,16 @@ class ExperimentStore:
 
         1. Reserve the recording's streams in `experiment_streams`, so a run's
            deletion finds every stream it may have written.
-        2. Write the samples to Escapement and wait until they, and every
-           request accepted before them, are published.
+        2. Send the samples to Escapement. Its receipt means they are durable;
+           they publish shortly after, and nothing here waits for that.
         3. Commit observations, artifacts, and graph intent in one transaction.
 
-        An observation therefore never points at missing samples, and each
-        time-series observation records the epoch from step 2, which includes
-        everything written to Escapement before the recording. A failure
-        after step 2 leaves samples no observation names; a retry rewrites
-        the same keys, and deleting the run clears them.
+        Each time-series observation stores the sequence Escapement had
+        accepted by step 2, which covers its samples and everything written
+        before it; readers wait for that sequence, so an observation never
+        reads as missing its samples. A failure after step 2 leaves samples
+        no observation names; a retry rewrites the same keys, and deleting
+        the run clears them.
         """
         if batch.frame is not None:
             with self.store._lock, self.store._write_conn() as conn:
@@ -427,23 +439,26 @@ class ExperimentStore:
                 self._own_streams(conn, run_id, batch.registrations)
         series = [item for item in batch.observations if item.ref_uri is not None]
         if series and (batch.frame is not None or self.store.samples is not None):
-            # A batch of references writes nothing and only waits.
-            epoch = self._write_samples(f"experiment/{run_id}", batch.frame)
+            # A batch of references writes nothing and only notes the sequence.
+            accepted = self._write_samples(f"experiment/{run_id}", batch.frame)
             for item in series:
-                item.epoch = epoch
+                item.accepted = accepted
         results = []
-        with self.store._lock, self.store._write_conn() as conn:
+        # Graph intent for new streams serializes with source clears.
+        with self.metadata.lock if batch.frame is not None else nullcontext(), \
+                self.store._lock, self.store._write_conn() as conn:
             self._check_recording(conn, run_id, batch)
             sequence, recorded = self._next_observation(conn, run_id)
             for offset, item in enumerate(batch.observations):
                 if item.attachment is not None:
                     self._store_artifact(conn, item.artifact_digest, *item.attachment, recorded)
                 self._execute(conn, "INSERT INTO experiment_observations (run_id, variable_id, sequence, recorded_at, occurred_at, value_json, artifact_digest, ref_uri, range_start, range_end, key_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [run_id, item.variable_id, sequence + offset, _database_timestamp(recorded), _database_timestamp(item.occurred_at) if item.occurred_at else None, _json(item.value) if item.value is not None else None, item.artifact_digest, item.ref_uri, _database_timestamp(item.interval[0]) if item.interval else None, _database_timestamp(item.interval[1]) if item.interval else None, _json(item.key) if item.key is not None else None])
-                if item.epoch is not None:
-                    self._execute(conn, "INSERT INTO experiment_observation_epochs VALUES (?, ?, ?)", [run_id, sequence + offset, item.epoch])
+                if item.accepted is not None:
+                    self._execute(conn, "INSERT INTO experiment_observation_accepted VALUES (?, ?, ?)", [run_id, sequence + offset, item.accepted])
                 receipt = {"sequence": sequence + offset, "recorded_at": recorded}
                 if item.sample_ref is not None:
                     receipt["ref_uri"] = item.sample_ref
+                    receipt["accepted"] = item.accepted
                 results.append(receipt)
             for update in batch.updates:
                 self.metadata.enqueue(conn, update)
@@ -468,7 +483,6 @@ class ExperimentStore:
             raise RuntimeError("this experiment ledger has no sample store")
         return self.store.samples.write(source, frame)
 
-    @_publishes
     def _cleanup_streams(self) -> None:
         """Clear the samples of streams whose run is gone, then forget them.
 
@@ -476,15 +490,17 @@ class ExperimentStore:
         finishes every deletion, including one a crash interrupted. Running it
         again does nothing new.
         """
-        with self.store._own_conn() as conn:
-            refs = [row[0] for row in self._execute(conn, "SELECT ref_uri FROM experiment_streams "
-                    "WHERE run_id NOT IN (SELECT run_id FROM experiment_runs)").fetchall()]
-        # Without Escapement the rows are all that find these samples later.
-        if not refs or self.store.samples is None:
-            return
-        self.store.samples.clear(refs)
-        with self.store._lock, self.store._write_conn() as conn:
-            self._execute(conn, f"DELETE FROM experiment_streams WHERE ref_uri IN ({self._marks(refs)})", refs)
+        # Its own lock: a long clear must not hold up recordings.
+        with self._cleanup_lock:
+            with self.store._own_conn() as conn:
+                refs = [row[0] for row in self._execute(conn, "SELECT ref_uri FROM experiment_streams "
+                        "WHERE run_id NOT IN (SELECT run_id FROM experiment_runs)").fetchall()]
+            # Without Escapement the rows are all that find these samples later.
+            if not refs or self.store.samples is None:
+                return
+            self.store.samples.clear(refs)
+            with self.store._lock, self.store._write_conn() as conn:
+                self._execute(conn, f"DELETE FROM experiment_streams WHERE ref_uri IN ({self._marks(refs)})", refs)
 
     def _store_artifact(self, conn, digest, artifact, data, recorded):
         # Identical bytes are stored once, under the first name they arrived with.
@@ -494,8 +510,15 @@ class ExperimentStore:
         for seq, start in enumerate(range(0, len(data), ARTIFACT_CHUNK_BYTES)):
             self._execute(conn, "INSERT INTO experiment_artifact_chunks VALUES (?, ?, ?)", [digest, seq, data[start:start + ARTIFACT_CHUNK_BYTES]])
 
-    @_publishes
     def finish(self, run_id: str, status: str, error: Any = None) -> dict[str, Any]:
+        with self._holding_run(run_id):
+            result = self._finish(run_id, status, error)
+        with self._run_locks_guard:
+            self._run_locks.pop(run_id, None)
+        return result
+
+    @_publishes
+    def _finish(self, run_id: str, status: str, error: Any = None) -> dict[str, Any]:
         if status not in {"succeeded", "failed"}: raise ValueError("status must be succeeded or failed")
         finished = _now()
         update = self.metadata_graph.fields_update(run_uri(run_id), {"status": status, "finished_at": finished})
@@ -777,12 +800,12 @@ class ExperimentStore:
                        o.value_json, o.artifact_digest, o.ref_uri,
                        o.range_start, o.range_end, v.variable_id, v.label,
                        v.role, v.kind, a.filename,
-                       a.media_type, a.byte_length, o.key_json, e.published_epoch
+                       a.media_type, a.byte_length, o.key_json, e.accepted
                 FROM experiment_observations AS o
                 JOIN experiment_runs AS r ON r.run_id=o.run_id
                 JOIN experiment_variables AS v ON v.variable_id=o.variable_id
                 LEFT JOIN experiment_artifacts AS a ON a.digest=o.artifact_digest
-                LEFT JOIN experiment_observation_epochs AS e ON e.run_id=o.run_id AND e.sequence=o.sequence
+                LEFT JOIN experiment_observation_accepted AS e ON e.run_id=o.run_id AND e.sequence=o.sequence
                 WHERE {' AND '.join(clauses)}
                 ORDER BY r.started_at, r.run_id, o.sequence
                 """,
@@ -812,10 +835,17 @@ class ExperimentStore:
                 "media_type": row[17],
                 "byte_length": row[18],
                 "key": json.loads(row[19]) if row[19] is not None else None,
-                "epoch": row[20],
+                "epoch": None,
             }
             for row in rows
         ]
+        # Wait for the newest data these observations name, then find the
+        # epoch each was recorded at: one lookup for the whole selection.
+        accepted = [row[20] for row in rows]
+        if self.store.samples is not None:
+            epochs = self.store.samples.epochs(sequence for sequence in accepted if sequence is not None)
+            for item, sequence in zip(result, accepted):
+                item["epoch"] = epochs.get(sequence)
         result = self.read_observation_metadata(result)
         return self._filter_metadata(result, EXPERIMENT.Run, "experiment_id", metadata)
 
@@ -872,7 +902,7 @@ class ExperimentStore:
             digests = [row[0] for row in self._execute(conn, f"""
                 SELECT DISTINCT artifact_digest FROM experiment_observations
                 WHERE run_id IN ({marks}) AND artifact_digest IS NOT NULL""", run_ids).fetchall()]
-            self._execute(conn, f"DELETE FROM experiment_observation_epochs WHERE run_id IN ({marks})", run_ids)
+            self._execute(conn, f"DELETE FROM experiment_observation_accepted WHERE run_id IN ({marks})", run_ids)
             self._execute(conn, f"DELETE FROM experiment_observations WHERE run_id IN ({marks})", run_ids)
             self._execute(conn, f"DELETE FROM experiment_runs WHERE run_id IN ({marks})", run_ids)
         sweep_sources = []
@@ -900,10 +930,26 @@ class ExperimentStore:
         return removed
 
     def _after_delete(self, removed) -> dict[str, Any]:
-        """After the SQL commit: deliver the graph changes, then clear the
-        deleted runs' samples. An error clearing them leaves the deletion
-        complete; the next cleanup finishes it."""
+        """After the SQL commit, under the metadata lock: deliver the graph
+        changes. The caller then clears the samples outside it."""
         self.sync_metadata_graph()
+        return removed
+
+    def delete_runs(self, run_ids: list[str]) -> dict[str, Any]:
+        """Delete finished runs with everything they recorded."""
+        return self._cleared(self._delete_runs_committed(run_ids))
+
+    def delete_study(self, template_id: str) -> dict[str, Any]:
+        """Delete a Study, its declarations, and every run."""
+        return self._cleared(self._delete_study_committed(template_id))
+
+    def clear(self) -> dict[str, Any]:
+        """Delete every Study and its records; other Acquirium data is untouched."""
+        return self._cleared(self._clear_committed())
+
+    def _cleared(self, removed):
+        """Clear deleted runs' samples. An error leaves the deletion complete;
+        the next deletion or start finishes it."""
         self._cleanup_streams()
         return removed
 
@@ -915,8 +961,7 @@ class ExperimentStore:
             raise ValueError("finish or fail running experiments before deleting them: " + ", ".join(running))
 
     @_publishes
-    def delete_runs(self, run_ids: list[str]) -> dict[str, Any]:
-        """Delete finished runs with everything they recorded."""
+    def _delete_runs_committed(self, run_ids: list[str]) -> dict[str, Any]:
         run_ids = list(dict.fromkeys(run_ids))
         if not run_ids:
             return {"runs": 0, "observations": 0, "annotations": 0, "samples": 0, "files": 0}
@@ -931,8 +976,7 @@ class ExperimentStore:
         return self._after_delete(result)
 
     @_publishes
-    def delete_study(self, template_id: str) -> dict[str, Any]:
-        """Delete a Study, its declarations, and every run."""
+    def _delete_study_committed(self, template_id: str) -> dict[str, Any]:
         with self.store._lock, self.store._write_conn() as conn:
             if self._execute(conn, "SELECT 1 FROM experiment_templates WHERE template_id=?", [template_id]).fetchone() is None:
                 raise KeyError(template_id)
@@ -947,8 +991,7 @@ class ExperimentStore:
         return {"studies": 1, "variables": len(variables), **self._after_delete(result)}
 
     @_publishes
-    def clear(self) -> dict[str, Any]:
-        """Delete every Study and its records; other Acquirium data is untouched."""
+    def _clear_committed(self) -> dict[str, Any]:
         with self.store._lock, self.store._write_conn() as conn:
             self._refuse_running(conn, "1=1", [])
             run_ids = [row[0] for row in self._execute(conn, "SELECT run_id FROM experiment_runs").fetchall()]
@@ -1352,7 +1395,7 @@ class ExperimentVariable:
         if isinstance(rows, StreamInterval):
             raise TypeError("add() records rows; use record() for a stream interval")
         entries = recording_entries(self, rows)
-        streams = {tuple(entry["key"] or ()): Stream(receipt["ref_uri"], self.study.client)
+        streams = {tuple(entry["key"] or ()): Stream(receipt["ref_uri"], self.study.client, receipt.get("accepted"))
                    for entry, receipt in zip(entries, _record_snapshot(self.study, entries))}
         return streams if self.keys else streams.get(())
 
