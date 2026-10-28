@@ -140,8 +140,10 @@ def test_sink_write_failure_replays_without_losing_or_double_applying_changes(
         pool = client.engine_status()["python_workers"]
         telemetry = pool["telemetry"]
         assert pool["queued"] == 0
-        assert telemetry["returned_jobs"] >= 4
-        assert telemetry["warm_service"]["count"] >= 2
+        # Tank means and the hottest tank run in Python; the alarm is native.
+        # The tank means start workers; the hottest tank reuses one.
+        assert telemetry["returned_jobs"] >= 3
+        assert telemetry["warm_service"]["count"] >= 1
         assert telemetry["total"]["count"] == sum(telemetry["total"]["buckets"])
         assert "rss_complete" in telemetry
         consumer = ChangeConsumer(client, tmp_path / "sink.json")
