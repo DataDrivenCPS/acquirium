@@ -106,6 +106,22 @@ jobs:
     runs-on: ubuntu-latest
     needs: unit-tests
 
+    # PostgreSQL variants of the experiment ledger and engine tests.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: acquirium
+          POSTGRES_PASSWORD: acquirium
+          POSTGRES_DB: acquirium_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U acquirium"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
     strategy:
       fail-fast: false
       matrix:
@@ -148,8 +164,11 @@ jobs:
         run: uv sync --python ${{ matrix.python-version }} --locked --extra mqtt
 
       - name: Run integration tests
+        env:
+          ACQUIRIUM_TEST_PG_DSN: postgresql://acquirium:acquirium@localhost:5432/acquirium_test
         run: |
-          uv run --no-sync pytest tests/integration/test_native_runtime.py tests/integration/test_soft_sensors.py tests/integration/test_streaming_workload.py tests/integration/test_execution_profiling.py tests/integration/test_local_runtime.py tests/integration/test_graph_store.py \
+          uv run --no-sync pytest tests/integration/test_native_runtime.py tests/integration/test_soft_sensors.py tests/integration/test_streaming_workload.py tests/integration/test_execution_profiling.py tests/integration/test_local_runtime.py tests/integration/test_graph_store.py tests/integration/test_experiment_models.py \
+            tests/test_experiment_ledger_transactions.py tests/test_experiment_metadata_outbox.py tests/test_experiment_refinement.py tests/test_experiment_restart.py tests/test_experiment_store_contract.py tests/test_schema_migrations.py \
             -v \
             --tb=short \
             --ignore=tests/unit \
