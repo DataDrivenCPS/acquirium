@@ -1,6 +1,6 @@
 """Tests for insert_metadata: the value-map builder (Client/metadata.py), the
 client/facade/query entry points, the register_streams ``metadata`` key, and
-the store-side closure check and orphan pruning."""
+and the store-side closure check."""
 import threading
 from datetime import date, datetime
 from unittest.mock import MagicMock
@@ -255,7 +255,7 @@ class TestClientInsert:
         out = client.insert_metadata({"x:valve-1": {"unit": "mg/L", "tags": ["a"]}})
         assert out == {"ok": True, "message": "update applied", "nodes": 1}
         update, kwargs = client.sparql_update.call_args[0][0], client.sparql_update.call_args[1]
-        assert kwargs == {"source_id": METADATA_SOURCE_ID}
+        assert kwargs == {"source_id": METADATA_SOURCE_ID, "effective_from": None, "effective_until": None}
         assert f"<{NODE}> <{HAS_UNIT}> <{UNIT}>" in update
         assert f'<{NODE}> <{ATTR_NS}tags.0> "a"' in update
 
@@ -313,7 +313,7 @@ class TestClientInsert:
         aq = Acquirium.__new__(Acquirium)
         aq.client = MagicMock()
         aq.insert_metadata(URIRef(NODE), {"a": 1})
-        aq.client.insert_metadata.assert_called_once_with({NODE: {"a": 1}})
+        aq.client.insert_metadata.assert_called_once_with({NODE: {"a": 1}}, effective_from=None, effective_until=None)
 
 
 class TestQueryInsert:
@@ -392,7 +392,8 @@ class TestRegisterStreamsMetadata:
         # the user attribute goes to the metadata graph, replacing the key
         assert not list(g.triples((None, URIRef(f"{ATTR_NS}product_info.year"), None)))
         update, ukw = client.sparql_update.call_args[0][0], client.sparql_update.call_args[1]
-        assert ukw == {"source_id": METADATA_SOURCE_ID}
+        # a registration holds over all time
+        assert ukw == {"source_id": METADATA_SOURCE_ID, "effective_from": "-infinity", "effective_until": "infinity"}
         assert f'STRSTARTS(STR(?p), "{ATTR_NS}product_info.")' in update
         assert f'<{NODE}> <{ATTR_NS}product_info.year> "2019"^^<{XSD_INTEGER}>' in update
         assert client.insert_graph.call_count == 1   # the stream first, then the metadata
@@ -424,7 +425,7 @@ META = source_graph_uri(METADATA_SOURCE_ID)
 PLANT = URIRef(PLANT_GRAPH_URI)
 
 
-def dataset_with_orphans(native: bool = False) -> Dataset:
+def dataset_with_metadata(native: bool = False) -> Dataset:
     if native:
         import pyoxigraph
         from oxrdflib.store import OxigraphStore
@@ -443,19 +444,6 @@ def dataset_with_orphans(native: bool = False) -> Dataset:
 
 
 class TestStore:
-    @pytest.mark.parametrize("native", [False, True], ids=["rdflib", "oxigraph"])
-    def test_prune_checks_the_subject_only(self, native):
-        # Oxigraph-backed datasets prune with Oxigraph's engine; both agree.
-        ds = dataset_with_orphans(native)
-        gs.prune_orphan_metadata(ds, META)
-        # the subject must be known elsewhere; a URI value may point anywhere
-        assert set(ds.graph(META)) == {
-            (URIRef("urn:x#kept"), URIRef(f"{ATTR_NS}a"), Literal(1)),
-            (URIRef("urn:x#kept"), HAS_UNIT, URIRef(UNIT)),
-            (URIRef("urn:x#kept"), URIRef(HAS_PROP), URIRef("urn:x#gone-point")),
-            (URIRef("urn:x#kept"), URIRef(f"{ATTR_NS}datasheet"), URIRef("https://example.org/p.pdf")),
-        }
-
     def test_closure_triples(self):
         g = Graph()
         g.add((URIRef("urn:a"), RDF.type, URIRef("urn:w#Valve")))
@@ -474,58 +462,36 @@ class TestStore:
         return store
 
     def test_sparql_update_only_marks_closure_when_imports_change(self):
-        store = self.make_store(dataset_with_orphans())
+        store = self.make_store(dataset_with_metadata())
         store.sparql_update(f'INSERT DATA {{ <urn:x#kept> <{ATTR_NS}b> "v" }}', graph_uri=META)
         store._finalize_source_write.assert_called_with(affects_closure=False)
         store.sparql_update("INSERT DATA { <urn:o> <http://www.w3.org/2002/07/owl#imports> <urn:dep> }",
                             graph_uri=PLANT)
         store._finalize_source_write.assert_called_with(affects_closure=True)
 
-    def test_metadata_update_runs_natively_and_prunes(self):
-        store = self.make_store(dataset_with_orphans(native=True))
+    def test_metadata_update_runs_natively(self):
+        store = self.make_store(dataset_with_metadata(native=True))
+        metadata = len(store.source_dataset.graph(META))
         store.metadata_update(f"DELETE WHERE {{ GRAPH <{PLANT}> {{ ?s ?p ?o }} }}", graph_uri=PLANT)
         assert len(store.source_dataset.graph(PLANT)) == 0
-        assert len(store.source_dataset.graph(META)) == 0  # every subject gone with the plant
+        # metadata about nodes that are gone stays: the model history keeps
+        # every graph's past, so nothing is removed on another graph's behalf
+        assert len(store.source_dataset.graph(META)) == metadata
         store._finalize_source_write.assert_called_once_with(affects_closure=False)
         with pytest.raises(ValueError, match="not a registered data input"):
             store.metadata_update("INSERT DATA { GRAPH <urn:onto> { <urn:x#a> <urn:x#b> 1 } }", graph_uri=URIRef("urn:onto"))
 
-    def test_sparql_update_prunes(self):
-        store = self.make_store(dataset_with_orphans())
-        store.sparql_update("DELETE WHERE { ?s ?p ?o }", graph_uri=PLANT)
-        assert len(store.source_dataset.graph(META)) == 0  # every subject gone with the plant
-
-    def test_clear_graphs_empties_named_and_prefixed_graphs_and_prunes(self):
-        ds = dataset_with_orphans()
+    def test_clear_graphs_empties_named_and_prefixed_graphs(self):
+        ds = dataset_with_metadata()
         runs = [source_graph_uri(f"experiment/run-{i}") for i in range(2)]
         for uri in runs:
             ds.graph(uri).add((URIRef(f"{uri}#point"), RDF.type, URIRef("urn:w#Point")))
         ledger = source_graph_uri("experiments")
         ds.graph(ledger).add((URIRef("urn:x#run"), RDF.type, URIRef("urn:w#Run")))
-        described = (URIRef(f"{runs[0]}#point"), URIRef(f"{ATTR_NS}a"), Literal(2))
-        ds.graph(META).add(described)
         store = self.make_store(ds)
         assert store.clear_graphs(prefix=str(source_graph_uri("experiment/"))) == 2
         assert all(len(ds.graph(uri)) == 0 for uri in runs)
         assert len(ds.graph(ledger)) == 1  # "experiments" is not under "experiment/"
-        assert described not in ds.graph(META)
         store._finalize_source_write.assert_called_once_with(affects_closure=False)
         assert store.clear_graphs([runs[0]]) == 0  # already empty: no write
         store._finalize_source_write.assert_called_once()
-
-    def test_sparql_update_prunes_only_after_a_removal_elsewhere(self):
-        store = self.make_store(dataset_with_orphans())
-        store._prune_orphan_metadata = MagicMock()
-        store.sparql_update("INSERT DATA { <urn:x#new> a <urn:w#Valve> }", graph_uri=PLANT)
-        store.sparql_update(f"DELETE WHERE {{ <urn:x#kept> <{ATTR_NS}a> ?o }}", graph_uri=META)
-        store._prune_orphan_metadata.assert_not_called()
-        store.sparql_update("delete where { <urn:x#new> ?p ?o }", graph_uri=PLANT)
-        store._prune_orphan_metadata.assert_called_once()
-
-    def test_replace_insert_prunes_but_append_does_not(self):
-        store = self.make_store(dataset_with_orphans())
-        store._prune_orphan_metadata = MagicMock()
-        store.insert_graph("<urn:x#new> a <urn:w#Valve> .", replace=False, graph_uri=PLANT)
-        store._prune_orphan_metadata.assert_not_called()
-        store.insert_graph("<urn:x#new> a <urn:w#Valve> .", replace=True, graph_uri=PLANT)
-        store._prune_orphan_metadata.assert_called_once()

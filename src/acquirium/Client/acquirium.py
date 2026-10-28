@@ -111,6 +111,8 @@ class Acquirium:
         replace=True,
         *,
         source_id: str,
+        effective_from: datetime | str | None = None,
+        effective_until: datetime | str | None = None,
     ) -> None:
         """
         Insert RDF graph into an explicitly owned deployment data graph.
@@ -124,12 +126,22 @@ class Acquirium:
             replace: If True, replaces the selected graph. If False, appends to it.
             source_id: Data-graph owner. Use ``"plant"`` for the shared plant
                 model, or a component's stable source ID.
+            effective_from: When the write starts to hold in the plant: a
+                datetime, or ``"-infinity"``. Defaults to now; the first
+                write to a graph that gives no start holds from
+                ``"-infinity"``. Must not lie in the future.
+            effective_until: When it stops holding: a datetime in the past,
+                or ``"infinity"``. A replacement defaults to ``"infinity"``;
+                an insertion keeps each new triple until the next recorded
+                change to it.
         """
         self.client.insert_graph(
             rdf_graph,
             format=format,
             replace=replace,
             source_id=source_id,
+            effective_from=effective_from,
+            effective_until=effective_until,
         )
 
     def insert_graph_file(
@@ -139,6 +151,8 @@ class Acquirium:
         replace: bool = True,
         *,
         source_id: str,
+        effective_from: datetime | str | None = None,
+        effective_until: datetime | str | None = None,
     ) -> None:
         """Read RDF from a file and insert it into an explicitly owned graph."""
         self.client.insert_graph_file(
@@ -146,9 +160,18 @@ class Acquirium:
             format=format,
             replace=replace,
             source_id=source_id,
+            effective_from=effective_from,
+            effective_until=effective_until,
         )
 
-    def insert_metadata(self, uri: str | URIRef, values: Mapping[str, Any]) -> dict[str, Any]:
+    def insert_metadata(
+        self,
+        uri: str | URIRef,
+        values: Mapping[str, Any],
+        *,
+        effective_from: datetime | str | None = None,
+        effective_until: datetime | str | None = None,
+    ) -> dict[str, Any]:
         """Attach metadata to one node (entity or measurement) by URI or CURIE.
 
         ``values`` is a plain map. A key that names a built-in attribute
@@ -167,17 +190,35 @@ class Acquirium:
             aq.query().measurement().where(aq.attr.product_info.year >= 2015)
 
         Writing a key replaces its previous value; ``None`` removes it. Keys
-        not mentioned stay. Metadata lives as long as the node does.
+        not mentioned stay. ``effective_from`` and ``effective_until`` bound
+        the write in the plant as for :meth:`sparql_update`.
         """
-        return self.client.insert_metadata({str(uri): values})
+        return self.client.insert_metadata(
+            {str(uri): values}, effective_from=effective_from, effective_until=effective_until,
+        )
 
-    def sparql_update(self, update: str, *, source_id: str) -> dict[str, Any]:
+    def sparql_update(
+        self,
+        update: str,
+        *,
+        source_id: str,
+        effective_from: datetime | str | None = None,
+        effective_until: datetime | str | None = None,
+    ) -> dict[str, Any]:
         """Execute a SPARQL update against one explicitly owned data graph.
 
         Components with a fixed owner use their ``self.sparql_update`` helper
-        instead of passing ``source_id`` themselves.
+        instead of passing ``source_id`` themselves. ``effective_from`` and
+        ``effective_until`` bound the update in the plant as for
+        :meth:`insert_graph`. With ``effective_until`` the update runs on
+        every version of the graph in the interval; without it, on the graph
+        at ``effective_from``, and each triple it changes keeps the change
+        until the next recorded change to that triple.
         """
-        return self.client.sparql_update(update, source_id=source_id)
+        return self.client.sparql_update(
+            update, source_id=source_id,
+            effective_from=effective_from, effective_until=effective_until,
+        )
 
     def query(self) -> Query:
         """Create a new empty Query (the explore builder) bound to this instance."""

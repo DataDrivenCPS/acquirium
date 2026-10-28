@@ -288,6 +288,9 @@ class ExperimentMetadata:
         operations = [json.loads(row[1]) for row in pending]
         target = graph.source_graph_uri("experiments")
         buffered, current_target = [], target
+        # Nodes this delivery removes from the experiment graphs; their user
+        # metadata lives in the versioned metadata graph and goes with them.
+        removed = set()
         def deliver():
             if buffered:
                 graph.metadata_update(batch_update(buffered, current_target), graph_uri=current_target)
@@ -295,14 +298,18 @@ class ExperimentMetadata:
         for operation in operations:
             if "clear" in operation:
                 deliver()
+                removed |= graph.graph_subjects(operation["clear"])
                 graph.clear_graphs(operation["clear"])
             else:
+                if operation.get("operation") == "delete":
+                    removed.add(operation["subject"])
                 destination = operation.get("graph_uri", target)
                 if destination != current_target:
                     deliver()
                     current_target = destination
                 buffered.append(operation)
         deliver()
+        graph.forget_metadata(removed)
         graph.flush_metadata()
         # Graph commit precedes acknowledgment. Replaying after either process
         # interruption or an acknowledgment failure is idempotent.

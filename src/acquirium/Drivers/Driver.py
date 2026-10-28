@@ -119,7 +119,15 @@ class Driver(ABC):
         """Return the canonical reference URI for ``self.source_id``/``ref_name``."""
         return compute_ref_uri(self.source_id, ref_name)
 
-    def insert_graph(self, rdf_graph: str, *, format: str = "turtle", replace: bool = False) -> None:
+    def insert_graph(
+        self,
+        rdf_graph: str,
+        *,
+        format: str = "turtle",
+        replace: bool = False,
+        effective_from: datetime | str | None = None,
+        effective_until: datetime | str | None = None,
+    ) -> None:
         """Write RDF to this driver's source-owned graph.
 
         Driver code must not pass a source id manually: this helper always
@@ -131,6 +139,8 @@ class Driver(ABC):
             format=format,
             replace=replace,
             source_id=self.source_id,
+            effective_from=effective_from,
+            effective_until=effective_until,
         )
 
     def insert_graph_file(
@@ -139,6 +149,8 @@ class Driver(ABC):
         *,
         format: str | None = None,
         replace: bool = False,
+        effective_from: datetime | str | None = None,
+        effective_until: datetime | str | None = None,
     ) -> None:
         """Read an RDF file into this driver's source-owned graph."""
         self.aq.insert_graph_file(
@@ -146,11 +158,22 @@ class Driver(ABC):
             format=format,
             replace=replace,
             source_id=self.source_id,
+            effective_from=effective_from,
+            effective_until=effective_until,
         )
 
-    def sparql_update(self, update: str) -> dict[str, Any]:
+    def sparql_update(
+        self,
+        update: str,
+        *,
+        effective_from: datetime | str | None = None,
+        effective_until: datetime | str | None = None,
+    ) -> dict[str, Any]:
         """Apply an update only to this driver's source-owned graph."""
-        return self.aq.sparql_update(update, source_id=self.source_id)
+        return self.aq.sparql_update(
+            update, source_id=self.source_id,
+            effective_from=effective_from, effective_until=effective_until,
+        )
 
     def config_dir(self) -> Path:
         """Return the directory containing the loaded config file, if known."""

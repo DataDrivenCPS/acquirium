@@ -468,11 +468,11 @@ swro:P1 attr:last_cleaned "2024-03-12"^^xsd:date ;
 The graph is an ordinary source graph.
 `insert_graph(..., source_id="metadata", replace=True)` clears it, and
 `sparql_update(..., source_id="metadata")` edits it directly.
-Metadata lives as long as the node it describes: when a plant reload or an
-update removes a node, the server drops the metadata about it in the same
-write.
-A node a stream introduced survives a plant reload, and so does its
-metadata.
+Metadata is not removed when the node it describes disappears from the
+plant or a source graph: the model keeps every graph's past, so a write to
+one graph never edits another. Experiment records are the exception:
+deleting a study, run or annotation also deletes the metadata of its nodes,
+from then on.
 Generic traversal (`related(via="any")`) never follows `attr:` predicates,
 so annotating a node does not change what its neighbours are.
 

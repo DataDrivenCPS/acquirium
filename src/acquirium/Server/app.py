@@ -593,6 +593,12 @@ class EmbeddingStatus(BaseModel):
     graph: EmbeddingIndexStatus
     qudt: EmbeddingIndexStatus
 
+# The bounds of a model write in the plant: a datetime, or the unbounded
+# ends "-infinity" (start) and "infinity" (end). Omitted means the default.
+EffectiveFrom = datetime | Literal["-infinity"] | None
+EffectiveUntil = datetime | Literal["infinity"] | None
+
+
 class InsertGraphRequest(BaseModel):
     rdf_graph: str = Field(..., description="File path or RDF text")
     format: str = "turtle"
@@ -601,6 +607,8 @@ class InsertGraphRequest(BaseModel):
         min_length=1,
         description="Deployment data-graph owner; use 'plant' for the shared plant model",
     )
+    effective_from: EffectiveFrom = None
+    effective_until: EffectiveUntil = None
 
 
 class TimeseriesInfoRequest(BaseModel):
@@ -815,6 +823,8 @@ def insert_graph(req: InsertGraphRequest) -> dict[str, Any]:
             format=req.format,
             replace=req.replace,
             source_id=req.source_id,
+            effective_from=req.effective_from,
+            effective_until=req.effective_until,
         )
         return {"ok": True, "embedding_ready": True}
     except Exception as e:
@@ -1273,6 +1283,8 @@ class SparqlUpdateRequest(BaseModel):
         min_length=1,
         description="Owner of the data graph to update; use 'plant' for the shared plant model",
     )
+    effective_from: EffectiveFrom = None
+    effective_until: EffectiveUntil = None
 
 
 @app.post("/sparql_update")
@@ -1281,7 +1293,10 @@ def sparql_update(req: SparqlUpdateRequest) -> dict[str, Any]:
     try:
         return {
             "ok": True,
-            **app.state.manager.sparql_update(req.update, source_id=req.source_id),
+            **app.state.manager.sparql_update(
+                req.update, source_id=req.source_id,
+                effective_from=req.effective_from, effective_until=req.effective_until,
+            ),
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

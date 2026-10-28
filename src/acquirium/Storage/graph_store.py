@@ -31,7 +31,19 @@ from acquirium._ontologies import (
 )
 from acquirium.Server.config import OntologySource
 from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI, METADATA_SOURCE_ID, SOURCE_GRAPH_PREFIX
+from acquirium.Storage.graph_registry import is_versioned_graph
 from acquirium.Storage.graph_registry import source_graph_uri as _compute_source_graph_uri
+from acquirium.Storage.model_history import (
+    NEG_INF,
+    POS_INF,
+    ModelHistory,
+    Step,
+    now_micros,
+    nt,
+    parse_bound,
+    parse_lines,
+    to_micros,
+)
 
 _logger = logging.getLogger("acquirium.graph_store")
 
@@ -89,34 +101,6 @@ def _closure_triples(graph: Graph) -> frozenset:
     return frozenset(graph.triples((None, OWL.imports, None))) | frozenset(
         graph.triples((None, RDF.type, OWL.Ontology))
     )
-
-
-# The update operations that can take triples out of a graph. A keyword that
-# only appears inside a literal costs a needless prune, never a missed one.
-_REMOVING_UPDATE = re.compile(r"\b(DELETE|CLEAR|DROP|MOVE|COPY)\b", re.IGNORECASE)
-
-
-def prune_orphan_metadata(dataset: Dataset, metadata_graph_uri: URIRef) -> None:
-    """Drop metadata about nodes no other graph mentions any more.
-
-    A metadata triple stays while its subject appears (as subject or
-    object) in some graph other than the metadata graph. Only the subject
-    is checked: a URI value is a value, and may point anywhere, inside the
-    graph or not. Run after a write that removed triples from a source
-    graph, so metadata never outlives the node it describes.
-    """
-    m = f"<{metadata_graph_uri}>"
-    update = (
-        f"DELETE {{ GRAPH {m} {{ ?s ?p ?o }} }}\n"
-        f"WHERE {{\n  GRAPH {m} {{ ?s ?p ?o }}\n"
-        f"  FILTER NOT EXISTS {{ GRAPH ?g {{ {{ ?s ?a ?b }} UNION {{ ?c ?d ?s }} }} FILTER(?g != {m}) }}\n"
-        f"}}"
-    )
-    # This runs after every source write. rdflib evaluates the NOT EXISTS for
-    # each metadata triple against every graph (seconds on a modest plant);
-    # Oxigraph's engine runs the same update in milliseconds.
-    native = getattr(dataset.store, "_inner", None)
-    (native.update if isinstance(native, ox.Store) else dataset.update)(update)
 
 
 # Kept at the old cache IRI so a warm start overwrites the former materialized
@@ -250,7 +234,14 @@ class OxigraphGraphStore:
       triples introduced by owl:imports closure expansion. It exists for
       export-style "data plus dependencies" views, not for normal SPARQL
       reads.
+
+    With a ``history``, every write to a versioned graph is recorded there
+    first, and the live source graphs hold the model at the current time.
     """
+
+    history: ModelHistory | None = None
+    # Recording time of the last write the live graphs reflect.
+    _history_head: int | None = None
 
     def __init__(
         self,
@@ -259,6 +250,7 @@ class OxigraphGraphStore:
         env_root: str | Path,
         main_graph_uri: URIRef = DEFAULT_MAIN_GRAPH,
         extra_ontology_sources: list[OntologySource] | None = None,
+        history: ModelHistory | None = None,
     ):
         # Serializes the public surface below. Oxigraph's own core is
         # thread-safe, but the derived state around it is not: the version
@@ -291,7 +283,10 @@ class OxigraphGraphStore:
 
         self.main_graph_uri = main_graph_uri
         self.acquirium_graph_uri = URIRef(ACQUIRIUM_GRAPH_URI)
+        self.history = history
         self._source_version = self._load_source_version()
+        self._history_head = self._load_source_state().get("history_head")
+        self._inferred_versions: dict[str, Graph] = {}
         self._closure_version = 0
         self._dependency_graph_cache: Graph | None = None
         self._dependency_graph_closure_version = -1
@@ -359,6 +354,9 @@ class OxigraphGraphStore:
                     src.source, exc,
                 )
         self._commit_dataset(self.source_dataset)
+        if self.history is not None:
+            with timed_debug(_logger, "OxigraphGraphStore: sync live graphs with the model history"):
+                self._sync_with_history()
         _logger.debug(
             "OxigraphGraphStore.__init__: ready (main_graph=%s, source_version=%d)",
             self.main_graph_uri, self._source_version,
@@ -491,19 +489,25 @@ class OxigraphGraphStore:
             src.source, src.rename_to,
         )
 
-    def _load_source_version(self) -> int:
+    def _load_source_state(self) -> dict:
         path = self._source_state_path()
         if not path.exists():
-            return 0
+            return {}
         try:
             raw = json.loads(path.read_text())
         except (OSError, ValueError):
-            return 0
-        value = raw.get("version") if isinstance(raw, dict) else 0
+            return {}
+        return raw if isinstance(raw, dict) else {}
+
+    def _load_source_version(self) -> int:
+        value = self._load_source_state().get("version")
         return int(value) if isinstance(value, int) else 0
 
     def _write_source_version(self) -> None:
-        self._source_state_path().write_text(json.dumps({"version": self._source_version}))
+        state = {"version": self._source_version}
+        if self._history_head is not None:
+            state["history_head"] = self._history_head
+        self._source_state_path().write_text(json.dumps(state))
 
     def _mark_source_changed(self) -> None:
         self._source_version += 1
@@ -686,18 +690,21 @@ class OxigraphGraphStore:
             raise RuntimeError("derived cache remained stale after rebuild")
 
     def _apply_graph_write(self, incoming: Graph, *, target: Graph, replace: bool) -> Graph:
-        """Apply a parsed graph write to one registered source graph."""
+        """Apply a parsed graph write to one unversioned source graph."""
         if replace:
             target.remove((None, None, None))
         for triple in incoming:
             target.add(triple)
+        self._bind_incoming_prefixes(incoming, target)
+        return target
+
+    def _bind_incoming_prefixes(self, incoming: Graph, target: Graph) -> None:
         # Prefix bindings declared in the incoming Turtle/RDF (rdflib's parser
         # populates incoming.namespace_manager from `@prefix` directives) so
         # they survive into the stores that back the public /namespace/list
         # endpoint. A model keeps the name its author chose for its own
         # vocabulary, but never renames a canonical namespace.
         self._bind_prefixes(incoming.namespaces(), override=False, target=target)
-        return target
 
     def _bind_prefixes(
         self,
@@ -912,7 +919,22 @@ class OxigraphGraphStore:
             return bytes(serialized), graph_format.media_type
         raise ValueError(f"Unexpected query result: {result!r}")
 
-    def sparql_update(self, update: str, *, graph_uri: URIRef | None = None) -> dict:
+    def sparql_update(
+        self,
+        update: str,
+        *,
+        graph_uri: URIRef | None = None,
+        effective_from: datetime | str | None = None,
+        effective_until: datetime | str | None = None,
+    ) -> dict:
+        """Run a SPARQL update against one data graph.
+
+        On a versioned graph the update holds over ``[effective_from,
+        effective_until)``: it runs on each version of the graph inside that
+        interval. Without ``effective_until`` it runs on the graph at
+        ``effective_from``, and each triple it changes keeps the change until
+        the next recorded change to that triple.
+        """
         _logger.debug("sparql_update: %s", update.replace("\n", " ")[:200])
         with self._lock, timed_debug(_logger, "sparql_update"):
             target = self._registered_data_graph(graph_uri)
@@ -920,14 +942,12 @@ class OxigraphGraphStore:
             # that drive the closure instead, so an instance-data update does
             # not force the ontology closure to be recomputed.
             before = _closure_triples(target)
-            target.update(update)
+            if self._versioned(target.identifier):
+                self._record_update(target, update, effective_from, effective_until)
+            else:
+                self._unversioned_write(target.identifier, effective_from, effective_until)
+                target.update(update)
             affects_closure = _closure_triples(target) != before
-            # Only a removal from another graph can orphan metadata; writes
-            # to the metadata graph itself (insert_metadata) check their
-            # subjects before they are sent.
-            if (target.identifier != self.source_graph_uri(METADATA_SOURCE_ID)
-                    and _REMOVING_UPDATE.search(update)):
-                self._prune_orphan_metadata()
             self._finalize_source_write(affects_closure=affects_closure)
         return {"message": "update applied", "changed": True}
 
@@ -941,8 +961,9 @@ class OxigraphGraphStore:
         """
         with self._lock, timed_debug(_logger, "metadata_update"):
             self._registered_data_graph(graph_uri)
+            if self._versioned(graph_uri):
+                raise ValueError(f"metadata_update writes experiment graphs only, not {graph_uri}")
             self.source_dataset.store._inner.update(update)
-            self._prune_orphan_metadata()
             self._finalize_source_write(affects_closure=False)
 
     def metadata_documents(self, subjects):
@@ -979,19 +1000,16 @@ class OxigraphGraphStore:
                 if not len(target):
                     continue
                 affects_closure = affects_closure or bool(_closure_triples(target))
-                target.remove((None, None, None))
+                if self._versioned(uri):
+                    # A whole-graph write of the empty graph from now on.
+                    start, end, dated, now = self._interval(uri, None, "infinity")
+                    self._record(target, "replace", start, end, dated, now, [Step((), clear=(start, end))], {})
+                else:
+                    target.remove((None, None, None))
                 cleared += 1
             if cleared:
-                self._prune_orphan_metadata()
                 self._finalize_source_write(affects_closure=affects_closure)
         return cleared
-
-    def _prune_orphan_metadata(self) -> None:
-        """Cascade: metadata lives as long as the node it describes."""
-        try:
-            prune_orphan_metadata(self.source_dataset, self.source_graph_uri(METADATA_SOURCE_ID))
-        except Exception:
-            _logger.warning("metadata pruning failed", exc_info=True)
 
     def validate(self) -> dict[str, str | bool]:
         """Validate the full data union against the ontology shape closure.
@@ -1037,12 +1055,29 @@ class OxigraphGraphStore:
         with self._lock:
             return self._ensure_dependency_cache_current().serialize(format=fmt)
 
-    def insert_graph(self, content: str | bytes | Graph, *, format: str = "turtle", replace: bool = False, graph_uri: URIRef | None = None) -> dict[str, int | bool]:
+    def insert_graph(
+        self,
+        content: str | bytes | Graph,
+        *,
+        format: str = "turtle",
+        replace: bool = False,
+        graph_uri: URIRef | None = None,
+        effective_from: datetime | str | None = None,
+        effective_until: datetime | str | None = None,
+    ) -> dict[str, int | bool]:
         """Parse incoming graph data and merge (or replace) into one data graph.
         format: turtle | n3 | xml | trix
 
         ``graph_uri`` must be one of the graph registry's data inputs. Omitting
         it preserves the legacy behavior of writing the plant graph.
+
+        On a versioned graph the write holds over ``[effective_from,
+        effective_until)``. ``effective_from`` defaults to now, or to
+        ``"-infinity"`` for the first write to the graph that gives no start.
+        A replacement lasts until ``"infinity"`` by default; an insertion
+        without ``effective_until`` keeps each new triple until the next
+        recorded change to it. Neither bound may lie in the future, except an
+        end of ``"infinity"``.
         """
 
         fmt = (format or "turtle").lower()
@@ -1068,16 +1103,234 @@ class OxigraphGraphStore:
         with self._lock:
             with timed_debug(_logger, "insert_graph merge into data graph (replace=%s, affects_closure=%s)", replace, affects_closure):
                 target = self._registered_data_graph(graph_uri)
-                self._apply_graph_write(
-                    incoming, target=target, replace=replace,
-                )
-                if replace:
-                    self._prune_orphan_metadata()
+                if self._versioned(target.identifier):
+                    self._record_insert(target, incoming, replace, effective_from, effective_until)
+                    self._bind_incoming_prefixes(incoming, target)
+                else:
+                    self._unversioned_write(target.identifier, effective_from, effective_until)
+                    self._apply_graph_write(incoming, target=target, replace=replace)
                 self._finalize_source_write(affects_closure=affects_closure)
         return {
             "replaced": replace,
             "changed": True,
         }
+
+    # -------------------- model history --------------------
+    def _versioned(self, graph_uri: URIRef | str) -> bool:
+        return self.history is not None and is_versioned_graph(graph_uri, plant_graph_uri=str(self.main_graph_uri))
+
+    @staticmethod
+    def _unversioned_write(graph_uri, effective_from, effective_until) -> None:
+        if effective_from is not None or effective_until is not None:
+            raise ValueError(f"{graph_uri} is not versioned; it takes no effective_from or effective_until")
+
+    def _interval(self, graph_uri, effective_from, effective_until) -> tuple[int, int | None, bool, int]:
+        """Resolve a write's interval to ``(start, end, dated, now)``.
+
+        ``end`` is ``None`` when the caller gave none. The first write to a
+        graph without a start time is its initial load and holds from
+        ``-infinity``; later ones hold from now. Future-dated changes are
+        not supported, so the live graph only changes when a write arrives.
+        """
+        now = now_micros()
+        start = parse_bound(effective_from, end=False)
+        end = parse_bound(effective_until, end=True)
+        dated = start is not None
+        if start is None:
+            start = now if self.history.has_undated_write(str(graph_uri)) else NEG_INF
+        if start > now:
+            raise ValueError("effective_from lies in the future; future-dated model changes are not supported")
+        if end is not None:
+            if end != POS_INF and end > now:
+                raise ValueError("effective_until lies in the future; only \"infinity\" may end after now")
+            if end <= start:
+                raise ValueError("effective_until must be after effective_from")
+        return start, end, dated, now
+
+    def graph_subjects(self, graph_uris: Iterable[URIRef | str]) -> set[str]:
+        """Every subject of the given data graphs."""
+        with self._lock:
+            return {
+                str(subject)
+                for uri in graph_uris
+                for subject in self._registered_data_graph(URIRef(uri)).subjects(unique=True)
+            }
+
+    def forget_metadata(self, subjects: Iterable[str]) -> None:
+        """Delete the metadata of *subjects* that no data graph mentions any more.
+
+        Experiment deliveries call this for the nodes they remove: experiment
+        graphs are derived from the ledger, so their nodes' metadata goes with
+        them. It is an ordinary write to the metadata graph at the current
+        time; nothing else removes metadata.
+        """
+        metadata_uri = self.source_graph_uri(METADATA_SOURCE_ID)
+        with self._lock:
+            native = self.source_dataset.store._inner
+            metadata = self.source_dataset.graph(metadata_uri)
+            gone = []
+            for subject in sorted(set(subjects)):
+                node = URIRef(subject)
+                if next(iter(metadata.triples((node, None, None))), None) is None:
+                    continue
+                mentioned = native.query(
+                    f"ASK {{ GRAPH ?g {{ {{ {node.n3()} ?a ?b }} UNION {{ ?c ?d {node.n3()} }} }} "
+                    f"FILTER(?g != {metadata_uri.n3()}) }}"
+                )
+                if not bool(mentioned):
+                    gone.append(node)
+            if gone:
+                self.sparql_update(
+                    " ;\n".join(f"DELETE WHERE {{ {node.n3()} ?p ?o }}" for node in gone),
+                    graph_uri=metadata_uri,
+                )
+
+    def _record_insert(self, target: Graph, incoming: Graph, replace: bool, effective_from, effective_until) -> None:
+        uri = str(target.identifier)
+        start, end, dated, now = self._interval(uri, effective_from, effective_until)
+        terms = {nt(triple): triple for triple in incoming}
+        if replace:
+            end = POS_INF if end is None else end
+            steps = [Step(tuple((line, "+", start, end) for line in terms), clear=(start, end))]
+        elif end is not None:
+            steps = [Step(tuple((line, "+", start, end) for line in terms))]
+        else:
+            # Triples already present at the start change nothing until their
+            # next recorded change, so only the new ones are written.
+            present = self.history.present(uri, terms, start)
+            new = [line for line in terms if line not in present]
+            ends = self.history.next_touch(uri, new, start)
+            steps = [Step(tuple((line, "+", start, ends[line]) for line in new))]
+        self._record(target, "replace" if replace else "insert", start, end, dated, now, steps, terms)
+
+    def _record_update(self, target: Graph, update: str, effective_from, effective_until) -> None:
+        uri = str(target.identifier)
+        start, end, dated, now = self._interval(uri, effective_from, effective_until)
+        terms: dict[str, tuple] = {}
+
+        def run(lines: Iterable[str]) -> set[str]:
+            # The update addresses the graph as its default graph, as it does
+            # on the live store.
+            graph = parse_lines(lines)
+            graph.update(update)
+            after = {}
+            for triple in graph:
+                after[nt(triple)] = triple
+            terms.update(after)
+            return set(after)
+
+        steps = []
+        if end is None:
+            before = self.history.graph_at(uri, start)
+            after = run(before)
+            removed, added = before - after, after - before
+            ends = self.history.next_touch(uri, removed | added, start)
+            items = [(line, "-", start, ends[line]) for line in sorted(removed)]
+            items += [(line, "+", start, ends[line]) for line in sorted(added)]
+            steps.append(Step(tuple(items)))
+        else:
+            for left, right, content in self.history.versions(uri, start, end):
+                after = run(content)
+                items = [(line, "-", left, right) for line in sorted(content - after)]
+                items += [(line, "+", left, right) for line in sorted(after - content)]
+                if items:
+                    steps.append(Step(tuple(items)))
+        self._record(target, "update", start, end, dated, now, steps, terms)
+
+    def _record(self, target: Graph, kind: str, start: int, end: int | None, dated: bool, now: int,
+                steps: list[Step], terms: dict[str, tuple]) -> None:
+        """Record a write, then apply the part of it that holds now to the
+        live graph. Nothing ends in the future except at ``POS_INF``, so a
+        change holds now exactly when it lasts until ``POS_INF``."""
+        self._history_head = self.history.record(
+            str(target.identifier), kind=kind, start=start, end=end, dated=dated, steps=steps, recorded_at=now,
+        )
+        missing = [line for step in steps for line, _, _, until in step.items
+                   if until == POS_INF and line not in terms]
+        for triple in parse_lines(missing):
+            terms[nt(triple)] = triple
+        for step in steps:
+            if step.clear is not None and step.clear[1] == POS_INF:
+                target.remove((None, None, None))
+            for line, op, _, until in step.items:
+                if until == POS_INF:
+                    (target.add if op == "+" else target.remove)(terms[line])
+
+    def _sync_with_history(self) -> None:
+        """Make the live versioned graphs hold the model at the current time.
+
+        A store from before the history existed is recorded as the initial
+        load of each graph. When the live graphs missed recorded writes (a
+        crash between recording and applying), they are rebuilt.
+        """
+        head = self.history.head()
+        if head == 0:
+            for context in list(self.source_dataset.graphs()):
+                if not self._versioned(context.identifier) or not len(context):
+                    continue
+                lines = tuple((nt(triple), "+", NEG_INF, POS_INF) for triple in context)
+                head = self.history.record(
+                    str(context.identifier), kind="replace", start=NEG_INF, end=POS_INF, dated=False,
+                    steps=[Step(lines, clear=(NEG_INF, POS_INF))], recorded_at=now_micros(),
+                )
+        elif self._history_head != head:
+            _logger.warning("live graphs are behind the model history (%s < %d); rebuilding them",
+                            self._history_head, head)
+            now = now_micros()
+            uris = set(self.history.graphs()) | {
+                str(context.identifier) for context in self.source_dataset.graphs()
+                if self._versioned(context.identifier)
+            }
+            for uri in uris:
+                target = self.source_dataset.graph(URIRef(uri))
+                target.remove((None, None, None))
+                for triple in parse_lines(self.history.graph_at(uri, now)):
+                    target.add(triple)
+            self._commit_dataset(self.source_dataset)
+            self._history_head = head
+            self._mark_source_changed()
+            self._mark_closure_changed()
+        self._history_head = head
+        self._write_source_version()
+
+    def model_at(self, at: datetime | int, *, as_of: int | None = None) -> Graph:
+        """The asserted model at time ``at``, as known at recording time
+        ``as_of`` (the latest when omitted): every versioned graph, metadata
+        overlaid as on the live graph. Acquirium's own graph is derived
+        state and not part of it."""
+        from acquirium.Metadata import overlay_documents
+
+        if self.history is None:
+            raise RuntimeError("this graph store keeps no model history")
+        at = at if isinstance(at, int) else to_micros(at)
+        metadata_uri = str(self.source_graph_uri(METADATA_SOURCE_ID))
+        merged, metadata = Graph(), Graph()
+        for uri in self.history.graphs():
+            graph = parse_lines(self.history.graph_at(uri, at, as_of=as_of))
+            merged += graph
+            if uri == metadata_uri:
+                metadata = graph
+        overlay_documents(merged, metadata)
+        return merged
+
+    def inferred_model_at(self, at: datetime | int, *, as_of: int | None = None) -> Graph:
+        """``model_at`` with inference applied, cached per distinct content.
+
+        The ontology closure is fixed: the one the live graph resolves.
+        """
+        data = self.model_at(at, as_of=as_of)
+        digest = hashlib.sha256("\n".join(sorted(nt(t) for t in data)).encode()).hexdigest()
+        with self._lock:
+            cached = self._inferred_versions.get(digest)
+            if cached is not None:
+                return cached
+            shapes = Graph() + self._ensure_dependency_cache_current()
+        inferred = self._build_query_views(data, shapes)
+        with self._lock:
+            self._inferred_versions[digest] = inferred
+            while len(self._inferred_versions) > 16:
+                self._inferred_versions.pop(next(iter(self._inferred_versions)))
+        return inferred
 
     def namespace_manager(self) -> NamespaceManager :
         return self.query_dataset.namespace_manager

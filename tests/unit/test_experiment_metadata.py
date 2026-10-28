@@ -55,6 +55,12 @@ class MemoryGraphStore:
         self.version += 1
         self.updates += 1
 
+    def graph_subjects(self, graph_uris):
+        return {str(s) for uri in graph_uris for s in self.dataset.graph(URIRef(uri)).subjects(unique=True)}
+
+    def forget_metadata(self, subjects):
+        pass
+
     def query(self, query, **kwargs):
         payload = json.loads(self.dataset.query(query).serialize(format="json"))
         columns = payload["head"]["vars"]

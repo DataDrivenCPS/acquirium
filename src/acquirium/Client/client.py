@@ -33,6 +33,15 @@ _CURIE = re.compile(r"[A-Za-z_][\w.-]*:[^\s:]+")
 if TYPE_CHECKING:
     import pyarrow as pa
 
+def _effective_bounds(effective_from, effective_until) -> dict[str, str]:
+    """The JSON fields for a model write's bounds; omitted ones stay unset."""
+    fields = {}
+    for name, value in (("effective_from", effective_from), ("effective_until", effective_until)):
+        if value is not None:
+            fields[name] = value.isoformat() if isinstance(value, datetime) else value
+    return fields
+
+
 def _raise_for_status(response: requests.Response) -> None:
     """Like response.raise_for_status(), but enriches the HTTPError message with the
     response body. For FastAPI servers this extracts the 'detail' field so the caller
@@ -205,6 +214,8 @@ class AcquiriumClient:
         replace: bool = True,
         *,
         source_id: str,
+        effective_from: datetime | str | None = None,
+        effective_until: datetime | str | None = None,
     ) -> None:
         """
         Insert RDF graph into an explicitly owned deployment data graph.
@@ -218,6 +229,14 @@ class AcquiriumClient:
             replace: If True, replaces the selected graph. If False, appends to it.
             source_id: Data-graph owner. Use ``"plant"`` for the shared plant
                 model, or a component's stable source ID.
+            effective_from: When the write starts to hold in the plant: a
+                datetime, or ``"-infinity"``. Defaults to now; the first
+                write to a graph that gives no start holds from
+                ``"-infinity"``. Must not lie in the future.
+            effective_until: When it stops holding: a datetime in the past,
+                or ``"infinity"``. A replacement defaults to ``"infinity"``;
+                an insertion keeps each new triple until the next recorded
+                change to it.
         """
         if not isinstance(rdf_graph, str):
             raise TypeError(
@@ -231,6 +250,7 @@ class AcquiriumClient:
             "replace": replace,
         }
         data["source_id"] = source_id
+        data.update(_effective_bounds(effective_from, effective_until))
         response = self._http.post(url, json=data)
         _raise_for_status(response)
         # the graph may bind new prefixes: read the list again when next needed
@@ -243,6 +263,8 @@ class AcquiriumClient:
         replace: bool = True,
         *,
         source_id: str,
+        effective_from: datetime | str | None = None,
+        effective_until: datetime | str | None = None,
     ) -> None:
         """Read RDF from *path* and insert it into an explicitly owned graph."""
         source_path = Path(path)
@@ -258,6 +280,8 @@ class AcquiriumClient:
             format=resolved_format,
             replace=replace,
             source_id=source_id,
+            effective_from=effective_from,
+            effective_until=effective_until,
         )
 
     def timeseries_df(
@@ -408,11 +432,25 @@ class AcquiriumClient:
         ]
         return {"columns": columns, "rows": rows}
 
-    def sparql_update(self, update: str, *, source_id: str) -> dict:
-        """Execute a SPARQL UPDATE against one explicitly owned data graph."""
+    def sparql_update(
+        self,
+        update: str,
+        *,
+        source_id: str,
+        effective_from: datetime | str | None = None,
+        effective_until: datetime | str | None = None,
+    ) -> dict:
+        """Execute a SPARQL UPDATE against one explicitly owned data graph.
+
+        ``effective_from`` and ``effective_until`` bound the update in the
+        plant as for :meth:`insert_graph`. With ``effective_until`` the update
+        runs on every version of the graph in the interval; without it, on
+        the graph at ``effective_from``.
+        """
         url = f"{self.base_url}/sparql_update"
         data = {"update": update}
         data["source_id"] = source_id
+        data.update(_effective_bounds(effective_from, effective_until))
         response = self._http.post(url, json=data)
         _raise_for_status(response)
         return response.json()
@@ -886,6 +924,8 @@ class AcquiriumClient:
             if extra:
                 extras.setdefault(str(subj), {}).update(extra)
         writes = self._plan_metadata(extras, dict.fromkeys(extras, "data"))
+        # A registration describes a stream, not a change in the plant, so it
+        # holds over all time.
         for source_id, graph in graphs.items():
             if len(graph):
                 self.insert_graph(
@@ -893,12 +933,14 @@ class AcquiriumClient:
                     format="turtle",
                     replace=False,
                     source_id=source_id,
+                    effective_from="-infinity",
+                    effective_until="infinity",
                 )
         # Same map and same update as insert_metadata: each key is replaced
         # in the metadata graph, so registering again with a changed value
         # leaves only the new one. Runs after the stream triples, which make
         # the point a node the metadata graph may describe.
-        self._write_metadata(writes)
+        self._write_metadata(writes, "-infinity", "infinity")
 
     def _resolve_one(self, text: str, kind: str) -> Optional[str]:
         """Resolve one text value of the given kind to a URI, or None."""
@@ -918,7 +960,7 @@ class AcquiriumClient:
         for i in range(0, len(uris), 500):
             chunk = " ".join(f"<{u}>" for u in uris[i:i + 500])
             # a URI that only user attributes mention (a link saved as a
-            # value) is not a node: metadata on it would be pruned at once
+            # value) is not a node
             sparql = (
                 "SELECT DISTINCT ?s ?ref\nWHERE {\n"
                 f"  VALUES ?s {{ {chunk} }}\n"
@@ -942,7 +984,13 @@ class AcquiriumClient:
         (see :func:`acquirium.Client.metadata.to_term`)."""
         return tuple(str(ns) for _, ns in self.namespace_manager().namespaces())
 
-    def insert_metadata(self, records: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    def insert_metadata(
+        self,
+        records: Mapping[str, Mapping[str, Any]],
+        *,
+        effective_from: datetime | str | None = None,
+        effective_until: datetime | str | None = None,
+    ) -> dict[str, Any]:
         """Write value maps on nodes: ``{node_uri: {key: value}}``.
 
         See :mod:`acquirium.Client.metadata` for what a value map may hold.
@@ -953,6 +1001,8 @@ class AcquiriumClient:
         regardless. Writes land in the
         reserved metadata source graph as one SPARQL update, so each key is
         replaced atomically and nothing outside that graph is touched.
+        ``effective_from`` and ``effective_until`` bound the write in the
+        plant as for :meth:`sparql_update`.
         """
         subjects = {self.node_uri(uri): values for uri, values in records.items()}
         if not subjects:
@@ -962,7 +1012,7 @@ class AcquiriumClient:
         if missing:
             raise ValueError(f"unknown node(s), not in any data graph: {missing}")
         writes = self._plan_metadata(subjects, roles)
-        return {**self._write_metadata(writes), "nodes": len(writes)}
+        return {**self._write_metadata(writes, effective_from, effective_until), "nodes": len(writes)}
 
     def _plan_metadata(self, records: Mapping[str, Mapping[str, Any]],
                        roles: Mapping[str, str]) -> list:
@@ -974,12 +1024,15 @@ class AcquiriumClient:
                            namespaces=namespaces)
                 for uri, values in records.items()]
 
-    def _write_metadata(self, writes: list) -> dict[str, Any]:
+    def _write_metadata(self, writes: list, effective_from=None, effective_until=None) -> dict[str, Any]:
         """Apply planned writes as one update to the metadata source graph."""
         update = update_text(writes)
         if not update:
             return {"ok": True}
-        return self.sparql_update(update, source_id=METADATA_SOURCE_ID)
+        return self.sparql_update(
+            update, source_id=METADATA_SOURCE_ID,
+            effective_from=effective_from, effective_until=effective_until,
+        )
 
     def metadata_documents(self, subjects: Iterable[str]) -> dict[str, dict]:
         """Read complete typed metadata from the authoritative source graph."""

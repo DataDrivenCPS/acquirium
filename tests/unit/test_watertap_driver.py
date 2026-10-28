@@ -139,6 +139,8 @@ def test_setup_can_insert_model_graph(tmp_path):
         format=None,
         replace=True,
         source_id="watertap",
+        effective_from=None,
+        effective_until=None,
     )
 
 

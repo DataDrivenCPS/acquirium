@@ -19,6 +19,7 @@ from acquirium.Storage import (
 )
 from acquirium.Storage.graph_store import select_values
 from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
+from acquirium.Storage.model_history import ModelHistory
 from acquirium.Storage.publication.types import PublicationReceipt, PublicationRequest, PublicationStore
 from acquirium.Storage.values import normalize_value_kind
 from acquirium.Experiments import ExperimentStore
@@ -149,6 +150,7 @@ class Manager:
                 store_path=graph_path,
                 env_root=ontoenv_root,
                 extra_ontology_sources=ontology_sources,
+                history=ModelHistory(timeseries_store),
             )
 
         self.timeseries_store = timeseries_store
@@ -507,6 +509,8 @@ class Manager:
         replace: bool = True,
         *,
         source_id: str,
+        effective_from: datetime | str | None = None,
+        effective_until: datetime | str | None = None,
     ) -> None:
         """
         Insert RDF graph into one explicitly owned deployment data graph.
@@ -524,6 +528,8 @@ class Manager:
             replace: If True, replaces the selected graph. If False, appends to it.
             source_id: Data-graph owner. Use ``"plant"`` for the shared plant
                 model, or a component's stable source ID.
+            effective_from, effective_until: The interval the write holds
+                over in the plant; see ``OxigraphGraphStore.insert_graph``.
         """
 
         if isinstance(rdf_graph, Path):
@@ -546,6 +552,8 @@ class Manager:
                         format=format,
                         replace=replace,
                         graph_uri=graph_uri,
+                        effective_from=effective_from,
+                        effective_until=effective_until,
                     )
             logging.info("acquirium: inserted graph into store")
             with timed_debug(logger, "insert_graph: _sync_stream_refs_from_graph"):
@@ -637,7 +645,7 @@ class Manager:
 
         Writes a graph node typed as acquirium:DataSourceRegistry so the
         datasource is discoverable via SPARQL.  Idempotent — safe to call
-        on every startup.  Returns source_id.
+        on every startup.  The node holds over all time.  Returns source_id.
         """
         node = URIRef(f"urn:acquirium:datasource:{source_id}")
         g = Graph()
@@ -648,6 +656,8 @@ class Manager:
             format="turtle",
             replace=False,
             graph_uri=self.graph_store.source_graph_uri(source_id),
+            effective_from="-infinity",
+            effective_until="infinity",
         )
         return source_id
 
@@ -919,16 +929,28 @@ class Manager:
         logger.info("Deleted all log references for point %s from graph", point_uri)
         return True
 
-    def sparql_update(self, update: str, source_id: str) -> dict[str, Any]:
+    def sparql_update(
+        self,
+        update: str,
+        source_id: str,
+        *,
+        effective_from: datetime | str | None = None,
+        effective_until: datetime | str | None = None,
+    ) -> dict[str, Any]:
         """Execute a SPARQL UPDATE against one explicitly owned data graph.
 
         It lets a component remove exactly the triples it registered without
-        granting updates to ontology graphs.
+        granting updates to ontology graphs. ``effective_from`` and
+        ``effective_until`` bound the update in the plant; see
+        ``OxigraphGraphStore.sparql_update``.
         """
         owned_metadata = source_id in {METADATA_SOURCE_ID, "experiments"} or source_id.startswith("experiment/")
         with self.experiments.metadata.edit() if owned_metadata else nullcontext():
             graph_uri = self.graph_store.source_graph_uri(source_id)
-            result = self.graph_store.sparql_update(update, graph_uri=graph_uri)
+            result = self.graph_store.sparql_update(
+                update, graph_uri=graph_uri,
+                effective_from=effective_from, effective_until=effective_until,
+            )
         self._sync_stream_refs_from_graph()
         self._record_materialization_graph_revision()
         return result

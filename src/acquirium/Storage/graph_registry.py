@@ -23,8 +23,7 @@ PLANT_SOURCE_ID = "plant"
 ACQUIRIUM_GRAPH_URI = "urn:acquirium:graph:data:acquirium"
 SOURCE_GRAPH_PREFIX = "urn:acquirium:graph:data:source:"
 # The source that owns metadata written with ``insert_metadata``. An
-# ordinary source graph by shape, so it needs no registration; pruned by the
-# store when the nodes it describes disappear from the other graphs.
+# ordinary source graph by shape, so it needs no registration.
 METADATA_SOURCE_ID = "metadata"
 
 
@@ -40,3 +39,26 @@ def source_graph_uri(source_id: str, *, plant_graph_uri: str = PLANT_GRAPH_URI) 
     if source_id == PLANT_SOURCE_ID:
         return URIRef(plant_graph_uri)
     return URIRef(f"{SOURCE_GRAPH_PREFIX}{quote(source_id, safe='')}")
+
+
+# Experiment graphs are rebuilt from the experiment ledger's SQL tables, so
+# they are derived data like Acquirium's own graph and carry no history.
+EXPERIMENTS_SOURCE_ID = "experiments"
+EXPERIMENT_RUN_SOURCE_PREFIX = "experiment/"
+
+
+def is_versioned_graph(graph_uri: str | URIRef, *, plant_graph_uri: str = PLANT_GRAPH_URI) -> bool:
+    """Whether writes to ``graph_uri`` are recorded in the model history.
+
+    The model is the plant graph and every source graph, the metadata graph
+    included. Acquirium's own graph and the experiment graphs are derived
+    from other state and are not part of it.
+    """
+    uri = str(graph_uri)
+    if uri == plant_graph_uri:
+        return True
+    if not uri.startswith(SOURCE_GRAPH_PREFIX):
+        return False
+    return uri != str(source_graph_uri(EXPERIMENTS_SOURCE_ID)) and not uri.startswith(
+        str(source_graph_uri(EXPERIMENT_RUN_SOURCE_PREFIX))
+    )

@@ -62,10 +62,31 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 
 | method | description |
 |---|---|
-| `insert_graph(rdf_graph: str, format="turtle", replace=True, *, source_id: str) -> None` | Insert RDF into the graph owned by `source_id`; `replace=True` clears that graph first. |
-| `insert_graph_file(path, format=None, replace=True, *, source_id: str) -> None` | Read RDF from a file and insert it into the graph owned by `source_id`; the format is taken from the extension when omitted. |
-| `insert_metadata(uri: str \| URIRef, values: Mapping[str, Any]) -> dict` | Attach a value map to one node by URI or CURIE; see [Metadata values](#metadata-values). Returns the update result with `nodes`, the number of nodes written. |
-| `sparql_update(update: str, *, source_id: str) -> dict` | Execute a SPARQL UPDATE against one owned data graph. |
+| `insert_graph(rdf_graph: str, format="turtle", replace=True, *, source_id: str, effective_from=None, effective_until=None) -> None` | Insert RDF into the graph owned by `source_id`; `replace=True` clears that graph first. The write holds over `[effective_from, effective_until)`; see [Effective intervals](#effective-intervals). |
+| `insert_graph_file(path, format=None, replace=True, *, source_id: str, effective_from=None, effective_until=None) -> None` | Read RDF from a file and insert it into the graph owned by `source_id`; the format is taken from the extension when omitted. |
+| `insert_metadata(uri: str \| URIRef, values: Mapping[str, Any], *, effective_from=None, effective_until=None) -> dict` | Attach a value map to one node by URI or CURIE; see [Metadata values](#metadata-values). Returns the update result with `nodes`, the number of nodes written. |
+| `sparql_update(update: str, *, source_id: str, effective_from=None, effective_until=None) -> dict` | Execute a SPARQL UPDATE against one owned data graph. |
+
+#### Effective intervals
+
+Acquirium keeps every version of the plant graph and of each source graph.
+Every write says when it holds in the plant: `effective_from` is a datetime
+or `"-infinity"`, `effective_until` a datetime or `"infinity"`. Neither may
+lie in the future, except an end of `"infinity"`.
+
+- `effective_from` defaults to now. The first write to a graph that gives no
+  `effective_from` is the graph's initial load and holds from `"-infinity"`.
+- With `replace=True` the end defaults to `"infinity"`: the new graph replaces
+  the old one from `effective_from` on.
+- Otherwise each triple the write adds or removes keeps that change until the
+  next recorded change to the same triple. A late correction therefore stops
+  at changes recorded for later times.
+- `sparql_update` with `effective_until` runs the update on every version of
+  the graph inside the interval; without it, on the graph at `effective_from`.
+- `register_streams` and `register_datasource` hold over all time.
+
+Acquirium's own graph and the experiment graphs keep no versions and take no
+effective interval.
 | `validate_graph() -> dict` | Validate all deployment data against the ontology shapes. |
 | `graph_version() -> int` | The server's current source-data generation. |
 | `graph_status() -> dict` | Source and derived-query cache generations (`source_version`, `published_version`, `is_current`, `rebuild_in_progress`). |
@@ -270,10 +291,9 @@ datatypes the graph holds for the attribute elsewhere (discovery collects
 them with the names), so a frame's schema does not depend on which nodes
 matched; `schema()` reports the same types in advance.
 
-Metadata lives as long as the node it describes: after a `replace=True`
-graph insert or a SPARQL update, the server removes metadata whose subject
-no longer appears in any other graph. A URI value is not checked; it may
-point anywhere.
+Metadata stays when the node it describes disappears from the plant or a
+source graph. Deleting an experiment record deletes the metadata of its
+nodes.
 See [Attach metadata to a node](../how-to/attach-metadata.md).
 
 ### Helpers
