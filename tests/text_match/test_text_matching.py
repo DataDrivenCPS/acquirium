@@ -166,7 +166,7 @@ def exact(tmp_path_factory: pytest.TempPathFactory):
     # Another test may already have imported fastembed. Record that first so
     # the check below is about what this Manager imported itself.
     preloaded = "fastembed" in sys.modules
-    m = Manager(data_dir=data_dir, timeseries_backend="duckdb", exact_only=True)
+    m = Manager(data_dir=data_dir, exact_only=True)
     m._test_imported_fastembed = "fastembed" in sys.modules and not preloaded
     yield m
     m.close()
@@ -176,7 +176,7 @@ def exact(tmp_path_factory: pytest.TempPathFactory):
 def semantic(tmp_path_factory: pytest.TempPathFactory):
     data_dir = tmp_path_factory.mktemp("acq-semantic")
     t0 = time.perf_counter()
-    m = Manager(data_dir=data_dir, timeseries_backend="duckdb", exact_only=False)
+    m = Manager(data_dir=data_dir, exact_only=False)
     _report["build_s"] = round(time.perf_counter() - t0, 1)
     _report["model"] = m._graph_matcher._model_name
     yield m
