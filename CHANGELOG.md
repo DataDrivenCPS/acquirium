@@ -185,8 +185,12 @@ change in any release.
   Experiment data recorded with development builds of main, which kept
   samples in SQL, is not migrated.
 - Time-series observations record the Escapement epoch they were recorded
-  at, as `observation.epoch`; `observation.dataframe(epoch=observation.epoch)`
+  at, as `observation.epoch`; it includes everything written to Escapement
+  before the recording. `observation.dataframe(epoch=observation.epoch)`
   reads the samples as recorded, after later corrections.
+- Deleting runs reports only their own samples and clears them a request at a
+  time; `usage()` counts samples without reading them. A failed clear at
+  server start is logged and retried later instead of stopping the server.
 - `Stream.dataframe(end=...)` and stream intervals include samples at `end`
   again; reads are half-open underneath, so the client reads up to just after
   it.

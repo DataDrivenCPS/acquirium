@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from threading import RLock
+import time
 
 import polars as pl
 import pyarrow as pa
@@ -138,6 +139,17 @@ class Core:
 
     def wait(self, receipt: Receipt, timeout: float = 30) -> Snapshot:
         return self.processor.read_after(receipt, timeout=timeout)
+
+    def settle(self, timeout: float = 30) -> Snapshot:
+        """Wait until every request accepted so far is published; return
+        the snapshot that includes them."""
+        accepted = self.engine.status()["accepted"]
+        deadline = time.monotonic() + timeout
+        while (snapshot := self.engine.snapshot()).applied < accepted:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"request {accepted} is not published after {timeout}s")
+            time.sleep(0.005)
+        return snapshot
 
     def changes(self, *, epoch=0, ordinal=0, limit=1000):
         """Page the signed native feed at a captured publication frontier.

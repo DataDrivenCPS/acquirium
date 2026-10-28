@@ -30,43 +30,42 @@ class EscapementSamples:
         self.core = core
         self.timeout = timeout
 
-    def write(self, source: str, frame: pl.DataFrame) -> int:
-        """Ingest ``frame``, wait until it is published, and return the epoch
-        that includes it."""
+    def write(self, source: str, frame: pl.DataFrame | None) -> int:
+        """Ingest ``frame`` and return the epoch that publishes it and every
+        request accepted before it. Without a frame, only wait for those."""
+        if frame is None or frame.is_empty():
+            return self.core.settle(timeout=self.timeout).epoch
         frame = frame.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
         receipt = None
         for offset in range(0, frame.height, MAX_REQUEST_ROWS):
             receipt = self.core.ingest(source, str(uuid.uuid4()), frame.slice(offset, MAX_REQUEST_ROWS))
-        if receipt is None:
-            return self.epoch()
         return self.core.wait(receipt, timeout=self.timeout).epoch
 
-    def epoch(self) -> int:
-        """The latest published epoch."""
-        return self.core.engine.snapshot().epoch
-
-    def _readings(self, refs):
+    def count(self, refs) -> int:
+        """How many samples ``refs`` hold, without reading them."""
         snapshot = self.core.engine.snapshot()
-        return {ref: snapshot.readings(ref) for ref in refs}
+        return sum((snapshot.stats(ref) or {"count": 0})["count"] for ref in refs)
 
-    def clear(self, refs) -> int:
-        """Delete every sample of ``refs``; returns how many there were."""
-        deletes = [(ref, reading.event_time_ns)
-                   for ref, readings in self._readings(refs).items() for reading in readings]
-        if deletes:
-            self.write("experiments", pl.DataFrame({
-                "ref_uri": pl.Series([ref for ref, _ in deletes], dtype=pl.String),
-                "ts": pl.Series([t for _, t in deletes], dtype=pl.Int64).cast(pl.Datetime("ns", "UTC")),
-                "value": pl.Series([None] * len(deletes), dtype=pl.Float64),
-                "operation": ["delete"] * len(deletes),
-            }))
-        return len(deletes)
+    def clear(self, refs) -> None:
+        """Delete every sample of ``refs``, one request-sized page at a time,
+        and wait until the deletions are published."""
+        snapshot = self.core.engine.snapshot()
+        receipt = None
+        for ref in refs:
+            start = None
+            while page := snapshot.query(ref, start=start, limit=MAX_REQUEST_ROWS):
+                times = [reading.event_time_ns for reading in page]
+                receipt = self.core.ingest("experiments", str(uuid.uuid4()), pl.DataFrame({
+                    "ref_uri": pl.Series([ref] * len(times), dtype=pl.String),
+                    "ts": pl.Series(times, dtype=pl.Int64).cast(pl.Datetime("ns", "UTC")),
+                    "value": pl.Series([None] * len(times), dtype=pl.Float64),
+                    "operation": ["delete"] * len(times),
+                }))
+                start = times[-1] + 1
+        if receipt is not None:
+            self.core.wait(receipt, timeout=self.timeout)
 
     def usage(self, refs) -> tuple[int, int]:
-        """Sample count and an estimate of their bytes."""
-        count = size = 0
-        for readings in self._readings(refs).values():
-            for reading in readings:
-                count += 1
-                size += 8 + (len(reading.value) if isinstance(reading.value, str) else 8)
-        return count, size
+        """Sample count and their bytes: 8 for each time and 8 for each number."""
+        count = self.count(refs)
+        return count, 16 * count

@@ -400,8 +400,8 @@ power_samples = power_recording.dataframe()
 An Observation exposes `experiment_id`, `variable`, `sequence`, `recorded_at`,
 `occurred_at`, `status`, `experiment_metadata`, `started_at`, and `finished_at`.
 Time-series records also carry `ref_uri`, `range_start`, `range_end`, and
-`epoch`: the Escapement epoch they were recorded at (the one that published
-recorded samples, or the latest one for a referenced interval).
+`epoch`: the Escapement epoch they were recorded at, which includes the
+recorded samples and everything written to Escapement before the recording.
 Files and tables carry `artifact_digest`, `filename`, `media_type`, and
 `byte_length`. A table's file is `<label>.parquet` with media type
 `application/vnd.apache.parquet`.
