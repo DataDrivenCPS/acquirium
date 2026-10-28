@@ -298,8 +298,9 @@ source-owned documents for the same key.
 ## Data
 
 `DataObject` is returned by `Query.data()`.
-It is lazy: row counts and time ranges come from stream statistics, and values
-are fetched on the first call that needs them.
+It is lazy: row counts and time ranges come from stream statistics, fetched in
+one batch request the first time one is read, and values are fetched on the
+first call that needs them.
 See the [data tutorial](../tutorials/data.md).
 
 | method | description |
@@ -315,8 +316,8 @@ See the [data tutorial](../tutorials/data.md).
 | `is_empty() -> bool` | Whether any rows exist; from stream statistics (ignoring the window) until the values are fetched. |
 | `stream_info(alias=None) -> pl.DataFrame` | One row per stream: `stream` (its number in this object, for `streams=`), `alias`, `point_uri`, `ref_uri`, `source_id`, `ref_name`. |
 | `aliases`, `entity_aliases` | Properties: the data and entity aliases present. |
-| `total_rows`, `time_range` | Properties: row count and `(earliest, latest)` from stream statistics, without fetching. |
-| `bindings` | Property: read-only binding metadata per stream. |
+| `total_rows`, `time_range` | Properties: row count and `(earliest, latest)` from stream statistics, without fetching the values. |
+| `bindings` | Property: read-only binding metadata per stream, with its statistics. |
 
 ### Parameters shared by data() and dataframe()
 

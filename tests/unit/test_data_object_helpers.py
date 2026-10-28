@@ -305,3 +305,93 @@ class TestStreamInfo:
         assert d.dataframe(compact=False, streams=[1])["flow"].to_list() == [1.1]
         narrow = d.dataframe(shape="narrow", compact=False, streams=["urn:t#r2", 2])
         assert sorted(narrow["ref_uri"].to_list()) == ["urn:t#r2", "urn:t#r3"]
+
+
+class TestLazyStats:
+    """Stream statistics are fetched on the first stat read, not by data()."""
+
+    R1 = "urn:t#ref1"
+    R2 = "urn:t#ref2"
+    T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    T1 = datetime(2026, 1, 2, tzinfo=timezone.utc)
+
+    def _data(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from acquirium.Client.explore.core import Query
+
+        client = MagicMock()
+        # one entity hosting two points, one stream each
+        client.sparql_query.return_value = {
+            "columns": ["v0", "v1", "ext1"],
+            "rows": [["urn:t#A", "urn:t#p1", self.R1], ["urn:t#A", "urn:t#p2", self.R2]],
+        }
+        client.timeseries_info_batch.return_value = {
+            self.R1: SimpleNamespace(row_count=3, earliest=self.T0, latest=self.T1),
+        }
+        client.timeseries_df.return_value = pl.DataFrame(
+            {"ts": [self.T0], "value": [1.0], "uri": [self.R1]}
+        )
+        data = Query(client=client).entity("urn:t#A", alias="a").measurement(alias="m").data()
+        return data, client
+
+    def test_data_does_not_fetch_stats(self):
+        data, client = self._data()
+        assert data.aliases == ["m"]
+        data.metadata()
+        data.stream_info()
+        client.timeseries_info_batch.assert_not_called()
+
+    def test_reading_values_does_not_fetch_stats(self):
+        data, client = self._data()
+        data["m"]
+        data.latest()
+        assert not data.is_empty()  # materialized: answered from the rows
+        client.timeseries_info_batch.assert_not_called()
+
+    def test_query_dataframe_does_not_fetch_stats(self):
+        data, client = self._data()
+        data.dataframe(shape="narrow", compact=False)
+        client.timeseries_info_batch.assert_not_called()
+
+    def test_first_stat_read_fetches_once_for_every_stream(self):
+        data, client = self._data()
+        assert data.total_rows == 3
+        assert data.time_range == (self.T0, self.T1)
+        assert not data.is_empty()
+        client.timeseries_info_batch.assert_called_once()
+        (uris,), _ = client.timeseries_info_batch.call_args
+        assert sorted(uris) == [self.R1, self.R2]
+
+    def test_bindings_carry_stats(self):
+        data, client = self._data()
+        counts = {b.ref_uri: b.row_count for b in data.bindings}
+        assert counts == {self.R1: 3, self.R2: 0}  # a stream without stats has no rows
+        client.timeseries_info_batch.assert_called_once()
+
+    def test_is_empty_before_a_fetch_reads_stats(self):
+        data, client = self._data()
+        client.timeseries_info_batch.return_value = {}
+        assert data.is_empty()
+        client.timeseries_info_batch.assert_called_once()
+
+    def test_lazy_repr_does_not_fetch(self):
+        data, client = self._data()
+        assert "2 streams" in repr(data)
+        client.timeseries_info_batch.assert_not_called()
+        data.total_rows
+        assert "~3 rows" in repr(data)
+
+    def test_sub_objects_reuse_loaded_stats(self):
+        data, client = self._data()
+        data.total_rows
+        (_, sub), = data.by("a")
+        assert sub.total_rows == 3
+        client.timeseries_info_batch.assert_called_once()
+
+    def test_sub_objects_fetch_their_own_stats(self):
+        data, client = self._data()
+        (_, sub), = data.by("a")
+        client.timeseries_info_batch.assert_not_called()
+        assert sub.total_rows == 3
+        client.timeseries_info_batch.assert_called_once()

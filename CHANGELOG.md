@@ -126,6 +126,12 @@ change in any release.
   instead of failing on an empty shapes graph.
 
 ### Changed
+- `Query.data()` no longer fetches stream statistics. The `DataObject`
+  fetches them in one batch request the first time `total_rows`,
+  `time_range`, `bindings` or `is_empty()` (before the values are fetched)
+  needs them, so `dataframe()`, `latest()` and `Query.dataframe()` skip the
+  server-side count of every matched stream. The repr of a lazy object
+  shows its stream count until the statistics are loaded.
 - `cast_value` is validated (`"float"`, `"int"`, `"str"` or `None`) and
   defaults to `None`; `"float"` parses numeric text into `value_numeric`
   without logging, `"int"` returns `Int64` columns and warns when it
