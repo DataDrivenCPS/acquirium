@@ -1,0 +1,6 @@
+{
+  "start": "2026-08-01T00:00:00Z",
+  "tank_capacity_m3": 1500,
+  "minimum_volume_m3": 200,
+  "energy_intensity_kwh_per_m3": 0.42
+}

@@ -11,6 +11,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  docs:
+    name: Docs Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Install UV
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      # Every page must be listed in docs/_toc.yml, or it won't show up in the
+      # site navigation at watermetadata.org/acquirium.
+      - name: Build docs and check table of contents
+        run: |
+          uv run --locked --only-group docs jupyter-book build docs 2>&1 | tee docs-build.log
+          if grep "isn't included in any toctree" docs-build.log; then
+            echo "::error::Add the pages above to docs/_toc.yml"
+            exit 1
+          fi
+
   unit-tests:
     name: Unit Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest

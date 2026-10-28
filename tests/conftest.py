@@ -11,6 +11,7 @@ import pytest
 
 from acquirium import Acquirium
 from acquirium.Storage.values import assign_stream_value_kind
+from tests.local_server import acquirium_without_experiments, local_server_storage
 
 
 ACQUIRIUM_TEST_SERVER_HOST = os.getenv("ACQUIRIUM_TEST_SERVER_HOST", "localhost")
@@ -84,3 +85,64 @@ def insert_sample_csv_streams(acq, *, source_id: str = SAMPLE_SOURCE_ID) -> None
         stream_rows[ref_name] = rows
     acq.register_streams(stream_specs)
     acq.insert_timeseries_batch(source_id, stream_rows)
+
+
+@pytest.fixture(params=["duckdb", "postgres"])
+def experiment_ledger(request, tmp_path):
+    """An experiment ledger on each SQL backend, sending samples to an
+    in-memory Escapement."""
+    from acquirium.core import Core
+    from acquirium.ExperimentSamples import EscapementSamples
+    from acquirium.Storage.ledger import open_ledger
+    from tests.local_server import postgres_schema
+
+    core = Core(":memory:")
+    samples = EscapementSamples(core)
+    try:
+        if request.param == "duckdb":
+            ledger = open_ledger(tmp_path / "experiments.duckdb", samples=samples)
+            try:
+                yield ledger
+            finally:
+                ledger.close()
+        else:
+            with postgres_schema() as url:
+                ledger = open_ledger(url, samples=samples)
+                try:
+                    yield ledger
+                finally:
+                    ledger.close()
+    finally:
+        core.close(drain=False)
+
+
+@pytest.fixture(scope="session")
+def local_acquirium(tmp_path_factory):
+    """Options for the one local server the whole run shares."""
+    import acquirium as aq
+
+    with local_server_storage(tmp_path_factory.mktemp("acquirium")) as (options, _):
+        try:
+            yield options
+        finally:
+            aq.shutdown()
+
+
+@pytest.fixture
+def ac(local_acquirium):
+    """The shared local server, with no Studies or runs."""
+    return acquirium_without_experiments(local_acquirium)
+
+
+@pytest.fixture
+def separate_server():
+    """Stop the shared server so a test can start its own with aq.init().
+
+    aq.init() runs one server per process. The next test that uses the shared
+    server starts it again on the same data.
+    """
+    import acquirium as aq
+
+    aq.shutdown()
+    yield
+    aq.shutdown()

@@ -55,7 +55,22 @@ class TestSparqlResultsToRows:
             b'"label":{"type":"literal","value":"Pump"}}]}}'
         )
 
-        assert result == {"columns": ["s", "label"], "rows": [["urn:test", "Pump"]]}
+        assert result == {"columns": ["s", "label"], "rows": [["urn:test", "Pump"]],
+                          "datatypes": [["iri", None]]}
+
+    def test_datatypes_name_typed_literals_and_unbound_cells(self):
+        result = _sparql_results_to_rows(
+            b'{"head":{"vars":["s","n","d"]},"results":{"bindings":['
+            b'{"s":{"type":"uri","value":"urn:a"},'
+            b'"n":{"type":"literal","value":"2019","datatype":"http://www.w3.org/2001/XMLSchema#integer"}},'
+            b'{"s":{"type":"uri","value":"urn:b"},'
+            b'"d":{"type":"literal","value":"2024-03-12","datatype":"http://www.w3.org/2001/XMLSchema#date"}}]}}'
+        )
+        assert result["rows"] == [["urn:a", "2019", None], ["urn:b", None, "2024-03-12"]]
+        assert result["datatypes"] == [
+            ["iri", "http://www.w3.org/2001/XMLSchema#integer", None],
+            ["iri", None, "http://www.w3.org/2001/XMLSchema#date"],
+        ]
 
     def test_ask_preserves_rows_contract(self):
         assert _sparql_results_to_rows(b'{"head":{},"boolean":true}') == {

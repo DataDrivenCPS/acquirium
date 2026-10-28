@@ -1,0 +1,17 @@
+[project]
+name = "acquirium-flexpse-codec-example"
+version = "0.1.0"
+description = "Save a flex-pse model with an Acquirium experiment and build it back"
+requires-python = ">=3.11"
+dependencies = [
+    "acquirium",
+    "flex-pse",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+acquirium = { path = "../..", editable = true }
+# The flex-pse commit this example was tested against.
+flex-pse = { git = "https://github.com/flex-pse/flex-pse", rev = "ef88f5df4cc2e3a821c8fed9afa55c79134e196c" }

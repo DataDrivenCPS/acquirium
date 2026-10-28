@@ -21,7 +21,7 @@ Config keys (beyond the usual ``watch_dir`` / ``glob`` / ``format`` /
     format       = "wide"
     time_col     = "timestamp"
     source_id    = "benicia-historical"
-    model        = "../benicia-model-100.ttl"   # relative to this config file
+    model        = "../benicia-model-large.ttl" # relative to this config file
     insert_graph = true
 """
 
@@ -48,7 +48,7 @@ class BeniciaParquetDriver(FileIngestDriver):
         super().setup()
         cfg = self.config["driver"]
 
-        model_path = self.config_dir() / cfg.get("model", "benicia-model-100.ttl")
+        model_path = self.config_dir() / cfg.get("model", "benicia-model-large.ttl")
         if not model_path.exists():
             raise FileNotFoundError(f"Benicia model not found: {model_path}")
         model = rdflib.Graph().parse(model_path)  # format inferred from suffix

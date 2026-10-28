@@ -29,8 +29,9 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
+from acquirium.Client.explore.attributes import Registry
 from acquirium.Client.explore.compile import compile_sparql, render_alternatives
-from acquirium.Client.explore.hidden import hidden_predicates
+from acquirium.Client.explore.hidden import hidden_predicates, hidden_prefixes
 from acquirium.Client.query_graph import QueryGraph
 
 # (server_key, alternatives, graph_version) -> adjacency {source: {targets}}
@@ -49,7 +50,7 @@ def materialize_segment(client, alternatives: tuple, version: int) -> Dict[str, 
     """
     has_wildcard = any(pred == "*" for chain in alternatives for pred, _ in chain)
     key = (_server_key(client), alternatives, version,
-           hidden_predicates() if has_wildcard else None)
+           (hidden_predicates(), hidden_prefixes()) if has_wildcard else None)
     cached = _SEGMENT_CACHE.get(key)
     if cached is not None:
         return cached
@@ -172,7 +173,7 @@ def _prune_target_subtree(graph: QueryGraph, edge) -> QueryGraph:
 
 
 def _fetch_source_uris(client, graph: QueryGraph, src_id: int) -> List[str]:
-    res = client.sparql_query(compile_sparql(graph), include_dependencies=True)
+    res = client.sparql_query(compile_sparql(graph, Registry(client)), include_dependencies=True)
     cols = res.get("columns", [])
     col = f"v{src_id}"
     if col not in cols:
@@ -210,7 +211,7 @@ def _fetch_target_accept(client, graph: QueryGraph, edge) -> Optional[Set[str]]:
         current_pointer=tid,
         data_nodes={tid: info} if info is not None else {},
     )
-    res = client.sparql_query(compile_sparql(sub), include_dependencies=True)
+    res = client.sparql_query(compile_sparql(sub, Registry(client)), include_dependencies=True)
     cols = res.get("columns", [])
     col = f"v{tid}"
     if col not in cols:

@@ -1,0 +1,63 @@
+@prefix pt: <urn:example:pump-tank:> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix quantitykind: <http://qudt.org/vocab/quantitykind/> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix s223: <http://data.ashrae.org/standard223#> .
+@prefix unit: <http://qudt.org/vocab/unit/> .
+@prefix watr: <https://watermetadata.org/ontology/watr#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+pt: a owl:Ontology ;
+    rdfs:comment "A pump that fills a storage tank, which supplies a water demand"^^xsd:string .
+
+pt:pump-station a s223:System ;
+    rdfs:label "pump station"^^xsd:string ;
+    s223:hasMember pt:pump,
+        pt:tank .
+
+pt:pump a s223:Pump ;
+    rdfs:label "pump"^^xsd:string ;
+    s223:hasConnectionPoint pt:pump-inlet,
+        pt:pump-outlet ;
+    s223:hasProperty pt:pump-flow,
+        pt:pump-power .
+
+pt:tank a watr:Tank ;
+    rdfs:label "tank"^^xsd:string ;
+    s223:hasConnectionPoint pt:tank-inlet,
+        pt:tank-outlet ;
+    s223:hasProperty pt:tank-volume .
+
+pt:pump-to-tank a s223:Pipe ;
+    rdfs:label "pump outlet to tank inlet"^^xsd:string ;
+    s223:cnx pt:pump-outlet,
+        pt:tank-inlet ;
+    s223:hasMedium s223:Fluid-Water .
+
+pt:pump-flow a s223:QuantifiableObservableProperty ;
+    rdfs:label "pump flow"^^xsd:string ;
+    qudt:hasQuantityKind quantitykind:VolumeFlowRate ;
+    qudt:hasUnit unit:M3-PER-HR .
+
+pt:pump-power a s223:QuantifiableObservableProperty ;
+    rdfs:label "pump power"^^xsd:string ;
+    qudt:hasQuantityKind quantitykind:ElectricPower ;
+    qudt:hasUnit unit:KiloW .
+
+pt:tank-volume a s223:QuantifiableObservableProperty ;
+    rdfs:label "tank volume"^^xsd:string ;
+    qudt:hasQuantityKind quantitykind:Volume ;
+    qudt:hasUnit unit:M3 .
+
+pt:pump-inlet a s223:InletConnectionPoint ;
+    s223:hasMedium s223:Fluid-Water .
+
+pt:pump-outlet a s223:OutletConnectionPoint ;
+    s223:hasMedium s223:Fluid-Water .
+
+pt:tank-inlet a s223:InletConnectionPoint ;
+    s223:hasMedium s223:Fluid-Water .
+
+pt:tank-outlet a s223:OutletConnectionPoint ;
+    s223:hasMedium s223:Fluid-Water .

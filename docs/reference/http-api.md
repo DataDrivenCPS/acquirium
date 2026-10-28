@@ -9,9 +9,10 @@ The server exposes semantic graph operations and one Escapement timeseries engin
 | `GET /health` | Server readiness |
 | `GET /graph_version` | Source/inferred graph generations |
 | `POST /insert_graph` | RDF text/file, format, source owner, replace/append that source's graph |
-| `POST /sparql_update` | Update one explicitly owned data graph |
+| `POST /sparql_update` | Update one explicitly owned data graph; `insert_metadata()` uses it with the reserved `metadata` source |
+| `POST /metadata/documents` | Full subject URIs to their complete typed metadata documents, read from asserted source data |
 | `GET /sparql` | SPARQL protocol read endpoint |
-| `GET/POST /sparql_json` | SPARQL SELECT as `{columns, rows}` |
+| `GET/POST /sparql_json` | SPARQL SELECT as `{columns, rows, datatypes}`: `datatypes` names each cell's kind (`"iri"`, an XSD datatype IRI, or null) |
 | `GET /export_graph` | Serialized RDF; optional dependencies |
 | `POST /validate_graph` | SHACL validation report |
 | `GET /namespace/list` | Prefix map |
@@ -32,6 +33,7 @@ The server exposes semantic graph operations and one Escapement timeseries engin
 | `POST /resolve_unit`, `/resolve_conversion`, `/conversion_factors` | Unit resolution and conversion factors |
 | `GET /embedding_status` | Exact/semantic index state |
 | `GET /drivers/list`, `POST /drivers/start`, `/drivers/stop` | Driver lifecycle |
+| `/experiments/...` | Studies (`templates`), variables, runs, recordings, artifacts, and stream annotations; see the [experiment reference](experiments.md#http-api). Unknown runs return 404 |
 
 JSON values contain timestamp/value pairs. Integer timestamps are UTC nanoseconds;
 timezone-aware datetime strings are also accepted. Values are numbers or text,

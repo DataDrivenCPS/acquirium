@@ -22,6 +22,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Dict, List, Optional, Set, Tuple
 
+from acquirium.Client.explore.attributes import Registry
 from acquirium.Client.explore.compile import compile_sparql
 from acquirium.Client.explore.traverse import _fetch_source_uris, _fetch_target_accept, _prune_target_subtree
 from acquirium.Client.query_graph import QueryEdge, QueryGraph, QueryNode
@@ -127,6 +128,7 @@ def execute_placed(graph: QueryGraph, client, include_dependencies: bool = True)
 
     columns: Optional[List[str]] = None
     rows_out: List[list] = []
+    datatypes_out: List[list] = []
 
     def run_place(candidates: Dict[str, Set[str]]) -> None:
         nonlocal columns
@@ -135,7 +137,8 @@ def execute_placed(graph: QueryGraph, client, include_dependencies: bool = True)
         if not pairs:
             return
         g = _with_pairs(graph, edge, pairs, undrop=src_dropped)
-        res = client.sparql_query(compile_sparql(g), include_dependencies=include_dependencies)
+        res = client.sparql_query(compile_sparql(g, Registry(client)),
+                                  include_dependencies=include_dependencies)
         cols = res.get("columns", [])
         if columns is None:
             columns = list(cols)
@@ -145,6 +148,7 @@ def execute_placed(graph: QueryGraph, client, include_dependencies: bool = True)
             hit = {r[si] for r in rows if r[si] is not None}
             pending.difference_update(hit)
         rows_out.extend(rows)
+        datatypes_out.extend(res.get("datatypes") or [[None] * len(cols) for _ in rows])
 
     # place: the source's own connection points
     if own_map:
@@ -171,10 +175,11 @@ def execute_placed(graph: QueryGraph, client, include_dependencies: bool = True)
     if columns is None:
         # nothing was ever queried: fall back to an empty result with the
         # ordinary column set
-        probe = compile_sparql(_with_pairs(graph, edge, [], undrop=src_dropped))
+        probe = compile_sparql(_with_pairs(graph, edge, [], undrop=src_dropped), Registry(client))
         columns = [c.lstrip("?") for c in probe.split("\n", 1)[0].split()[2:]]
     if src_dropped and src_col in columns:
         si = columns.index(src_col)
         columns = [c for i, c in enumerate(columns) if i != si]
         rows_out = [[v for i, v in enumerate(r) if i != si] for r in rows_out]
-    return {"columns": columns, "rows": rows_out}
+        datatypes_out = [[v for i, v in enumerate(r) if i != si] for r in datatypes_out]
+    return {"columns": columns, "rows": rows_out, "datatypes": datatypes_out}
