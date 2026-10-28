@@ -253,31 +253,27 @@ class Core:
         return pages()
 
     def info(self, streams):
+        """Reading count and earliest and latest times per stream, from one
+        snapshot, without reading the rows."""
+
+        def iso(value):
+            if value is None:
+                return None
+            return (
+                pl.Series([value], dtype=pl.Int64)
+                .cast(pl.Datetime("ns", "UTC"))
+                .dt.to_string("%Y-%m-%dT%H:%M:%S%.9f%:z")
+                .item()
+            )
+
         snapshot = self.engine.snapshot()
         result = {}
         for stream in streams:
-            count, earliest, latest = 0, None, None
-            for batch in self.batches(stream, snapshot=snapshot, mode="coalesce"):
-                if not batch.num_rows:
-                    continue
-                count += batch.num_rows
-                earliest = earliest if earliest is not None else batch["ts"][0].value
-                latest = batch["ts"][-1].value
-
-            def iso(value):
-                if value is None:
-                    return None
-                return (
-                    pl.Series([value], dtype=pl.Int64)
-                    .cast(pl.Datetime("ns", "UTC"))
-                    .dt.to_string("%Y-%m-%dT%H:%M:%S%.9f%:z")
-                    .item()
-                )
-
+            stats = snapshot.stats(stream) or {"count": 0, "first_ns": None, "last_ns": None}
             result[stream] = dict(
-                row_count=count,
-                earliest=iso(earliest),
-                latest=iso(latest),
+                row_count=stats["count"],
+                earliest=iso(stats["first_ns"]),
+                latest=iso(stats["last_ns"]),
             )
         return result
 
