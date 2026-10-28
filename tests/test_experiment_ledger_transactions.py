@@ -126,6 +126,18 @@ def test_interrupted_cleanup_finishes_at_the_next_start(experiment_ledger, ledge
     assert _count(store, "experiment_streams") == 2
     assert len(_samples(store)) == 2
 
+    # A start that cannot clear them still starts, and keeps the rows.
+    with monkeypatch.context() as patch:
+        patch.setattr(store.samples, "clear", fail)
+        ExperimentStore(experiment_ledger, graph_store=ledger.metadata_graph.graph_store)
+    assert _count(store, "experiment_streams") == 2
+
+    # So does a ledger opened without Escapement, which cannot clear them.
+    samples, store.samples = store.samples, None
+    ExperimentStore(experiment_ledger, graph_store=ledger.metadata_graph.graph_store)
+    store.samples = samples
+    assert _count(store, "experiment_streams") == 2
+
     ExperimentStore(experiment_ledger, graph_store=ledger.metadata_graph.graph_store)
     assert _samples(store) == []
     assert _count(store, "experiment_streams") == 0

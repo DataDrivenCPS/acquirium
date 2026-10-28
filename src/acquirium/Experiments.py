@@ -13,6 +13,7 @@ import base64
 from fnmatch import fnmatchcase
 import io
 import json
+import logging
 import re
 import reprlib
 import warnings
@@ -42,6 +43,7 @@ from acquirium.ExperimentDeclarations import (
 )
 
 UTC = timezone.utc
+logger = logging.getLogger("acquirium.experiments")
 
 # Server receipt time is deliberately distinct from a caller's occurred_at.
 # The former answers when Acquirium learned something; the latter answers when
@@ -134,8 +136,12 @@ class ExperimentStore:
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_observations_variable_idx ON experiment_observations(variable_id, run_id, sequence)")
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_observations_ref_idx ON experiment_observations(ref_uri, range_start, range_end)")
         self._resolutions = {}
-        # Finish any deletion a crash interrupted.
-        self._cleanup_streams()
+        # Finish any deletion a crash interrupted. A failure leaves the rows
+        # for the next deletion or start; it must not keep the server down.
+        try:
+            self._cleanup_streams()
+        except Exception:
+            logger.exception("could not clear the samples of deleted experiment runs")
 
     def _resolve(self, text, kind):
         key = (text, kind)
@@ -472,9 +478,10 @@ class ExperimentStore:
         with self.store._own_conn() as conn:
             refs = [row[0] for row in self._execute(conn, "SELECT ref_uri FROM experiment_streams "
                     "WHERE run_id NOT IN (SELECT run_id FROM experiment_runs)").fetchall()]
-        if not refs:
+        # Without Escapement the rows are all that find these samples later.
+        if not refs or self.store.samples is None:
             return 0
-        cleared = self.store.samples.clear(refs) if self.store.samples is not None else 0
+        cleared = self.store.samples.clear(refs)
         with self.store._lock, self.store._write_conn() as conn:
             self._execute(conn, f"DELETE FROM experiment_streams WHERE ref_uri IN ({self._marks(refs)})", refs)
         return cleared

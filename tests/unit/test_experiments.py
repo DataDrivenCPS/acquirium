@@ -1279,3 +1279,11 @@ def test_cloudpickle_codec_saves_what_pickle_cannot():
     pytest.importorskip("cloudpickle")
     double = lambda value: 2 * value
     assert pickle.loads(aq.CloudpickleCodec().dumps(double))(4) == 8
+
+
+def test_a_read_up_to_end_includes_every_sample_within_its_microsecond():
+    end = datetime(2026, 1, 2, 0, 0, 0, 123456, tzinfo=timezone.utc)
+    end_us = int(end.timestamp()) * 1_000_000 + end.microsecond
+    # Reads are half-open, so samples at end_us*1000 up to +999 ns fall inside.
+    assert _after_ns(end) == end_us * 1000 + 1000
+    assert _after_ns(end.isoformat()) == _after_ns(end)
