@@ -265,3 +265,15 @@ class TestResolveConversion:
             client.resolve_conversion("mg/l", "psi")
 
 
+
+
+def test_recording_is_resent_while_the_server_is_at_capacity(offline):
+    def response(status, body):
+        reply = requests.Response()
+        reply.status_code, reply._content = status, body
+        reply.headers["Retry-After"] = "0"
+        return reply
+    with patch.object(offline._http, "post", side_effect=[response(503, b'{"detail": "full"}'),
+                                                          response(200, b'[{"sequence": 1}]')]) as post:
+        assert offline.record_experiment_batch("run", [{"form": "value"}]) == [{"sequence": 1}]
+    assert post.call_count == 2

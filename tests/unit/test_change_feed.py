@@ -158,3 +158,31 @@ def test_http_capacity_is_retryable_and_unpublished_admission_is_not_in_feed(
             manager.core.engine.step()  # The stopped processor no longer owns stepping.
     finally:
         manager.close()
+
+
+def test_a_recording_refused_at_capacity_is_retryable_and_left_uncommitted(tmp_path, monkeypatch):
+    from acquirium.Server.manager import Manager
+
+    manager = Manager(data_dir=tmp_path, exact_only=True, max_pending_requests=1)
+    try:
+        experiments = manager.experiments
+        study = experiments.define("capacity")
+        level = experiments.declare(study["template_id"], "level", "output", "timeseries", {})
+        run = experiments.start(study["template_id"], {})["run_id"]
+        manager.core.processor.stop(drain=False)
+        monkeypatch.setattr(api.state, "manager", manager, raising=False)
+        http = TestClient(api)
+        try:
+            entries = [{"form": "samples", "variable_id": level["variable_id"],
+                        "samples": [["2026-01-01T00:00:00+00:00", 1.0]]}]
+            # The first fills the inbox; it commits without waiting to publish.
+            assert http.post(f"/experiments/runs/{run}/record", json=entries).status_code == 200
+            response = http.post(f"/experiments/runs/{run}/record", json=entries)
+            assert response.status_code == 503 and response.headers["Retry-After"] == "1"
+        finally:
+            http.close()
+            manager.core.engine.step()
+        manager.core.processor = manager.core.engine.start()
+        assert len(experiments.observations(study["template_id"])) == 1
+    finally:
+        manager.close()

@@ -734,7 +734,9 @@ def test_record_files_and_streams(study_api, tmp_path):
     assert run.observations(stream).latest().ref_uri == recorded.ref_uri
     client.timeseries_df.return_value = _stream_frame(recorded.ref_uri, [(when, 10.0)])
     assert recorded.dataframe(limit=5).rows() == [(when, 10.0)]
-    client.timeseries_df.assert_called_once_with(recorded.ref_uri, start=None, end_ns=None, limit=5)
+    # The handle reads its own samples even before they publish.
+    assert isinstance(recorded._after, int)
+    client.timeseries_df.assert_called_once_with(recorded.ref_uri, start=None, end_ns=None, after=recorded._after, limit=5)
     assert str(recorded) == recorded.ref_uri == str(compute_ref_uri(f"experiment/{run.run_id}", _stream_name(stream.variable_id, ())))
     for variable in (file, stream):
         with pytest.raises(TypeError, match="occurred_at"):

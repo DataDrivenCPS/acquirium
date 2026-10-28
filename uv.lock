@@ -98,7 +98,7 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "duckdb", specifier = ">=0.10.0" },
-    { name = "escapement-db", git = "ssh://git@github.com/gtfierro/escapement.git?rev=2ba07bd9f1e50c48f1a51645e365eb52b4a5522f" },
+    { name = "escapement-db", git = "ssh://git@github.com/gtfierro/escapement.git?rev=64e6712060e60fd0edc1a458ba1d258764be305c" },
     { name = "fastapi", specifier = ">=0.125.0" },
     { name = "fastembed", specifier = ">=0.4.0" },
     { name = "fastexcel", specifier = ">=0.17.2" },
@@ -814,7 +814,7 @@ wheels = [
 [[package]]
 name = "escapement-db"
 version = "0.1.0"
-source = { git = "ssh://git@github.com/gtfierro/escapement.git?rev=2ba07bd9f1e50c48f1a51645e365eb52b4a5522f#2ba07bd9f1e50c48f1a51645e365eb52b4a5522f" }
+source = { git = "ssh://git@github.com/gtfierro/escapement.git?rev=64e6712060e60fd0edc1a458ba1d258764be305c#64e6712060e60fd0edc1a458ba1d258764be305c" }
 dependencies = [
     { name = "polars" },
     { name = "pyarrow" },

@@ -402,6 +402,7 @@ An Observation exposes `experiment_id`, `variable`, `sequence`, `recorded_at`,
 Time-series records also carry `ref_uri`, `range_start`, `range_end`, and
 `epoch`: the Escapement epoch they were recorded at, which includes the
 recorded samples and everything written to Escapement before the recording.
+Reading observations waits, at most an epoch, for data recorded moments ago.
 Files and tables carry `artifact_digest`, `filename`, `media_type`, and
 `byte_length`. A table's file is `<label>.parquet` with media type
 `application/vnd.apache.parquet`.
@@ -671,7 +672,7 @@ The HTTP API calls a Study a `template`. `template_id`, `variable_id`, and
 | `POST` | `/experiments/templates/{template_id}/observations/query` | Retrieve observations for graph-selected runs |
 | `POST` | `/experiments/metadata/sync` | Backfill or repair the experiment metadata graph |
 | `POST` | `/experiments/runs/{run_id}/variables/{variable_id}/observations` | Record a value or reference |
-| `POST` | `/experiments/runs/{run_id}/record` | Publish samples to Escapement, then record values, artifacts, and durable graph intent in one SQL transaction; see [Batch transport](#batch-transport) |
+| `POST` | `/experiments/runs/{run_id}/record` | Send samples to Escapement, then record values, artifacts, and durable graph intent in one SQL transaction; a full Escapement inbox returns 503 with `Retry-After` before anything commits. See [Batch transport](#batch-transport) |
 | `POST` | `/experiments/runs/{run_id}/observations/batch` | Record an ordered batch atomically, including inline artifacts; see [Batch transport](#batch-transport) |
 | `POST` | `/experiments/runs/{run_id}/stream-annotations` | Tag a stream interval |
 | `GET` | `/experiments/stream-annotations` | Find annotations by Study, run, stream, and overlapping time |

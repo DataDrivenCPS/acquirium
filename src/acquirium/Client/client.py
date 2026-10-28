@@ -2,6 +2,7 @@ from typing import Optional, Iterator, Iterable, Any, Callable, Mapping, TYPE_CH
 from datetime import datetime, timezone
 import json
 import re
+import time
 import uuid
 import requests
 from requests import HTTPError
@@ -138,8 +139,16 @@ class AcquiriumClient:
         return self._experiment_get(f"/experiments/templates/{template_id}/runs", self._experiment_params(filters))
     def get_experiment(self, run_id: str) -> dict:
         return self._experiment_get(f"/experiments/runs/{run_id}")
-    def record_experiment_batch(self, run_id: str, entries: list[dict]) -> list[dict]:
-        return self._experiment_post(f"/experiments/runs/{run_id}/record", entries)
+    def record_experiment_batch(self, run_id: str, entries: list[dict], *, timeout: float = 60.0) -> list[dict]:
+        """Record a batch, resending it while the server answers 503: the
+        engine refused it before any observation committed."""
+        deadline = time.monotonic() + timeout
+        while True:
+            response = self._http.post(f"{self.base_url}/experiments/runs/{run_id}/record", json=entries)
+            if response.status_code != 503 or time.monotonic() >= deadline:
+                _raise_for_status(response)
+                return response.json()
+            time.sleep(float(response.headers.get("Retry-After", 1)))
 
     def observe_experiment(self, run_id: str, variable_id: str, **body: Any) -> dict: return self._experiment_post(f"/experiments/runs/{run_id}/variables/{quote(variable_id, safe='')}/observations", body)
     def observe_experiment_batch(self, run_id: str, observations: list[dict]) -> list[dict]:
@@ -266,11 +275,13 @@ class AcquiriumClient:
         value_mode: str = "default",
         epoch: int | None = None,
         end_ns: int | None = None,
+        after: int | None = None,
     ) -> pl.DataFrame:
         """
         Fetch the full timeseries payload and return a single Polars DataFrame.
         Best for small to medium responses. Bounds are half-open; ``end_ns``
-        gives the end in UTC nanoseconds instead of ``end``.
+        gives the end in UTC nanoseconds instead of ``end``. ``after`` is a
+        request sequence the read waits for and includes.
         """
         url = f"{self.base_url}/timeseries"
         params = {
@@ -282,6 +293,7 @@ class AcquiriumClient:
             "order": order,
             "value_mode": value_mode,
             "epoch": epoch,
+            "after": after,
         }
         headers = {"Accept": "application/vnd.apache.arrow.stream"}
 

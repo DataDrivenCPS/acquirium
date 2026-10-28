@@ -8,6 +8,7 @@ from __future__ import annotations
 import uuid
 
 import polars as pl
+from escapement import Receipt
 
 from acquirium.core import Core
 
@@ -31,15 +32,27 @@ class EscapementSamples:
         self.timeout = timeout
 
     def write(self, source: str, frame: pl.DataFrame | None) -> int:
-        """Ingest ``frame`` and return the epoch that publishes it and every
-        request accepted before it. Without a frame, only wait for those."""
+        """Ingest ``frame`` without waiting for it to publish, and return the
+        sequence of the last request Escapement has accepted, which covers
+        the frame and everything written before it."""
         if frame is None or frame.is_empty():
-            return self.core.settle(timeout=self.timeout).epoch
+            return self.core.engine.status()["accepted"]
         frame = frame.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
-        receipt = None
         for offset in range(0, frame.height, MAX_REQUEST_ROWS):
             receipt = self.core.ingest(source, str(uuid.uuid4()), frame.slice(offset, MAX_REQUEST_ROWS))
-        return self.core.wait(receipt, timeout=self.timeout).epoch
+        return receipt.sequence
+
+    def wait(self, sequence: int) -> None:
+        """Wait until the request at ``sequence`` is published."""
+        self.core.wait(Receipt(sequence), timeout=self.timeout)
+
+    def epochs(self, sequences) -> dict[int, int]:
+        """The epoch that published each sequence, waiting for any not yet."""
+        sequences = sorted(set(sequences))
+        if not sequences:
+            return {}
+        self.wait(sequences[-1])
+        return dict(zip(sequences, self.core.engine.epochs_of(sequences)))
 
     def count(self, refs) -> int:
         """How many samples ``refs`` hold, without reading them."""
