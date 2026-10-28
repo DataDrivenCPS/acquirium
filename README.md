@@ -83,6 +83,9 @@ receipts, snapshots, restart, and failure behavior.
 Start with [the documentation index](docs/_index.md),
 [semantic queries](docs/tutorials/querying.md), and
 [the HTTP API](docs/reference/http-api.md).
+To record experiments, see [your first experiment](docs/tutorials/first-experiment.py),
+[record experiments](docs/how-to/record-experiments.md), and the
+[experiment reference](docs/reference/experiments.md).
 
 ```sh
 uv run pytest tests/unit

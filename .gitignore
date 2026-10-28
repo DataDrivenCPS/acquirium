@@ -2,6 +2,9 @@
 .acquirium
 .streaming-workload/
 examples/transformation/.data/
+examples/flexpse/.data/
+examples/flexpse-codec/.data/
+examples/pump-tank/.data/
 
 scripts/dev_examples
 # Byte-compiled / optimized / DLL files
@@ -221,3 +224,4 @@ scripts/benchmark/scalability/*.csv
 dpr-trailer-data/
 
 .run_logs
+scripts/dev/

@@ -1,0 +1,14 @@
+Text-matcher failures — 2026-05-28T00:41:37.784328
+============================================================
+
+CLASS misses (4):
+  'RO membrane': expected one of ('urn:nawi-water-ontology#ReverseOsmosisMembrane',), got 'urn:nawi-water-ontology#Process-ReverseOsmosis'
+  'RO': expected one of ('urn:nawi-water-ontology#ReverseOsmosisMembrane',), got 'urn:nawi-water-ontology#Process-ReverseOsmosis'
+  'UF': expected one of ('urn:nawi-water-ontology#UltrafiltrationUnit',), got 'http://data.ashrae.org/standard223#Signal-ULF'
+  'chlorination basin': expected one of ('urn:nawi-water-ontology#ChlorinationBasin',), got 'urn:nawi-water-ontology#Process-Chlorination'
+
+PREDICATE misses (0):
+
+UNIT misses (0):
+
+QUANTITY_KIND misses (0):

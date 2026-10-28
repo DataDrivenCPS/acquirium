@@ -41,6 +41,7 @@ _logger = logging.getLogger("acquirium.config")
 _SERVER_ENV_MAP: dict[str, str] = {
     "data_dir": "ACQUIRIUM_DATA_DIR",
     "engine_path": "ACQUIRIUM_ENGINE_PATH",
+    "experiments_path": "ACQUIRIUM_EXPERIMENTS_PATH",
     "engine_workers": "ACQUIRIUM_ENGINE_WORKERS",
     "python_pool_size": "ACQUIRIUM_PYTHON_POOL_SIZE",
     "python_max_worker_jobs": "ACQUIRIUM_PYTHON_MAX_WORKER_JOBS",
@@ -94,8 +95,8 @@ class LoadedConfig:
             if key not in server:
                 continue
             value = server[key]
-            # A PostgreSQL URL names the engine's database, not a file.
-            if key in {"data_dir", "engine_path", "graph_path"} and not str(
+            # A PostgreSQL URL names a database, not a file.
+            if key in {"data_dir", "engine_path", "experiments_path", "graph_path"} and not str(
                 value
             ).startswith(("postgres://", "postgresql://")):
                 path = Path(value)

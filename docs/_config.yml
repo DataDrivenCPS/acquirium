@@ -1,0 +1,37 @@
+# Jupyter Book settings for the Acquirium docs served at watermetadata.org/acquirium
+
+title: Acquirium Documentation
+author: NAWI Project Team
+
+# design notes in plans/ are not published
+exclude_patterns:
+  - plans/*
+
+execute:
+  execute_notebooks: "off"
+
+repository:
+  url: https://github.com/DataDrivenCPS/acquirium
+  path_to_book: docs
+  branch: main
+
+html:
+  use_issues_button: true
+  use_repository_button: true
+  extra_navbar: '<a href="/">watermetadata.org</a> · <a href="/docs">Ontology docs</a>'
+
+parse:
+  myst_enable_extensions:
+    - colon_fence
+    - deflist
+    - linkify
+    - substitution
+    - tasklist
+    - attrs_inline
+
+sphinx:
+  config:
+    # acquirium docs carry their title in frontmatter (`title:`) instead of an H1
+    myst_title_to_header: true
+    # auto-generate #slug anchors for headings so GitHub-style section links resolve
+    myst_heading_anchors: 4

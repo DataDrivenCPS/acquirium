@@ -62,6 +62,7 @@ Tutorials walk through the capabilities of Acquirium. We recommend starting here
 - [Your first driver](tutorials/first-driver.md) — authoring a CSV driver step by step without a plant model
 - [A driver against an existing plant model](tutorials/driver-with-a-plant-model.md) — the same driver with a plant model, binding its streams to the model's points
 - [Your first app](tutorials/first-app.md) — derive a new stream from stored data and watch it stay current
+- [Your first experiment](tutorials/first-experiment.py) — optimize a pump schedule with SciPy, record each scenario, and compare runs
 
 The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acquirium/tree/main/notebooks/watertap) are runnable tutorials too: a quick start, the query interface feature by feature, a regulatory-compliance check and a soft sensor.
 
@@ -75,6 +76,9 @@ The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acq
 - [Consume streaming changes](how-to/consume-streaming-changes.md) — resumable signed changes, epoch completion, and a sustained workload
 - [Profile soft-sensor execution](../examples/profiling/README.md) — native epoch and Python stage measurements, with [initial results](profiling/2026-10-18/README.md)
 - [Check, deploy, and repair an app](how-to/check-deploy-apps.md) — dry runs, deployment, removal, and execution controls
+- [Compare runs with formulas](how-to/compare-experiment-runs.md) — one row per run, formulas in Polars or plain Python
+- [Record experiments](how-to/record-experiments.md) — record inputs and results, find runs by metadata, and annotate stream intervals
+- [Record a whole model](how-to/record-a-whole-model.md) — explicit general and Pyomo adapters, JSON metadata, and sampling
 - [Run the server](how-to/run-the-server.md) — the server command, startup, Docker
 - [Start from a script](how-to/local-runtime.md) — `aq.init()`, config discovery, and local server ownership
 - [Debugging queries for an unexpected result](how-to/debug-an-empty-query.md) — the five usual causes
@@ -91,7 +95,9 @@ The reference guides contain complete interface of each module:
 - [Acquirium Client API](reference/client-api.md) — every method of `Acquirium`, `Query`, `DataObject`, `AcquiriumClient`
 - [Driver reference](reference/drivers.md) — class hierarchy, hooks, state, config keys, built-in drivers, CLI
 - [App reference](reference/apps.md) — the app API, output requirements, and processing rules
+- [Experiment reference](reference/experiments.md) — Studies, variables, runs, stream annotations, and endpoints
 - [Server configuration](reference/server-config.md) — `[server]`, environment variables, `[ontologies]`, the endpoint table
+- [Storage migrations](reference/storage-migrations.md) — versioned schema upgrades and adding future migrations
 - [HTTP API](reference/http-api.md) — the raw endpoints
 - [Glossary](reference/glossary.md) — URIs, CURIEs, free text, the plant model, querying and data terms
 
@@ -104,6 +110,7 @@ These contain explanation behind the motivation of key design choices we made wh
 - [Units](explanation/units.md) — point units, storage units, compatibility, automatic and requested conversion
 - [Drivers](explanation/drivers.md) — why drivers, and the sMAP inspiration
 - [Apps](explanation/apps.md) — how apps keep derived streams current as readings arrive and are corrected
+- [Experiments](explanation/experiments.md) — how Studies, runs, stream intervals, and artifacts preserve analysis context
 - [The data stream lifecycle](explanation/stream-lifecycle.md) — how streams are identified, stored and found again
 - [Text resolution](explanation/text-resolution.md) — how matching works
 - [Escapement core](explanation/escapement-core.md) — native scheduling, history, snapshots, and recovery

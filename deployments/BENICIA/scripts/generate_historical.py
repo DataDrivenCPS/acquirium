@@ -49,7 +49,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("--model", default=str(DEPLOYMENT / "benicia-model-100.ttl"),
+    p.add_argument("--model", default=str(DEPLOYMENT / "benicia-model-large.ttl"),
                    help="Path to the Benicia model TTL.")
     p.add_argument("--output-dir", default=str(DEPLOYMENT / "data" / "historical"),
                    help="Directory to write the parquet file into.")

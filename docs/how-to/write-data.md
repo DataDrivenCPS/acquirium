@@ -38,6 +38,10 @@ labelled with its `ref_name` unless you pass `label`.
 topology queries do not reach it.
 `unit`, `quantity_kind`, `medium` and `substance` accept free text or URIs,
 like everywhere else.
+An optional `metadata` key takes the same value map `insert_metadata()`
+takes, written on the point together with the stream: each key becomes a
+queryable attribute of the point.
+See [Attach metadata to a node](attach-metadata.md).
 
 When `point_uri` names a point the graph already has, the metadata you pass
 is checked against it.
