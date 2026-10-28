@@ -2,11 +2,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from acquirium.ExperimentValues import timestamp as _utc
 import polars as pl
+
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def _after_ns(value: datetime | str) -> int:
+    """UTC nanoseconds just after ``value``: a half-open read up to it
+    includes it."""
+    return (_utc(value) - _EPOCH) // timedelta(microseconds=1) * 1000 + 1
 
 
 def samples_frame(frame: pl.DataFrame) -> pl.DataFrame:
@@ -33,7 +42,8 @@ class Stream:
 
     def dataframe(self, *, start: datetime | str | None = None, end: datetime | str | None = None,
                   **options: Any) -> pl.DataFrame:
-        """Read the stream's samples as ``time`` and ``value`` columns.
+        """Read the stream's samples from ``start`` to ``end``, inclusive, as
+        ``time`` and ``value`` columns.
 
         Other options (``limit``, ``order``, ``timeout``, ``value_mode``) pass
         through to the time-series read.
@@ -43,7 +53,8 @@ class Stream:
         frame = self._client.timeseries_df(
             self.ref_uri,
             start=_utc(start).isoformat() if start is not None else None,
-            end=_utc(end).isoformat() if end is not None else None,
+            # Reads are half-open, so read up to just after the end.
+            end_ns=_after_ns(end) if end is not None else None,
             **options,
         )
         return samples_frame(frame)

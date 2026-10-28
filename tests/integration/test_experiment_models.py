@@ -145,3 +145,25 @@ def test_experiment_stream_identity_survives_label_collisions_and_resume(tmp_pat
         resumed.finish()
     finally:
         aq.shutdown()
+
+
+@pytest.mark.integration
+def test_observation_reads_as_recorded_at_its_epoch(tmp_path):
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    ac = aq.init(data_dir=tmp_path / "epoch-server")
+    try:
+        ac.register_streams([{"source_id": "site", "ref_name": "flow", "value_kind": "numeric"}])
+        ac.insert_timeseries("site", "flow", [(start, 5)])
+        study = ac.study.define("as recorded")
+        flow = study.input("flow").timeseries()
+        run = study.start()
+        flow.record(ac.stream("site", "flow").between(start, start))
+        run.finish()
+        # A later correction changes the current reading, not the recorded one.
+        ac.insert_timeseries("site", "flow", [(start, 7)])
+        [observation] = run.observations("flow").all()
+        assert observation.epoch is not None
+        assert observation.dataframe()["value"].to_list() == [7.]
+        assert observation.dataframe(epoch=observation.epoch)["value"].to_list() == [5.]
+    finally:
+        aq.shutdown()

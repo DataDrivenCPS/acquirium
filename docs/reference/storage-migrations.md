@@ -79,5 +79,7 @@ older events retain the experiment graph as their default target. Source
 clears are ordering barriers. Delivery does not perform another SQL reference
 registration. Artifact bytes are stored in the SQL store, content-addressed
 and split into chunks, so they commit and delete with the rows that reference
-them. Ledgers from releases that kept samples in SQL are not migrated; recreate
-them.
+them. Version 4 also adds `experiment_observation_epochs`, the Escapement epoch
+each time-series observation was recorded at.
+Experiment data recorded with development builds that kept samples in SQL is
+not migrated; no release stored experiments.
