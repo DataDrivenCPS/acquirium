@@ -262,33 +262,33 @@ def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
 
 
 def _native_resolution(original_data: pl.DataFrame) -> timedelta | None:
-        """Median gap between consecutive timestamps, or ``None`` with fewer
-        than 2 measurements. The median keeps one unusually close pair of
-        readings from making the inferred resolution needlessly fine.
-        """
-        if original_data.height < 2:
-            return None
-        diffs = original_data["time"].diff().drop_nulls()
-        if diffs.len() == 0:
-            return None
-        return diffs.median()
+    """Median gap between consecutive timestamps, or ``None`` with fewer
+    than 2 measurements. The median keeps one unusually close pair of
+    readings from making the inferred resolution needlessly fine.
+    """
+    if original_data.height < 2:
+        return None
+    diffs = original_data["time"].diff().drop_nulls()
+    if diffs.len() == 0:
+        return None
+    return diffs.median()
 
 
 def _round_to_epoch_grid(dt: datetime, every: timedelta) -> datetime:
-        """Round ``dt`` to the nearest multiple of ``every`` since the UTC
-        epoch, an exact half-step rounding up. The fixed epoch is what puts
-        independently sampled series on the same grid times.
-        """
-        epoch = datetime(1970, 1, 1, tzinfo=dt.tzinfo)
-        remainder = (dt - epoch) % every
-        rounded = dt - remainder
-        return rounded + every if 2 * remainder >= every else rounded
+    """Round ``dt`` to the nearest multiple of ``every`` since the UTC
+    epoch, an exact half-step rounding up. The fixed epoch is what puts
+    independently sampled series on the same grid times.
+    """
+    epoch = datetime(1970, 1, 1, tzinfo=dt.tzinfo)
+    remainder = (dt - epoch) % every
+    rounded = dt - remainder
+    return rounded + every if 2 * remainder >= every else rounded
 
 
 def _build_time_grid(start: datetime, end: datetime, every: timedelta) -> list[datetime]:
-        """Grid times from ``start`` to ``end`` inclusive (both already grid times)."""
-        n_steps = int((end - start) // every)
-        return [start + i * every for i in range(n_steps + 1)]
+    """Grid times from ``start`` to ``end`` inclusive (both already grid times)."""
+    n_steps = int((end - start) // every)
+    return [start + i * every for i in range(n_steps + 1)]
 
 
 @dataclass(frozen=True)
