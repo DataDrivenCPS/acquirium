@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import polars as pl
 import pytest
 
-from acquirium.Client.data_object import _apply_downsample, _pivot_split_values, _snap_to_grid
+from acquirium.Client.data_object import DataObject, _pivot_split_values
 
 
 def _tall(keys):
@@ -54,7 +54,7 @@ class TestApplyDownsample:
         # a 1-min ramp sampled on whole minutes: 00:30 is in the 01:00 window, 01:30 is not
         times = [self.ORIGIN + timedelta(minutes=m) for m in range(30, 91)]
         with pytest.warns(UserWarning, match=r"2 measurement\(s\) in 'ramp' fall exactly on a window boundary"):
-            out = _apply_downsample(
+            out = DataObject._apply_downsample(
                 _frame(times, [float(m) for m in range(30, 91)]), self.ORIGIN, self.EVERY, "mean", label="ramp",
             )
         assert out["value"].to_list() == [59.5, 90.0]
@@ -62,17 +62,17 @@ class TestApplyDownsample:
     def test_measurements_off_window_boundary_do_not_warn(self):
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            _apply_downsample(self._series(self.VALUES), self.ORIGIN, self.EVERY, "median")
+            DataObject._apply_downsample(self._series(self.VALUES), self.ORIGIN, self.EVERY, "median")
 
     def test_median(self):
-        out = _apply_downsample(self._series(self.VALUES), self.ORIGIN, self.EVERY, "median")
+        out = DataObject._apply_downsample(self._series(self.VALUES), self.ORIGIN, self.EVERY, "median")
         assert out["time"].to_list() == [self.ORIGIN, self.ORIGIN + self.EVERY]
         assert out["value"].to_list() == [2.0, 3.0]
 
     def test_window_is_centered_and_half_open(self):
         minutes = [-30, 29, 30, 89]
         times = [self.ORIGIN + timedelta(minutes=m) for m in minutes]
-        snapped = _snap_to_grid(_frame(times, [0.0] * 4), self.ORIGIN, self.EVERY)
+        snapped = DataObject._snap_to_grid(_frame(times, [0.0] * 4), self.ORIGIN, self.EVERY)
         assert snapped["time"].to_list() == [self.ORIGIN, self.ORIGIN, self.ORIGIN + self.EVERY, self.ORIGIN + self.EVERY]
         assert snapped["offset_us"].to_list() == [m * 60_000_000 for m in (-30, 29, -30, 29)]
 
@@ -81,29 +81,29 @@ class TestApplyDownsample:
         minutes = [-20, 5, 25,  # closest to ORIGIN is +5
                    50, 70]      # tie around ORIGIN + 1h: the earlier (+50) wins
         times = [self.ORIGIN + timedelta(minutes=m) for m in minutes]
-        out = _apply_downsample(_frame(times, [1.0, 2.0, 3.0, 4.0, 5.0]), self.ORIGIN, self.EVERY, method)
+        out = DataObject._apply_downsample(_frame(times, [1.0, 2.0, 3.0, 4.0, 5.0]), self.ORIGIN, self.EVERY, method)
         assert out["value"].to_list() == [2.0, 4.0]
 
     def test_single_measurement_per_grid_time_needs_no_method(self):
         times = [self.ORIGIN + timedelta(minutes=7), self.ORIGIN + timedelta(hours=1, minutes=7)]
-        out = _apply_downsample(_frame(times, [1.0, 2.0]), self.ORIGIN, self.EVERY, None)
+        out = DataObject._apply_downsample(_frame(times, [1.0, 2.0]), self.ORIGIN, self.EVERY, None)
         assert out["time"].to_list() == [self.ORIGIN, self.ORIGIN + self.EVERY]
         assert out["value"].to_list() == [1.0, 2.0]
 
     def test_several_measurements_without_method_raises(self):
         with pytest.raises(ValueError, match="downsample=None"):
-            _apply_downsample(self._series(self.VALUES), self.ORIGIN, self.EVERY, None)
+            DataObject._apply_downsample(self._series(self.VALUES), self.ORIGIN, self.EVERY, None)
 
     def test_multimodal_mode_warns_and_takes_median_of_modes(self):
         with pytest.warns(UserWarning, match=r"1 of 2 grid times in 'flow' were multimodal"):
-            out = _apply_downsample(self._series(self.VALUES), self.ORIGIN, self.EVERY, "mode", label="flow")
+            out = DataObject._apply_downsample(self._series(self.VALUES), self.ORIGIN, self.EVERY, "mode", label="flow")
         assert out.columns == ["time", "value"]
         assert out["value"].to_list() == [2.0, 2.0]
 
     def test_unimodal_mode_does_not_warn(self):
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            out = _apply_downsample(self._series(self.VALUES[:6]), self.ORIGIN, self.EVERY, "mode")
+            out = DataObject._apply_downsample(self._series(self.VALUES[:6]), self.ORIGIN, self.EVERY, "mode")
         assert out["value"].to_list() == [2.0]
 
 

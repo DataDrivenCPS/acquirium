@@ -734,7 +734,7 @@ class Q:
             # Two points, reconciled onto a common 10-second grid:
             df = q.reconcile(["a", "b"], resolution="10s", upsample="interpolate", downsample="mean")
         """
-        from acquirium.Client.data_object import _as_utc_datetime, _infer_resolution, _parse_resolution
+        from acquirium.Client.data_object import DataObject, _as_utc_datetime
 
         def fetch(pad: timedelta) -> DataObject:
             return self.data(
@@ -749,14 +749,14 @@ class Q:
             target = resolution
         else:
             if resolution is not None:
-                target = _parse_resolution(resolution)
+                target = DataObject._parse_resolution(resolution)
             else:
                 # the padding depends on the resolution, so infer it from the unpadded data first
                 try:
                     native = fetch(timedelta(0))._native_series(points)
                 except ValueError as e:
                     raise ValueError(f"reconcile: {e}") from e
-                target = _infer_resolution(list(native.values()))
+                target = DataObject._infer_resolution(list(native.values()))
             data = fetch(target / 2)
 
         df = data.reconcile(
