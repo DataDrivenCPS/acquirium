@@ -749,11 +749,11 @@ class Q:
             target = resolution
         else:
             if resolution is not None:
-                target = DataObject._parse_resolution(resolution)
+                target = DataObject.parse_resolution(resolution)
             else:
                 # the padding depends on the resolution, so infer it from the unpadded data first
                 try:
-                    native = fetch(timedelta(0))._native_series(points)
+                    native = fetch(timedelta(0)).native_series(points)
                 except ValueError as e:
                     raise ValueError(f"reconcile: {e}") from e
                 target = DataObject._infer_resolution(list(native.values()))

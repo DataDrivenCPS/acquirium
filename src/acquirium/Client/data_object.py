@@ -261,6 +261,36 @@ def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
     return wide.select(["time", *value_cols]).sort("time")
 
 
+def _native_resolution(original_data: pl.DataFrame) -> timedelta | None:
+        """Median gap between consecutive timestamps, or ``None`` with fewer
+        than 2 measurements. The median keeps one unusually close pair of
+        readings from making the inferred resolution needlessly fine.
+        """
+        if original_data.height < 2:
+            return None
+        diffs = original_data["time"].diff().drop_nulls()
+        if diffs.len() == 0:
+            return None
+        return diffs.median()
+
+
+def _round_to_epoch_grid(dt: datetime, every: timedelta) -> datetime:
+        """Round ``dt`` to the nearest multiple of ``every`` since the UTC
+        epoch, an exact half-step rounding up. The fixed epoch is what puts
+        independently sampled series on the same grid times.
+        """
+        epoch = datetime(1970, 1, 1, tzinfo=dt.tzinfo)
+        remainder = (dt - epoch) % every
+        rounded = dt - remainder
+        return rounded + every if 2 * remainder >= every else rounded
+
+
+def _build_time_grid(start: datetime, end: datetime, every: timedelta) -> list[datetime]:
+        """Grid times from ``start`` to ``end`` inclusive (both already grid times)."""
+        n_steps = int((end - start) // every)
+        return [start + i * every for i in range(n_steps + 1)]
+
+
 @dataclass(frozen=True)
 class BindingInfo:
     """Lightweight metadata for a single (nid, point_uri, ref_uri) data binding."""
@@ -1132,15 +1162,13 @@ class DataObject:
     # Reconciliation
     # ------------------------------------------------------------------
 
-    _UPSAMPLE_METHODS = frozenset({"interpolate", "copy", "ffill", "zero", "default_value", "null"})
-    _DOWNSAMPLE_METHODS = frozenset(
+    UPSAMPLE_METHODS = frozenset({"interpolate", "copy", "ffill", "zero", "default_value", "null"})
+    DOWNSAMPLE_METHODS = frozenset(
         {"mean", "average", "median", "mode", "ignore_intermediate", "closest", "min", "max"}
     )
-    # evaluated at grid times from the original measurements' timestamps
-    _EXACT_TIME_UPSAMPLE_METHODS = frozenset({"interpolate", "copy", "ffill"})
-    # 5 columns already give C(5, 2) = 10 differences
-    _MAX_DIFFERENCE_POINTS = 5
-    _DURATION_UNIT_SECONDS = {
+    EXACT_TIME_UPSAMPLE_METHODS = frozenset({"interpolate", "copy", "ffill"})
+    MAX_DIFFERENCE_POINTS = 5
+    DURATION_UNIT_SECONDS = {
         "ns": 1e-9,
         "us": 1e-6,
         "ms": 1e-3,
@@ -1151,10 +1179,10 @@ class DataObject:
         "d": 86400.0,
         "w": 604800.0,
     }
-    _DURATION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(ns|us|ms|min|[smhdw])\s*$")
+    DURATION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(ns|us|ms|min|[smhdw])\s*$")
 
     @classmethod
-    def _parse_resolution(cls, resolution: str | timedelta) -> timedelta:
+    def parse_resolution(cls, resolution: str | timedelta) -> timedelta:
         """Parse a ``timedelta`` or a duration string such as ``"10s"``,
         ``"1.5m"``, ``"2h"``, ``"1d"`` or ``"1w"`` into a ``timedelta``
         (``"m"`` is minutes, as in polars).
@@ -1178,43 +1206,13 @@ class DataObject:
             f"reconcile: resolution must be a str or timedelta, got {type(resolution).__name__}"
         )
 
-    @staticmethod
-    def _native_resolution(original_data: pl.DataFrame) -> timedelta | None:
-        """Median gap between consecutive timestamps, or ``None`` with fewer
-        than 2 measurements. The median keeps one unusually close pair of
-        readings from making the inferred resolution needlessly fine.
-        """
-        if original_data.height < 2:
-            return None
-        diffs = original_data["time"].diff().drop_nulls()
-        if diffs.len() == 0:
-            return None
-        return diffs.median()
-
     @classmethod
-    def _infer_resolution(cls, series: list[pl.DataFrame]) -> timedelta:
+    def infer_resolution(cls, series: list[pl.DataFrame]) -> timedelta:
         """The finest native resolution among ``series``."""
-        intervals = [r for r in map(cls._native_resolution, series) if r is not None]
+        intervals = [r for r in map(_native_resolution, series) if r is not None]
         if not intervals:
             return timedelta(seconds=1)
         return min(intervals)
-
-    @staticmethod
-    def _round_to_epoch_grid(dt: datetime, every: timedelta) -> datetime:
-        """Round ``dt`` to the nearest multiple of ``every`` since the UTC
-        epoch, an exact half-step rounding up. The fixed epoch is what puts
-        independently sampled series on the same grid times.
-        """
-        epoch = datetime(1970, 1, 1, tzinfo=dt.tzinfo)
-        remainder = (dt - epoch) % every
-        rounded = dt - remainder
-        return rounded + every if 2 * remainder >= every else rounded
-
-    @staticmethod
-    def _build_time_grid(start: datetime, end: datetime, every: timedelta) -> list[datetime]:
-        """Grid times from ``start`` to ``end`` inclusive (both already grid times)."""
-        n_steps = int((end - start) // every)
-        return [start + i * every for i in range(n_steps + 1)]
 
     @staticmethod
     def _downsample_expr(method: str) -> pl.Expr:
@@ -1352,7 +1350,7 @@ class DataObject:
         filled = cls._apply_upsample(combined, method, fill_value)
         return grid_df.join(filled.select("time", "value"), on="time", how="left").sort("time")
 
-    def _native_series(self, points: list[str] | None = None) -> dict[str, pl.DataFrame]:
+    def native_series(self, points: list[str] | None = None) -> dict[str, pl.DataFrame]:
         """Extract each selected point's original ``[time, value]`` series
         (no resampling), keyed by the column name :meth:`dataframe` gives it
         (see :meth:`_column_labeler`) and ordered like its wide columns.
@@ -1509,7 +1507,7 @@ class DataObject:
             return pl.DataFrame(schema=empty_schema)
 
         try:
-            series = self._native_series(aliases)
+            series = self.native_series(aliases)
         except ValueError as e:
             raise ValueError(f"reconcile: {e}") from e
 
@@ -1528,16 +1526,16 @@ class DataObject:
             return pl.DataFrame(schema=empty_schema)
 
         target = (
-            self._parse_resolution(resolution)
+            self.parse_resolution(resolution)
             if resolution is not None
             else self._infer_resolution(with_data)
         )
 
         global_min = min(original_data["time"].min() for original_data in with_data)
         global_max = max(original_data["time"].max() for original_data in with_data)
-        origin = self._round_to_epoch_grid(global_min, target)
-        end = self._round_to_epoch_grid(global_max, target)
-        grid_times = self._build_time_grid(origin, end, target)
+        origin = _round_to_epoch_grid(global_min, target)
+        end = _round_to_epoch_grid(global_max, target)
+        grid_times = _build_time_grid(origin, end, target)
         grid_df = pl.DataFrame({"time": grid_times}, schema={"time": pl.Datetime(time_zone="UTC")})
 
         out = grid_df
@@ -1718,7 +1716,7 @@ class DataObject:
 
         series = {
             label: original_data
-            for label, original_data in self._native_series(points).items()
+            for label, original_data in self.native_series(points).items()
             if not original_data.is_empty()
         }
         if not series:
