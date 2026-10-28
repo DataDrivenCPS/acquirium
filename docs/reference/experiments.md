@@ -667,7 +667,7 @@ The HTTP API calls a Study a `template`. `template_id`, `variable_id`, and
 | `POST` | `/experiments/templates/{template_id}/observations/query` | Retrieve observations for graph-selected runs |
 | `POST` | `/experiments/metadata/sync` | Backfill or repair the experiment metadata graph |
 | `POST` | `/experiments/runs/{run_id}/variables/{variable_id}/observations` | Record a value or reference |
-| `POST` | `/experiments/runs/{run_id}/record` | Record values, artifacts, and durable graph intent in one SQL transaction, with samples published to Escapement as its last step; see [Batch transport](#batch-transport) |
+| `POST` | `/experiments/runs/{run_id}/record` | Publish samples to Escapement, then record values, artifacts, and durable graph intent in one SQL transaction; see [Batch transport](#batch-transport) |
 | `POST` | `/experiments/runs/{run_id}/observations/batch` | Record an ordered batch atomically, including inline artifacts; see [Batch transport](#batch-transport) |
 | `POST` | `/experiments/runs/{run_id}/stream-annotations` | Tag a stream interval |
 | `GET` | `/experiments/stream-annotations` | Find annotations by Study, run, stream, and overlapping time |

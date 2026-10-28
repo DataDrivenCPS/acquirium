@@ -180,8 +180,9 @@ change in any release.
   artifact bytes, and the graph-metadata outbox) in a SQL ledger, DuckDB or
   PostgreSQL, set with `[server] experiments_path`; it defaults to the engine's
   PostgreSQL database, or `data_dir/experiments.duckdb`. Samples a run records
-  are Escapement streams, written as the recording's last step. Ledgers from
-  releases that stored samples in SQL must be recreated.
+  are Escapement streams, published before the observations that point at
+  them; deleting runs clears their samples after the deletion commits. Ledgers
+  from releases that stored samples in SQL must be recreated.
 - A SPARQL update no longer forces the ontology closure to be recomputed
   unless it changed the graph's `owl:imports` or `owl:Ontology` triples.
 - The query compiler renders `int`, `float`, `bool`, `date` and `datetime`

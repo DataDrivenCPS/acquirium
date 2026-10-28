@@ -73,7 +73,9 @@ EXPERIMENT_MIGRATIONS += (Migration(3, "declaration_upgrade_frontier", (
     "ALTER TABLE experiment_metadata_state ADD COLUMN declaration_upgrade_version BIGINT",
 )),)
 
-# Samples moved to Escapement; the ledger keeps which streams experiments own.
+# Samples moved to Escapement. The ledger lists every stream a run may have
+# written: a row is added before the first sample and removed only after the
+# stream's samples are cleared.
 EXPERIMENT_MIGRATIONS += (Migration(4, "experiment_streams", (
-    "CREATE TABLE IF NOT EXISTS experiment_streams (ref_uri VARCHAR PRIMARY KEY, source_id VARCHAR NOT NULL, ref_name VARCHAR NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS experiment_streams (ref_uri VARCHAR PRIMARY KEY, run_id VARCHAR NOT NULL, source_id VARCHAR NOT NULL, ref_name VARCHAR NOT NULL)",
 )),)
