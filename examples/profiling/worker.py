@@ -15,12 +15,11 @@ import os
 import sys
 from pathlib import Path
 
-# Escapement fe7e50f483a07088a682935e83b6d7095760e1cb. Changing the native
-# worker requires reviewing these boundaries before updating this digest.
-WORKER_SHA256 = "b26f608086f40e74f6763f4ade6f0e34662601a835ca135e45467bf5a1028d34"
-POOLED_WORKER_SHA256 = (
-    "7927f935a0a2a94e8ad360f68aa4b111d5d2a688bcaef844c74e196467152760"
-)
+# Escapement 8bd90b0 (python/worker.py, unchanged through 2ba07bd). Changing
+# the native worker requires reviewing these boundaries before updating this
+# digest. 8bd90b0 only added text output checks after the function call, which
+# output_ns now includes.
+WORKER_SHA256 = "2205b620a8c6b1315825ff34e9fe00ded4f3539840363fb1332c6089627e8658"
 
 
 def timed(nodes, field):
@@ -88,7 +87,7 @@ def main():
     worker = Path(sys.argv[1])
     source = worker.read_bytes()
     digest = hashlib.sha256(source).hexdigest()
-    if digest not in (WORKER_SHA256, POOLED_WORKER_SHA256):
+    if digest != WORKER_SHA256:
         raise RuntimeError(
             f"native worker changed ({digest}); review profiling boundaries"
         )
