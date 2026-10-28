@@ -10,7 +10,6 @@ from acquirium.ObjectCodecs import BytesCodec, CloudpickleCodec, Codec, JsonCode
 from acquirium.Experiments import DeclaredVariables
 from acquirium import adapters
 from acquirium.Client.explore.core import Query
-from acquirium.Client.query import Q
 from acquirium.Client.data_object import DataObject
 from acquirium.Drivers.Driver import (
     Driver,

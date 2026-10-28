@@ -224,3 +224,9 @@ dpr-trailer-data/
 
 .run_logs
 scripts/dev/
+scripts/performance/
+
+paper/
+experiments/
+
+tests/text_match_results/

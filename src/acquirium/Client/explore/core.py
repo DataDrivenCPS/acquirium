@@ -1,6 +1,6 @@
 """Core immutable query builder for the explore layer.
 
-``Query`` is the clean replacement for the legacy builder (now ``Q``): short verbs
+``Query`` is the query builder: short verbs
 (``entity`` / ``related`` / ``measurement`` / ``where`` / ``include`` /
 ``alias`` / ``drop`` / ``refocus``) build an immutable :class:`QueryGraph`, and terminals
 (``metadata`` / ``data`` / ``dataframe`` / ``execute`` / ``to_sparql``) run
@@ -19,14 +19,15 @@ be kept side by side::
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 import polars as pl
 from rdflib import URIRef
 
 from acquirium.Client.explore.attributes import (
-    ATTR_NS, NOT_IN_ALL, Not, Registry, attributes_doc, is_list_attr, list_index, normalize_value,
+    ATTR_NS, NOT_IN_ALL, RESOLVE_MIN_SCORE, Not, Registry, attributes_doc, is_list_attr, list_index,
+    normalize_value,
 )
 from acquirium.Client.explore.compile import attr_var, compile_parts, compile_sparql
 from acquirium.Client.explore.directions import EQUIPMENT_STEPS, PROPERTY_STEPS
@@ -34,7 +35,8 @@ from acquirium.Client.explore.expr import ORDERING, BoolOp, Compare, Expr
 from acquirium.Client.explore.expr import attr_name as _path_name
 from acquirium.Client.explore.relations import RELATIONS
 from acquirium.Client.explore.typed import (
-    IRI, cast_values, coerce, column_dtype, dtype_for_datatypes, normalize_type, parse_cell, typed_column,
+    CAST_DTYPES, IRI, cast_values, coerce, column_dtype, dtype_for_datatypes, normalize_type, parse_cell,
+    result_datatypes,
 )
 from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
 from acquirium.internals.internals_namespaces import S223
@@ -53,6 +55,10 @@ def _is_uri(text: Any) -> bool:
     return isinstance(text, str) and (
         text.startswith("urn:") or text.startswith("http://") or text.startswith("https://")
     )
+
+
+def _iso(v: "datetime | str | None") -> "str | None":
+    return v.isoformat() if isinstance(v, datetime) else v
 
 
 @dataclass(frozen=True)
@@ -89,7 +95,7 @@ class Query:
         """Coerce a class/predicate input to a URI: passthrough or text-resolve."""
         if isinstance(value, URIRef) or _is_uri(value):
             return str(value)
-        uri = self.client.resolve(str(value), kind, min_score=0.4)
+        uri = self.client.resolve(str(value), kind, min_score=RESOLVE_MIN_SCORE)
         if uri is None:
             raise ValueError(f"Could not resolve {value!r} as {kind}")
         return uri
@@ -169,7 +175,7 @@ class Query:
         if not core:
             raise ValueError("related: empty via predicate")
         if not _is_uri(core):
-            resolved = self.client.resolve(core, "predicate", min_score=0.4)
+            resolved = self.client.resolve(core, "predicate", min_score=RESOLVE_MIN_SCORE)
             if resolved is None:
                 raise ValueError(
                     f"related: could not resolve via predicate {core!r} "
@@ -198,37 +204,40 @@ class Query:
         if unknown:
             raise ValueError(f"unknown attribute(s) {unknown}; known: {sorted(registry)}")
 
-        record: Dict[str, Any] = {}
-        for name, raw in attrs.items():
-            attr = registry[name]
-            values, _ = normalize_value(raw)
-            for i, v in enumerate(values):
-                if attr.literal or isinstance(v, URIRef) or _is_uri(v):
-                    continue
-                record[f"{name}_{i}"] = (str(v), attr.kind)
-        resolved_uris = self.client.resolve(record, min_score=0.4) if record else {}
+        resolved = self._resolve_texts({
+            f"{name}_{i}": (registry[name], v)
+            for name, raw in attrs.items()
+            for i, v in enumerate(normalize_value(raw)[0])
+        })
 
         out: Dict[str, Any] = {}
         for name, raw in attrs.items():
-            attr = registry[name]
             values, negated = normalize_value(raw)
             if not values:
                 continue
             coerced: List[Any] = []
             for i, v in enumerate(values):
-                if name == "id":
-                    coerced.extend(self._id_alternatives(v))
-                elif attr.literal:
-                    coerced.append(v)
-                elif isinstance(v, URIRef) or _is_uri(v):
-                    coerced.append(str(v))
-                else:
-                    uri = resolved_uris.get(f"{name}_{i}")
-                    if uri is None:
-                        raise ValueError(f"Could not resolve {v!r} as {attr.kind} for attribute {name!r}")
-                    coerced.append(uri)
+                coerced.extend(self._id_alternatives(v) if name == "id" else [resolved[f"{name}_{i}"]])
             value = coerced[0] if len(coerced) == 1 else coerced
             out[name] = Not(value) if negated else value
+        return out
+
+    def _resolve_texts(self, items: Dict[str, tuple]) -> Dict[str, Any]:
+        """``{key: (attr, value)}`` -> ``{key: value}``, text on a URI-valued
+        attribute resolved to a URI in one joint ``client.resolve`` call so
+        siblings disambiguate each other. Literal attributes keep their
+        value; URIs pass through as strings."""
+        record = {k: (str(v), attr.kind) for k, (attr, v) in items.items()
+                  if not (attr.literal or isinstance(v, URIRef) or _is_uri(v))}
+        found = self.client.resolve(record, min_score=RESOLVE_MIN_SCORE) if record else {}
+        out: Dict[str, Any] = {}
+        for k, (attr, v) in items.items():
+            if k not in record:
+                out[k] = v if attr.literal else str(v)
+            elif found.get(k) is None:
+                raise ValueError(f"Could not resolve {v!r} as {attr.kind} for attribute {attr.name!r}")
+            else:
+                out[k] = found[k]
         return out
 
     def _id_alternatives(self, value: Any) -> List[Any]:
@@ -291,35 +300,22 @@ class Query:
         for e in exprs:
             walk(e, False)
 
-        record: Dict[str, Any] = {}
-        for i, e in enumerate(leaves):
-            attr = registry[e.attr]
-            if attr.literal or e.op in ("exists",) or e.op in ORDERING:
-                continue
-            values = e.value if e.op == "in" else [e.value]
-            for j, v in enumerate(values):
-                if not (isinstance(v, URIRef) or _is_uri(v)):
-                    record[f"{i}_{j}"] = (str(v), attr.kind)
-        resolved = self.client.resolve(record, min_score=0.4) if record else {}
+        # ordering comparisons are on literals (checked above) and exists has
+        # no value: only equality and membership carry text to resolve
+        resolved = self._resolve_texts({
+            f"{i}_{j}": (registry[e.attr], v)
+            for i, e in enumerate(leaves) if e.op in ("==", "!=", "in")
+            for j, v in enumerate(e.value if e.op == "in" else [e.value])
+        })
 
-        def coerce(i: int, e: Compare) -> Compare:
-            attr = registry[e.attr]
+        def resolve_leaf(i: int, e: Compare) -> Compare:
             if e.attr == "id" and e.op in ("==", "in"):
                 values = [a for v in (e.value if e.op == "in" else [e.value])
                           for a in self._id_alternatives(v)]
                 return replace(e, op="in", value=tuple(values)) if len(values) > 1 else e
-            if attr.literal or e.op == "exists" or e.op in ORDERING:
+            if registry[e.attr].literal or e.op not in ("==", "!=", "in"):
                 return e
-            values = e.value if e.op == "in" else [e.value]
-            out = []
-            for j, v in enumerate(values):
-                if isinstance(v, URIRef) or _is_uri(v):
-                    out.append(str(v))
-                    continue
-                uri = resolved.get(f"{i}_{j}")
-                if uri is None:
-                    raise ValueError(f"Could not resolve {v!r} as {attr.kind} for attribute {e.attr!r}")
-                out.append(uri)
+            out = [resolved[f"{i}_{j}"] for j in range(len(e.value) if e.op == "in" else 1)]
             return Compare(e.attr, e.op, out if e.op == "in" else out[0])
 
         counter = iter(range(len(leaves)))
@@ -327,7 +323,7 @@ class Query:
         def rebuild(e: Expr) -> Expr:
             if isinstance(e, BoolOp):
                 return BoolOp(e.op, tuple(rebuild(o) for o in e.operands))
-            return coerce(next(counter), e)
+            return resolve_leaf(next(counter), e)
 
         return tuple(rebuild(e) for e in exprs)
 
@@ -337,7 +333,7 @@ class Query:
         measurement node; a list attribute once, under its collapsed name."""
         if nid in g.data_nodes:
             return self.registry.for_role("data", summary=True)
-        return [a for a in self.registry.for_role("entity", summary=True)] + [
+        return self.registry.for_role("entity", summary=True) + [
             a for a in self.registry.for_role("data", summary=True) if "entity" not in a.roles]
 
     def _check_applies(self, g: QueryGraph, nid: int, name: str, verb: str = "") -> None:
@@ -362,7 +358,6 @@ class Query:
     def _apply_exprs(self, g: QueryGraph, node_ids: List[int], exprs: "tuple[Expr, ...]") -> QueryGraph:
         """Store expressions on the given nodes (role-checked)."""
         ptr = g.current_pointer
-        registry = self.registry
         for nid in node_ids:
             is_data = nid in g.data_nodes
             for e in exprs:
@@ -381,7 +376,6 @@ class Query:
     def _apply_attrs(self, g: QueryGraph, node_ids: List[int], resolved: Dict[str, Any]) -> QueryGraph:
         """Store resolved attribute constraints on the given nodes (role-checked)."""
         ptr = g.current_pointer
-        registry = self.registry
         for nid in node_ids:
             is_data = nid in g.data_nodes
             for name in resolved:
@@ -542,7 +536,7 @@ class Query:
     def measurement(self, *, frm: "str | list | tuple | None" = None, alias: Optional[str] = None,
                     direction: Optional[str] = None, max_depth: int = 3,
                     nearest: Optional[bool] = None, include_connection_points: bool = True,
-                    **attrs: Any) -> "Query":
+                    uri: str | URIRef | None = None, **attrs: Any) -> "Query":
         """Attach a measurement point (data node) to the pattern and point at it.
 
         Matches nodes carrying an external reference one hop from the source.
@@ -578,12 +572,18 @@ class Query:
             q.measurement(direction="upstream", quantity_kind="ph")
             q.measurement(direction="downstream", nearest=False, max_depth=2)
 
+        ``uri`` pins the measurement node to one point (a full URI or a
+        bound CURIE), the way ``entity(uri=...)`` does for an entity::
+
+            aq.query().measurement(uri="wbs:RO-in-pressure")
+
         Extra keyword arguments are attribute filters applied to the new
         measurement node(s), same as ``where()``::
 
             q.measurement(quantity_kind="mass flow rate", medium=Not("brine"))
         """
         g = self.query_graph
+        instance_uri = self._normalize_instance_uri(uri)
 
         if isinstance(frm, (list, tuple)) and direction is not None:
             raise ValueError("measurement: frm list only combines with the non-directional form")
@@ -628,13 +628,14 @@ class Query:
             g = g.with_edge(QueryEdge(source_id=mid_id, target_id=data_id, hops=1),
                             new_pointer=data_id)
             g = g.with_data_node(DataNodeInfo(node_id=data_id))
+            g = self._pin_uri(g, [data_id], instance_uri)
             if attrs:
                 g = self._apply_attrs(g, [data_id], self._resolve_attr_values(attrs))
             return self._with_graph(g)
 
         if frm is None and not g.nodes:
             # Root form: every measurement point in the plant, no entity
-            # anchor (the legacy find_all_data). A standalone data node —
+            # anchor (what ``Acquirium.find_all_data()`` builds). A standalone data node —
             # still bounded by the external-reference requirement.
             new_id = self._next_id()
             if alias is not None:
@@ -642,6 +643,7 @@ class Query:
             g = g.with_node(QueryNode(id=new_id, alias=alias if alias is not None else "data",
                                       constraints={"is_data_node": True}))
             g = g.with_data_node(DataNodeInfo(node_id=new_id))
+            g = self._pin_uri(g, [new_id], instance_uri)
             if attrs:
                 g = self._apply_attrs(g, [new_id], self._resolve_attr_values(attrs))
             return self._with_graph(g)
@@ -679,9 +681,26 @@ class Query:
             g = g.with_data_node(DataNodeInfo(node_id=new_id))
             created.append(new_id)
 
+        g = self._pin_uri(g, created, instance_uri)
         if attrs:
             g = self._apply_attrs(g, created, self._resolve_attr_values(attrs))
         return self._with_graph(g)
+
+    @staticmethod
+    def _pin_uri(g: QueryGraph, node_ids: List[int], instance_uri: str | None) -> QueryGraph:
+        """Constrain each node to one instance; a no-op without a URI."""
+        if instance_uri is None:
+            return g
+        pointer = g.current_pointer
+        for nid in node_ids:
+            node = g.nodes[nid]
+            g = g.with_node(QueryNode(id=nid, alias=node.alias,
+                                      constraints={**node.constraints, "instance_uri": instance_uri}))
+        # with_node() moves the pointer to the node it writes; put it back.
+        return QueryGraph(
+            nodes=g.nodes, edges=g.edges, aliases=g.aliases, aliases_reverse=g.aliases_reverse,
+            current_pointer=pointer, data_nodes=g.data_nodes, selects=g.selects,
+        )
 
     def _lower_context_via(self, via: Any) -> tuple:
         """Turn ``context(via=...)`` into ``(chains, name)``.
@@ -700,7 +719,7 @@ class Query:
             if not core:
                 raise ValueError("context: empty via predicate")
             if not _is_uri(core):
-                resolved = self.client.resolve(core, "predicate", min_score=0.4)
+                resolved = self.client.resolve(core, "predicate", min_score=RESOLVE_MIN_SCORE)
                 if resolved is None:
                     raise ValueError(
                         f"context: {via!r} is neither a registered relation "
@@ -938,7 +957,6 @@ class Query:
             q.include("all", of="ro")               # every attr of another node
         """
         if type is not None:
-            from acquirium.Client.explore.typed import normalize_type
             normalize_type(type)  # fail here, not at metadata()
         if not names:
             raise ValueError('include: provide at least one column name, e.g. include("medium")')
@@ -1091,63 +1109,78 @@ class Query:
 
         cache_key = f"options:{attr_name}:{nid}:{include_dependencies}"
         if self.cache.get(cache_key) is None:
-            # Two-phase: the pattern runs once through execute() (program
-            # edges BFS-resolved, result cached and shared with metadata());
-            # attribute values come from a flat VALUES-anchored lookup and
-            # the counting happens here. The store only does index lookups —
-            # no server-side GROUP BY over the whole pattern.
-            res = self.execute(include_dependencies=include_dependencies)
-            cols = res.get("columns", [])
-            col = f"v{nid}"
-            uris: List[str] = []
-            if col in cols:
-                idx = cols.index(col)
-                seen: set = set()
-                for r in res.get("rows", []):
-                    val = r[idx]
-                    if val is None:
-                        continue
-                    s = str(val)
-                    if s not in seen and _is_uri(s):
-                        seen.add(s)
-                        uris.append(s)
+            self._fill_options([attr], nid, include_dependencies)
+        return self.cache[cache_key]
 
-            pred_path = "|".join(f"<{p}>" for p in attr.predicates)
-            # keyed by (value, its Python type): the date 2024-03-12 and the
-            # string "2024-03-12" are two values, as they are in the graph
-            counts_by_value: Dict[tuple, set] = {}
-            for i in range(0, len(uris), 500):
-                chunk = " ".join(f"<{u}>" for u in uris[i:i + 500])
-                sparql = (
-                    f"SELECT ?v ?opt\nWHERE {{\n  VALUES ?v {{ {chunk} }}\n"
-                    f"  ?v ({pred_path}) ?opt .\n}}"
-                )
-                lookup = self.client.sparql_query(
-                    sparql,
-                    include_dependencies=include_dependencies,
-                )
-                lcols = lookup.get("columns", [])
-                vi = lcols.index("v") if "v" in lcols else 0
-                oi = lcols.index("opt") if "opt" in lcols else 1
-                ldts = lookup.get("datatypes") or [[None] * len(lcols) for _ in lookup.get("rows", [])]
-                for r, d in zip(lookup.get("rows", []), ldts):
-                    if r[oi] is None or r[vi] is None:
-                        continue
-                    dt = d[oi] if oi < len(d) else None
-                    if dt == IRI or (dt is None and _is_uri(str(r[oi]))):
-                        value: Any = self._compact_uri_safe(str(r[oi]))
-                    else:
-                        value = parse_cell(r[oi], dt)
-                    counts_by_value.setdefault((value, type(value).__name__), set()).add(str(r[vi]))
+    def _fill_options(self, attrs: List[Any], nid: int, include_dependencies: bool) -> None:
+        """Compute the ``options()`` frames of ``attrs`` on node ``nid`` into
+        the cache, with one lookup per 500 matched nodes however many
+        attributes there are (``facets()`` asks for all of them at once).
 
-            ranked = sorted(counts_by_value.items(), key=lambda kv: (-len(kv[1]), str(kv[0][0]), kv[0][1]))
+        Two-phase: the pattern runs once through execute() (program edges
+        BFS-resolved, result cached and shared with metadata()); attribute
+        values come from a flat VALUES-anchored lookup and the counting
+        happens here. The store only does index lookups — no server-side
+        GROUP BY over the whole pattern.
+        """
+        res = self.execute(include_dependencies=include_dependencies)
+        cols = res.get("columns", [])
+        col = f"v{nid}"
+        uris: List[str] = []
+        if col in cols:
+            idx = cols.index(col)
+            seen: set = set()
+            for r in res.get("rows", []):
+                val = r[idx]
+                if val is None:
+                    continue
+                s = str(val)
+                if s not in seen and _is_uri(s):
+                    seen.add(s)
+                    uris.append(s)
+
+        # predicate -> the attributes it feeds (tags.0 feeds tags.0 and tags)
+        by_pred: Dict[str, List[str]] = {}
+        for attr in attrs:
+            for p in attr.predicates:
+                by_pred.setdefault(str(p), []).append(attr.name)
+        preds = " ".join(f"<{p}>" for p in by_pred)
+        # per attribute, keyed by (value, its Python type): the date
+        # 2024-03-12 and the string "2024-03-12" are two values, as they are
+        # in the graph
+        counts: Dict[str, Dict[tuple, set]] = {attr.name: {} for attr in attrs}
+        for i in range(0, len(uris), 500):
+            chunk = " ".join(f"<{u}>" for u in uris[i:i + 500])
+            sparql = (
+                f"SELECT ?v ?opt ?p\nWHERE {{\n  VALUES ?v {{ {chunk} }}\n"
+                f"  VALUES ?p {{ {preds} }}\n  ?v ?p ?opt .\n}}"
+            )
+            lookup = self.client.sparql_query(sparql, include_dependencies=include_dependencies)
+            lcols = lookup.get("columns", [])
+            vi = lcols.index("v") if "v" in lcols else 0
+            oi = lcols.index("opt") if "opt" in lcols else 1
+            pi = lcols.index("p") if "p" in lcols else None
+            for r, d in zip(lookup.get("rows", []), result_datatypes(lookup)):
+                if r[oi] is None or r[vi] is None:
+                    continue
+                dt = d[oi] if oi < len(d) else None
+                if dt == IRI or (dt is None and _is_uri(str(r[oi]))):
+                    value: Any = self._compact_uri_safe(str(r[oi]))
+                else:
+                    value = parse_cell(r[oi], dt)
+                # a result without ?p (a test double) answers for every attribute
+                names = by_pred.get(str(r[pi]), ()) if pi is not None else counts
+                for name in names:
+                    counts[name].setdefault((value, type(value).__name__), set()).add(str(r[vi]))
+
+        for name, by_value in counts.items():
+            ranked = sorted(by_value.items(), key=lambda kv: (-len(kv[1]), str(kv[0][0]), kv[0][1]))
             values = [v for (v, _), _ in ranked]
             dtype = column_dtype(values)
-            self.cache[cache_key] = pl.DataFrame(
-                {attr_name: pl.Series(attr_name, coerce(values, dtype), dtype=dtype),
+            self.cache[f"options:{name}:{nid}:{include_dependencies}"] = pl.DataFrame(
+                {name: pl.Series(name, coerce(values, dtype), dtype=dtype),
                  "count": pl.Series("count", [len(nodes) for _, nodes in ranked], dtype=pl.Int64)},
             )
-        return self.cache[cache_key]
 
     def facets(self, *, of: Optional[str] = None, include_dependencies: bool = True) -> "FacetSummary":
         """Value counts for every attribute applicable to a node, with fallback.
@@ -1174,10 +1207,13 @@ class Query:
         version = self.client.graph_version()
 
         summary = FacetSummary(node_alias=alias)
-        for attr in self._node_attrs(g, nid):
+        # id: one value per node, nothing to count
+        attrs = [a for a in self._node_attrs(g, nid) if a.name != "id"]
+        missing = [a for a in attrs if f"options:{a.name}:{nid}:{include_dependencies}" not in self.cache]
+        if missing:
+            self._fill_options(missing, nid, include_dependencies)
+        for attr in attrs:
             name = attr.name
-            if name == "id":
-                continue          # one value per node, nothing to count
             if attr.datatypes:          # a user attribute: show its type
                 summary.dtypes[name] = str(self._leaf_dtype(name))
             df = self.options(name, of=alias, include_dependencies=include_dependencies)
@@ -1230,85 +1266,53 @@ class Query:
         g = self.query_graph
         _, select_parts, _ = compile_parts(g, registry)
         leaf_selects, group_selects = self._expanded_selects()
-        casts = {(nid, name): (type_, strict) for nid, name, type_, strict in g.casts}
+        casts = {(nid, name): type_ for nid, name, type_, _ in g.casts}
+        explicit = {(nid, name) for nid, name, _ in g.selects}
+        leaf_of_var = {attr_var(nid, name)[1:]: (nid, name) for nid, name, _ in leaf_selects}
 
-        leaf_dtype = self._leaf_dtype
+        def typed(nid: int, name: str, dtype: pl.DataType) -> pl.DataType:
+            return _cast_dtype(dtype, casts[(nid, name)]) if (nid, name) in casts else dtype
 
         def group_dtype(gname: str, children: List[str]) -> pl.DataType:
             if gname in registry:
                 return pl.Object   # a plain value on some nodes, a dict on others
-            tree: Dict[str, Any] = {}
-            for child in children:
-                node = tree
-                parts = child[len(gname) + 1:].split(".")
-                for part in parts[:-1]:
-                    node = node.setdefault(part, {})
-                node[parts[-1]] = leaf_dtype(child)
 
             def build(sub: Any) -> pl.DataType:
                 if not isinstance(sub, dict):
                     return sub
-                fields = [pl.Field(k, build(v)) for k, v in sorted(sub.items())]
-                if any(f.dtype == pl.Object for f in fields):
-                    return pl.Object
-                return pl.Struct(fields)
+                fields = [pl.Field(k, build(v)) for k, v in sub.items()]
+                return pl.Object if any(f.dtype == pl.Object for f in fields) else pl.Struct(fields)
 
-            return build(tree)
-
-        def cast_dtype(dtype: pl.DataType, type_: Any) -> pl.DataType:
-            target = normalize_type(type_)
-            scalar = {"string": pl.String, "int": pl.Int64, "float": pl.Float64, "bool": pl.Boolean,
-                      "date": pl.Date, "datetime": pl.Datetime("us", "UTC"), "object": pl.Object}
-            if target == "struct":
-                return dtype if isinstance(dtype, pl.Struct) else pl.Object
-            if target in ("string", "object"):
-                return scalar[target]
-            return pl.List(scalar[target]) if isinstance(dtype, pl.List) else scalar[target]
+            return build(_path_tree({c[len(gname) + 1:]: self._leaf_dtype(c) for c in children}))
 
         out: Dict[str, pl.DataType] = {}
-        explicit = {(nid, name) for nid, name, _ in g.selects}
         for var in select_parts:
             col = var.lstrip("?")
-            if col.startswith(("ext", "unit", "attrp")):
-                continue
+            if col.startswith(("ext", "unit", "attrp", "lbl")):
+                continue   # internals; a label is placed right after its node
             alias = self._col_name_to_alias(col)
-            if col.startswith("lbl"):
-                continue   # placed right after its node below
             if col.startswith("v"):
                 out[alias] = pl.String
-                nid = int(col[1:])
-                if nid in g.data_nodes:
+                if int(col[1:]) in g.data_nodes:
                     out[f"{alias}.label"] = pl.String
                 continue
-            # an attribute column: which select produced it?
-            nid, lname = next(((n, l) for n, l, _ in leaf_selects
-                               if self._col_name_to_alias(attr_var(n, l)[1:]) == alias), (None, None))
-            if lname is None:
+            if col not in leaf_of_var:
                 out[alias] = pl.String
                 continue
+            nid, lname = leaf_of_var[col]
             node_alias = g.aliases_reverse.get(nid, f"v{nid}")
-            # a child of a parent key: the struct stands where its first child is
+            # a child of a parent key: the struct stands where its first
+            # child is, and the child keeps a column only when included itself
             for gnid, gname, children in group_selects:
-                if gnid == nid and lname in children or (gnid == nid and lname == gname):
-                    struct_col = f"{node_alias}.{gname}"
-                    if struct_col not in out:
-                        dtype = group_dtype(gname, children)
-                        if (gnid, gname) in casts:
-                            dtype = cast_dtype(dtype, casts[(gnid, gname)][0])
-                        out[struct_col] = dtype
-                    if (nid, lname) not in explicit or lname == gname:
-                        break
+                if gnid != nid or (lname != gname and lname not in children):
+                    continue
+                struct_col = f"{node_alias}.{gname}"
+                if struct_col not in out:
+                    out[struct_col] = typed(gnid, gname, group_dtype(gname, children))
+                if (nid, lname) not in explicit or lname == gname:
+                    break
             else:
-                dtype = leaf_dtype(lname)
-                if (nid, lname) in casts:
-                    dtype = cast_dtype(dtype, casts[(nid, lname)][0])
-                out[alias] = dtype
-                continue
-            if (nid, lname) in explicit and lname != gname:
-                dtype = leaf_dtype(lname)
-                if (nid, lname) in casts:
-                    dtype = cast_dtype(dtype, casts[(nid, lname)][0])
-                out[alias] = dtype
+                out[alias] = typed(nid, lname, self._leaf_dtype(lname))
         return pl.Schema(out)
 
     def to_sparql(self) -> str:
@@ -1328,10 +1332,10 @@ class Query:
             g = self.query_graph
             if any(getattr(e, "patterns", None) and e.value_pairs is None for e in g.edges):
                 from acquirium.Client.explore.traverse import resolve_program_edges
-                g = resolve_program_edges(g, self.client)
+                g = resolve_program_edges(g, self.client, self.registry)
             if any(e.direction is not None and e.nearest for e in g.edges):
                 from acquirium.Client.explore.places import execute_placed
-                self.cache[cache_key] = execute_placed(g, self.client, include_dependencies)
+                self.cache[cache_key] = execute_placed(g, self.client, include_dependencies, self.registry)
             else:
                 self.cache[cache_key] = self.client.sparql_query(
                     compile_sparql(g, self.registry),
@@ -1401,6 +1405,91 @@ class Query:
                 for nid, info in g.data_nodes.items()
             ],
         }
+
+    # ---------- logbook ----------
+
+    def _log_targets(self, alias: Optional[str], *, verb: str) -> List[str]:
+        """URIs a logbook call addresses: the current node's matches, one
+        alias's matches, or every node's with ``alias="*"``."""
+        g = self.query_graph
+        if alias == "*":
+            return self.resolved_nodes()
+        if alias is None:
+            if g.current_pointer is None:
+                raise ValueError(
+                    f"{verb}: the query has no nodes; pass alias= or use "
+                    "Acquirium.insert_log()/read_logs() for plant-level notes"
+                )
+            alias = g.aliases_reverse.get(g.current_pointer, str(g.current_pointer))
+        if g.resolve_alias(alias) is None:
+            raise KeyError(f"{verb}: alias {alias!r} not in query; available: {sorted(g.aliases)}")
+        return self.resolved_nodes(alias=alias)
+
+    def insert_log(
+        self,
+        message: str,
+        *,
+        alias: Optional[str] = None,
+        observation_start: "datetime | str | None" = None,
+        observation_end: "datetime | str | None" = None,
+    ) -> List[str]:
+        """Write a logbook note on every entity the query matches.
+
+        The note goes to the current node's matches, to ``alias``'s, or to
+        every node's with ``alias="*"``. Returns the URIs written to; a
+        query that matches nothing raises ``ValueError`` rather than
+        logging to no one.
+        """
+        uris = self._log_targets(alias, verb="insert_log")
+        if not uris:
+            raise ValueError("insert_log: the query matches no entities")
+        now = datetime.now(timezone.utc).isoformat()
+        for uri in uris:
+            self.client.insert_log(
+                point_uri=uri,
+                log_message=message,
+                log_time=now,
+                observation_start=_iso(observation_start),
+                observation_end=_iso(observation_end),
+            )
+        return uris
+
+    def read_logs(
+        self,
+        *,
+        alias: Optional[str] = None,
+        log_time_start: "datetime | str | None" = None,
+        log_time_end: "datetime | str | None" = None,
+        observation_start: "datetime | str | None" = None,
+        observation_end: "datetime | str | None" = None,
+    ) -> pl.DataFrame:
+        """Read the logbook notes of every entity the query matches.
+
+        Same targeting as :meth:`insert_log`. Returns a frame with
+        ``point_uri``, ``message``, ``log_time``, ``observation_start`` and
+        ``observation_end``, oldest first.
+        """
+        schema = {
+            "point_uri": pl.Utf8,
+            "message": pl.Utf8,
+            "log_time": pl.Datetime(time_zone="UTC"),
+            "observation_start": pl.Datetime(time_zone="UTC"),
+            "observation_end": pl.Datetime(time_zone="UTC"),
+        }
+        rows: list[dict] = []
+        for uri in self._log_targets(alias, verb="read_logs"):
+            for entry in self.client.query_logs(
+                point_uri=uri,
+                log_time_start=_iso(log_time_start),
+                log_time_end=_iso(log_time_end),
+                observation_start=_iso(observation_start),
+                observation_end=_iso(observation_end),
+            ):
+                rows.append(entry.to_dict())
+        if not rows:
+            return pl.DataFrame(schema=schema)
+        return (pl.concat([pl.DataFrame(r, schema=schema) for r in rows], how="vertical")
+                .select(list(schema)).sort("log_time"))
 
     def resolved_nodes(
         self,
@@ -1474,7 +1563,7 @@ class Query:
             # a URI-looking string is then taken for a node; one that does
             # marks nodes "iri", so a literal that looks like a URI stays text
             typed = bool(res.get("datatypes"))
-            datatypes = res.get("datatypes") or [[None] * len(cols) for _ in rows]
+            datatypes = result_datatypes(res)
             # list attributes: value column -> column holding each element's predicate
             registry = self.registry
             selects = list(self.query_graph.selects)
@@ -1490,12 +1579,17 @@ class Query:
             ]
             cols_w_alias = [self._col_name_to_alias(cols[i]) for i in keep_idx]
 
+            compacted: Dict[str, str] = {}   # one compactor call per distinct URI
+
             def cell(value: Any, datatype: Optional[str]) -> Any:
                 # a node, or a cell whose kind is unknown and looks like one
                 if value is None:
                     return None
                 if datatype == IRI or (not typed and isinstance(value, str) and _is_uri(value)):
-                    return self._compact_uri_safe(str(value))
+                    uri = str(value)
+                    if uri not in compacted:
+                        compacted[uri] = self._compact_uri_safe(uri)
+                    return compacted[uri]
                 return value
 
             parsed: Dict[str, list] = {}
@@ -1511,14 +1605,15 @@ class Query:
                 # list, the other list columns null; lists of different
                 # nodes still multiply, and the index map undoes that)
                 groups: Dict[tuple, Dict[str, dict]] = {}
+                pred_idx = {n: cols.index(p) if p in cols else None for n, p in list_names.items()}
                 for r_i, r in enumerate(rows):
                     key = tuple(parsed[n][r_i] for n in scalar_names)
                     bucket = groups.setdefault(key, {n: {} for n in list_names})
-                    for n, pcol in list_names.items():
+                    for n, pi in pred_idx.items():
                         v = parsed[n][r_i]
                         if v is None:
                             continue
-                        pred = r[cols.index(pcol)] if pcol in cols else None
+                        pred = r[pi] if pi is not None else None
                         bucket[n][list_index(pred) if pred else (r_i,)] = v
                 keys = list(groups)
                 parsed = {n: [k[j] for k in keys] for j, n in enumerate(scalar_names)}
@@ -1592,15 +1687,16 @@ class Query:
                     members = {}
                     for k in keys:
                         vals = [v.get(k) if isinstance(v, dict) else None for v in cast]
-                        members[k] = pl.Series(k, coerce(vals, column_dtype(vals)), dtype=column_dtype(vals))
+                        kdtype = column_dtype(vals)
+                        members[k] = pl.Series(k, coerce(vals, kdtype), dtype=kdtype)
                     columns[col] = (_struct_series(col, members) if members
                                     else pl.Series(col, [None] * len(cast), dtype=pl.Null))
                 else:
-                    dtype = column_dtype(cast if not any(isinstance(v, list) for v in cast)
-                                         else [e for v in cast if v for e in v])
+                    has_lists = any(isinstance(v, list) for v in cast)
+                    dtype = column_dtype([e for v in cast if v for e in v] if has_lists else cast)
                     if target == "object":
                         dtype = pl.Object
-                    elif target != "object" and any(isinstance(v, list) for v in cast):
+                    elif has_lists:
                         dtype = pl.List(dtype)
                     columns[col] = pl.Series(col, cast, dtype=dtype)
             pl_table = pl.DataFrame(columns) if columns else pl.DataFrame()
@@ -1631,7 +1727,7 @@ class Query:
         limit: int | None = None,
         order: str = "asc",
         include_dependencies: bool = True,
-        cast_value: str | None = "float",
+        cast_value: str | None = None,
         value_mode: str = "default",
     ) -> "DataObject":
         """Return a lazy DataObject with alias-driven access to the matched streams."""
@@ -1656,7 +1752,7 @@ class Query:
         limit: int | None = None,
         order: str = "asc",
         include_dependencies: bool = True,
-        cast_value: str | None = "str",
+        cast_value: str | None = None,
         value_mode: str = "default",
         include_ref: bool = False,
         compact: bool = True,
@@ -1720,7 +1816,7 @@ class Query:
         res = q.execute(include_dependencies=include_dependencies)
         cols = [str(c) for c in res.get("columns", [])]
         rows = res.get("rows", [])
-        datatypes = res.get("datatypes") or [[None] * len(cols) for _ in rows]
+        datatypes = result_datatypes(res)
         g = q.query_graph
         registry = q.registry
         index = {c: i for i, c in enumerate(cols)}
@@ -1821,7 +1917,11 @@ class Query:
     def _expanded_selects(self) -> tuple:
         """``(leaf_selects, group_selects)``: the query's selects with every
         parent key replaced by its child leaves, and the parent keys listed
-        as ``(nid, name, [children])`` so ``metadata()`` can fold them back."""
+        as ``(nid, name, [children])`` so ``metadata()`` can fold them back.
+        Cached on the query: every column lookup needs it."""
+        cached = self.cache.get("_expanded_selects")
+        if cached is not None:
+            return cached
         registry = self.registry
         leaves: List[tuple] = []
         groups: List[tuple] = []
@@ -1834,7 +1934,18 @@ class Query:
                 leaves.extend((nid, c, req) for c in children)
             else:
                 leaves.append((nid, name, req))
+        self.cache["_expanded_selects"] = (leaves, groups)
         return leaves, groups
+
+    def _attr_var_names(self) -> Dict[str, str]:
+        """Projected attribute variable (without ``?``) -> the attribute path
+        it encodes, for every leaf select. A user attribute's variable is an
+        encoding of its path, so the column name maps back through this."""
+        names = self.cache.get("_attr_var_names")
+        if names is None:
+            names = self.cache["_attr_var_names"] = {
+                attr_var(nid, name)[1:]: name for nid, name, _ in self._expanded_selects()[0]}
+        return names
 
     def _col_name_to_alias(self, col_name: str) -> str:
         if col_name.startswith("attr"):
@@ -1844,13 +1955,7 @@ class Query:
             except ValueError:
                 return col_name
             base_alias = self.query_graph.aliases_reverse.get(node_id, f"v{node_id}")
-            # a user attribute's variable is an encoding of its path; the
-            # select entry (or the parent key's child) that produced it
-            # holds the path itself
-            for snid, name, _ in self._expanded_selects()[0]:
-                if snid == node_id and attr_var(snid, name) == f"?{col_name}":
-                    return f"{base_alias}.{name}"
-            return f"{base_alias}.{attr_name}"
+            return f"{base_alias}.{self._attr_var_names().get(col_name, attr_name)}"
         if col_name.startswith("lbl"):
             try:
                 node_id = int(col_name[3:])
@@ -1858,6 +1963,14 @@ class Query:
                 return col_name
             base_alias = self.query_graph.aliases_reverse.get(node_id, f"v{node_id}")
             return f"{base_alias}.label"
+        for prefix, suffix in (("extsrc", "_source"), ("extname", "_ref_name")):
+            if col_name.startswith(prefix):
+                try:
+                    node_id = int(col_name[len(prefix):])
+                except ValueError:
+                    return col_name
+                base_alias = self.query_graph.aliases_reverse.get(node_id, col_name)
+                return f"{base_alias}{suffix}"
         if col_name.startswith("ext"):
             try:
                 node_id = int(col_name[3:])
@@ -1938,6 +2051,31 @@ def _cast_at(value: Any, segments: List[str], cast: Any) -> Any:
     return value
 
 
+def _path_tree(leaves: Dict[str, Any]) -> Dict[str, Any]:
+    """Nest ``{"year": a, "limits.max": b}`` into ``{"limits": {"max": b},
+    "year": a}``, keys sorted by name like ``Registry.children``."""
+    tree: Dict[str, Any] = {}
+    for rel, leaf in sorted(leaves.items()):
+        node = tree
+        parts = rel.split(".")
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = leaf
+    return tree
+
+
+def _cast_dtype(dtype: pl.DataType, type_: Any) -> pl.DataType:
+    """The dtype a column of ``dtype`` takes under ``include(type=type_)``:
+    a list is cast element-wise, ``struct`` keeps a struct (else Object)."""
+    target = normalize_type(type_)
+    if target == "struct":
+        return dtype if isinstance(dtype, pl.Struct) else pl.Object
+    scalar = CAST_DTYPES[target]
+    if target in ("string", "object") or not isinstance(dtype, pl.List):
+        return scalar
+    return pl.List(scalar)
+
+
 def _struct_series(name: str, members: Dict[str, pl.Series], *,
                    scalar: Optional[pl.Series] = None) -> pl.Series:
     """One struct column from child columns keyed by their path under the
@@ -1947,13 +2085,7 @@ def _struct_series(name: str, members: Dict[str, pl.Series], *,
     When a member is itself ``Object`` (mixed element kinds), or ``scalar``
     holds the same key as a plain value on other nodes, no struct dtype
     fits: the column is ``Object`` and each cell is a dict or that value."""
-    tree: Dict[str, Any] = {}
-    for rel, series in sorted(members.items()):   # field order is by name, like Registry.children
-        node = tree
-        parts = rel.split(".")
-        for part in parts[:-1]:
-            node = node.setdefault(part, {})
-        node[parts[-1]] = series
+    tree = _path_tree(members)
 
     def dtype_of(sub: Any) -> pl.DataType:
         if isinstance(sub, pl.Series):

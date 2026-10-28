@@ -91,6 +91,11 @@ def _closure_triples(graph: Graph) -> frozenset:
     )
 
 
+# The update operations that can take triples out of a graph. A keyword that
+# only appears inside a literal costs a needless prune, never a missed one.
+_REMOVING_UPDATE = re.compile(r"\b(DELETE|CLEAR|DROP|MOVE|COPY)\b", re.IGNORECASE)
+
+
 def prune_orphan_metadata(dataset: Dataset, metadata_graph_uri: URIRef) -> None:
     """Drop metadata about nodes no other graph mentions any more.
 
@@ -917,7 +922,12 @@ class OxigraphGraphStore:
             before = _closure_triples(target)
             target.update(update)
             affects_closure = _closure_triples(target) != before
-            self._prune_orphan_metadata()
+            # Only a removal from another graph can orphan metadata; writes
+            # to the metadata graph itself (insert_metadata) check their
+            # subjects before they are sent.
+            if (target.identifier != self.source_graph_uri(METADATA_SOURCE_ID)
+                    and _REMOVING_UPDATE.search(update)):
+                self._prune_orphan_metadata()
             self._finalize_source_write(affects_closure=affects_closure)
         return {"message": "update applied", "changed": True}
 

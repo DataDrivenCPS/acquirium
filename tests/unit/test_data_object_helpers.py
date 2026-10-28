@@ -164,3 +164,144 @@ class TestPointLabelsFirst:
         meta = d.metadata()
         assert meta.columns[:3] == ["data_alias", "point_label", "point_uri"]
         assert meta["point_label"].to_list() == ["intake"]
+
+
+class TestCastValue:
+    def _object(self, values, cast_value):
+        from unittest.mock import MagicMock
+        from acquirium.Client.data_object import BindingInfo, DataObject
+        from acquirium.Client.query_graph import QueryGraph
+
+        t = [datetime(2026, 1, d, tzinfo=timezone.utc) for d in range(1, len(values) + 1)]
+        tall = pl.DataFrame({
+            "data_alias": ["flow"] * len(values),
+            "point_uri": ["urn:t#p1"] * len(values),
+            "ref_uri": ["urn:t#r1"] * len(values),
+            "time": t,
+            "value_numeric": pl.Series(values, dtype=pl.Float64),
+            "value_text": [None] * len(values),
+        })
+        client = MagicMock()
+        client.compact_uri.side_effect = lambda u: str(u).rsplit("#", 1)[-1]
+        return DataObject(
+            _bindings=[BindingInfo(nid=0, point_uri="urn:t#p1", ref_uri="urn:t#r1",
+                                   alias="flow", entity_contexts=[{}])],
+            _entity_columns=[], _query_graph=QueryGraph(), _client=client,
+            _tall=tall, _materialized=True, _query_params={"cast_value": cast_value},
+        )
+
+    def test_unknown_cast_value_is_rejected(self):
+        import pytest
+        from acquirium.Client.data_object import _validate_cast_value
+        for ok in ("float", "int", "str", None):
+            assert _validate_cast_value(ok) == ok
+        with pytest.raises(ValueError, match="cast_value must be"):
+            _validate_cast_value("double")
+
+    def test_str_sends_everything_to_text(self):
+        from acquirium.Client.data_object import _split_value_column
+        out = _split_value_column(pl.DataFrame({"value": [1.5, 2.0]}), "str")
+        assert out["value_numeric"].to_list() == [None, None]
+        assert out["value_text"].to_list() == ["1.5", "2.0"]
+
+    def test_float_parses_numbers_out_of_text(self):
+        from acquirium.Client.data_object import _split_value_column
+        df = pl.DataFrame({"value": ["12.5", "ON", None, " 3 "]})
+        out = _split_value_column(df, "float")
+        assert out["value_numeric"].to_list() == [12.5, None, None, 3.0]
+        assert out["value_text"].to_list() == [None, "ON", None, None]
+
+    def test_no_cast_keeps_text_as_text(self):
+        from acquirium.Client.data_object import _split_value_column
+        out = _split_value_column(pl.DataFrame({"value": ["12.5", "ON"]}), None)
+        assert out["value_numeric"].to_list() == [None, None]
+        assert out["value_text"].to_list() == ["12.5", "ON"]
+
+    def test_int_returns_int64_columns(self):
+        d = self._object([1.0, 2.0], "int")
+        assert d["flow"]["value"].dtype == pl.Int64
+        assert d.dataframe("wide")["flow"].to_list() == [1, 2]
+        assert d.dataframe("narrow")["value_numeric"].dtype == pl.Int64
+        assert d.dataframe("narrow", compact=False)["value_numeric"].dtype == pl.Int64
+
+    def test_int_truncates_fractional_values_with_a_warning(self):
+        import pytest
+        d = self._object([1.0, 1.5], "int")
+        with pytest.warns(UserWarning, match="truncates 1 non-integer value.*such as 1.5"):
+            assert d.dataframe("wide")["flow"].to_list() == [1, 1]
+        with pytest.warns(UserWarning, match="cast_value='int'"):
+            assert d["flow"]["value"].to_list() == [1, 1]
+
+    def test_float_leaves_values_alone(self):
+        d = self._object([1.0, 1.5], "float")
+        assert d["flow"]["value"].to_list() == [1.0, 1.5]
+        assert d["flow"]["value"].dtype == pl.Float64
+
+
+class TestStreamInfo:
+    def _object(self):
+        from acquirium.Client.data_object import BindingInfo, DataObject
+        from acquirium.Client.query_graph import QueryGraph
+        bs = [
+            BindingInfo(nid=0, point_uri="urn:t#p1", ref_uri="urn:t#r1", alias="flow",
+                        entity_contexts=[{}], source_id="scada", ref_name="FT-101"),
+            BindingInfo(nid=0, point_uri="urn:t#p1", ref_uri="urn:t#r2", alias="flow",
+                        entity_contexts=[{}], source_id="lab", ref_name="flow_csv"),
+            BindingInfo(nid=1, point_uri="urn:t#p2", ref_uri="urn:t#r3", alias="temp",
+                        entity_contexts=[{}]),
+        ]
+        return DataObject(_bindings=bs, _entity_columns=[], _query_graph=QueryGraph())
+
+    def test_one_row_per_stream_with_driver_names(self):
+        info = self._object().stream_info()
+        assert info.columns == ["stream", "alias", "point_uri", "ref_uri", "source_id", "ref_name"]
+        assert info["stream"].to_list() == [0, 1, 2]
+        assert info["source_id"].to_list() == ["scada", "lab", None]
+        assert info["ref_name"].to_list() == ["FT-101", "flow_csv", None]
+
+    def test_alias_keeps_the_numbering(self):
+        d = self._object()
+        assert d.stream_info("temp")["stream"].to_list() == [2]
+        import pytest
+        with pytest.raises(KeyError):
+            d.stream_info("nope")
+
+    def test_metadata_with_refs_shows_identity(self):
+        meta = self._object().metadata(include_ref_uris=True)
+        assert meta.filter(meta["ref_uri"] == "urn:t#r1")["ref_name"].to_list() == ["FT-101"]
+
+    def test_streams_resolve_by_number_or_ref_uri(self):
+        d = self._object()
+        assert d._resolve_streams(None) is None
+        assert d._resolve_streams(1) == {"urn:t#r2"}
+        assert d._resolve_streams("urn:t#r3") == {"urn:t#r3"}
+        assert d._resolve_streams([0, "urn:t#r2"]) == {"urn:t#r1", "urn:t#r2"}
+
+    def test_unknown_stream_raises(self):
+        import pytest
+        d = self._object()
+        with pytest.raises(KeyError, match="0..2"):
+            d._resolve_streams([3])
+        with pytest.raises(KeyError, match="stream_info"):
+            d._resolve_streams(["urn:t#nope"])
+        with pytest.raises(TypeError):
+            d._resolve_streams([1.5])
+
+    def test_dataframe_streams_filters_the_tall_frame(self):
+        import polars as pl
+        from datetime import datetime, timezone
+        d = self._object()
+        t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        d._tall = pl.DataFrame({
+            "data_alias": ["flow", "flow", "temp"],
+            "point_uri": ["urn:t#p1", "urn:t#p1", "urn:t#p2"],
+            "ref_uri": ["urn:t#r1", "urn:t#r2", "urn:t#r3"],
+            "time": [t, t, t],
+            "value_numeric": [1.0, 1.1, 20.0],
+            "value_text": pl.Series([None, None, None], dtype=pl.Utf8),
+        })
+        d._materialized = True
+        assert d.dataframe(compact=False)["flow"].to_list() == [1.0]       # first stream wins
+        assert d.dataframe(compact=False, streams=[1])["flow"].to_list() == [1.1]
+        narrow = d.dataframe(shape="narrow", compact=False, streams=["urn:t#r2", 2])
+        assert sorted(narrow["ref_uri"].to_list()) == ["urn:t#r2", "urn:t#r3"]

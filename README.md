@@ -142,4 +142,4 @@ make test                    # full suite (Docker required)
 
 ## Status
 
-Acquirium is under active development. Planned work is tracked in [improvements.md](./improvements.md). Bug reports and feature requests are welcome — please open an issue.
+Acquirium is under active development. Bug reports and feature requests are welcome — please open an issue.

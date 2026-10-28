@@ -6,7 +6,13 @@ import polars as pl
 import pytest
 
 from acquirium.Client.explore.core import Query
-from acquirium.Client.explore.typed import XSD, column_dtype, parse_cell, typed_column
+from acquirium.Client.explore.typed import XSD, coerce, column_dtype, parse_cell
+
+
+def typed_column(values, datatypes):
+    parsed = [parse_cell(v, d) for v, d in zip(values, datatypes)]
+    dtype = column_dtype(parsed)
+    return coerce(parsed, dtype), dtype
 
 CLS_A = "urn:test#TypeA"
 
