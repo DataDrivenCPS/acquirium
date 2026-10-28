@@ -305,8 +305,9 @@ class ExperimentStore:
         return self.record_batch(run_id, entries)
 
     def record_batch(self, run_id: str, entries: list[dict]) -> list[dict]:
-        # Sample metadata must serialize with source clears. Attachments and
-        # value-only batches queue no graph intent and need only the SQL lock.
+        # A batch with samples holds the metadata lock from reserving its
+        # streams to committing, so finishing or deleting the run waits for it.
+        # Other batches write no samples and need only the SQL lock.
         with self.metadata.lock if any(e.get("form") == "samples" for e in entries) else nullcontext():
             return self._write_recording(run_id, self._prepare_recording(run_id, entries))
 
@@ -410,10 +411,13 @@ class ExperimentStore:
 
         1. Reserve the recording's streams in `experiment_streams`, so a run's
            deletion finds every stream it may have written.
-        2. Write the samples to Escapement and wait until they are published.
+        2. Write the samples to Escapement and wait until they, and every
+           request accepted before them, are published.
         3. Commit observations, artifacts, and graph intent in one transaction.
 
-        An observation therefore never points at missing samples. A failure
+        An observation therefore never points at missing samples, and each
+        time-series observation records the epoch from step 2, which includes
+        everything written to Escapement before the recording. A failure
         after step 2 leaves samples no observation names; a retry rewrites
         the same keys, and deleting the run clears them.
         """
@@ -421,16 +425,12 @@ class ExperimentStore:
             with self.store._lock, self.store._write_conn() as conn:
                 self._check_recording(conn, run_id, batch)
                 self._own_streams(conn, run_id, batch.registrations)
-            written = self._write_samples(f"experiment/{run_id}", batch.frame)
-            for item in batch.observations:
-                if item.sample_ref is not None:
-                    item.epoch = written
-        # A reference to an existing stream reads as of the latest epoch.
-        references = [item for item in batch.observations if item.ref_uri is not None and item.sample_ref is None]
-        if references and self.store.samples is not None:
-            latest = self.store.samples.epoch()
-            for item in references:
-                item.epoch = latest
+        series = [item for item in batch.observations if item.ref_uri is not None]
+        if series and (batch.frame is not None or self.store.samples is not None):
+            # A batch of references writes nothing and only waits.
+            epoch = self._write_samples(f"experiment/{run_id}", batch.frame)
+            for item in series:
+                item.epoch = epoch
         results = []
         with self.store._lock, self.store._write_conn() as conn:
             self._check_recording(conn, run_id, batch)
@@ -468,23 +468,23 @@ class ExperimentStore:
             raise RuntimeError("this experiment ledger has no sample store")
         return self.store.samples.write(source, frame)
 
-    def _cleanup_streams(self) -> int:
+    @_publishes
+    def _cleanup_streams(self) -> None:
         """Clear the samples of streams whose run is gone, then forget them.
 
         A stream's row outlives its run until its samples are cleared, so this
         finishes every deletion, including one a crash interrupted. Running it
-        again does nothing new. Returns how many samples were cleared.
+        again does nothing new.
         """
         with self.store._own_conn() as conn:
             refs = [row[0] for row in self._execute(conn, "SELECT ref_uri FROM experiment_streams "
                     "WHERE run_id NOT IN (SELECT run_id FROM experiment_runs)").fetchall()]
         # Without Escapement the rows are all that find these samples later.
         if not refs or self.store.samples is None:
-            return 0
-        cleared = self.store.samples.clear(refs)
+            return
+        self.store.samples.clear(refs)
         with self.store._lock, self.store._write_conn() as conn:
             self._execute(conn, f"DELETE FROM experiment_streams WHERE ref_uri IN ({self._marks(refs)})", refs)
-        return cleared
 
     def _store_artifact(self, conn, digest, artifact, data, recorded):
         # Identical bytes are stored once, under the first name they arrived with.
@@ -859,6 +859,8 @@ class ExperimentStore:
                 if users:
                     raise ValueError("other experiments reference streams these runs recorded: "
                                      + ", ".join(row[0] for row in users))
+                if self.store.samples is not None:
+                    removed["samples"] = self.store.samples.count(refs)
             for run_id, sequence, variable_id in self._execute(conn, f"""
                     SELECT run_id, sequence, variable_id FROM experiment_observations
                     WHERE run_id IN ({marks})""", run_ids).fetchall():
@@ -902,7 +904,7 @@ class ExperimentStore:
         deleted runs' samples. An error clearing them leaves the deletion
         complete; the next cleanup finishes it."""
         self.sync_metadata_graph()
-        removed["samples"] = self._cleanup_streams()
+        self._cleanup_streams()
         return removed
 
     def _refuse_running(self, conn, clause, parameters) -> None:

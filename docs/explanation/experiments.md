@@ -95,9 +95,27 @@ filter APIs. A transactional SQL outbox retains pending, already-resolved graph
 updates until delivery succeeds; interrupted delivery replays those updates.
 Recording these objects creates their graph nodes automatically. The ledger
 is DuckDB or PostgreSQL (`experiments_path`); time-series samples a run records
-are ordinary Escapement streams, published before the observation that points
-at them commits, so an observation never names missing samples. Backups must
-include the SQL ledger, the Escapement store, and the metadata graph.
+are ordinary Escapement streams. Backups must include the SQL ledger, the
+Escapement store, and the metadata graph.
+
+The ledger and Escapement commit separately, so three rules keep them
+consistent:
+
+- **Data before pointer.** A recording reserves its streams in the ledger,
+  writes its samples and waits until Escapement publishes them, then commits
+  its observations. An observation never names missing samples. A recording
+  that fails after writing leaves samples no observation names; a retry
+  rewrites them, and deleting the run removes them.
+- **One epoch per recording.** Each time-series observation stores the
+  Escapement epoch the recording waited for. It includes everything written
+  to Escapement before the recording, so a reference sees data a driver sent
+  just before it.
+- **Deletion clears afterwards.** Deleting runs commits in the ledger first.
+  Their samples are cleared next, and a clear interrupted by an error or a
+  crash is finished by the next deletion or server start.
+
+Recordings with samples, finishing a run, and deleting runs take turns, so a
+run cannot end or disappear while one of its recordings is writing.
 
 The ledger stores JSON, text, scalar, and log observations directly.
 For other data it stores references:

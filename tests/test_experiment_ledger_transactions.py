@@ -6,10 +6,12 @@ build the server's ledger in-process instead, because what they check, a
 failure partway through a write or the order two writers commit in, cannot
 be arranged from a client.
 """
+import threading
 from datetime import datetime, timezone
 
 import pytest
 
+from acquirium.ExperimentSamples import sample_frame
 from acquirium.Experiments import ExperimentStore
 from acquirium.Storage.metadata_outbox import execute
 from tests.unit.test_experiment_metadata import MemoryGraphStore
@@ -109,7 +111,7 @@ def test_deleting_runs_clears_their_samples_after_the_commit(ledger):
     assert _count(ledger.store, "experiment_streams") == 0
 
 
-def test_interrupted_cleanup_finishes_at_the_next_start(experiment_ledger, ledger, monkeypatch):
+def test_an_interrupted_cleanup_is_finished_later(experiment_ledger, ledger, monkeypatch):
     store = ledger.store
     study, runs = _recorded_runs(ledger, 2)
 
@@ -138,9 +140,37 @@ def test_interrupted_cleanup_finishes_at_the_next_start(experiment_ledger, ledge
     store.samples = samples
     assert _count(store, "experiment_streams") == 2
 
+    # A later deletion finishes the earlier one but reports only its own.
+    _, later = _recorded_runs(ledger, 1)
+    assert ledger.delete_runs(later)["samples"] == 1
+    assert _samples(store) == []
+    assert _count(store, "experiment_streams") == 0
+
+
+def test_a_start_finishes_an_interrupted_cleanup(experiment_ledger, ledger, monkeypatch):
+    store = ledger.store
+    _, runs = _recorded_runs(ledger, 1)
+    with monkeypatch.context() as patch:
+        patch.setattr(store.samples, "clear", lambda refs: (_ for _ in ()).throw(RuntimeError("clear failure")))
+        with pytest.raises(RuntimeError):
+            ledger.delete_runs(runs)
     ExperimentStore(experiment_ledger, graph_store=ledger.metadata_graph.graph_store)
     assert _samples(store) == []
     assert _count(store, "experiment_streams") == 0
+
+
+def test_clearing_deletes_a_page_at_a_time(ledger, monkeypatch):
+    monkeypatch.setattr("acquirium.ExperimentSamples.MAX_REQUEST_ROWS", 3)
+    study = ledger.define("pages")
+    level = ledger.declare(study["template_id"], "level", "output", "timeseries", {})
+    run = ledger.start(study["template_id"], {})["run_id"]
+    ledger.record_batch(run, [dict(form="samples", variable_id=level["variable_id"],
+                                   samples=[[WHEN.replace(second=i).isoformat(), float(i)] for i in range(7)])])
+    ledger.finish(run, "succeeded")
+    ingest, requests = ledger.store.samples.core.ingest, []
+    monkeypatch.setattr(ledger.store.samples.core, "ingest", lambda *a: requests.append(a[2].height) or ingest(*a))
+    assert ledger.delete_runs([run])["samples"] == 7
+    assert requests == [3, 3, 1] and _samples(ledger.store) == []
 
 
 def test_declaration_racing_the_same_label_is_idempotent(experiment_ledger, ledger, monkeypatch):
@@ -204,7 +234,45 @@ def test_time_series_observations_record_their_epoch(ledger):
                                    interval=[WHEN.isoformat(), WHEN.isoformat()]),
                               dict(form="value", variable_id=cost["variable_id"], value=3)])
     epochs = {item["variable"]: item["epoch"] for item in ledger.observations(study["template_id"])}
-    published = ledger.store.samples.epoch()
-    # Samples record the epoch that published them; a reference, the latest
-    # epoch when it was recorded; a plain value, none.
+    published = ledger.store.samples.core.engine.snapshot().epoch
+    # Samples record the epoch that published them; a reference, the epoch
+    # that published everything written before it; a plain value, none.
     assert epochs == {"level": published, "used": published, "cost": None}
+
+
+def test_a_reference_records_an_epoch_that_includes_earlier_writes(ledger):
+    study = ledger.define("read your writes")
+    used = ledger.declare(study["template_id"], "used", "input", "timeseries", {})
+    run = ledger.start(study["template_id"], {})["run_id"]
+    core = ledger.store.samples.core
+    # Accepted but not yet published when the reference is recorded: the
+    # processor resumes only while the recording waits.
+    core.processor.stop(drain=False)
+    core.ingest("plant", "flow-1", sample_frame("urn:plant:flow", [(WHEN, 2.0)]))
+    resume = threading.Timer(0.3, lambda: setattr(core, "processor", core.engine.start()))
+    resume.start()
+    ledger.record_batch(run, [dict(form="reference", variable_id=used["variable_id"], ref_uri="urn:plant:flow",
+                                   interval=[WHEN.isoformat(), WHEN.isoformat()])])
+    resume.join()
+    [observation] = ledger.observations(study["template_id"])
+    assert [r.value for r in core.engine.query("urn:plant:flow", epoch=observation["epoch"])] == [2.0]
+
+
+def test_finishing_a_run_waits_for_a_recording_in_progress(ledger, monkeypatch):
+    study = ledger.define("finish race")
+    level = ledger.declare(study["template_id"], "level", "output", "timeseries", {})
+    run = ledger.start(study["template_id"], {})["run_id"]
+    write, finishing = ledger.store.samples.write, []
+
+    def finish_meanwhile(source, frame):
+        # The streams are reserved; a finish now must wait for the commit.
+        finishing.append(threading.Thread(target=ledger.finish, args=(run, "succeeded")))
+        finishing[0].start()
+        finishing[0].join(0.2)
+        assert finishing[0].is_alive()
+        return write(source, frame)
+    monkeypatch.setattr(ledger.store.samples, "write", finish_meanwhile)
+    ledger.record_batch(run, [dict(form="samples", variable_id=level["variable_id"], samples=[[WHEN.isoformat(), 1.0]])])
+    finishing[0].join()
+    assert [item["variable"] for item in ledger.observations(study["template_id"])] == ["level"]
+    assert ledger.runs(study["template_id"])[0]["status"] == "succeeded"
