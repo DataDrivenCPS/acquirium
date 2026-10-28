@@ -13,9 +13,9 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 def _after_ns(value: datetime | str) -> int:
-    """UTC nanoseconds just after ``value``: a half-open read up to it
-    includes it."""
-    return (_utc(value) - _EPOCH) // timedelta(microseconds=1) * 1000 + 1
+    """UTC nanoseconds just after the microsecond ``value`` names: a half-open
+    read up to it includes every sample within that microsecond."""
+    return ((_utc(value) - _EPOCH) // timedelta(microseconds=1) + 1) * 1000
 
 
 def samples_frame(frame: pl.DataFrame) -> pl.DataFrame:
