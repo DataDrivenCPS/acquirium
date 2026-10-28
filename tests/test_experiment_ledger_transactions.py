@@ -178,3 +178,21 @@ def test_values_that_json_cannot_carry_are_rejected(ledger):
         with pytest.raises(ValueError):
             ledger.observe(run, variable, value=value)
     assert ledger.observations(study["template_id"]) == []
+
+
+def test_time_series_observations_record_their_epoch(ledger):
+    study = ledger.define("epochs")
+    level = ledger.declare(study["template_id"], "level", "output", "timeseries", {})
+    used = ledger.declare(study["template_id"], "used", "input", "timeseries", {})
+    cost = ledger.declare(study["template_id"], "cost", "output", "scalar", {})
+    run = ledger.start(study["template_id"], {})["run_id"]
+    [recorded] = ledger.record_batch(run, [dict(form="samples", variable_id=level["variable_id"],
+                                                samples=[[WHEN.isoformat(), 1.0]])])
+    ledger.record_batch(run, [dict(form="reference", variable_id=used["variable_id"], ref_uri=recorded["ref_uri"],
+                                   interval=[WHEN.isoformat(), WHEN.isoformat()]),
+                              dict(form="value", variable_id=cost["variable_id"], value=3)])
+    epochs = {item["variable"]: item["epoch"] for item in ledger.observations(study["template_id"])}
+    published = ledger.store.samples.epoch()
+    # Samples record the epoch that published them; a reference, the latest
+    # epoch when it was recorded; a plain value, none.
+    assert epochs == {"level": published, "used": published, "cost": None}

@@ -297,8 +297,9 @@ receipt time; time-series rows carry sample times and do not accept
 A time-series variable also records a `StreamInterval`, from
 `stream.between(start, end)`. That stores only the stream and range: reads
 return the stream's current samples, including later corrections and data
-that arrives afterwards. Record `interval.dataframe()` instead to store a
-fixed copy. Recording a `Stream` without a range raises `TypeError`, as does
+that arrives afterwards. To see them as they were when recorded, read
+`observation.dataframe(epoch=observation.epoch)`, or record
+`interval.dataframe()` instead to store a copy. Recording a `Stream` without a range raises `TypeError`, as does
 recording a stream to a variable of another type.
 
 ### Output assignment
@@ -398,7 +399,9 @@ power_samples = power_recording.dataframe()
 
 An Observation exposes `experiment_id`, `variable`, `sequence`, `recorded_at`,
 `occurred_at`, `status`, `experiment_metadata`, `started_at`, and `finished_at`.
-Time-series records also carry `ref_uri`, `range_start`, and `range_end`.
+Time-series records also carry `ref_uri`, `range_start`, `range_end`, and
+`epoch`: the Escapement epoch they were recorded at (the one that published
+recorded samples, or the latest one for a referenced interval).
 Files and tables carry `artifact_digest`, `filename`, `media_type`, and
 `byte_length`. A table's file is `<label>.parquet` with media type
 `application/vnd.apache.parquet`.
@@ -422,7 +425,7 @@ while preserving existing handles.
 | `ac.stream(source_id, name)` | A `Stream` for the stream a driver writes as `(source_id, name)` |
 | `ac.stream(ref_uri)` | A `Stream` for a reference URI |
 | `stream.ref_uri` | The stream's reference URI; `str(stream)` returns it too |
-| `stream.dataframe(start=None, end=None, **options)` | The stream's samples as `time` and `value` columns |
+| `stream.dataframe(start=None, end=None, **options)` | The stream's samples from `start` to `end`, inclusive, as `time` and `value` columns |
 | `stream.between(start, end)` | A `StreamInterval`; the end must not precede the start |
 | `interval.stream`, `interval.start`, `interval.end` | The interval's stream and inclusive bounds |
 | `interval.dataframe(**options)` | The samples in the interval |
@@ -435,7 +438,8 @@ power_samples = recorded_power.dataframe()
 ```
 
 Sample reads accept the low-level time-series client's `limit`, `order`,
-`timeout`, and `value_mode` options. Every experiment sample read returns
+`timeout`, `value_mode`, and `epoch` options; `epoch` reads the samples as
+that Escapement epoch published them. Every experiment sample read returns
 `time` and `value` columns: `Stream`, `StreamInterval`, time-series
 `Observation`, and `StreamAnnotation` alike. `Observation.dataframe()` defaults
 to its recorded range. Streams compare equal when their reference URIs do.

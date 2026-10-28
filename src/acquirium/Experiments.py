@@ -91,6 +91,7 @@ class _PreparedObservation:
     interval: tuple[datetime, datetime] | None = None
     attachment: tuple[dict, bytes] | None = None
     sample_ref: str | None = None
+    epoch: int | None = None
 
 
 @dataclass
@@ -414,7 +415,16 @@ class ExperimentStore:
             with self.store._lock, self.store._write_conn() as conn:
                 self._check_recording(conn, run_id, batch)
                 self._own_streams(conn, run_id, batch.registrations)
-            self._write_samples(f"experiment/{run_id}", batch.frame)
+            written = self._write_samples(f"experiment/{run_id}", batch.frame)
+            for item in batch.observations:
+                if item.sample_ref is not None:
+                    item.epoch = written
+        # A reference to an existing stream reads as of the latest epoch.
+        references = [item for item in batch.observations if item.ref_uri is not None and item.sample_ref is None]
+        if references and self.store.samples is not None:
+            latest = self.store.samples.epoch()
+            for item in references:
+                item.epoch = latest
         results = []
         with self.store._lock, self.store._write_conn() as conn:
             self._check_recording(conn, run_id, batch)
@@ -423,6 +433,8 @@ class ExperimentStore:
                 if item.attachment is not None:
                     self._store_artifact(conn, item.artifact_digest, *item.attachment, recorded)
                 self._execute(conn, "INSERT INTO experiment_observations (run_id, variable_id, sequence, recorded_at, occurred_at, value_json, artifact_digest, ref_uri, range_start, range_end, key_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [run_id, item.variable_id, sequence + offset, _database_timestamp(recorded), _database_timestamp(item.occurred_at) if item.occurred_at else None, _json(item.value) if item.value is not None else None, item.artifact_digest, item.ref_uri, _database_timestamp(item.interval[0]) if item.interval else None, _database_timestamp(item.interval[1]) if item.interval else None, _json(item.key) if item.key is not None else None])
+                if item.epoch is not None:
+                    self._execute(conn, "INSERT INTO experiment_observation_epochs VALUES (?, ?, ?)", [run_id, sequence + offset, item.epoch])
                 receipt = {"sequence": sequence + offset, "recorded_at": recorded}
                 if item.sample_ref is not None:
                     receipt["ref_uri"] = item.sample_ref
@@ -445,10 +457,10 @@ class ExperimentStore:
             self._execute(conn, "INSERT INTO experiment_streams (ref_uri, run_id, source_id, ref_name) VALUES (?, ?, ?, ?) "
                           "ON CONFLICT (ref_uri) DO NOTHING", [ref, run_id, source, name])
 
-    def _write_samples(self, source, frame):
+    def _write_samples(self, source, frame) -> int:
         if self.store.samples is None:
             raise RuntimeError("this experiment ledger has no sample store")
-        self.store.samples.write(source, frame)
+        return self.store.samples.write(source, frame)
 
     def _cleanup_streams(self) -> int:
         """Clear the samples of streams whose run is gone, then forget them.
@@ -758,11 +770,12 @@ class ExperimentStore:
                        o.value_json, o.artifact_digest, o.ref_uri,
                        o.range_start, o.range_end, v.variable_id, v.label,
                        v.role, v.kind, a.filename,
-                       a.media_type, a.byte_length, o.key_json
+                       a.media_type, a.byte_length, o.key_json, e.published_epoch
                 FROM experiment_observations AS o
                 JOIN experiment_runs AS r ON r.run_id=o.run_id
                 JOIN experiment_variables AS v ON v.variable_id=o.variable_id
                 LEFT JOIN experiment_artifacts AS a ON a.digest=o.artifact_digest
+                LEFT JOIN experiment_observation_epochs AS e ON e.run_id=o.run_id AND e.sequence=o.sequence
                 WHERE {' AND '.join(clauses)}
                 ORDER BY r.started_at, r.run_id, o.sequence
                 """,
@@ -792,6 +805,7 @@ class ExperimentStore:
                 "media_type": row[17],
                 "byte_length": row[18],
                 "key": json.loads(row[19]) if row[19] is not None else None,
+                "epoch": row[20],
             }
             for row in rows
         ]
@@ -849,6 +863,7 @@ class ExperimentStore:
             digests = [row[0] for row in self._execute(conn, f"""
                 SELECT DISTINCT artifact_digest FROM experiment_observations
                 WHERE run_id IN ({marks}) AND artifact_digest IS NOT NULL""", run_ids).fetchall()]
+            self._execute(conn, f"DELETE FROM experiment_observation_epochs WHERE run_id IN ({marks})", run_ids)
             self._execute(conn, f"DELETE FROM experiment_observations WHERE run_id IN ({marks})", run_ids)
             self._execute(conn, f"DELETE FROM experiment_runs WHERE run_id IN ({marks})", run_ids)
         sweep_sources = []
@@ -1062,10 +1077,17 @@ class Observation:
     media_type: str | None = None
     byte_length: int | None = None
     key: tuple | None = None
+    #: The Escapement epoch a time-series observation was recorded at.
+    epoch: int | None = None
     _client: Any = field(default=None, repr=False, compare=False)
 
     def dataframe(self, **kwargs: Any):
-        """Read a table, or fetch a time-series observation's samples."""
+        """Read a table, or fetch a time-series observation's samples.
+
+        Samples are read as they are now. Pass ``epoch=observation.epoch`` to
+        read them exactly as they were when recorded, even if the stream has
+        since been corrected.
+        """
         if self.variable.kind == "table":
             if kwargs:
                 raise TypeError("a table observation's dataframe() takes no options")
@@ -1148,6 +1170,7 @@ class Observation:
             "media_type": self.media_type,
             "byte_length": self.byte_length,
             "key": self.key,
+            "epoch": self.epoch,
         }
 
 class _Builder:
@@ -1900,6 +1923,7 @@ class ObservationCollection:
                 media_type=item.get("media_type"),
                 byte_length=item.get("byte_length"),
                 key=tuple(item["key"]) if item.get("key") is not None else None,
+                epoch=item.get("epoch"),
                 _client=self.study.client,
             ))
         return observations

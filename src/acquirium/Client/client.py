@@ -265,16 +265,19 @@ class AcquiriumClient:
         *,
         value_mode: str = "default",
         epoch: int | None = None,
+        end_ns: int | None = None,
     ) -> pl.DataFrame:
         """
         Fetch the full timeseries payload and return a single Polars DataFrame.
-        Best for small to medium responses.
+        Best for small to medium responses. Bounds are half-open; ``end_ns``
+        gives the end in UTC nanoseconds instead of ``end``.
         """
         url = f"{self.base_url}/timeseries"
         params = {
             "uri": uri,
             "start": start,
             "end": end,
+            "end_ns": end_ns,
             "limit": limit,
             "order": order,
             "value_mode": value_mode,

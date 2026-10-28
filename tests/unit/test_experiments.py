@@ -9,7 +9,7 @@ import polars as pl
 import pytest
 from requests import HTTPError
 
-from acquirium.Client.streams import Stream
+from acquirium.Client.streams import Stream, _after_ns
 from acquirium.Experiments import Study, StudyService, timestamp, _stream_name
 from acquirium.internals.models import compute_ref_uri
 
@@ -443,7 +443,7 @@ def test_stream_annotations_support_historical_and_live_intervals(study_api):
     assert historical.dataframe().rows() == [(start, 1.0)]
     assert historical.stream == Stream("urn:plant:gas-flow")
     study_api.client.timeseries_df.assert_called_once_with(
-        "urn:plant:gas-flow", start=start.isoformat(), end=end.isoformat())
+        "urn:plant:gas-flow", start=start.isoformat(), end_ns=_after_ns(end))
 
     live.close(datetime(2026, 1, 3, tzinfo=timezone.utc))
     assert live.range_end == datetime(2026, 1, 3, tzinfo=timezone.utc)
@@ -592,7 +592,7 @@ def test_reopened_study_hydrates_variables_and_reads_experiments(study_api):
     client.timeseries_df.assert_called_with(
         power_observation.ref_uri,
         start=start.isoformat(),
-        end=end.isoformat(),
+        end_ns=_after_ns(end),
     )
     # The recorded range can be recorded again, as another run's input.
     assert power_observation.interval == Stream("urn:acquirium:power-1").between(start, end)
@@ -734,7 +734,7 @@ def test_record_files_and_streams(study_api, tmp_path):
     assert run.observations(stream).latest().ref_uri == recorded.ref_uri
     client.timeseries_df.return_value = _stream_frame(recorded.ref_uri, [(when, 10.0)])
     assert recorded.dataframe(limit=5).rows() == [(when, 10.0)]
-    client.timeseries_df.assert_called_once_with(recorded.ref_uri, start=None, end=None, limit=5)
+    client.timeseries_df.assert_called_once_with(recorded.ref_uri, start=None, end_ns=None, limit=5)
     assert str(recorded) == recorded.ref_uri == str(compute_ref_uri(f"experiment/{run.run_id}", _stream_name(stream.variable_id, ())))
     for variable in (file, stream):
         with pytest.raises(TypeError, match="occurred_at"):
@@ -1041,7 +1041,7 @@ def test_stream_handles_name_a_stream_and_a_range():
     client.timeseries_df.return_value = pl.DataFrame()
     empty = interval.dataframe()
     assert (empty.height, empty.schema["time"], empty.schema["value"]) == (0, pl.Datetime("us", "UTC"), pl.Float64)
-    client.timeseries_df.assert_called_once_with(by_name.ref_uri, start=T0.isoformat(), end=T0.replace(day=2).isoformat())
+    client.timeseries_df.assert_called_once_with(by_name.ref_uri, start=T0.isoformat(), end_ns=_after_ns(T0.replace(day=2)))
     with pytest.raises(RuntimeError, match="not bound"):
         Stream("urn:x").dataframe()
 
