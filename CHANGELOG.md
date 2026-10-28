@@ -22,6 +22,9 @@ change in any release.
 
 ### Added
 - `Query.measurement(uri=...)` pins a measurement node to one point.
+- `Query.measurement(ref=...)` keeps only the given streams: a reference
+  URI, a `Stream` from `ac.stream(source_id, ref_name)`, or a list of
+  either (an empty list matches nothing).
 - `Query.insert_log()` and `Query.read_logs()` write and read logbook notes
   on the entities a query matches, as the legacy builder did.
 - `DataObject` supports `alias in data`, `iter(data)` and `len(data)`;

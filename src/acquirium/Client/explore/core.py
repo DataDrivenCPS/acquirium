@@ -536,7 +536,7 @@ class Query:
     def measurement(self, *, frm: "str | list | tuple | None" = None, alias: Optional[str] = None,
                     direction: Optional[str] = None, max_depth: int = 3,
                     nearest: Optional[bool] = None, include_connection_points: bool = True,
-                    uri: str | URIRef | None = None, **attrs: Any) -> "Query":
+                    uri: str | URIRef | None = None, ref: Any = None, **attrs: Any) -> "Query":
         """Attach a measurement point (data node) to the pattern and point at it.
 
         Matches nodes carrying an external reference one hop from the source.
@@ -577,6 +577,12 @@ class Query:
 
             aq.query().measurement(uri="wbs:RO-in-pressure")
 
+        ``ref`` keeps only the given streams: a reference URI, a
+        :class:`~acquirium.Client.streams.Stream`, or a list of either (an
+        empty list matches nothing)::
+
+            aq.query().measurement(ref=aq.stream("hist", "FT_feed")).dataframe()
+
         Extra keyword arguments are attribute filters applied to the new
         measurement node(s), same as ``where()``::
 
@@ -584,6 +590,7 @@ class Query:
         """
         g = self.query_graph
         instance_uri = self._normalize_instance_uri(uri)
+        refs = self._normalize_refs(ref)
 
         if isinstance(frm, (list, tuple)) and direction is not None:
             raise ValueError("measurement: frm list only combines with the non-directional form")
@@ -627,7 +634,7 @@ class Query:
                                       constraints={"is_data_node": True}))
             g = g.with_edge(QueryEdge(source_id=mid_id, target_id=data_id, hops=1),
                             new_pointer=data_id)
-            g = g.with_data_node(DataNodeInfo(node_id=data_id))
+            g = g.with_data_node(DataNodeInfo(node_id=data_id, refs=refs))
             g = self._pin_uri(g, [data_id], instance_uri)
             if attrs:
                 g = self._apply_attrs(g, [data_id], self._resolve_attr_values(attrs))
@@ -642,7 +649,7 @@ class Query:
                 self._require_free_alias(g, alias, verb="measurement")
             g = g.with_node(QueryNode(id=new_id, alias=alias if alias is not None else "data",
                                       constraints={"is_data_node": True}))
-            g = g.with_data_node(DataNodeInfo(node_id=new_id))
+            g = g.with_data_node(DataNodeInfo(node_id=new_id, refs=refs))
             g = self._pin_uri(g, [new_id], instance_uri)
             if attrs:
                 g = self._apply_attrs(g, [new_id], self._resolve_attr_values(attrs))
@@ -678,13 +685,29 @@ class Query:
             g = g.with_edge(QueryEdge(source_id=src_id, target_id=new_id, hops=1,
                                       cp_union=include_connection_points),
                             new_pointer=new_id)
-            g = g.with_data_node(DataNodeInfo(node_id=new_id))
+            g = g.with_data_node(DataNodeInfo(node_id=new_id, refs=refs))
             created.append(new_id)
 
         g = self._pin_uri(g, created, instance_uri)
         if attrs:
             g = self._apply_attrs(g, created, self._resolve_attr_values(attrs))
         return self._with_graph(g)
+
+    @staticmethod
+    def _normalize_refs(ref: Any) -> Optional[tuple]:
+        """``measurement(ref=)`` as a tuple of unique reference URIs (None: no filter)."""
+        if ref is None:
+            return None
+        items = list(ref) if isinstance(ref, (list, tuple, set, frozenset)) else [ref]
+        refs = tuple(dict.fromkeys(str(getattr(r, "ref_uri", r)) for r in items))
+        for r in refs:
+            # the URIs go into a VALUES block verbatim, so nothing that could
+            # close the IRI or the block gets through
+            if not _is_uri(r) or any(c in r for c in '<>"{}|\\^` \t\n\r'):
+                raise ValueError(
+                    f"measurement: ref must be stream reference URIs or Stream handles, got {r!r}"
+                )
+        return refs
 
     @staticmethod
     def _pin_uri(g: QueryGraph, node_ids: List[int], instance_uri: str | None) -> QueryGraph:
@@ -1401,6 +1424,7 @@ class Query:
                     "alias": g.aliases_reverse.get(nid, f"v{nid}"),
                     "filters": safe(dict(info.filters or {})),
                     "exprs": safe(list(info.exprs or ())),
+                    "refs": list(info.refs) if info.refs is not None else None,
                 }
                 for nid, info in g.data_nodes.items()
             ],
