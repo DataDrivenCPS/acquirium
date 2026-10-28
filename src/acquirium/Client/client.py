@@ -18,8 +18,10 @@ from acquirium.internals.models import (
     looks_like_uri,
 )
 from acquirium.internals.internals_namespaces import *
+from acquirium.Client.explore.attributes import ATTR_NS, RESOLVE_MIN_SCORE
+from acquirium.Client.metadata import plan_write, update_text
+from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
 from acquirium.Storage.values import normalize_value_kind
-from acquirium.Grafana.grafana_dashboard_creator import GrafanaDashboardCreator
 from rdflib import Graph, URIRef, Literal
 from rdflib.namespace import NamespaceManager, RDF, RDFS
 import logging
@@ -64,6 +66,11 @@ from acquirium.StreamMetadata import (
     POINT_FIELD_KINDS, POINT_FIELD_PREDICATES, _add_triple, _coerce_resolved, _build_stream_triples,
 )
 
+# Fields a stream registration already takes at top level; a ``metadata``
+# key naming one of them is merged into the stream.
+STREAM_FIELDS = frozenset({"unit", "quantity_kind", "medium", "substance", "data_source", "label"})
+
+
 def _split_stream_metadata(stream: dict) -> tuple[dict, dict]:
     """Return ``(stream with metadata fields merged in, remaining metadata)``.
 
@@ -72,8 +79,6 @@ def _split_stream_metadata(stream: dict) -> tuple[dict, dict]:
     with different values is an error. Everything else (user attributes,
     other built-ins) is written on the point by the metadata builder.
     """
-    from acquirium.Client.metadata import STREAM_FIELDS
-
     meta = dict(stream.get("metadata") or {})
     merged = {k: v for k, v in stream.items() if k != "metadata"}
     rest: dict = {}
@@ -102,10 +107,6 @@ class AcquiriumClient:
         # Bare requests.get/post open a new connection per call, which paid the
         # connect cost (and the ::1 miss above) on every request.
         self._http = requests.Session()
-        self.grafana = GrafanaDashboardCreator(
-            title="Acquirium Grafana Dashboard",
-            tags=["acquirium"],
-        )
         self._namespaces_cache: dict[str, str] | None = None
 
     @property
@@ -863,9 +864,6 @@ class AcquiriumClient:
         the same ``source_id`` and source-local ``ref_name``. Acquirium resolves
         those inserts to the same canonical reference URI internally.
         """
-        from acquirium.Client.metadata import plan_write, update_text
-        from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
-
         graphs: dict[str, Graph] = {}
         # the ``metadata`` maps per point; a later stream on the same point
         # wins key by key
@@ -887,12 +885,7 @@ class AcquiriumClient:
             subj = _build_stream_triples(graph, stream, resolved, existing, self._units_compatible)
             if extra:
                 extras.setdefault(str(subj), {}).update(extra)
-        # Plan the metadata before writing anything, so a bad key or a value
-        # that does not resolve fails the whole registration.
-        namespaces = self._namespace_uris() if extras else ()
-        writes = [plan_write(subj, extra, role="data", resolve=self._resolve_one,
-                             namespaces=namespaces)
-                  for subj, extra in extras.items()]
+        writes = self._plan_metadata(extras, dict.fromkeys(extras, "data"))
         for source_id, graph in graphs.items():
             if len(graph):
                 self.insert_graph(
@@ -905,13 +898,11 @@ class AcquiriumClient:
         # in the metadata graph, so registering again with a changed value
         # leaves only the new one. Runs after the stream triples, which make
         # the point a node the metadata graph may describe.
-        update = update_text(writes)
-        if update:
-            self.sparql_update(update, source_id=METADATA_SOURCE_ID)
+        self._write_metadata(writes)
 
     def _resolve_one(self, text: str, kind: str) -> Optional[str]:
         """Resolve one text value of the given kind to a URI, or None."""
-        hits = self.resolve({"v": (text, kind)}, min_score=0.4) or {}
+        hits = self.resolve({"v": (text, kind)}, min_score=RESOLVE_MIN_SCORE) or {}
         return hits.get("v")
 
     def node_roles(self, uris: Iterable[str]) -> dict[str, str]:
@@ -922,8 +913,6 @@ class AcquiriumClient:
         graphs do not mention (as subject or object) is left out, and so is
         one only user attributes mention.
         """
-        from acquirium.Client.explore.attributes import ATTR_NS
-
         uris = list(dict.fromkeys(str(u) for u in uris))
         roles: dict[str, str] = {}
         for i in range(0, len(uris), 500):
@@ -965,9 +954,6 @@ class AcquiriumClient:
         reserved metadata source graph as one SPARQL update, so each key is
         replaced atomically and nothing outside that graph is touched.
         """
-        from acquirium.Client.metadata import plan_write, update_text
-        from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
-
         subjects = {self.node_uri(uri): values for uri, values in records.items()}
         if not subjects:
             return {"ok": True, "nodes": 0}
@@ -975,17 +961,25 @@ class AcquiriumClient:
         missing = sorted(set(subjects) - set(roles))
         if missing:
             raise ValueError(f"unknown node(s), not in any data graph: {missing}")
-        namespaces = self._namespace_uris()
-        writes = [
-            plan_write(uri, values, role=roles[uri], resolve=self._resolve_one,
-                       namespaces=namespaces)
-            for uri, values in subjects.items()
-        ]
+        writes = self._plan_metadata(subjects, roles)
+        return {**self._write_metadata(writes), "nodes": len(writes)}
+
+    def _plan_metadata(self, records: Mapping[str, Mapping[str, Any]],
+                       roles: Mapping[str, str]) -> list:
+        """One :class:`~acquirium.Client.metadata.Write` per node, planned
+        before anything is written so a bad key or a value that does not
+        resolve fails the whole call."""
+        namespaces = self._namespace_uris() if records else ()
+        return [plan_write(uri, values, role=roles[uri], resolve=self._resolve_one,
+                           namespaces=namespaces)
+                for uri, values in records.items()]
+
+    def _write_metadata(self, writes: list) -> dict[str, Any]:
+        """Apply planned writes as one update to the metadata source graph."""
         update = update_text(writes)
         if not update:
-            return {"ok": True, "nodes": len(writes)}
-        result = self.sparql_update(update, source_id=METADATA_SOURCE_ID)
-        return {**result, "nodes": len(writes)}
+            return {"ok": True}
+        return self.sparql_update(update, source_id=METADATA_SOURCE_ID)
 
     def metadata_documents(self, subjects: Iterable[str]) -> dict[str, dict]:
         """Read complete typed metadata from the authoritative source graph."""
@@ -1115,14 +1109,3 @@ class AcquiriumClient:
         response.raise_for_status()
         return response.json()
 
-
-    ### Grafana dashboard related methods
-    def add_gauge_panel(self, prop_dict: dict) -> None:
-        self.grafana.add_gauge(prop_dict)
-
-    def add_time_series_panel(self, title: str, prop_dicts: list[dict]) -> None:
-        self.grafana.add_time_series(title, prop_dicts)
-
-    def generate_grafana_dashboard(self, server: str, api_key: str) -> None:
-        self.grafana.generate_dashboard()
-        self.grafana.upload_dashboard(server, api_key)

@@ -84,10 +84,6 @@ The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acq
 - [Inserting data](how-to/write-data.md) — register streams and write rows without a driver; the logbook
 - [Resolve text to URIs](how-to/resolve-text.md) — `resolve()`, units and conversion, tuning
 
-<!-- TODO: `generate_grafana_dashboard()` and the Grafana service in
-     compose.yaml are undocumented everywhere except one row of the client-API
-     table. Either write a how-to or drop it from the public API list. -->
-
 ## Reference
 
 The reference guides contain complete interface of each module:

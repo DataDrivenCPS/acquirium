@@ -1,6 +1,7 @@
 import pytest
 from acquirium.Client.data_object import DataObject
 from acquirium.internals.internals_namespaces import *
+from conftest import _CSV_SOURCE_ID
 
 
 # ---- Alias-based access ----
@@ -21,16 +22,14 @@ def test_getitem_returns_correct_columns(acquirium_client_csv):
     assert not df.is_empty()
 
 
-def test_getitem_nonexistent_alias_returns_empty(acquirium_client_csv):
-    """Accessing a nonexistent alias should return an empty DataFrame."""
+def test_getitem_nonexistent_alias_raises(acquirium_client_csv):
+    """A typo in the alias is an error, not an empty frame."""
     acq = acquirium_client_csv
-    query = acq.find_all_data()
-    data = query.data()
+    data = acq.find_all_data().data()
 
-    df = data["nonexistent_alias_xyz"]
-    assert df.is_empty()
-    assert "time" in df.columns
-    assert "value" in df.columns
+    assert "nonexistent_alias_xyz" not in data
+    with pytest.raises(KeyError):
+        data["nonexistent_alias_xyz"]
 
 
 # ---- Grouping via by() ----
@@ -38,9 +37,9 @@ def test_getitem_nonexistent_alias_returns_empty(acquirium_client_csv):
 def test_by_grouping(acquirium_client_csv):
     """by() should yield entity-scoped sub-DataObjects."""
     acq = acquirium_client_csv
-    entity_B = acq.find_entity(_class=ACQUIRIUM_NS.B, alias="b")
-    entity_BE = entity_B.find_related(_class=ACQUIRIUM_NS.E, alias="e")
-    query = entity_BE.find_all_data()
+    query = (acq.query().entity(ACQUIRIUM_NS.B, alias="b")
+             .related(ACQUIRIUM_NS.E, alias="e", nearest=False)
+             .measurement(frm="*"))
 
     data = query.data()
 
@@ -101,25 +100,6 @@ def test_dataframe_narrow(acquirium_client_csv):
     assert "point_uri" not in df_compact.columns
 
 
-# ---- iter() ----
-
-def test_iter_yields_per_point(acquirium_client_csv):
-    """iter() should yield (point_uri, DataFrame) pairs for each unique point."""
-    acq = acquirium_client_csv
-    query = acq.find_all_data()
-    data = query.data()
-
-    alias = data.aliases[0]
-    count = 0
-    for point_uri, df in data.iter(alias):
-        assert isinstance(point_uri, str)
-        assert "time" in df.columns
-        assert "value" in df.columns
-        assert not df.is_empty()
-        count += 1
-    assert count >= 1
-
-
 # ---- metadata() ----
 
 def test_metadata(acquirium_client_csv):
@@ -138,35 +118,69 @@ def test_metadata(acquirium_client_csv):
     assert "ref_uri" in meta_full.columns
 
 
-# ---- ref_info ----
+# ---- stream_info ----
 
-def test_ref_info(acquirium_client_csv):
-    """ref_info() should return indexed ref URIs."""
+def test_stream_info(acquirium_client_csv):
+    """stream_info() names each stream the way its driver registered it."""
     acq = acquirium_client_csv
-    query = acq.find_all_data()
-    data = query.data()
+    data = acq.find_all_data().data()
 
-    alias = data.aliases[0]
-    refs = data.ref_info(alias)
-    assert len(refs) >= 1
-    assert refs[0][0] == 0  # first index is 0
-    assert isinstance(refs[0][1], str)
+    info = data.stream_info()
+    assert info.columns == ["stream", "alias", "point_uri", "ref_uri", "source_id", "ref_name"]
+    assert info.height == 10
+    assert info["stream"].to_list() == list(range(10))
+    assert set(info["source_id"].to_list()) == {_CSV_SOURCE_ID}
+    assert set(info["ref_name"].to_list()) == {f"point_{i}" for i in range(1, 11)}
+
+    only = data.stream_info(data.aliases[0])
+    assert only.height == 10
+    with pytest.raises(KeyError):
+        data.stream_info("nope")
+
+    meta = data.metadata(include_ref_uris=True)
+    assert {"ref_uri", "source_id", "ref_name"} <= set(meta.columns)
+
+
+def test_dataframe_streams(acquirium_client_csv):
+    """streams= narrows every shape to the chosen streams, by number or ref URI."""
+    acq = acquirium_client_csv
+    data = acq.find_all_data().data()
+    info = data.stream_info()
+
+    one = data.dataframe(shape="narrow", compact=False, streams=[0])
+    assert one["ref_uri"].unique().to_list() == [info["ref_uri"][0]]
+    assert data.dataframe(shape="narrow", compact=False, streams=info["ref_uri"][0]).equals(one)
+
+    two = data.dataframe(shape="narrow", compact=False, streams=[0, info["ref_uri"][1]])
+    assert set(two["ref_uri"].to_list()) == set(info["ref_uri"][:2].to_list())
+
+    wide = data.dataframe(streams=[0])
+    assert len(wide.columns) == 2            # time + one stream
+
+    assert data.latest(streams=[0]).height == 1
+    with pytest.raises(KeyError):
+        data.dataframe(streams=[info.height])
 
 
 # ---- latest() ----
 
 def test_latest(acquirium_client_csv):
-    """latest() should return the most recent row for an alias."""
+    """latest() should return the newest row of every point of an alias."""
     acq = acquirium_client_csv
     query = acq.find_all_data()
     data = query.data()
 
     alias = data.aliases[0]
+    points = {b.point_uri for b in data.bindings if b.alias == alias}
     latest = data.latest(alias)
-    assert not latest.is_empty()
-    assert latest.shape[0] == 1
+    assert latest.shape[0] == len(points)
     assert "time" in latest.columns
     assert "value" in latest.columns
+    assert ("point_uri" in latest.columns) == (len(points) > 1)
+
+    everything = data.latest()
+    assert everything.columns == ["data_alias", "point_uri", "time", "value"]
+    assert everything.shape[0] == len({(b.alias, b.point_uri) for b in data.bindings})
 
 
 # ---- Edge cases ----
@@ -174,13 +188,14 @@ def test_latest(acquirium_client_csv):
 def test_empty_data_object(acquirium_client_csv):
     """A query with no data nodes should produce an empty DataObject."""
     acq = acquirium_client_csv
-    query = acq.find_entity(_class=ACQUIRIUM_NS.B, alias="b")
+    query = acq.query().entity(ACQUIRIUM_NS.B, alias="b")
     # No data nodes — just an entity query
     data = query.data()
 
     assert data.is_empty()
     assert data.aliases == []
-    assert data.entity_aliases == []
+    assert data.entity_aliases == ["b"]      # the query's shape survives an empty result
+    assert list(data.by("b")) == []
     df = data.dataframe()
     assert df.is_empty()
 
@@ -199,8 +214,7 @@ def test_single_data_node_no_entity(acquirium_client_csv):
 def test_data_with_entity_context(acquirium_client_csv):
     """Query with entity + data should produce entity columns."""
     acq = acquirium_client_csv
-    entity_B = acq.find_entity(_class=ACQUIRIUM_NS.B, alias="b")
-    data_query = entity_B.find_data(alias="b_data")
+    data_query = acq.query().entity(ACQUIRIUM_NS.B, alias="b").measurement(alias="b_data")
     data = data_query.data(limit=5)
 
     assert not data.is_empty()

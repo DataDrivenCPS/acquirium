@@ -14,11 +14,8 @@ if TYPE_CHECKING:
 
 from rdflib import URIRef
 
-import warnings
-
 from acquirium.Client.explore.core import Query
 from acquirium.Client.explore.expr import AttrProxy
-from acquirium.Client.query import Q
 from acquirium.Materialization.api import App
 from acquirium.Materialization.planner import Deployment
 
@@ -52,7 +49,6 @@ class Acquirium:
             server_url: str = "127.0.0.1",
             server_port: int = 8000,
             use_ssl: bool = False,
-            lexicon_path: Optional[Path] = None,
             insert_batch_rows: int = 50_000,
             health_timeout: float | None = 60.0,
         ):
@@ -63,13 +59,6 @@ class Acquirium:
         raises ``ConnectionError`` if it never does. Pass
         ``health_timeout=None`` (or 0) to skip the check.
         """
-        if lexicon_path is not None:
-            warnings.warn(
-                "lexicon_path is deprecated and ignored. "
-                "Text resolution now uses server-side embeddings via /resolve_text.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         self.client = AcquiriumClient(
             server_url=server_url,
             server_port=server_port,
@@ -209,19 +198,15 @@ class Acquirium:
         """Alias of :meth:`query`."""
         return self.query()
 
-    def find_entity(
-        self,
-        *,
-        _class: Optional[str] = None,
-        alias: Optional[str] = None,
-        uri: str | URIRef | None = None,
-    ) -> "Q":
-        q = Q(client=self.client).find_entity(_class=_class, alias=alias, uri=uri)
-        return q
+    def find_all_data(self, *, _class: Optional[str] = None, uri: str | URIRef | None = None) -> Query:
+        """Every registered measurement point, as a :class:`Query`.
 
-    def find_all_data(self, *, _class: Optional[str] = None, uri: str | URIRef | None = None) -> "Q":
-        q = Q(client=self.client).find_all_data(_class=_class, uri=uri)
-        return q
+        Shorthand for ``acq.query().measurement(type=_class, uri=uri)``:
+        ``_class`` restricts the points to a class (URI or free text) and
+        ``uri`` pins the query to one point.
+        """
+        attrs = {"type": _class} if _class is not None else {}
+        return self.query().measurement(uri=uri, **attrs)
 
     # ------------------------------------------------------------------
     # TIMESERIES API
@@ -516,9 +501,6 @@ class Acquirium:
             else:
                 graph.add_edge(source, target, ref_uris=[edge["ref_uri"]])
         return graph
-
-    def generate_grafana_dashboard(self, grafana_server, api_key):
-        return self.client.generate_grafana_dashboard(grafana_server, api_key)
 
     # ------------------------------------------------------------------
     # LOGGING API (plant-level convenience methods)

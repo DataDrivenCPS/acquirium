@@ -86,7 +86,7 @@ two.
 | observation | one reading: a timestamp and a value on one stream | `(2026-08-08 05:51:47, 7e6)` |
 | `value_kind` | whether a stream was registered as numeric or text | `"numeric"` |
 | `value_mode` | which of the two value columns a read returns | `"default"`, `"numeric"`, `"text"`, `"coalesce"` |
-| `cast_value` | a client-side cast applied after the values arrive | `"float"`, `"int"` |
+| `cast_value` | a client-side cast applied after the values arrive | `"float"`, `"int"`, `"str"`, `None` |
 | wide | one column per point, aligned on the timestamp | `time, m__wbs:RO-in-pressure, ...` |
 | narrow | one row per reading, with its point in its own column | `data_alias, point_id, time, value_numeric, ...` |
 

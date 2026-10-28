@@ -9,6 +9,7 @@ including a property on a pipe.
 import re
 
 import pytest
+from uuid import uuid4
 from rdflib import Graph, Literal, Namespace, RDF, RDFS, URIRef
 
 from acquirium.Client.explore import (
@@ -273,8 +274,9 @@ class FakeClient:
 
     def __init__(self, graph: Graph):
         self.graph = graph
-        # distinct per fixture graph: adjacency and segment caches key on it
-        self.base_url = f"fake://{id(graph)}"
+        # distinct per fixture graph: the segment cache keys on it, and id()
+        # is reused once an earlier fixture graph is collected
+        self.base_url = f"fake://{uuid4().hex}"
 
     def sparql_query(self, sparql: str, include_dependencies: bool = True) -> dict:
         res = self.graph.query(sparql)

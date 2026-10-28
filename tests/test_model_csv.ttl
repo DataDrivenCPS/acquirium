@@ -64,12 +64,12 @@ ex:point_10 a acq:QuantifiableObservableProperty ;
     qudt:hasUnit acq:Unit2 .
 
 ex:eq_1 a acq:A ;
-    acq:hasProperty ex:point_9 ;
+    s223:hasProperty ex:point_9 ;
     acq:x ex:eq_2,
         ex:eq_6 .
 
 ex:eq_2 a acq:B ;
-    acq:hasProperty ex:point_1,
+    s223:hasProperty ex:point_1,
         ex:point_2,
         ex:point_3 ;
     acq:w ex:eq_6 ;
@@ -88,18 +88,18 @@ ex:eq_4 a acq:D ;
     acq:z ex:eq_3 .
 
 ex:eq_5 a acq:E ;
-    acq:hasProperty ex:point_4 ;
+    s223:hasProperty ex:point_4 ;
     acq:x ex:eq_6 .
 
 ex:eq_6 a acq:A ;
-    acq:hasProperty ex:point_5,
+    s223:hasProperty ex:point_5,
         ex:point_6 ;
     acq:w ex:eq_5 ;
     acq:x ex:eq_7 ;
     acq:y ex:eq_2 .
 
 ex:eq_7 a acq:B ;
-    acq:hasProperty ex:point_7 ;
+    s223:hasProperty ex:point_7 ;
     acq:x ex:eq_10,
         ex:eq_8 ;
     acq:y ex:eq_3 ;
@@ -110,7 +110,7 @@ ex:eq_8 a acq:C ;
     acq:z ex:eq_7 .
 
 ex:eq_9 a acq:D ;
-    acq:hasProperty ex:point_4 .
+    s223:hasProperty ex:point_4 .
 
 ex:eq_10 a acq:E ;
-    acq:hasProperty ex:point_8 .
+    s223:hasProperty ex:point_8 .

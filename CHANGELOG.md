@@ -10,7 +10,26 @@ change in any release.
 
 ## [Unreleased]
 
+### Removed
+- The legacy query builder (`acquirium.Q`, `acq.find_entity()` and the
+  `find_related` / `find_data` / `filter_by_*` family). `acq.find_all_data()`
+  stays and now builds an explore `Query`; see "Coming from the old
+  interface" in the client API reference for the verb-by-verb mapping.
+- The Grafana dashboard helpers (`generate_grafana_dashboard()`,
+  `add_gauge_panel()`, `add_time_series_panel()`) and the `grafanalib`
+  dependency. The Grafana service in `compose.yaml` is unchanged.
+- The ignored `lexicon_path` argument of `Acquirium()`.
+
 ### Added
+- `Query.measurement(uri=...)` pins a measurement node to one point.
+- `Query.insert_log()` and `Query.read_logs()` write and read logbook notes
+  on the entities a query matches, as the legacy builder did.
+- `DataObject` supports `alias in data`, `iter(data)` and `len(data)`;
+  `data["typo"]` raises `KeyError`.
+- `DataObject.stream_info()` lists the streams behind an object with the
+  `source_id` and `ref_name` their driver registered, and
+  `dataframe(streams=...)` / `latest(streams=...)` read only the listed
+  streams, by number from that table or by ref URI. `ref_info()` is removed.
 - `object` experiment variables save any Python object through a codec class
   and rebuild it with `observation.load()`. A codec has a `media_type`,
   `dumps(value) -> bytes`, and `loads(data)`; the declaration stores its
@@ -107,6 +126,18 @@ change in any release.
   instead of failing on an empty shapes graph.
 
 ### Changed
+- `cast_value` is validated (`"float"`, `"int"`, `"str"` or `None`) and
+  defaults to `None`; `"float"` parses numeric text into `value_numeric`
+  without logging, `"int"` returns `Int64` columns and warns when it
+  truncates.
+- `DataObject.units()` lists the distinct units of each alias's points,
+  `metadata()` has a per-point `unit` column, and `convert_to()` converts each
+  point from its own unit. `latest()` fetches each point's newest reading and
+  takes no alias to report every point. `iter()` is gone; split `d["alias"]`
+  on `point_uri` instead.
+- A unit conversion that cannot be done is no longer only logged: the
+  automatic one raises a `UserWarning` and returns the values as stored, and a
+  `convert_to()` that fails at fetch time raises `ValueError`.
 - DuckDB and TimescaleDB databases from earlier releases upgrade in place the
   first time the server opens them. A large DuckDB database briefly needs room
   for a second copy of its samples table.
