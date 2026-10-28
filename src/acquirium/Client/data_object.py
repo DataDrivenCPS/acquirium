@@ -6,6 +6,8 @@ from typing import Any, Iterator, Sequence, TYPE_CHECKING
 import polars as pl
 import warnings
 
+from acquirium.Client.streams import Stream
+
 if TYPE_CHECKING:
     from acquirium.Client.explore.core import Query
     from acquirium.Client.query_graph import QueryGraph
@@ -912,7 +914,7 @@ class DataObject:
         order: str = "asc",
         include_ref: bool = False,
         compact: bool = True,
-        streams: "int | str | Sequence[int | str] | None" = None,
+        streams: "int | str | Stream | Sequence[int | str | Stream] | None" = None,
     ) -> pl.DataFrame:
         """Return a flat DataFrame.
 
@@ -943,8 +945,9 @@ class DataObject:
         preserved with entity columns), wide keeps alias/URI column names.
 
         ``streams`` keeps only the listed streams: numbers from the
-        ``stream`` column of :meth:`stream_info`, ref URIs, or a mix. A
-        point fed by several streams then shows just the chosen ones, so
+        ``stream`` column of :meth:`stream_info`, ref URIs,
+        :class:`~acquirium.Client.streams.Stream` handles from
+        ``ac.stream(source_id, ref_name)``, or a mix. A point fed by several streams then shows just the chosen ones, so
         ``streams=[1]`` reads one driver's values for a point that has two.
         An unknown number or URI raises ``KeyError``.
 
@@ -957,19 +960,22 @@ class DataObject:
         return self._cast_output(frame)
 
     def _resolve_streams(self, streams) -> set[str] | None:
-        """Turn ``streams`` (numbers from :meth:`stream_info`, ref URIs, or a
-        mix) into the set of ref URIs they name; ``None`` means all."""
+        """Turn ``streams`` (numbers from :meth:`stream_info`, ref URIs,
+        ``Stream`` handles, or a mix) into the set of ref URIs they name;
+        ``None`` means all."""
         if streams is None:
             return None
-        if isinstance(streams, (int, str)):
+        if isinstance(streams, (int, str, Stream)):
             streams = [streams]
         table = self.stream_info()
         by_number = dict(zip(table["stream"].to_list(), table["ref_uri"].to_list()))
         known = set(by_number.values())
         refs: set[str] = set()
         for item in streams:
+            if isinstance(item, Stream):
+                item = item.ref_uri
             if isinstance(item, bool) or not isinstance(item, (int, str)):
-                raise TypeError(f"streams: expected a stream number or ref URI, got {item!r}")
+                raise TypeError(f"streams: expected a stream number, ref URI or Stream, got {item!r}")
             if isinstance(item, int):
                 if item not in by_number:
                     raise KeyError(f"stream {item} not in this object; stream_info() lists 0..{len(by_number) - 1}")
@@ -1170,7 +1176,7 @@ class DataObject:
         return table
 
     def latest(self, alias: str | None = None, *,
-               streams: "int | str | Sequence[int | str] | None" = None) -> pl.DataFrame:
+               streams: "int | str | Stream | Sequence[int | str | Stream] | None" = None) -> pl.DataFrame:
         """Return the newest reading of each point.
 
         Answers from its own fetch (one row per stream, newest first), so

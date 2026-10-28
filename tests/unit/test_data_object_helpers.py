@@ -277,13 +277,23 @@ class TestStreamInfo:
         assert d._resolve_streams("urn:t#r3") == {"urn:t#r3"}
         assert d._resolve_streams([0, "urn:t#r2"]) == {"urn:t#r1", "urn:t#r2"}
 
+    def test_streams_resolve_stream_handles_like_measurement_ref(self):
+        from acquirium.Client.streams import Stream
+        d = self._object()
+        assert d._resolve_streams(Stream("urn:t#r2")) == {"urn:t#r2"}
+        assert d._resolve_streams([Stream("urn:t#r1"), "urn:t#r1", 2]) == {"urn:t#r1", "urn:t#r3"}
+        assert d._resolve_streams([]) == set()  # an empty list selects nothing
+
     def test_unknown_stream_raises(self):
         import pytest
+        from acquirium.Client.streams import Stream
         d = self._object()
         with pytest.raises(KeyError, match="0..2"):
             d._resolve_streams([3])
         with pytest.raises(KeyError, match="stream_info"):
             d._resolve_streams(["urn:t#nope"])
+        with pytest.raises(KeyError, match="stream_info"):
+            d._resolve_streams(Stream("urn:t#nope"))
         with pytest.raises(TypeError):
             d._resolve_streams([1.5])
 

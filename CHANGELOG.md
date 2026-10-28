@@ -32,7 +32,8 @@ change in any release.
 - `DataObject.stream_info()` lists the streams behind an object with the
   `source_id` and `ref_name` their driver registered, and
   `dataframe(streams=...)` / `latest(streams=...)` read only the listed
-  streams, by number from that table or by ref URI. `ref_info()` is removed.
+  streams, by number from that table, by ref URI, or by the `Stream` handle
+  `ac.stream(source_id, ref_name)` returns. `ref_info()` is removed.
 - `object` experiment variables save any Python object through a codec class
   and rebuild it with `observation.load()`. A codec has a `media_type`,
   `dumps(value) -> bytes`, and `loads(data)`; the declaration stores its

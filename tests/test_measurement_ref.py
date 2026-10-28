@@ -58,6 +58,15 @@ def test_ref_list_selects_each_stream(hist):
     assert info["source_id"].unique().to_list() == [SOURCE]
 
 
+def test_streams_takes_the_same_stream_handles(hist):
+    feed, perm = hist.stream(SOURCE, "FT_feed"), hist.stream(SOURCE, "FT_perm")
+    data = hist.query().measurement(ref=[feed, perm]).data()
+    narrow = data.dataframe(shape="narrow", compact=False, streams=feed)
+    assert narrow["ref_uri"].unique().to_list() == [feed.ref_uri]
+    latest = data.latest(streams=[perm])
+    assert latest["value"].to_list() == [11.0]
+
+
 @pytest.mark.parametrize("ref", [[], "urn:acquirium:no-such-stream"])
 def test_ref_without_a_match_is_empty(hist, ref):
     data = hist.query().measurement(ref=ref).data()
