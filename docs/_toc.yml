@@ -1,0 +1,51 @@
+# Table of contents for the Acquirium docs (Diátaxis layout)
+format: jb-book
+root: _index.md
+chapters:
+- file: tutorials/_index.md
+  sections:
+  - file: tutorials/getting-started.md
+  - file: tutorials/querying.md
+  - file: tutorials/query-cookbook.md
+  - file: tutorials/data.md
+  - file: tutorials/first-driver.md
+  - file: tutorials/driver-with-a-plant-model.md
+  - file: tutorials/first-app.md
+- file: how-to/_index.md
+  sections:
+  - file: how-to/load-a-plant-model.md
+  - file: how-to/explore-a-model.md
+  - file: how-to/debug-an-empty-query.md
+  - file: how-to/calculate-derived-streams.md
+  - file: how-to/check-deploy-apps.md
+  - file: how-to/write-data.md
+  - file: how-to/attach-metadata.md
+  - file: how-to/record-a-whole-model.md
+  - file: how-to/record-experiments.md
+  - file: how-to/compare-experiment-runs.md
+  - file: how-to/run-the-server.md
+  - file: how-to/local-runtime.md
+  - file: how-to/resolve-text.md
+- file: reference/_index.md
+  sections:
+  - file: reference/client-api.md
+  - file: reference/drivers.md
+  - file: reference/apps.md
+  - file: reference/experiments.md
+  - file: reference/server-config.md
+  - file: reference/storage-migrations.md
+  - file: reference/http-api.md
+  - file: reference/glossary.md
+- file: explanation/_index.md
+  sections:
+  - file: explanation/query-model.md
+  - file: explanation/values.md
+  - file: explanation/units.md
+  - file: explanation/drivers.md
+  - file: explanation/apps.md
+  - file: explanation/stream-lifecycle.md
+  - file: explanation/experiments.md
+  - file: explanation/text-resolution.md
+  - file: explanation/materialization-internals.md
+  - file: explanation/server-internals.md
+  - file: explanation/graph-backend.md
