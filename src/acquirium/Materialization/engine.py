@@ -172,9 +172,18 @@ class Engine:
             rows, seq_from, seq_to, revision = 0, 0, 0, None
             if entries:
                 revision = self.store._next_revision(conn)
+                # Consecutive readings go in as one upsert, in sequence order,
+                # so the last row for a (stream, time) still wins.
+                readings: list[pa.Table] = []
                 for seq, kind, meta, payload in entries:
                     table = decode(bytes(payload))
+                    if kind == "readings":
+                        readings.append(table)
+                        continue
+                    rows += self._apply_readings(conn, readings, revision)
+                    readings = []
                     rows += self._apply(conn, kind, json.loads(meta), table, revision)
+                rows += self._apply_readings(conn, readings, revision)
                 seq_from, seq_to = int(entries[0][0]), int(entries[-1][0])
                 self._execute(conn, "DELETE FROM materialization_inbox WHERE seq>=? AND seq<=?", [seq_from, seq_to])
             timings["apply"] = perf_counter() - applying
@@ -196,6 +205,12 @@ class Engine:
         if self.evaluator is not None and plan is not None:
             self.evaluator.committed(report)
         return report
+
+    def _apply_readings(self, conn: Any, tables: list[pa.Table], revision: int) -> int:
+        if not tables:
+            return 0
+        table = tables[0] if len(tables) == 1 else pa.concat_tables(tables, promote_options="permissive")
+        return self._apply(conn, "readings", {}, table, revision)
 
     def _apply(self, conn: Any, kind: str, meta: dict[str, Any], table: pa.Table, revision: int) -> int:
         frame = self.store._prepare_frame(pl.from_arrow(table))
