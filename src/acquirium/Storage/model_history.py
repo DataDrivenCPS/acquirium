@@ -27,41 +27,24 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from uuid import uuid4
 
 from rdflib import Graph, Literal
 from rdflib.namespace import XSD
 from rdflib.plugins.serializers.nt import _nt_row
 
+from acquirium.internals.intervals import (  # noqa: F401  (re-exported for callers)
+    NEG_INF,
+    POS_INF,
+    from_micros,
+    merge,
+    now_micros,
+    symmetric_difference,
+    to_micros,
+)
 from acquirium.Storage.metadata_outbox import execute
 from acquirium.Storage.migrations import Migration, migrate
-
-NEG_INF = -(2**63)
-POS_INF = 2**63 - 1
-
-_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
-
-
-def to_micros(value: datetime) -> int:
-    """Microseconds since the epoch; a naive datetime is taken as UTC."""
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    delta = value - _EPOCH
-    return (delta.days * 86_400 + delta.seconds) * 1_000_000 + delta.microseconds
-
-
-def from_micros(value: int) -> datetime | str:
-    """The inverse of ``to_micros``; the unbounded ends become strings."""
-    if value == NEG_INF:
-        return "-infinity"
-    if value == POS_INF:
-        return "infinity"
-    return _EPOCH + timedelta(microseconds=value)
-
-
-def now_micros() -> int:
-    return to_micros(datetime.now(timezone.utc))
 
 
 def parse_bound(value: datetime | str | None, *, end: bool) -> int | None:
@@ -450,39 +433,3 @@ class ModelHistory:
             finally:
                 conn.unregister(view)
         return name
-
-
-# -------------------- interval sets --------------------
-def merge(intervals: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:
-    """Sorted disjoint union; touching intervals join."""
-    out: list[tuple[int, int]] = []
-    for start, end in sorted(intervals):
-        if out and start <= out[-1][1]:
-            if end > out[-1][1]:
-                out[-1] = (out[-1][0], end)
-        else:
-            out.append((start, end))
-    return out
-
-
-def symmetric_difference(a: Iterable[tuple[int, int]], b: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:
-    """The points covered by exactly one of *a* and *b*."""
-    edges: dict[int, int] = defaultdict(int)
-    for start, end in merge(a):
-        edges[start] += 1
-        edges[end] -= 1
-    for start, end in merge(b):
-        edges[start] += 1
-        edges[end] -= 1
-    out: list[tuple[int, int]] = []
-    depth = 0
-    left = None
-    for point in sorted(edges):
-        before = depth
-        depth += edges[point]
-        if before != 1 and depth == 1:
-            left = point
-        elif before == 1 and depth != 1 and left is not None:
-            out.append((left, point))
-            left = None
-    return merge(out)
