@@ -549,8 +549,11 @@ def _deploy_config_apps(cfg: dict) -> None:
         try:
             target = _load_config_app_target(spec, base_dir=base_dir)
             # Only non-reserved fields become constructor parameters. ``name``
-            # remains display/config metadata and cannot alter binding identity.
-            parameters = {key: value for key, value in entry.items() if key not in {"spec", "name"}}
+            # remains display/config metadata and cannot alter binding identity;
+            # ``effective_from`` is when the deployment starts ("-infinity" for
+            # all history, now if omitted).
+            parameters = {key: value for key, value in entry.items() if key not in {"spec", "name", "effective_from"}}
+            effective_from = entry.get("effective_from")
             if isinstance(target, type) and issubclass(target, MaterializationApp):
                 deployments = (target,)
                 deployment_parameters = parameters
@@ -568,7 +571,7 @@ def _deploy_config_apps(cfg: dict) -> None:
             else:
                 raise TypeError("app spec target must be an App class or callable registrar")
             for app_class in deployments:
-                aq.deploy_app(app_class, parameters=deployment_parameters)
+                aq.deploy_app(app_class, parameters=deployment_parameters, effective_from=effective_from)
             log.info("Deployed config app '%s' (%s): %d app(s)", entry.get("name", spec), spec, len(deployments))
         except Exception:
             log.exception("Config app %s failed to deploy", spec)

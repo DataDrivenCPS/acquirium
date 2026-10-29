@@ -38,18 +38,20 @@ def test_config_app_registrar_receives_table_options_and_deploys_returned_classe
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-        def deploy_app(self, transformation, *, parameters=None):
-            deployed.append((transformation, parameters))
+        def deploy_app(self, transformation, *, parameters=None, effective_from=None):
+            deployed.append((transformation, parameters, effective_from))
 
     monkeypatch.setattr("acquirium.Client.acquirium.Acquirium", FakeAcquirium)
     _deploy_config_apps({
         "__config_dir": str(tmp_path),
         "server": {"port": 8000},
-        "apps": [{"spec": "./configured_dag.py:register", "threshold": 7}],
+        "apps": [{"spec": "./configured_dag.py:register", "threshold": 7, "effective_from": "-infinity"}],
     })
 
-    assert [item.__name__ for item, _ in deployed] == ["First", "Second"]
-    assert [parameters for _, parameters in deployed] == [{}, {}]
+    assert [item.__name__ for item, _, _ in deployed] == ["First", "Second"]
+    assert [parameters for _, parameters, _ in deployed] == [{}, {}]
+    # the start of the deployment is not a constructor parameter
+    assert [start for _, _, start in deployed] == ["-infinity", "-infinity"]
 
 
 _APP_SOURCE = (
