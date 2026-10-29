@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from acquirium.Materialization.checks import check_entry, check_outputs
 
-import re
 import json
 from dataclasses import replace
 from uuid import uuid4
@@ -23,42 +22,17 @@ from datetime import datetime
 from typing import Any
 from time import monotonic
 from threading import Lock, RLock
-from rdflib import Graph, Literal, RDF, RDFS, URIRef
+from rdflib import Graph, URIRef
 
 from acquirium.Materialization.models import ApplicationGraph, OutputBuilder, TimeWindow, _duration
 from acquirium.Materialization.revision_store import RevisionStore
 from acquirium.Materialization.scheduler import InProcessExecutor, Scheduler
 from acquirium.Materialization.deployments import DeploymentLog
 from acquirium.Materialization.planner import BindingPlanner, Deployment
+from acquirium.Materialization.publication import _default_label, output_triples  # noqa: F401
 from acquirium.internals.intervals import NEG_INF, POS_INF, now_micros
 from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI
-from acquirium.internals.internals_namespaces import (
-    ACQUIRIUM_REF_NAME, ACQUIRIUM_SOURCE_ID, ACQUIRIUM_VALUE_KIND,
-    DATA_SOURCE, HAS_EXTERNAL_REFERENCE, HAS_MEDIUM, HAS_QUANTITY_KIND, HAS_UNIT,
-    IS_CALCULATED_FROM, OF_SUBSTANCE, PRODUCED_BY, PRODUCES,
-    TIMESERIES_REFERENCE,
-)
-
-
-def _default_label(binding, port: str, spec) -> str:
-    """Name a derived stream the most specific way its binding allows.
-
-    The author's own ``label`` wins over this, and a ``named`` output already
-    carries a human name. Otherwise the label reads as the thing measured
-    followed by what produced it — ``Basin 1 inlet temperature
-    (normalize-temperatures[celsius])`` — with any previous parenthetical
-    dropped, so a chain of apps stays one hop deep instead of accumulating.
-    An output over several streams has no single subject, so it is named for
-    its app and port alone.
-    """
-    if spec.stream_name:
-        return spec.stream_name
-    tag = f"{binding.application_name}[{port}]"
-    streams = [stream for values in binding.inputs.values() for stream in values]
-    if len(streams) == 1 and streams[0].label:
-        subject = re.sub(r"\s*\([^()]*\)$", "", streams[0].label)
-        return f"{subject} ({tag})"
-    return tag
+from acquirium.internals.internals_namespaces import IS_CALCULATED_FROM, PRODUCES
 
 
 class Materializer:
@@ -344,33 +318,8 @@ class Materializer:
                 for item in inputs:
                     graph.add((binding_uri, IS_CALCULATED_FROM, URIRef(item.ref_uri)))
             for name, output in binding.outputs.items():
-                spec = output.spec
-                ref, point = URIRef(output.ref_uri), URIRef(output.point_uri)
-                graph.add((binding_uri, PRODUCES, ref))
-                graph.add((point, HAS_EXTERNAL_REFERENCE, ref))
-                # Which app made this. On the point, where query attributes
-                # are matched, so `measurement(app="…")` finds one app's work
-                # without the author having to tag it by hand.
-                graph.add((point, PRODUCED_BY, Literal(binding.application_name)))
-                graph.add((ref, RDF.type, TIMESERIES_REFERENCE))
-                graph.add((ref, ACQUIRIUM_SOURCE_ID, Literal(f"derived:{binding.application_name}")))
-                graph.add((ref, ACQUIRIUM_REF_NAME, Literal(output.ref_name)))
-                if spec.value_kind: graph.add((ref, ACQUIRIUM_VALUE_KIND, Literal(spec.value_kind)))
-                if spec.unit: graph.add((point, HAS_UNIT, URIRef(spec.unit)))
-                # A point the author supplied is theirs and already has a
-                # name; only a point this runtime created gets a generated
-                # one, so a derived stream never shows up as a bare URI.
-                label = spec.label or (None if spec.point_uri else _default_label(binding, name, spec))
-                if label: graph.add((point, RDFS.label, Literal(label)))
-                if spec.quantity_kind: graph.add((point, HAS_QUANTITY_KIND, URIRef(spec.quantity_kind)))
-                if spec.medium: graph.add((point, HAS_MEDIUM, URIRef(spec.medium)))
-                if spec.substance: graph.add((point, OF_SUBSTANCE, URIRef(spec.substance)))
-                # On the point, not the reference: that is where driver
-                # registration records it, and where the query layer looks —
-                # measurement(data_source=...) filters the point.
-                if spec.data_source: graph.add((point, DATA_SOURCE, Literal(spec.data_source)))
-                for predicate, values in (spec.properties or {}).items():
-                    for value in values: graph.add((point, URIRef(predicate), URIRef(value)))
+                graph.add((binding_uri, PRODUCES, URIRef(output.ref_uri)))
+                graph += output_triples(binding.application_name, binding.inputs, name, output)
         self._graph.insert_graph(
             graph,
             format="turtle",

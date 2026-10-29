@@ -8,11 +8,14 @@ dry runs can use the same compiler without activating the result.
 """
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import asdict, dataclass, field, fields
 from datetime import timedelta
 from hashlib import sha256
 import json
 from typing import Any, Callable, Iterable, Mapping
+
+from rdflib import Graph
 
 from acquirium.Client.explore.core import Query
 from acquirium.Client.explore.expr import AttrProxy
@@ -22,7 +25,12 @@ from acquirium.Materialization.models import (
 )
 from acquirium.Materialization.worker import load_entrypoint
 from acquirium.Materialization.definitions import source_digest
-from acquirium.internals.intervals import Interval, lives
+from acquirium.internals.intervals import POS_INF, Interval, intersect, lives, merge
+from acquirium.Materialization.admission import AdmissionError, Schedule, admit
+from acquirium.Materialization.deployments import DeploymentChange, deployment, names as deployment_names
+from acquirium.Materialization.publication import output_triples
+from acquirium.Materialization.temporal import Row, ViewDefinition, view_graph, writer_conflicts
+from acquirium.Storage.model_history import nt
 from acquirium.internals.models import compute_ref_uri, looks_like_uri
 
 
@@ -59,17 +67,24 @@ class _GraphQueryClient:
 
 
 class _VersionGraph:
-    """One model version behind the surface planning queries use.
+    """One model version, with the view outputs published at that time,
+    behind the surface planning queries use.
 
-    The version key is derived from the content digest, so query-builder
-    caches keyed by graph version never mix two versions.
+    The version key is derived from both contents, so query-builder caches
+    keyed by graph version never mix two versions.
     """
-    def __init__(self, store: object, version: object) -> None:
-        self._store, self._version = store, version
+    def __init__(self, store: object, version: object, publications: Graph | None = None) -> None:
+        self._store, self._version, self._publications = store, version, publications
+        published = "" if publications is None else _graph_digest(publications)
+        self.key = sha256(f"{version.digest}:{published}".encode()).hexdigest()
     def sparql_query(self, query: str, include_dependencies: bool = True, *, wait_for_fresh: bool = False) -> dict:
-        return self._store.query_version(self._version, query, include_dependencies)
+        return self._store.query_version(self._version, query, include_dependencies, publications=self._publications)
     def graph_status(self) -> dict:
-        return {"published_version": int(self._version.digest[:15], 16)}
+        return {"published_version": int(self.key[:15], 16)}
+
+
+def _graph_digest(graph: Graph) -> str:
+    return sha256("\n".join(sorted(nt(t) for t in graph)).encode()).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -303,19 +318,72 @@ class BindingPlanner:
         version alone (Acquirium's own graph is not part of the model).
         """
         app = self._load(deployment, search_path)
-        pieces = []
-        rows_by_key: dict[str, _MatchRow] = {}
+        found = []
         for start, end in self.graph.model_versions():
             version = self.graph.model_version(start)
-            rows = _query_rows(app.build_query(self._client(_VersionGraph(self.graph, version))))
-            keys = []
-            for row in rows:
-                key = _json({"streams": row.streams, "columns": row.columns})
-                rows_by_key[key] = row
-                keys.append(key)
-            pieces.append((start, end, keys))
-        return sorted(((rows_by_key[key], life) for key, life in lives(pieces).items()),
-                      key=lambda item: _json(item[0].columns))
+            found.append((start, end, _query_rows(app.build_query(self._client(_VersionGraph(self.graph, version))))))
+        return _row_lives(found)
+
+    def temporal_plan(self, changes: Iterable[DeploymentChange], *, search_path: str | None = None) -> "TemporalPlan":
+        """Plan every deployment of the log over all of time.
+
+        Each definition's query runs on every model version, together with
+        the output nodes published at that time: the named outputs of every
+        view deployed then, and the generated outputs of the instances
+        present then. Generated outputs depend on the rows found, so planning
+        repeats until the rows stop changing; with stratified selection that
+        takes at most one round per view plus one. Raises ``AdmissionError``
+        when the view set is not admitted.
+        """
+        changes = list(changes)
+        definitions = []
+        for name in deployment_names(changes):
+            spans: dict[str, list[Interval]] = defaultdict(list)
+            for start, end, text in deployment(changes, name):
+                spans[text].append((start, end))
+            for text, deployed in sorted(spans.items()):
+                definitions.append(_PlannedDefinition(name, text, Deployment.from_json(text), tuple(merge(deployed))))
+        apps = {d.key: self._load(d.deployment, search_path) for d in definitions}
+        named = [(d.deployed, output_triples(d.name, {}, port, _port(d, port, {})))
+                 for d in definitions for port, spec in d.deployment.outputs.items() if spec.stream_name is not None]
+        cache: dict[tuple, tuple[_MatchRow, ...]] = {}
+        rows: dict[tuple, list[tuple[_MatchRow, list[Interval]]]] = {}
+        generated: list[tuple[tuple[Interval, ...], Graph]] = []
+        for _ in range(len(definitions) + 2):
+            published = named + generated
+            pieces = _refine(self.graph.model_versions(), [span for spans, _ in published for span in spans])
+            current = {}
+            for definition in definitions:
+                found = []
+                for start, end in pieces:
+                    version = self.graph.model_version(start)
+                    graph = Graph()
+                    for spans, triples in published:
+                        if any(left <= start < right for left, right in spans):
+                            graph += triples
+                    view = _VersionGraph(self.graph, version, graph)
+                    key = (definition.key, view.key)
+                    if key not in cache:
+                        cache[key] = _query_rows(apps[definition.key].build_query(self._client(view)))
+                    found.append((start, end, cache[key]))
+                current[definition.key] = _row_lives(found)
+            if current == rows:
+                break
+            rows = current
+            generated = [item for definition in definitions for item in _generated(definition, rows[definition.key])]
+        else:
+            raise AdmissionError("queries select each other's generated outputs without end; "
+                                 "read one of them through a named output instead")
+        temporal = tuple(_temporal_definition(d, rows[d.key]) for d in definitions)
+        graph = view_graph(temporal)
+        starts: dict[str, int] = {}
+        for d in definitions:
+            starts[d.name] = min(starts.get(d.name, POS_INF), d.deployed[0][0])
+        schedule = admit(starts, graph.reads, graph.selects)
+        conflicts = writer_conflicts(temporal)
+        if conflicts:
+            raise AdmissionError("; ".join(str(conflict) for conflict in conflicts))
+        return TemporalPlan(temporal, {d.text: d.deployment for d in definitions}, rows, schedule)
 
     def compile(self, deployments: Iterable[Deployment], graph_revision: int,
                 *, search_path: str | None = None) -> tuple[ApplicationGraph, dict[str, App]]:
@@ -387,3 +455,100 @@ class BindingPlanner:
         if int(self.graph.graph_status().get("published_version", 0)) != graph_revision:
             raise RuntimeError("graph changed while materialization plan was being compiled")
         return ApplicationGraph(bindings), applications
+
+
+@dataclass(frozen=True)
+class _PlannedDefinition:
+    name: str
+    text: str
+    deployment: Deployment
+    deployed: tuple[Interval, ...]
+
+    @property
+    def key(self) -> tuple[str, str]:
+        return (self.name, self.text)
+
+
+@dataclass(frozen=True)
+class TemporalPlan:
+    """Every definition of every view, planned over all of time.
+
+    ``definitions`` are the admission-level descriptions (instances, reads,
+    writes); ``deployments`` maps definition texts to their deployments;
+    ``rows`` holds each definition's query rows with their lives.
+    """
+    definitions: tuple[ViewDefinition, ...]
+    deployments: Mapping[str, Deployment]
+    rows: Mapping[tuple[str, str], list[tuple[_MatchRow, list[Interval]]]]
+    schedule: Schedule
+
+
+def _refine(pieces: Iterable[tuple[int, int]], spans: Iterable[Interval]) -> list[tuple[int, int]]:
+    """``pieces`` split at every endpoint of ``spans`` that falls inside one."""
+    cuts = sorted({p for span in spans for p in span})
+    out = []
+    for start, end in pieces:
+        points = [start, *[p for p in cuts if start < p < end], end]
+        out.extend(zip(points, points[1:]))
+    return out
+
+
+def _row_key(row: _MatchRow) -> str:
+    return _json({"streams": row.streams, "columns": row.columns})
+
+
+def _row_lives(found: Iterable[tuple[int, int, tuple[_MatchRow, ...]]]) -> list[tuple[_MatchRow, list[Interval]]]:
+    by_key: dict[str, _MatchRow] = {}
+    pieces = []
+    for start, end, rows in found:
+        keys = []
+        for row in rows:
+            key = _row_key(row)
+            by_key[key] = row
+            keys.append(key)
+        pieces.append((start, end, keys))
+    return sorted(((by_key[key], life) for key, life in lives(pieces).items()), key=lambda item: _row_key(item[0]))
+
+
+def _descriptors(row: _MatchRow) -> dict[str, tuple[StreamDescriptor, ...]]:
+    return {alias: tuple(StreamDescriptor(ref_uri=str(item["ref_uri"]), point_uri=item.get("point_uri"),
+                                          unit=item.get("unit"), label=item.get("label")) for item in items)
+            for alias, items in sorted(row.streams.items())}
+
+
+def _port(definition: _PlannedDefinition, port: str, inputs: Mapping[str, Iterable[StreamDescriptor]]) -> OutputPort:
+    return output_port(definition.name, port, inputs, definition.deployment.outputs[port])
+
+
+def _generated(definition: _PlannedDefinition, rows: list[tuple[_MatchRow, list[Interval]]]):
+    """``(times, triples)`` for the generated outputs of a definition."""
+    ports = [port for port, spec in definition.deployment.outputs.items() if spec.stream_name is None]
+    if definition.deployment.grouping == "per_match":
+        for row, life in rows:
+            present = tuple(intersect(life, definition.deployed))
+            if present:
+                inputs = _descriptors(row)
+                for port in ports:
+                    yield present, output_triples(definition.name, inputs, port, _port(definition, port, inputs))
+    else:
+        for port in ports:
+            yield definition.deployed, output_triples(definition.name, {}, port, _port(definition, port, {}))
+
+
+def _temporal_definition(definition: _PlannedDefinition, rows) -> ViewDefinition:
+    spec = definition.deployment
+    generated = frozenset(port for port, item in spec.outputs.items() if item.stream_name is None)
+    per_match = spec.grouping == "per_match"
+    single = {port: _port(definition, port, {}).ref_uri for port in spec.outputs
+              if port not in generated or not per_match}
+    lookahead = int(spec.lookahead.total_seconds() * 1_000_000)
+    temporal_rows = []
+    aliases = set()
+    for row, life in rows:
+        streams = {alias: tuple(str(item["ref_uri"]) for item in items) for alias, items in row.streams.items()}
+        aliases.update(streams)
+        outputs = {port: _port(definition, port, _descriptors(row)).ref_uri for port in generated} if per_match else {}
+        temporal_rows.append(Row(_row_key(row), streams, tuple(life), outputs))
+    return ViewDefinition(definition.name, definition.text, spec.grouping, definition.deployed,
+                          tuple(temporal_rows), lookahead={alias: lookahead for alias in aliases},
+                          outputs=single, generated=generated)

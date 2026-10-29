@@ -125,6 +125,8 @@ def _solutions(result) -> dict:
 
 
 VERSION_GRAPH_PREFIX = "urn:acquirium:graph:version:"
+# The view output nodes a version query sees, replaced per query when they differ.
+PUBLICATIONS_GRAPH = f"{VERSION_GRAPH_PREFIX}publications"
 
 
 @dataclass(frozen=True)
@@ -319,6 +321,7 @@ class OxigraphGraphStore:
         self._history_head = self._load_source_state().get("history_head")
         self._inferred_versions: dict[str, ModelVersion] = {}
         self._loaded_versions: set[str] = set()
+        self._loaded_publications: str | None = None
         self._drop_version_graphs()
         self._closure_version = 0
         self._dependency_graph_cache: Graph | None = None
@@ -1369,9 +1372,11 @@ class OxigraphGraphStore:
     def inferred_model_at(self, at: datetime | int, *, as_of: int | None = None) -> Graph:
         return self.model_version(at, as_of=as_of).graph
 
-    def query_version(self, version: ModelVersion, query: str, include_dependencies: bool = True) -> dict:
+    def query_version(self, version: ModelVersion, query: str, include_dependencies: bool = True,
+                      *, publications: Graph | None = None) -> dict:
         """Run a SPARQL query on one model version, with the ontologies when
-        ``include_dependencies``. Same result shape as ``sparql_query``.
+        ``include_dependencies`` and with ``publications`` (the view output
+        nodes at that time) added. Same result shape as ``sparql_query``.
 
         The version is loaded as a named graph of the query store next to the
         ontology graph, so the ontologies are not copied per version.
@@ -1389,6 +1394,12 @@ class OxigraphGraphStore:
             graphs = [NamedNode(str(version.uri))]
             if include_dependencies:
                 graphs.append(NamedNode(str(self.dependency_query_graph_uri)))
+            if publications is not None and len(publications):
+                digest = hashlib.sha256("\n".join(sorted(nt(t) for t in publications)).encode()).hexdigest()
+                if digest != self._loaded_publications:
+                    _replace_named_graph(self.query_dataset, publications, URIRef(PUBLICATIONS_GRAPH))
+                    self._loaded_publications = digest
+                graphs.append(NamedNode(PUBLICATIONS_GRAPH))
             result = self.query_dataset.store._inner.query(
                 query, use_default_graph_as_union=False, default_graph=graphs,
             )

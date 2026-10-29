@@ -57,8 +57,12 @@ class EveryMeasurement(App):
     def transform(self, inputs, output, context): pass
 
 
+QK = "http://qudt.org/schema/qudt/hasQuantityKind"
+TEMPERATURE = "http://qudt.org/vocab/quantitykind/Temperature"
+
+
 def point(n: int) -> str:
-    return f"<urn:ex/p{n}> <{REF}> <urn:ex/r{n}> ."
+    return f"<urn:ex/p{n}> <{REF}> <urn:ex/r{n}> .\n<urn:ex/p{n}> <{QK}> <{TEMPERATURE}> ."
 
 
 def test_rows_get_their_lives_from_the_model_versions(graphs):
@@ -97,3 +101,80 @@ def test_versions_with_equal_content_share_one_inferred_model(graphs):
     after = graphs.model_version(BASE + 8 * DAY)
     assert before is after
     assert graphs.model_version(BASE + 6 * DAY).digest != before.digest
+
+
+# -------------------- the temporal plan --------------------
+from acquirium.Materialization.admission import AdmissionError  # noqa: E402
+from acquirium.Materialization.deployments import DeploymentChange  # noqa: E402
+from acquirium.Materialization.temporal import view_graph  # noqa: E402
+
+
+class RawOnly(App):
+    name = "raw-only"
+    grouping = "per_match"
+    outputs = {"out": output.stream(value_kind="numeric")}
+    def build_query(self, plant): return plant.query().measurement(alias="input", quantity_kind=TEMPERATURE)
+    def transform(self, inputs, output, context): pass
+
+
+class AverageOfRawOnly(App):
+    name = "average"
+    grouping = "all_matches"
+    outputs = {"mean": output.named("plant-mean", value_kind="numeric")}
+    def build_query(self, plant): return plant.query().measurement(alias="input", app="raw-only")
+    def transform(self, inputs, output, context): pass
+
+
+class ReadsTheMean(App):
+    name = "reads-mean"
+    grouping = "all_matches"
+    outputs = {"out": output.stream(value_kind="numeric")}
+    def build_query(self, plant): return plant.query().measurement(alias="mean", app="average")
+    def transform(self, inputs, output, context): pass
+
+
+class EveryMeasurementAgain(EveryMeasurement):
+    name = "every-measurement-again"
+
+
+def deployed(*apps, start=NEG_INF):
+    return [DeploymentChange(r, app.name, Deployment.from_class(app).to_json(), start, POS_INF)
+            for r, app in enumerate(apps, start=1)]
+
+
+def test_a_query_sees_generated_outputs_while_their_instances_are_present(graphs):
+    graphs.insert_graph(point(1), format="nt", graph_uri=URIRef(PLANT_GRAPH_URI))
+    graphs.insert_graph(point(2), format="nt", graph_uri=URIRef(PLANT_GRAPH_URI),
+                        effective_from=from_micros(BASE + 10 * DAY), effective_until=from_micros(BASE + 20 * DAY))
+    plan = BindingPlanner(graphs).temporal_plan(deployed(RawOnly, AverageOfRawOnly))
+    by_view = {d.view: d for d in plan.definitions}
+    # raw-only has one instance per sensor; average's rows are their outputs,
+    # alive exactly while each instance is present
+    raw_outputs = {row.outputs["out"]: row.life for row in by_view["raw-only"].rows}
+    average_inputs = {row.streams["input"][0]: row.life for row in by_view["average"].rows}
+    assert average_inputs == raw_outputs
+    assert sorted(raw_outputs.values()) == [((NEG_INF, POS_INF),), ((BASE + 10 * DAY, BASE + 20 * DAY),)]
+    assert plan.schedule.selection_order.index("raw-only") < plan.schedule.selection_order.index("average")
+
+
+def test_a_named_output_exists_wherever_its_view_is_deployed(graphs):
+    # average has no input rows at all before day 10, yet its named output
+    # exists and reads-mean's query binds it over the whole deployment
+    graphs.insert_graph(point(1), format="nt", graph_uri=URIRef(PLANT_GRAPH_URI),
+                        effective_from=from_micros(BASE + 10 * DAY))
+    changes = deployed(AverageOfRawOnly, ReadsTheMean)
+    changes.append(DeploymentChange(3, RawOnly.name, Deployment.from_class(RawOnly).to_json(),
+                                    BASE + 10 * DAY, POS_INF))
+    plan = BindingPlanner(graphs).temporal_plan(changes)
+    (row,) = {d.view: d for d in plan.definitions}["reads-mean"].rows
+    assert row.life == ((NEG_INF, POS_INF),)
+    # reading a named output is a read edge of the view graph, not selection
+    graph = view_graph(plan.definitions)
+    assert ("average", "reads-mean", 0) in graph.reads
+    assert ("reads-mean", "average") not in graph.selects
+
+
+def test_queries_that_select_each_others_generated_outputs_are_rejected(graphs):
+    graphs.insert_graph(point(1), format="nt", graph_uri=URIRef(PLANT_GRAPH_URI))
+    with pytest.raises(AdmissionError, match="generated outputs"):
+        BindingPlanner(graphs).temporal_plan(deployed(EveryMeasurement, EveryMeasurementAgain))
