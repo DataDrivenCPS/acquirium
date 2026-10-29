@@ -541,6 +541,7 @@ class ViewEvaluator:
         # windows are queued in view_pending and retried by every step.
         self.errors: dict[str, str] = {}
         self._failed: list[tuple[str, Interval]] = []
+        self._own: dict[tuple, list[Interval]] = {}
         with store._lock, store._write_conn() as conn:
             execute(conn, """CREATE TABLE IF NOT EXISTS view_engine_state (
                 id INTEGER PRIMARY KEY, data_revision BIGINT NOT NULL,
@@ -562,7 +563,9 @@ class ViewEvaluator:
         state = execute(conn, "SELECT data_revision, model_head, deployment_head FROM view_engine_state WHERE id = 1").fetchone()
         current = reader.current_revision()
         old_plan = self.materializer.applied_plan()
+        # A change for a whole view (structural) or for one instance (own).
         structural: dict[str, list[Interval]] = defaultdict(list)
+        own: dict[tuple, list[Interval]] = defaultdict(list)
         first = state is None
         known = self.materializer.known_views()
         if first:
@@ -573,8 +576,11 @@ class ViewEvaluator:
             data_revision, old_model, old_deployment = (int(v) for v in state)
             if (old_model, old_deployment) != (model_head, deployment_head):
                 if old_plan is not None and old_plan[1:] == (old_model, old_deployment):
-                    for view, region in _plan_difference(old_plan[0], plan).items():
+                    views, instances = _plan_difference(old_plan[0], plan)
+                    for view, region in views.items():
                         structural[view].extend(region)
+                    for ident, region in instances.items():
+                        own[ident].extend(region)
                 else:
                     # The plan these heads were evaluated with is not known
                     # (a restart): every view any deployment ever named,
@@ -593,6 +599,7 @@ class ViewEvaluator:
         changed: dict[str, list[Interval]] = defaultdict(list)
         for ref, spans in data.items():
             changed[ref].extend(spans)
+        self._own = own
         self._run(plan, runner, structural, changed, report, old_plan[0] if old_plan else None)
         flushing = perf_counter()
         reader.flush()
@@ -619,8 +626,9 @@ class ViewEvaluator:
         schedule = plan.schedule
         # Views of the old plan that are gone keep streams to retract.
         views_in_order = [name for component in schedule.components for name in component]
-        for name in sorted(set(structural) - set(views_in_order)):
-            self._retract_view(runner, name, structural[name], {})
+        gone = (set(structural) | {view for view, _, _ in self._own}) - set(views_in_order)
+        for name in sorted(gone):
+            self._retract_view(runner, name, self._retracting(name, structural.get(name, [])), {})
         for stream, spans in runner.flush().items():
             changed[stream].extend(spans)
         for component in schedule.components:
@@ -647,8 +655,15 @@ class ViewEvaluator:
         grown = expand(region, lookback=lb, lookahead=la) if (lb, la) != (0, 0) else []
         return merge(list(region) + grown)
 
+    def _retracting(self, name: str, structural: list[Interval]) -> list[Interval]:
+        """Where a view's outputs may lose their writer: the view's change and
+        every change of one of its instances, old or new."""
+        return merge(list(structural) + [span for (view, _, _), spans in self._own.items() if view == name
+                                         for span in spans])
+
     def _regions(self, runner: _Runner, instance: PlannedInstance, structural: list[Interval],
                  changed: Mapping[str, list[Interval]]) -> list[Interval]:
+        structural = list(structural) + self._own.get((instance.view, instance.text, instance.key), [])
         region = merge(self._structural(runner, instance, structural) + runner.data_affected(instance, changed))
         region = intersect(region, instance.present)
         if not region:
@@ -662,7 +677,7 @@ class ViewEvaluator:
         written: dict[str, list[Interval]] = defaultdict(list)
         work = []
         needs: dict[str, list[Interval]] = defaultdict(list)
-        if structural:
+        if structural or any(view == name for view, _, _ in self._own):
             runner.prefetch_extents(runner.by_view.get(name, []))
         for instance in runner.by_view.get(name, []):
             for port in instance.outputs.values():
@@ -676,7 +691,7 @@ class ViewEvaluator:
         for instance, region in work:
             for window in region:
                 self._compute(runner, instance, window)
-        self._retract_view(runner, name, structural, written)
+        self._retract_view(runner, name, self._retracting(name, structural), written)
         for stream, spans in runner.flush().items():
             changed[stream].extend(spans)
 
@@ -754,7 +769,7 @@ class ViewEvaluator:
             for port in instance.outputs.values():
                 written[port.ref_uri].extend(instance.present)
         for name in component:
-            self._retract_view(runner, name, structural.get(name, []), written)
+            self._retract_view(runner, name, self._retracting(name, structural.get(name, [])), written)
         for stream, spans in runner.flush().items():
             changed[stream].extend(spans)
 
@@ -765,33 +780,39 @@ def _names(plan: TemporalPlan | None) -> set[str]:
     return {definition.view for definition in plan.definitions}
 
 
-def _plan_difference(old: TemporalPlan, new: TemporalPlan) -> dict[str, list[Interval]]:
-    """Per view, where its instances, their presence, or the lives of their
-    rows differ between two plans."""
-    def shape(plan: TemporalPlan) -> dict[str, dict[tuple, list[Interval]]]:
-        out: dict[str, dict[tuple, list[Interval]]] = defaultdict(dict)
+def _plan_difference(old: TemporalPlan, new: TemporalPlan) -> tuple[dict[str, list[Interval]], dict[tuple, list[Interval]]]:
+    """Where two plans differ: per view, where a definition changed (every
+    instance of the view is affected there), and per instance ``(view, text,
+    key)``, where its presence, the lives of its rows, its outputs or its
+    named inputs differ (only that instance is)."""
+    def shape(plan: TemporalPlan) -> dict[tuple, dict[tuple, list[Interval]]]:
+        out: dict[tuple, dict[tuple, list[Interval]]] = defaultdict(dict)
         for instance in plan.instances:
-            out[instance.view][("present", instance.text, instance.key)] = list(instance.present)
+            ident = (instance.view, instance.text, instance.key)
+            out[ident][("present",)] = list(instance.present)
             for row in instance.rows:
-                key = ("life", instance.text, instance.key, tuple(sorted(row.columns.items())),
+                key = ("life", tuple(sorted(row.columns.items())),
                        tuple(sorted((k, tuple(d.ref_uri for d in v)) for k, v in row.streams.items())))
-                out[instance.view][key] = list(row.life)
-            out[instance.view][("outputs", instance.text, instance.key,
-                                tuple(sorted((p, o.ref_uri) for p, o in instance.outputs.items())),
-                                tuple(sorted((n, d.ref_uri) for n, d in instance.named.items())))] = list(instance.present)
+                out[ident][key] = list(row.life)
+            out[ident][("outputs", tuple(sorted((p, o.ref_uri) for p, o in instance.outputs.items())),
+                        tuple(sorted((n, d.ref_uri) for n, d in instance.named.items())))] = list(instance.present)
         return out
     before, after = shape(old), shape(new)
-    regions: dict[str, list[Interval]] = {}
-    for view in set(before) | set(after) | _names(old) | _names(new):
-        old_view, new_view = before.get(view, {}), after.get(view, {})
+    instances: dict[tuple, list[Interval]] = {}
+    for ident in set(before) | set(after):
+        old_shape, new_shape = before.get(ident, {}), after.get(ident, {})
         region: list[Interval] = []
-        for key in set(old_view) | set(new_view):
-            region.extend(symmetric_difference(old_view.get(key, []), new_view.get(key, [])))
-        # a definition that changed text changes the view where either holds
+        for key in set(old_shape) | set(new_shape):
+            region.extend(symmetric_difference(old_shape.get(key, []), new_shape.get(key, [])))
+        if region:
+            instances[ident] = merge(region)
+    views: dict[str, list[Interval]] = {}
+    for view in _names(old) | _names(new):
         old_defs = {d.text: d.deployed for d in old.definitions if d.view == view}
         new_defs = {d.text: d.deployed for d in new.definitions if d.view == view}
+        region = []
         for text in set(old_defs) | set(new_defs):
             region.extend(symmetric_difference(old_defs.get(text, ()), new_defs.get(text, ())))
         if region:
-            regions[view] = merge(region)
-    return regions
+            views[view] = merge(region)
+    return views, instances
