@@ -126,7 +126,7 @@ def stored(world: World) -> dict[str, dict]:
         rows = execute(conn,
             "SELECT s.source_id, s.ref_name, t.ts, t.numeric_value FROM timeseries t "
             "JOIN ref_ids r ON r.ref_id = t.ref_id JOIN streams s ON s.ref_uri = r.ref_uri "
-            "WHERE s.source_id LIKE 'derived:%' AND NOT t.deleted").fetchall()
+            "WHERE s.source_id LIKE ? AND NOT t.deleted", ["derived:%"]).fetchall()
     plan = world.views.current_plan()[0]
     point_of: dict[str, int] = {}
     for instance in plan.instances:

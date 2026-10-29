@@ -105,7 +105,7 @@ def stored(store) -> dict[str, pl.DataFrame]:
         rows = execute(conn,
             "SELECT s.source_id, s.ref_uri, t.ts, t.numeric_value FROM timeseries t "
             "JOIN ref_ids r ON r.ref_id = t.ref_id JOIN streams s ON s.ref_uri = r.ref_uri "
-            "WHERE s.source_id LIKE 'derived:%' AND NOT t.deleted").fetchall()
+            "WHERE s.source_id LIKE ? AND NOT t.deleted", ["derived:%"]).fetchall()
     frame = pl.DataFrame({"view": [r[0].removeprefix("derived:") for r in rows], "ref": [r[1] for r in rows],
                           "ts": [r[2].replace(tzinfo=UTC) for r in rows], "value": [r[3] for r in rows]},
                          schema={"view": pl.String, "ref": pl.String, "ts": pl.Datetime("us", "UTC"), "value": pl.Float64})
@@ -116,7 +116,7 @@ def raw(store, sensors: int) -> pl.DataFrame:
     with store._own_conn() as conn:
         rows = execute(conn,
             "SELECT r.ref_uri, t.ts, t.numeric_value FROM timeseries t JOIN ref_ids r ON r.ref_id = t.ref_id "
-            "WHERE r.ref_uri LIKE 'urn:ex/r%' AND NOT t.deleted").fetchall()
+            "WHERE r.ref_uri LIKE ? AND NOT t.deleted", ["urn:ex/r%"]).fetchall()
     return pl.DataFrame({"ref": [r[0] for r in rows], "ts": [r[1].replace(tzinfo=UTC) for r in rows],
                          "value": [r[2] for r in rows]},
                         schema={"ref": pl.String, "ts": pl.Datetime("us", "UTC"), "value": pl.Float64})

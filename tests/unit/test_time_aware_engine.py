@@ -423,7 +423,7 @@ def test_check_computes_without_writing_anything(world):
     out = binding["outputs"]["out"]
     assert out["rows"] == 5 and out["truncated"] and [v["value"] for v in out["values"]] == [0.0, 2.0]
     with world.store._own_conn() as conn:
-        assert execute(conn, "SELECT count(*) FROM streams WHERE source_id LIKE 'derived:%'").fetchone()[0] == 0
+        assert execute(conn, "SELECT count(*) FROM streams WHERE source_id LIKE ?", ["derived:%"]).fetchone()[0] == 0
         assert execute(conn, "SELECT current_revision FROM system_state").fetchone()[0] == revision
     assert world.views._log.changes() == []
 
@@ -552,7 +552,7 @@ def _ops(world):
 def _all_outputs(world):
     with world.store._own_conn() as conn:
         rows = execute(conn, "SELECT s.ref_uri, t.ts, t.numeric_value FROM timeseries t JOIN ref_ids r ON r.ref_id = t.ref_id "
-                             "JOIN streams s ON s.ref_uri = r.ref_uri WHERE s.source_id LIKE 'derived:%' AND NOT t.deleted").fetchall()
+                             "JOIN streams s ON s.ref_uri = r.ref_uri WHERE s.source_id LIKE ? AND NOT t.deleted", ["derived:%"]).fetchall()
     return sorted((ref, ts.replace(tzinfo=UTC), value) for ref, ts, value in rows)
 
 
