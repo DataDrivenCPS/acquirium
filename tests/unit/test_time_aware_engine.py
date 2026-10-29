@@ -694,3 +694,33 @@ def test_an_all_matches_view_clips_each_row_by_its_own_run(world):
     assert by_time[at(9)] == 10 * 1.0 + 2 * 10.0
     # inside p2's gap only r1 counts
     assert by_time[at(6)] == 7 * 1.0
+
+
+class Label(App):
+    """A text output: "high" or "low" at every sample."""
+    name = "label"
+    grouping = "per_match"
+    outputs = {"state": output.stream(value_kind="text")}
+    def build_query(self, plant): return plant.query().measurement(alias="t", quantity_kind=TEMPERATURE)
+    def transform(self, inputs, output, context):
+        table = inputs["t"].collect()
+        output["state"] = pa.table({"time": table["time"],
+                                    "value": pa.array(["high" if v > 5 else "low" for v in table["value"].to_pylist()], pa.string())})
+
+
+def test_text_outputs_are_written_and_corrected(world):
+    world.model(point(1))
+    world.write("urn:ex/r1", [(at(m), float(m)) for m in range(10)])
+    world.deploy(Label)
+    plan = world.views.current_plan()[0]
+    (ref,) = {port.ref_uri for i in plan.instances for port in i.outputs.values()}
+    with world.store._own_conn() as conn:
+        rows = execute(conn, "SELECT t.ts, t.text_value, t.numeric_value FROM timeseries t JOIN ref_ids r ON r.ref_id = t.ref_id "
+                             "WHERE r.ref_uri = ? AND NOT t.deleted ORDER BY t.ts", [ref]).fetchall()
+    assert [(text, numeric) for _, text, numeric in rows] == [("low", None)] * 6 + [("high", None)] * 4
+    world.write("urn:ex/r1", [(at(2), 9.0)])     # a late correction flips one label
+    with world.store._own_conn() as conn:
+        rows = execute(conn, "SELECT t.text_value FROM timeseries t JOIN ref_ids r ON r.ref_id = t.ref_id "
+                             "WHERE r.ref_uri = ? AND NOT t.deleted ORDER BY t.ts", [ref]).fetchall()
+    assert [text for (text,) in rows] == ["low", "low", "high", "low", "low", "low", "high", "high", "high", "high"]
+    assert world.views.evaluator.last_report.points_changed == 1
