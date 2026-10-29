@@ -618,7 +618,7 @@ def test_check_returns_computed_rows_without_writing_anything(tmp_path):
     with store._own_conn() as conn:
         assert conn.execute("SELECT count(*) FROM streams WHERE source_id LIKE 'derived:%'").fetchone()[0] == 0
         assert conn.execute("SELECT count(*) FROM binding_progress").fetchone()[0] == 0
-        assert conn.execute("SELECT count(*) FROM materialization_deployments").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM view_deployments").fetchone()[0] == 0
     assert materializer._revisions.current_revision() == revision_before
 
 

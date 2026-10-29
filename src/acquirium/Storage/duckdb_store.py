@@ -119,7 +119,7 @@ class DuckDBStore:
                     "experiment_metadata_resolutions",
                     "materialization_work",
                     "materialization_lineage",
-                    "materialization_deployments",
+                    "view_deployments",
                     "model_writes",
                     "model_events",
                     "model_triples",

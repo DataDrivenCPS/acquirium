@@ -28,7 +28,9 @@ from rdflib import Graph, Literal, RDF, RDFS, URIRef
 from acquirium.Materialization.models import ApplicationGraph, OutputBuilder, TimeWindow, _duration
 from acquirium.Materialization.revision_store import RevisionStore
 from acquirium.Materialization.scheduler import InProcessExecutor, Scheduler
+from acquirium.Materialization.deployments import DeploymentLog
 from acquirium.Materialization.planner import BindingPlanner, Deployment
+from acquirium.internals.intervals import NEG_INF, POS_INF, now_micros
 from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_REF_NAME, ACQUIRIUM_SOURCE_ID, ACQUIRIUM_VALUE_KIND,
@@ -91,8 +93,8 @@ class Materializer:
         self._lineage_signatures: frozenset[str] = frozenset()
         self._pending_since: dict[str, float] = {}
         self._last_run: dict[str, float] = {}
+        self._log = DeploymentLog(store)
         with store._lock, store._write_conn() as conn:
-            self._execute(conn, "CREATE TABLE IF NOT EXISTS materialization_deployments (name VARCHAR PRIMARY KEY, deployment_json VARCHAR NOT NULL)")
             self._execute(conn, """CREATE TABLE IF NOT EXISTS materialization_lineage (
                 binding_signature VARCHAR NOT NULL, progress_key VARCHAR NOT NULL,
                 application_name VARCHAR NOT NULL,
@@ -106,7 +108,12 @@ class Materializer:
             query = query.replace("?", "%s")
         return conn.execute(query, list(params))
 
-    def deploy(self, deployment: Deployment) -> None:
+    def deploy(self, deployment: Deployment, *, start: int | None = None) -> None:
+        """Deploy ``deployment`` from ``start`` on (microseconds; ``NEG_INF``
+        for all history). Without a start, a backfilling app starts at the
+        beginning of history and any other app now."""
+        if start is None:
+            start = NEG_INF if deployment.backfill else now_micros()
         with self._plan_lock:
             deployments = [d for d in self._deployments() if d.name != deployment.name]
             deployments.append(deployment)
@@ -117,7 +124,7 @@ class Materializer:
             # definition intact if import, query, or graph validation fails.
             self._planner.compile(deployments, revision)
             with self._store._lock, self._store._write_conn() as conn:
-                self._execute(conn, "INSERT INTO materialization_deployments VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET deployment_json=EXCLUDED.deployment_json", [deployment.name, deployment.to_json()])
+                self._log.record([(deployment.name, deployment.to_json(), start, POS_INF)], conn=conn)
                 # Renew even if the definition is identical. Redeploying must
                 # revoke work from the prior activation without resetting its
                 # durable progress or changing its derived stream identities.
@@ -131,10 +138,14 @@ class Materializer:
                 if binding.application_name == name:
                     self._revisions.active_bindings.pop(binding.progress_key, None)
 
-    def remove(self, name: str) -> None:
+    def remove(self, name: str, *, at: int | None = None, purge: bool = False) -> None:
+        """Remove a deployed app from ``at`` on (now if omitted); its outputs
+        before that stay. ``purge`` removes it over all time."""
+        if name not in self._log.current():
+            raise KeyError(name)
+        start = NEG_INF if purge else (now_micros() if at is None else at)
         with self._plan_lock, self._store._lock, self._store._write_conn() as conn:
-            if self._execute(conn, "DELETE FROM materialization_deployments WHERE name=? RETURNING name", [name]).fetchone() is None:
-                raise KeyError(name)
+            self._log.record([(name, None, start, POS_INF)], conn=conn)
             self._execute(conn, """DELETE FROM binding_progress WHERE progress_key IN
                 (SELECT progress_key FROM materialization_lineage WHERE application_name=?)""", [name])
             self._execute(conn, """DELETE FROM materialization_work WHERE progress_key IN
@@ -215,8 +226,8 @@ class Materializer:
         return {"app": deployment.name, "graph_revision": revision, "bindings": bindings}
 
     def _deployments(self) -> tuple[Deployment, ...]:
-        with self._store._own_conn() as conn:
-            return tuple(Deployment.from_json(row[0]) for row in self._execute(conn, "SELECT deployment_json FROM materialization_deployments ORDER BY name").fetchall())
+        current = self._log.current()
+        return tuple(Deployment.from_json(current[name]) for name in sorted(current))
 
     def refresh(self) -> None:
         """Reconcile the plan with persisted deployments and the graph version.

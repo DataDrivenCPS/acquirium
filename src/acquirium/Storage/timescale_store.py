@@ -82,7 +82,7 @@ class TimescaleStore(TimeseriesStore):
                     "experiment_variables",
                     "experiment_templates",
                     "experiment_metadata_resolutions",
-                    "schema_migrations", "stream_resets", "materialization_work", "materialization_lineage", "materialization_deployments",
+                    "schema_migrations", "stream_resets", "materialization_work", "materialization_lineage", "view_deployments",
                     "model_writes", "model_events", "model_triples",
                     BINDING_PROGRESS_TABLE, SYSTEM_STATE_TABLE, TIMESERIES_TABLE, REF_IDS_TABLE, STREAMS_TABLE, LOGS_TABLE,
                 ):
