@@ -619,10 +619,19 @@ def _port(definition: _PlannedDefinition, port: str, inputs: Mapping[str, Iterab
     return output_port(definition.name, port, inputs, definition.deployment.outputs[port])
 
 
+_DIGESTS: dict[int, tuple[Graph, str]] = {}
+
+
 def _publication(view: str, times: tuple[Interval, ...], triples: Graph) -> tuple[str, tuple[Interval, ...], Graph, str]:
     """A published output: its view, when it is published, its triples, and
-    a digest of the triples that identifies it in query caches."""
-    return view, times, triples, _graph_digest(triples)
+    a digest of the triples that identifies it in query caches. The triples
+    are shared (``output_triples`` caches them), so their digest is too."""
+    known = _DIGESTS.get(id(triples))
+    if known is None or known[0] is not triples:
+        known = _DIGESTS[id(triples)] = (triples, _graph_digest(triples))
+        while len(_DIGESTS) > 100_000:
+            _DIGESTS.pop(next(iter(_DIGESTS)))
+    return view, times, triples, known[1]
 
 
 def _generated(definition: _PlannedDefinition, rows: list[tuple[_MatchRow, list[Interval]]]):

@@ -157,7 +157,8 @@ def _replace_named_graph(dataset: Dataset, graph: Graph, graph_uri: URIRef) -> N
     ``sh:rule`` / ``sh:path``), which shifty >=0.4 then rejects as an invalid
     shapes graph. ``load`` keeps one mapping and is faster here anyway.
     """
-    dataset.graph(graph_uri).remove((None, None, None))
+    # Oxigraph clears a graph in one call; rdflib's remove goes triple by triple.
+    dataset.store._inner.clear_graph(NamedNode(str(graph_uri)))
     if not len(graph):
         return
     nt = graph.serialize(format="nt", encoding="utf-8")
@@ -322,6 +323,7 @@ class OxigraphGraphStore:
         self._inferred_versions: dict[str, ModelVersion] = {}
         self._loaded_versions: set[str] = set()
         self._loaded_publications: str | None = None
+        self._version_at: dict[tuple[int, int], str] = {}
         self._drop_version_graphs()
         self._closure_version = 0
         self._dependency_graph_cache: Graph | None = None
@@ -1373,8 +1375,21 @@ class OxigraphGraphStore:
 
         The ontology closure is fixed: the one the live graph resolves.
         """
+        at = at if isinstance(at, int) else to_micros(at)
+        # The history only grows, so the model at a time as of a head is
+        # fixed; skip reading and parsing it again.
+        head = self.history.head() if as_of is None else as_of
+        known = self._version_at.get((head, at))
+        if known is not None and known in self._inferred_versions:
+            with self._lock:
+                version = self._inferred_versions.pop(known)
+                self._inferred_versions[known] = version
+                return version
         data = self.model_at(at, as_of=as_of)
         digest = hashlib.sha256("\n".join(sorted(nt(t) for t in data)).encode()).hexdigest()
+        self._version_at[(head, at)] = digest
+        while len(self._version_at) > 4096:
+            self._version_at.pop(next(iter(self._version_at)))
         with self._lock:
             cached = self._inferred_versions.pop(digest, None)
             if cached is not None:

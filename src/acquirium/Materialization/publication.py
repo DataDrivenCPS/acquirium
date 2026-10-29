@@ -48,9 +48,25 @@ class _Inputs:
         self.application_name, self.inputs = application_name, inputs
 
 
+_CACHE: dict[tuple, Graph] = {}
+
+
 def output_triples(application_name: str, inputs: Mapping[str, Iterable[StreamDescriptor]],
                    name: str, output: OutputPort) -> Graph:
-    """The point, reference and metadata of one output stream."""
+    """The point, reference and metadata of one output stream. The result is
+    shared between calls with the same arguments; callers copy, never change it."""
+    key = (application_name, name, output.ref_uri, output.ref_name, output.point_uri, repr(output.spec),
+           tuple((alias, tuple((d.ref_uri, d.label) for d in streams)) for alias, streams in sorted(inputs.items())))
+    cached = _CACHE.get(key)
+    if cached is None:
+        cached = _CACHE[key] = _output_triples(application_name, inputs, name, output)
+        while len(_CACHE) > 100_000:
+            _CACHE.pop(next(iter(_CACHE)))
+    return cached
+
+
+def _output_triples(application_name: str, inputs: Mapping[str, Iterable[StreamDescriptor]],
+                    name: str, output: OutputPort) -> Graph:
     graph = Graph()
     spec = output.spec
     ref, point = URIRef(output.ref_uri), URIRef(output.point_uri)
