@@ -195,8 +195,9 @@ change in any release.
   stream handle returned by `add()` uses it to read its own samples.
 - A recording refused because Escapement's inbox is full returns 503 before
   anything commits, and the client resends it.
-- Deleting runs reports only their own samples and clears them a request at a
-  time; `usage()` counts samples without reading them. A failed clear at
+- Deleting runs reports only their own samples and clears them with one
+  Escapement range delete per stream; `usage()` counts samples without
+  reading them. A failed clear at
   server start is logged and retried later instead of stopping the server.
 - `Stream.dataframe(end=...)` and stream intervals include samples at `end`
   again; reads are half-open underneath, so the client reads up to just after

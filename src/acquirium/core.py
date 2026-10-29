@@ -130,6 +130,16 @@ class Core:
             self.processor.wake()
             return receipt
 
+    def clear(self, source: str, request_id: str, streams) -> Receipt:
+        """Delete every reading of ``streams`` in one request."""
+        mutations = [Mutation.delete_range(stream) for stream in sorted(set(streams))]
+        if not mutations:
+            raise ValueError("clear needs at least one stream")
+        with self._gate:
+            receipt = self.engine.ingest(source, request_id, mutations)
+            self.processor.wake()
+            return receipt
+
     def activate(self, request_id: str, plan) -> Receipt:
         with self._gate:
             receipt = self.engine.activate(request_id, plan)

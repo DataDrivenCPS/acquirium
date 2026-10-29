@@ -159,18 +159,17 @@ def test_a_start_finishes_an_interrupted_cleanup(experiment_ledger, ledger, monk
     assert _count(store, "experiment_streams") == 0
 
 
-def test_clearing_deletes_a_page_at_a_time(ledger, monkeypatch):
-    monkeypatch.setattr("acquirium.ExperimentSamples.MAX_REQUEST_ROWS", 3)
-    study = ledger.define("pages")
+def test_clearing_a_run_is_one_request_however_many_samples(ledger, monkeypatch):
+    study = ledger.define("one request")
     level = ledger.declare(study["template_id"], "level", "output", "timeseries", {})
     run = ledger.start(study["template_id"], {})["run_id"]
     ledger.record_batch(run, [dict(form="samples", variable_id=level["variable_id"],
-                                   samples=[[WHEN.replace(second=i).isoformat(), float(i)] for i in range(7)])])
+                                   samples=[[WHEN.replace(second=i).isoformat(), float(i)] for i in range(50)])])
     ledger.finish(run, "succeeded")
-    ingest, requests = ledger.store.samples.core.ingest, []
-    monkeypatch.setattr(ledger.store.samples.core, "ingest", lambda *a: requests.append(a[2].height) or ingest(*a))
-    assert ledger.delete_runs([run])["samples"] == 7
-    assert requests == [3, 3, 1] and _samples(ledger.store) == []
+    clear, requests = ledger.store.samples.core.clear, []
+    monkeypatch.setattr(ledger.store.samples.core, "clear", lambda *a: requests.append(a[2]) or clear(*a))
+    assert ledger.delete_runs([run])["samples"] == 50
+    assert len(requests) == 1 and _samples(ledger.store) == []
 
 
 def test_declaration_racing_the_same_label_is_idempotent(experiment_ledger, ledger, monkeypatch):
