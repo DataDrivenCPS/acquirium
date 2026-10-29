@@ -170,6 +170,24 @@ class RollingSum(App):
                                   "value": pa.array([r[1] for r in rows], pa.float64())})
 
 
+class TenMinuteMean(App):
+    """The mean of each ten-minute bucket, written at the bucket's start."""
+    name = "ten-minute-mean"
+    grouping = "per_match"
+    every = "10m"
+    outputs = {"out": output.stream(value_kind="numeric")}
+    def build_query(self, plant): return plant.query().measurement(alias="t", quantity_kind=TEMPERATURE)
+    def transform(self, inputs, output, context):
+        import polars as pl
+        frame = inputs["t"].df().sort("time")
+        if frame.is_empty():
+            output["out"] = pa.table({"time": pa.array([], pa.timestamp("us", tz="UTC")), "value": pa.array([], pa.float64())})
+            return
+        means = frame.group_by_dynamic("time", every="10m").agg(pl.col("value").mean())
+        window = context.output_window
+        output["out"] = means.filter((pl.col("time") >= window.start) & (pl.col("time") <= window.end)).to_arrow()
+
+
 class SumOfDoubles(App):
     name = "sum-of-doubles"
     grouping = "all_matches"
@@ -433,3 +451,123 @@ def test_the_outputs_present_now_are_published_into_acquiriums_graph(world):
     assert str(next(graph.objects(point_uri, RDFS.label))).startswith("tagged[out]")
     # planning never reads this graph: the model has no derived points
     assert not any(world.graphs.model_at(to_micros(NOW)).triples((point_uri, None, None)))
+
+
+# -------------------- a loop across two views --------------------
+def _named_series(inputs, name):
+    table = inputs[name].collect()
+    return dict(zip(table["time"].to_pylist(), table["value"].to_pylist()))
+
+
+def _series(rows):
+    return pa.table({"time": pa.array([r[0] for r in rows], pa.timestamp("us", tz="UTC")),
+                     "value": pa.array([r[1] for r in rows], pa.float64())})
+
+
+class Estimator(App):
+    """e(t) = x(t) + 0.1 c(t - 2 min)."""
+    name = "estimator"
+    grouping = "all_matches"
+    named_inputs = {"x": "urn:ex/r1", "c": "controller-out"}
+    windows = {"x": ("0s", "0s"), "c": ("-2m", "-2m")}
+    outputs = {"e": output.named("estimator-out", value_kind="numeric")}
+    def transform(self, inputs, output, context):
+        x, c = _named_series(inputs, "x"), _named_series(inputs, "c")
+        window = context.output_window
+        output["e"] = _series([(t, v + 0.1 * c.get(t - timedelta(minutes=2), 0.0))
+                               for t, v in sorted(x.items()) if window.start <= t <= window.end])
+
+
+class Controller(App):
+    """c(t) = mean of e over [t, t + 1 min], at every e: reads ahead."""
+    name = "controller"
+    grouping = "all_matches"
+    named_inputs = {"e": "estimator-out"}
+    windows = {"e": ("0s", "1m")}
+    outputs = {"c": output.named("controller-out", value_kind="numeric")}
+    def transform(self, inputs, output, context):
+        e = _named_series(inputs, "e")
+        window = context.output_window
+        rows = []
+        for t in sorted(e):
+            if window.start <= t <= window.end:
+                ahead = [v for s, v in e.items() if t <= s <= t + timedelta(minutes=1)]
+                rows.append((t, sum(ahead) / len(ahead)))
+        output["c"] = _series(rows)
+
+
+def loop_reference(x: dict) -> tuple[dict, dict]:
+    """e and c in time order: e(t) needs c(t - 2 min); c(s) needs e on
+    [s, s + 1 min], known once t passes s + 1 min."""
+    e, c = {}, {}
+    times = sorted(x)
+    for t in times:
+        e[t] = x[t] + 0.1 * c.get(t - timedelta(minutes=2), 0.0)
+        for s in [s for s in times if s not in c and s + timedelta(minutes=1) <= t]:
+            ahead = [e[v] for v in times if s <= v <= s + timedelta(minutes=1)]
+            c[s] = sum(ahead) / len(ahead)
+    for s in times:
+        if s not in c:
+            ahead = [e[v] for v in times if s <= v <= s + timedelta(minutes=1)]
+            c[s] = sum(ahead) / len(ahead)
+    return e, c
+
+
+def test_a_loop_across_two_views_with_lookahead(world):
+    x = {at(m): float((m * 3) % 5) for m in range(12)}
+    world.write("urn:ex/r1", sorted(x.items()))
+    world.deploy(Estimator, start=at(0))
+    world.deploy(Controller, start=at(0))
+    plan = world.views.current_plan()[0]
+    assert plan.schedule.loops == {"estimator", "controller"}
+    assert plan.schedule.epsilon == 30 * 1_000_000  # (-2 min + 1 min) over two edges
+    want_e, want_c = loop_reference(x)
+    (e,) = world.outputs("estimator").values()
+    (c,) = world.outputs("controller").values()
+    assert e == sorted(want_e.items()) and c == sorted(want_c.items())
+    # a late sample changes the loop from there on
+    x[at(4)] = 40.0
+    world.write("urn:ex/r1", [(at(4), 40.0)])
+    want_e, want_c = loop_reference(x)
+    (e,) = world.outputs("estimator").values()
+    (c,) = world.outputs("controller").values()
+    assert e == sorted(want_e.items()) and c == sorted(want_c.items())
+
+
+# -------------------- batching --------------------
+def _ops(world):
+    world.model(point(1) + "\n" + point(2))
+    world.deploy(Double)
+    world.deploy(RollingSum)
+    world.deploy(SumOfDoubles)
+    world.deploy(TenMinuteMean, start=at(5))
+    world.write("urn:ex/r1", [(at(m), float(m % 4)) for m in range(0, 40, 3)])
+    world.write("urn:ex/r2", [(at(m), float(m % 5)) for m in range(1, 40, 4)])
+    world.unmodel(point(2), effective_from=from_micros(to_micros(at(10))), effective_until=from_micros(to_micros(at(20))))
+    world.write("urn:ex/r1", [(at(7), 9.0), (at(31), 1.0)])
+    world.views.remove("rolling-sum", at=to_micros(at(30)))
+    world.views.step()
+
+
+def _all_outputs(world):
+    with world.store._own_conn() as conn:
+        rows = execute(conn, "SELECT s.ref_uri, t.ts, t.numeric_value FROM timeseries t JOIN ref_ids r ON r.ref_id = t.ref_id "
+                             "JOIN streams s ON s.ref_uri = r.ref_uri WHERE s.source_id LIKE 'derived:%' AND NOT t.deleted").fetchall()
+    return sorted((ref, ts.replace(tzinfo=UTC), value) for ref, ts, value in rows)
+
+
+def test_outputs_do_not_depend_on_how_writes_are_batched_into_steps(tmp_path, monkeypatch):
+    eager = World(tmp_path / "eager", monkeypatch)
+    lazy = World(tmp_path / "lazy", monkeypatch)
+    try:
+        _ops(eager)
+        lazy.views.engine.deferred = True
+        lazy.views.step = lambda: None  # every write waits in the inbox
+        _ops(lazy)
+        type(lazy.views).step(lazy.views)
+        assert lazy.views.engine.pending() == 0
+        assert _all_outputs(lazy) == _all_outputs(eager)
+        assert _all_outputs(eager)
+    finally:
+        eager.close()
+        lazy.close()

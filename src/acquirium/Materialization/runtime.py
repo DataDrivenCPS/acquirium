@@ -96,6 +96,10 @@ class Materializer:
     def refresh(self) -> None:
         self.current_plan()
 
+    def known_views(self) -> set[str]:
+        """Every view name any deployment change has named."""
+        return {change.name for change in self._log.changes()}
+
     # -------------------- deployment changes --------------------
     def deploy(self, deployment_: Deployment, *, start: int | None = None) -> None:
         """Deploy from ``start`` (microseconds, ``NEG_INF`` for all history;

@@ -346,10 +346,18 @@ class _Runner:
         out.extend(_Input(name, d, named_life) for name, d in instance.named.items())
         return out
 
-    def widest(self, instance: PlannedInstance) -> tuple[int, int]:
+    def window(self, instance: PlannedInstance, name: str) -> tuple[int, int]:
+        """An input's (lookback, lookahead): an output at a bucket's start
+        reads to the bucket's end, so the bucket width adds to the lookahead."""
         deployment = self.deployment(instance)
+        lb, la = deployment.window(name)
+        if deployment.every is not None:
+            la += int(deployment.every.total_seconds() * 1_000_000)
+        return lb, la
+
+    def widest(self, instance: PlannedInstance) -> tuple[int, int]:
         names = {item.name for item in self.inputs(instance)} or {""}
-        windows = [deployment.window(name) for name in names]
+        windows = [self.window(instance, name) for name in names]
         return max(max(lb for lb, _ in windows), 0), max(max(la for _, la in windows), 0)
 
     def bucketed(self, instance: PlannedInstance, region: list[Interval]) -> list[Interval]:
@@ -404,9 +412,9 @@ class _Runner:
         needs: dict[str, list[Interval]] = defaultdict(list)
         for window in windows:
             for item in self.inputs(instance):
-                lb, la = deployment.window(item.name)
+                lb, la = self.window(instance, item.name)
                 low = NEG_INF if lb == POS_INF else window[0] - lb
-                needs[item.descriptor.ref_uri].append((low, window[1] + max(la, 0) + 1))
+                needs[item.descriptor.ref_uri].append((low, window[1] + max(la, 0)))
             for port in instance.outputs.values():
                 needs[port.ref_uri].append(window)
         return needs
@@ -443,9 +451,9 @@ class _Runner:
             run = run_at(item.life, window[0])
             if run is None:
                 continue
-            lb, la = deployment.window(item.name)
+            lb, la = self.window(instance, item.name)
             low = NEG_INF if lb == POS_INF else window[0] - lb
-            high = window[1] - 1 + la + 1
+            high = window[1] + la
             span = intersect([(low, high)], [run])
             if span:
                 ranges[item.descriptor.ref_uri].extend(span)
@@ -458,7 +466,7 @@ class _Runner:
                                  _dt((max(highs) if highs else window[1]) - 1))
         output_window = TimeWindow(_dt(window[0]), _dt(window[1] - 1))
         streams: dict[str, StreamSet] = {}
-        names = {item.name for item in inputs}
+        names = {item.name for item in inputs} | set(instance.aliases) | set(instance.named)
         for name in sorted(names):
             descriptors = tuple({d.ref_uri: d for d in by_name.get(name, ())}.values())
             refs = [d.ref_uri for d in descriptors]
@@ -512,7 +520,7 @@ class _Runner:
                     window = app.output_window(TimeWindow(_dt(_safe(start)), _dt(_safe(end) - 1)))
                     out.append((to_micros(window.start), to_micros(window.end) + 1))
                 continue
-            lb, la = deployment.window(item.name)
+            lb, la = self.window(instance, item.name)
             out.extend(expand(touched, lookback=lb, lookahead=la))
         return merge(out)
 
@@ -556,8 +564,9 @@ class ViewEvaluator:
         old_plan = self.materializer.applied_plan()
         structural: dict[str, list[Interval]] = defaultdict(list)
         first = state is None
+        known = self.materializer.known_views()
         if first:
-            for view in {i.view for i in plan.instances} | set(_names(plan)):
+            for view in {i.view for i in plan.instances} | set(_names(plan)) | known:
                 structural[view] = list(ALL)
             data: dict[str, list[Interval]] = {}
         else:
@@ -567,9 +576,11 @@ class ViewEvaluator:
                     for view, region in _plan_difference(old_plan[0], plan).items():
                         structural[view].extend(region)
                 else:
+                    # The plan these heads were evaluated with is not known
+                    # (a restart): every view any deployment ever named,
+                    # wherever anything changed.
                     region = self.materializer.changed_region(old_model, model_head, old_deployment, deployment_head)
-                    for view in {i.view for i in plan.instances} | set(_names(plan)) | set(
-                            _names(old_plan[0]) if old_plan else ()):
+                    for view in {i.view for i in plan.instances} | set(_names(plan)) | known:
                         structural[view] = list(region)
             points = reader.changed_points(data_revision, current)
             data = {ref: merge((t, t + 1) for t in times) for ref, times in points.items()}
@@ -731,8 +742,7 @@ class ViewEvaluator:
                     key = id(reader_instance)
                     if key not in pending:
                         continue
-                    deployment = runner.deployment(reader_instance)
-                    lb, la = deployment.window(item.name)
+                    lb, la = runner.window(reader_instance, item.name)
                     touched = intersect(spans, item.life)
                     region = intersect(expand(touched, lookback=lb, lookahead=la), reader_instance.present)
                     if region and (region[0][0] == NEG_INF or region[-1][1] == POS_INF):

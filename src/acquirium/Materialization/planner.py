@@ -384,6 +384,7 @@ class BindingPlanner:
         starts_of_versions = [start for start, _ in versions]
         cache = self._query_cache
         rows: dict[tuple, list[tuple[_MatchRow, list[Interval]]]] = {}
+        aliases: dict[tuple, set[str]] = defaultdict(set)
         generated: list[tuple[str, tuple[Interval, ...], Graph, str]] = []
         for _ in range(len(definitions) + 2):
             published = named + generated
@@ -406,10 +407,11 @@ class BindingPlanner:
                             graph += item[2]
                         view = _VersionGraph(self.graph, version, graph, published_key)
                         query = _build_query(apps[definition.key], self._client(view))
-                        cache[key] = () if query is None else _query_rows(query)
+                        cache[key] = ((), ()) if query is None else (_query_rows(query), _stream_aliases(query))
                         while len(cache) > 20_000:
                             cache.pop(next(iter(cache)))
-                    found.append((start, end, cache[key]))
+                    found.append((start, end, cache[key][0]))
+                    aliases[definition.key].update(cache[key][1])
                 current[definition.key] = _row_lives(found)
             if current == rows:
                 break
@@ -428,7 +430,8 @@ class BindingPlanner:
         conflicts = writer_conflicts(temporal)
         if conflicts:
             raise AdmissionError("; ".join(str(conflict) for conflict in conflicts))
-        instances = tuple(item for d in definitions for item in _instances(d, rows[d.key], named_streams))
+        instances = tuple(item for d in definitions
+                          for item in _instances(d, rows[d.key], named_streams, tuple(sorted(aliases[d.key]))))
         return TemporalPlan(temporal, {d.text: d.deployment for d in definitions}, rows, schedule,
                             instances, {d.key: apps[d.key] for d in definitions})
 
@@ -559,6 +562,7 @@ class PlannedInstance:
     named: Mapping[str, StreamDescriptor]
     outputs: Mapping[str, OutputPort]
     match_life: tuple[Interval, ...] | None = None
+    aliases: tuple[str, ...] = ()
 
     @property
     def definition(self) -> tuple[str, str]:
@@ -687,7 +691,13 @@ def _temporal_definition(definition: _PlannedDefinition, rows, named_streams) ->
                           outputs=single, generated=generated)
 
 
-def _instances(definition: _PlannedDefinition, rows, named_streams) -> list[PlannedInstance]:
+def _stream_aliases(query: Query) -> tuple[str, ...]:
+    """The query's stream-bearing aliases, bound or not."""
+    graph = query.query_graph
+    return tuple(sorted(graph.aliases_reverse.get(node, f"data_{node}") for node in graph.data_nodes))
+
+
+def _instances(definition: _PlannedDefinition, rows, named_streams, aliases=()) -> list[PlannedInstance]:
     spec = definition.deployment
     named = {name: StreamDescriptor(ref_uri=ref) for name, ref in _resolve_named(definition, named_streams).items()}
     planned = [(row, PlannedRow(dict(row.columns), _descriptors(row), tuple(life))) for row, life in rows]
@@ -700,8 +710,8 @@ def _instances(definition: _PlannedDefinition, rows, named_streams) -> list[Plan
                 ports = {port: _port(definition, port, inputs if spec.outputs[port].stream_name is None else {})
                          for port in spec.outputs}
                 out.append(PlannedInstance(definition.name, definition.text, _row_key(row), present,
-                                           (item,), named, ports, item.life))
+                                           (item,), named, ports, item.life, aliases))
         return out
     ports = {port: _port(definition, port, {}) for port in spec.outputs}
     return [PlannedInstance(definition.name, definition.text, "*", definition.deployed,
-                            tuple(item for _, item in planned), named, ports)]
+                            tuple(item for _, item in planned), named, ports, None, aliases)]

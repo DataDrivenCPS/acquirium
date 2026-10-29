@@ -23,15 +23,18 @@ import pytest
 
 from acquirium.internals.intervals import NEG_INF, POS_INF, from_micros, to_micros
 from acquirium.Materialization.planner import Deployment
+from acquirium.Materialization.runtime import Materializer
 from acquirium.Storage.metadata_outbox import execute
 
 from .test_time_aware_engine import (  # noqa: F401  (the world fixture)
-    BASE, Double, Ewma, RollingSum, SumOfDoubles, World, at, point, world,
+    BASE, Double, Ewma, RollingSum, SumOfDoubles, TenMinuteMean, World, at, point, world,
 )
 from rdflib import URIRef
 from acquirium.Storage.graph_registry import PLANT_GRAPH_URI
 
-APPS = {"double": Double, "rolling-sum": RollingSum, "sum-of-doubles": SumOfDoubles, "ewma": Ewma}
+APPS = {"double": Double, "rolling-sum": RollingSum, "sum-of-doubles": SumOfDoubles, "ewma": Ewma,
+        "ten-minute-mean": TenMinuteMean}
+PER_POINT = ("double", "rolling-sum", "ten-minute-mean")
 POINTS = (1, 2, 3)
 HORIZON = 120  # minutes
 
@@ -66,6 +69,11 @@ class Reference:
             t -= 1
         return t
 
+    def run_end(self, p: int, t: int) -> int:
+        while t < 10 * HORIZON and self.present(p, t):
+            t += 1
+        return t
+
     # ---- outputs from scratch ----
     def outputs(self) -> dict[str, dict]:
         out: dict[str, dict] = {}
@@ -83,6 +91,17 @@ class Reference:
                     first = self.run_start(p, t)
                     rolling[p][t] = sum(x for s, x in self.data[p].items() if s >= first and t - 10 < s <= t)
         out["rolling-sum"] = {p: dict(v) for p, v in rolling.items() if v}
+        # a bucket's output is written at its start and reads the bucket inside
+        # the run that contains the start
+        buckets: dict[int, dict[int, float]] = defaultdict(dict)
+        for p in POINTS:
+            for b in range(0, HORIZON + 10, 10):
+                if self.present(p, b) and self.deployed("ten-minute-mean", b):
+                    end = min(b + 10, self.run_end(p, b))
+                    samples = [x for s, x in self.data[p].items() if b <= s < end]
+                    if samples:
+                        buckets[p][b] = sum(samples) / len(samples)
+        out["ten-minute-mean"] = {p: dict(v) for p, v in buckets.items() if v}
         # sum-of-doubles reads double's outputs while their instances are present
         total: dict[int, float] = defaultdict(float)
         times = set()
@@ -118,15 +137,21 @@ def stored(world: World) -> dict[str, dict]:
                         if d.ref_uri.startswith("urn:ex/r"):
                             point_of[port.ref_name] = int(d.ref_uri.removeprefix("urn:ex/r"))
     out: dict[str, dict] = {"double": defaultdict(dict), "rolling-sum": defaultdict(dict),
-                            "sum-of-doubles": {}, "ewma": {}}
+                            "ten-minute-mean": defaultdict(dict), "sum-of-doubles": {}, "ewma": {}}
     for source, ref_name, ts, value in rows:
         view = source.removeprefix("derived:")
         minute = int((ts.replace(tzinfo=BASE.tzinfo) - BASE).total_seconds() // 60)
-        if view in ("double", "rolling-sum"):
+        if view in PER_POINT:
             out[view][point_of.get(ref_name, ref_name)][minute] = value
         else:
             out[view][minute] = value
-    return {k: (dict(v) if k in ("double", "rolling-sum") else v) for k, v in out.items()}
+    return {k: (dict(v) if k in PER_POINT else v) for k, v in out.items()}
+
+
+def _close(a, b) -> bool:
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(_close(a[k], b[k]) for k in a)
+    return abs(a - b) < 1e-9
 
 
 def minute(m: int):
@@ -145,8 +170,13 @@ def run(world: World, seed: int, operations: int) -> None:
     deployed = set()
     # sum-of-doubles and ewma depend on the others; deploy in any order anyway
     for step in range(operations):
-        kind = rng.choice(["model", "model", "data", "data", "data", "deploy", "remove"])
-        if kind == "model":
+        kind = rng.choice(["model", "model", "data", "data", "data", "deploy", "remove", "restart"])
+        if kind == "restart":
+            # a new process over the same database and graph: the plan and the
+            # loaded code are rebuilt, the frontier and the log are durable
+            world.views = Materializer(world.store, world.graphs)
+            world.views.step()
+        elif kind == "model":
             p = rng.choice(POINTS)
             op = rng.choice(["+", "+", "-"])
             start = rng.choice([None, rng.randrange(0, HORIZON)])
@@ -190,7 +220,7 @@ def run(world: World, seed: int, operations: int) -> None:
             ref.change_deployment(name, False, -10 * HORIZON if purge else at_minute, 10 * HORIZON)
         expected, got = ref.outputs(), stored(world)
         for view in APPS:
-            assert got[view] == expected[view], f"seed {seed} op {step} ({kind}) view {view}"
+            assert _close(got[view], expected[view]), f"seed {seed} op {step} ({kind}) view {view}: {got[view]} != {expected[view]}"
         assert not world.views.failures(), world.views.failures()
 
 
