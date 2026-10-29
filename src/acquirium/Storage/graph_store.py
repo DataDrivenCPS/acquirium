@@ -1395,7 +1395,7 @@ class OxigraphGraphStore:
         return self.model_version(at, as_of=as_of).graph
 
     def query_version(self, version: ModelVersion, query: str, include_dependencies: bool = True,
-                      *, publications: Graph | None = None) -> dict:
+                      *, publications: Graph | None = None, publications_key: str | None = None) -> dict:
         """Run a SPARQL query on one model version, with the ontologies when
         ``include_dependencies`` and with ``publications`` (the view output
         nodes at that time) added. Same result shape as ``sparql_query``.
@@ -1417,7 +1417,8 @@ class OxigraphGraphStore:
             if include_dependencies:
                 graphs.append(NamedNode(str(self.dependency_query_graph_uri)))
             if publications is not None and len(publications):
-                digest = hashlib.sha256("\n".join(sorted(nt(t) for t in publications)).encode()).hexdigest()
+                digest = publications_key or hashlib.sha256(
+                    "\n".join(sorted(nt(t) for t in publications)).encode()).hexdigest()
                 if digest != self._loaded_publications:
                     _replace_named_graph(self.query_dataset, publications, URIRef(PUBLICATIONS_GRAPH))
                     self._loaded_publications = digest

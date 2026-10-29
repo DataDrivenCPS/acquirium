@@ -387,9 +387,10 @@ class _DryReader(_Reader):
 
     def stage(self, ref, window, values, *, port, application):
         self.captured[ref].update(values)
+        return []
 
     def flush(self):
-        return {}
+        pass
 
 
 def _check_outputs(instance, captured: dict[str, dict[int, Any]], limit: int | None) -> dict[str, Any]:

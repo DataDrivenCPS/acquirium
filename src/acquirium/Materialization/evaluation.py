@@ -29,6 +29,7 @@ Times are integer microseconds; intervals are half-open.
 from __future__ import annotations
 
 import math
+from bisect import bisect_left, insort
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
@@ -85,20 +86,52 @@ class EvaluationReport:
     timings: dict[str, float] = field(default_factory=lambda: defaultdict(float))
 
 
+class _Stream:
+    """The rows of one stream known to a step: sorted times, their values,
+    and the intervals over which they are complete."""
+    __slots__ = ("times", "values", "covered")
+
+    def __init__(self) -> None:
+        self.times: list[int] = []
+        self.values: dict[int, Any] = {}
+        self.covered: list[Interval] = []
+
+    def put(self, t: int, value: Any) -> None:
+        if t not in self.values:
+            insort(self.times, t)
+        self.values[t] = value
+
+    def drop(self, t: int) -> None:
+        if t in self.values:
+            del self.values[t]
+            del self.times[bisect_left(self.times, t)]
+
+    def within(self, start: int, end: int) -> list[int]:
+        return self.times[bisect_left(self.times, start):bisect_left(self.times, end)]
+
+
 class _Reader:
-    """Reads and writes the time-series tables on the step's connection."""
+    """The step's view of the time-series tables.
+
+    Rows a step needs are loaded into memory once and kept there; what the
+    step writes is applied to that copy at once, so later reads in the step
+    see it, and to the database by ``flush`` at the end of the step.
+    """
 
     def __init__(self, store: Any, conn: Any) -> None:
         self.store, self.conn = store, conn
         self.postgres = getattr(store, "materialization_backend", None) == "postgres"
         self.revision: int | None = None
-        self._staged: list = []
+        self.streams: dict[str, _Stream] = {}
+        self._ops: list = []
+        self.queries = 0
 
     def _t(self, micros: int) -> datetime:
         value = _dt(micros)
         return value if self.postgres else value.replace(tzinfo=None)
 
     def _q(self, sql: str, params: Iterable[Any] = ()):
+        self.queries += 1
         return execute(self.conn, sql, list(params))
 
     def changed_points(self, after: int, upto: int) -> dict[str, list[int]]:
@@ -122,107 +155,133 @@ class _Reader:
         low, high = self._q(
             f"SELECT min(t.ts), max(t.ts) FROM timeseries t JOIN ref_ids r ON r.ref_id = t.ref_id "
             f"WHERE r.ref_uri IN ({marks}) AND NOT t.deleted", refs).fetchone()
-        if low is None:
+        spans = [] if low is None else [(to_micros(low), to_micros(high) + 1)]
+        for ref in refs:
+            stream = self.streams.get(ref)
+            if stream is not None and stream.times:
+                spans.append((stream.times[0], stream.times[-1] + 1))
+        if not spans:
             return None
-        return (to_micros(low), to_micros(high) + 1)
+        return (min(s for s, _ in spans), max(e for _, e in spans))
 
-    def read(self, ranges: Mapping[str, list[Interval]]) -> pa.Table:
-        """Rows of each stream inside its ranges, as (ref_uri, time, value, revision)."""
-        refs = sorted(ref for ref, spans in ranges.items() if spans)
-        empty = pa.table({"ref_uri": pa.array([], pa.string()), "time": pa.array([], pa.timestamp("us", tz="UTC")),
-                          "numeric": pa.array([], pa.float64()), "text": pa.array([], pa.string())})
-        if not refs:
-            return empty
-        low = min(spans[0][0] for spans in (ranges[r] for r in refs))
-        high = max(spans[-1][1] for spans in (ranges[r] for r in refs))
+    def extents(self, refs: Iterable[str]) -> dict[str, Interval]:
+        """Each stream's extent in one query, the step's own writes included."""
+        refs = sorted(set(refs))
+        out: dict[str, Interval] = {}
+        if refs:
+            marks = ",".join("?" for _ in refs)
+            for ref, low, high in self._q(
+                    f"SELECT r.ref_uri, min(t.ts), max(t.ts) FROM timeseries t JOIN ref_ids r ON r.ref_id = t.ref_id "
+                    f"WHERE r.ref_uri IN ({marks}) AND NOT t.deleted GROUP BY r.ref_uri", refs).fetchall():
+                out[ref] = (to_micros(low), to_micros(high) + 1)
+        for ref in refs:
+            stream = self.streams.get(ref)
+            if stream is not None and stream.times:
+                span = (stream.times[0], stream.times[-1] + 1)
+                old = out.get(ref)
+                out[ref] = span if old is None else (min(old[0], span[0]), max(old[1], span[1]))
+        return out
+
+    def load(self, needs: Mapping[str, list[Interval]]) -> None:
+        """Bring what is not yet known of ``needs`` into memory, in one query."""
+        missing = {}
+        for ref, spans in needs.items():
+            known = self.streams[ref].covered if ref in self.streams else []
+            rest = subtract([(_safe(s), _safe(e)) for s, e in spans], known)
+            if rest:
+                missing[ref] = rest
+        if not missing:
+            return
+        refs = sorted(missing)
+        low = min(spans[0][0] for spans in missing.values())
+        high = max(spans[-1][1] for spans in missing.values())
         marks = ",".join("?" for _ in refs)
         cursor = self._q(
             f"SELECT r.ref_uri, t.ts, t.numeric_value, t.text_value FROM timeseries t "
             f"JOIN ref_ids r ON r.ref_id = t.ref_id WHERE r.ref_uri IN ({marks}) AND NOT t.deleted "
-            f"AND t.ts >= ? AND t.ts < ? ORDER BY r.ref_uri, t.ts",
-            [*refs, self._t(low), self._t(high)])
-        if self.postgres:
-            rows = cursor.fetchall()
-            table = pa.table({
-                "ref_uri": pa.array([r[0] for r in rows], pa.string()),
-                "time": pa.array([r[1] for r in rows], pa.timestamp("us", tz="UTC")),
-                "numeric": pa.array([r[2] for r in rows], pa.float64()),
-                "text": pa.array([r[3] for r in rows], pa.string()),
-            })
-        else:
-            table = cursor.to_arrow_table().rename_columns(["ref_uri", "time", "numeric", "text"])
-            table = table.set_column(1, "time", pc.cast(pc.assume_timezone(table["time"], "UTC"), pa.timestamp("us", tz="UTC")))
-        if not table.num_rows:
-            return empty
-        # keep each stream's rows inside its own ranges
-        times = pc.cast(table["time"], pa.int64())
-        keep = None
+            f"AND t.ts >= ? AND t.ts < ?", [*refs, self._t(low), self._t(high)])
+        rows = cursor.fetchall()
+        hull = (low, high)
         for ref in refs:
-            is_ref = pc.equal(table["ref_uri"], ref)
-            inside = None
-            for start, end in ranges[ref]:
-                span = pc.and_(pc.greater_equal(times, _safe(start)), pc.less(times, _safe(end)))
-                inside = span if inside is None else pc.or_(inside, span)
-            part = pc.and_(is_ref, inside)
-            keep = part if keep is None else pc.or_(keep, part)
-        return table.filter(keep)
+            stream = self.streams.setdefault(ref, _Stream())
+            fresh = subtract([hull], stream.covered)
+            stream.covered = merge(stream.covered + [hull])
+            missing[ref] = fresh
+        for ref, ts, numeric, text_value in rows:
+            t = to_micros(ts)
+            stream = self.streams[ref]
+            if run_at(missing[ref], t) is not None:
+                stream.put(t, text_value if text_value is not None else numeric)
 
-    def output_rows(self, ref: str, window: Interval) -> dict[int, Any]:
-        rows = self._q(
-            "SELECT t.ts, t.numeric_value, t.text_value FROM timeseries t JOIN ref_ids r ON r.ref_id = t.ref_id "
-            "WHERE r.ref_uri = ? AND NOT t.deleted AND t.ts >= ? AND t.ts < ?",
-            [ref, self._t(window[0]), self._t(window[1])]).fetchall()
-        return {to_micros(ts): (text if text is not None else numeric) for ts, numeric, text in rows}
+    def read(self, ranges: Mapping[str, list[Interval]]) -> pa.Table:
+        """Rows of each stream inside its ranges, as (ref_uri, time, numeric, text)."""
+        ranges = {ref: spans for ref, spans in ranges.items() if spans}
+        self.load(ranges)
+        refs, times, numeric, texts = [], [], [], []
+        for ref in sorted(ranges):
+            stream = self.streams[ref]
+            for start, end in ranges[ref]:
+                for t in stream.within(_safe(start), _safe(end)):
+                    value = stream.values[t]
+                    refs.append(ref)
+                    times.append(t)
+                    if isinstance(value, str):
+                        numeric.append(None)
+                        texts.append(value)
+                    else:
+                        numeric.append(value)
+                        texts.append(None)
+        return pa.table({
+            "ref_uri": pa.array(refs, pa.string()),
+            "time": pa.array(times, pa.timestamp("us", tz="UTC")),
+            "numeric": pa.array(numeric, pa.float64()),
+            "text": pa.array(texts, pa.string()),
+        })
 
     def _revision(self) -> int:
         if self.revision is None:
             self.revision = self.store._next_revision(self.conn)
         return self.revision
 
-    def stage(self, ref: str, window: Interval, values: Mapping[int, Any], *, port: Any, application: str) -> None:
-        """Make ``ref`` hold exactly ``values`` inside ``window`` at the next
-        ``flush``. Staged windows of one stream must not overlap."""
-        self._staged.append((ref, window, dict(values), port, application))
-
-    def retract(self, ref: str, window: Interval) -> None:
-        self.stage(ref, window, {}, port=None, application="")
-
-    def flush(self) -> dict[str, list[int]]:
-        """Write everything staged with one read of the old rows and one insert;
-        return the times whose value changed, per stream."""
-        staged, self._staged = self._staged, []
-        if not staged:
-            return {}
-        hull: dict[str, Interval] = {}
-        for ref, window, *_ in staged:
-            low, high = hull.get(ref, window)
-            hull[ref] = (min(low, window[0]), max(high, window[1]))
-        old = self._rows(hull)
-        changed: dict[str, list[int]] = defaultdict(list)
-        tombstones, rows, register = [], [], {}
-        for ref, window, values, port, application in staged:
-            before = {t: v for t, v in old.get(ref, {}).items() if window[0] <= t < window[1]}
-            diff = sorted(t for t in set(before) | set(values) if before.get(t) != values.get(t))
-            if not diff:
-                continue
-            changed[ref].extend(diff)
-            numeric = port is None or port.spec.value_kind == "numeric"
-            if any(t not in values for t in diff):
-                tombstones.append((ref, window))
-                written = sorted(values)
+    def stage(self, ref: str, window: Interval, values: Mapping[int, Any], *, port: Any, application: str) -> list[int]:
+        """Make ``ref`` hold exactly ``values`` inside ``window``; return the
+        times whose value changes. The database follows at ``flush``."""
+        self.load({ref: [window]})
+        stream = self.streams[ref]
+        before = {t: stream.values[t] for t in stream.within(window[0], window[1])}
+        diff = sorted(t for t in set(before) | set(values) if before.get(t) != values.get(t))
+        if not diff:
+            return []
+        for t in diff:
+            if t in values:
+                stream.put(t, values[t])
             else:
-                written = [t for t in diff if t in values]
-            rows.extend((ref, t, values[t], numeric) for t in written)
+                stream.drop(t)
+        removed = any(t not in values for t in diff)
+        written = sorted(values) if removed else [t for t in diff if t in values]
+        numeric = port is None or port.spec.value_kind == "numeric"
+        self._ops.append((ref, window, removed, [(t, values[t]) for t in written], numeric, port, application))
+        return diff
+
+    def retract(self, ref: str, window: Interval) -> list[int]:
+        return self.stage(ref, window, {}, port=None, application="")
+
+    def flush(self) -> None:
+        """Write every staged change: tombstones, then one insert."""
+        ops, self._ops = self._ops, []
+        if not ops:
+            return
+        revision = self._revision()
+        rows, register = [], {}
+        for ref, window, removed, written, numeric, port, application in ops:
+            if removed:
+                self._q(
+                    "UPDATE timeseries SET deleted = TRUE, last_revision = ? WHERE ref_id = "
+                    "(SELECT ref_id FROM ref_ids WHERE ref_uri = ?) AND ts >= ? AND ts < ? AND NOT deleted",
+                    [revision, ref, self._t(window[0]), self._t(window[1])])
+            rows.extend((ref, t, value, numeric) for t, value in written)
             if port is not None:
                 register[ref] = (port, application)
-        if not changed:
-            return {}
-        revision = self._revision()
-        for ref, window in tombstones:
-            self._q(
-                "UPDATE timeseries SET deleted = TRUE, last_revision = ? WHERE ref_id = "
-                "(SELECT ref_id FROM ref_ids WHERE ref_uri = ?) AND ts >= ? AND ts < ? AND NOT deleted",
-                [revision, ref, self._t(window[0]), self._t(window[1])])
         if register:
             refs = sorted(register)
             marks = ",".join("?" for _ in refs)
@@ -243,24 +302,6 @@ class _Reader:
             if not self.postgres:
                 frame = frame.with_columns(pl.col("ts").dt.replace_time_zone(None))
             self.store._insert_frame(self.conn, frame, revision)
-        return changed
-
-    def _rows(self, hull: Mapping[str, Interval]) -> dict[str, dict[int, Any]]:
-        refs = sorted(hull)
-        marks = ",".join("?" for _ in refs)
-        low = min(span[0] for span in hull.values())
-        high = max(span[1] for span in hull.values())
-        rows = self._q(
-            f"SELECT r.ref_uri, t.ts, t.numeric_value, t.text_value FROM timeseries t JOIN ref_ids r ON r.ref_id = t.ref_id "
-            f"WHERE r.ref_uri IN ({marks}) AND NOT t.deleted AND t.ts >= ? AND t.ts < ?",
-            [*refs, self._t(low), self._t(high)]).fetchall()
-        out: dict[str, dict[int, Any]] = defaultdict(dict)
-        for ref, ts, numeric, text_value in rows:
-            t = to_micros(ts)
-            span = hull[ref]
-            if span[0] <= t < span[1]:
-                out[ref][t] = text_value if text_value is not None else numeric
-        return out
 
     def derived_streams(self, application: str) -> list[str]:
         return [row[0] for row in self._q("SELECT ref_uri FROM streams WHERE source_id = ?",
@@ -282,6 +323,7 @@ class _Runner:
     def __init__(self, plan: TemporalPlan, reader: _Reader, unit_converter: Any, report: EvaluationReport) -> None:
         self.plan, self.reader, self.converter, self.report = plan, reader, unit_converter, report
         self._extents: dict[int, Interval | None] = {}
+        self._changed: dict[str, list[int]] = defaultdict(list)
         self.by_view: dict[str, list[PlannedInstance]] = defaultdict(list)
         for instance in plan.instances:
             self.by_view[instance.view].append(instance)
@@ -346,18 +388,46 @@ class _Runner:
             self._call(instance, (left, right), inputs)
 
     def flush(self) -> dict[str, list[Interval]]:
-        """Write what is staged; the changed points per stream, as intervals."""
-        started = perf_counter()
-        changed = self.reader.flush()
-        self.report.timings["write"] += perf_counter() - started
+        """The points changed since the last call, per stream, as intervals."""
+        changed, self._changed = self._changed, defaultdict(list)
         self.report.points_changed += sum(len(times) for times in changed.values())
         return {stream: merge((t, t + 1) for t in times) for stream, times in changed.items()}
+
+    def retract(self, ref: str, window: Interval) -> None:
+        moved = self.reader.retract(ref, window)
+        if moved:
+            self._changed[ref].extend(moved)
+
+    def preload(self, instance: PlannedInstance, windows: Iterable[Interval]) -> dict[str, list[Interval]]:
+        """What computing ``instance`` over ``windows`` reads and writes."""
+        deployment = self.deployment(instance)
+        needs: dict[str, list[Interval]] = defaultdict(list)
+        for window in windows:
+            for item in self.inputs(instance):
+                lb, la = deployment.window(item.name)
+                low = NEG_INF if lb == POS_INF else window[0] - lb
+                needs[item.descriptor.ref_uri].append((low, window[1] + max(la, 0) + 1))
+            for port in instance.outputs.values():
+                needs[port.ref_uri].append(window)
+        return needs
 
     def extent_of(self, instance: PlannedInstance) -> Interval | None:
         key = id(instance)
         if key not in self._extents:
             self._extents[key] = self.extent(instance)
         return self._extents[key]
+
+    def prefetch_extents(self, instances: Iterable[PlannedInstance]) -> None:
+        """Know the extents of many instances with one query."""
+        instances = [i for i in instances if id(i) not in self._extents]
+        if not instances:
+            return
+        refs_of = {id(i): [item.descriptor.ref_uri for item in self.inputs(i)] +
+                          [port.ref_uri for port in i.outputs.values()] for i in instances}
+        found = self.reader.extents(ref for refs in refs_of.values() for ref in refs)
+        for instance in instances:
+            spans = [found[ref] for ref in refs_of[id(instance)] if ref in found]
+            self._extents[id(instance)] = (min(s for s, _ in spans), max(e for _, e in spans)) if spans else None
 
     def _call(self, instance: PlannedInstance, window: Interval, inputs: list[_Input]) -> None:
         deployment = self.deployment(instance)
@@ -418,7 +488,9 @@ class _Runner:
             times = pc.cast(out["time"], pa.int64()).to_pylist()
             values = {t: v for t, v in zip(times, out["value"].to_pylist()) if window[0] <= t < window[1]}
             self.report.points_written += len(values)
-            self.reader.stage(port.ref_uri, window, values, port=port, application=instance.view)
+            moved = self.reader.stage(port.ref_uri, window, values, port=port, application=instance.view)
+            if moved:
+                self._changed[port.ref_uri].extend(moved)
         self.report.timings["write"] += perf_counter() - writing
 
     # ---- affected regions ----
@@ -511,6 +583,9 @@ class ViewEvaluator:
         for ref, spans in data.items():
             changed[ref].extend(spans)
         self._run(plan, runner, structural, changed, report, old_plan[0] if old_plan else None)
+        flushing = perf_counter()
+        reader.flush()
+        report.timings["flush"] = perf_counter() - flushing
         for name, (start, end) in self._failed:
             execute(conn, "INSERT INTO view_pending VALUES (?, ?, ?)", [name, start, end])
         report.errors = dict(self.errors)
@@ -522,6 +597,7 @@ class ViewEvaluator:
                     [final, model_head, deployment_head])
         self._applied = (plan, model_head, deployment_head)
         report.timings["evaluate"] = perf_counter() - started
+        report.timings["queries"] = reader.queries
         self.timings = dict(report.timings)
         self.last_report = report
         return report.points_changed > 0 or reader.revision is not None
@@ -573,10 +649,20 @@ class ViewEvaluator:
     def _run_view(self, runner: _Runner, name: str, structural: list[Interval],
                   changed: dict[str, list[Interval]], report: EvaluationReport) -> None:
         written: dict[str, list[Interval]] = defaultdict(list)
+        work = []
+        needs: dict[str, list[Interval]] = defaultdict(list)
+        if structural:
+            runner.prefetch_extents(runner.by_view.get(name, []))
         for instance in runner.by_view.get(name, []):
             for port in instance.outputs.values():
                 written[port.ref_uri].extend(instance.present)
             region = self._regions(runner, instance, structural, changed)
+            if region:
+                work.append((instance, region))
+                for ref, spans in runner.preload(instance, region).items():
+                    needs[ref].extend(spans)
+        runner.reader.load({ref: merge(spans) for ref, spans in needs.items()})
+        for instance, region in work:
             for window in region:
                 self._compute(runner, instance, window)
         self._retract_view(runner, name, structural, written)
@@ -597,7 +683,7 @@ class ViewEvaluator:
             if extent is None:
                 continue
             for window in intersect(gone, [extent]):
-                runner.reader.retract(ref, window)
+                runner.retract(ref, window)
 
     def _run_loop(self, plan: TemporalPlan, runner: _Runner, component: tuple[str, ...],
                   structural: Mapping[str, list[Interval]], changed: dict[str, list[Interval]],
@@ -606,10 +692,20 @@ class ViewEvaluator:
         epsilon = schedule.epsilon
         members = [instance for name in component for instance in runner.by_view.get(name, [])]
         index = {id(instance): instance for instance in members}
+        runner.prefetch_extents(members)
         pending: dict[int, list[Interval]] = {}
         for instance in members:
             pending[id(instance)] = self._regions(runner, instance, structural.get(instance.view, []), changed)
         own = {port.ref_uri for instance in members for port in instance.outputs.values()}
+        firsts = [spans[0][0] for spans in pending.values() if spans]
+        if firsts:
+            # A loop may run on to the end of its data: load it all from the
+            # first pending time on.
+            needs: dict[str, list[Interval]] = defaultdict(list)
+            for instance in members:
+                for ref, spans in runner.preload(instance, [(min(firsts), SAFE_HIGH)]).items():
+                    needs[ref].extend(spans)
+            runner.reader.load({ref: merge(spans) for ref, spans in needs.items()})
         while True:
             starts = [(Fraction(spans[0][0]) + schedule.phi[index[key].view], key)
                       for key, spans in pending.items() if spans]

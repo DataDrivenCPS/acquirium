@@ -8,6 +8,7 @@ dry runs can use the same compiler without activating the result.
 """
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import timedelta
@@ -71,14 +72,19 @@ class _VersionGraph:
     behind the surface planning queries use.
 
     The version key is derived from both contents, so query-builder caches
-    keyed by graph version never mix two versions.
+    keyed by graph version never mix two versions. ``published`` is the
+    digest of ``publications`` when the caller already knows it.
     """
-    def __init__(self, store: object, version: object, publications: Graph | None = None) -> None:
+    def __init__(self, store: object, version: object, publications: Graph | None = None,
+                 published: str | None = None) -> None:
         self._store, self._version, self._publications = store, version, publications
-        published = "" if publications is None else _graph_digest(publications)
+        if published is None:
+            published = "" if publications is None else _graph_digest(publications)
+        self._published = published
         self.key = sha256(f"{version.digest}:{published}".encode()).hexdigest()
     def sparql_query(self, query: str, include_dependencies: bool = True, *, wait_for_fresh: bool = False) -> dict:
-        return self._store.query_version(self._version, query, include_dependencies, publications=self._publications)
+        return self._store.query_version(self._version, query, include_dependencies, publications=self._publications,
+                                         publications_key=self._published or None)
     def graph_status(self) -> dict:
         return {"published_version": int(self.key[:15], 16)}
 
@@ -318,12 +324,20 @@ class BindingPlanner:
     def __init__(self, graph: object, *, query_resolver: Callable[..., Any] | None = None,
                  record_resolver: Callable[..., Any] | None = None) -> None:
         self.graph, self.query_resolver, self.record_resolver = graph, query_resolver, record_resolver
+        # Query rows per (definition, model version, publications), kept across
+        # plans: a model write only adds versions, so most pieces are known.
+        self._query_cache: dict[tuple, tuple[_MatchRow, ...]] = {}
+        # Loaded apps per code and parameters. An app keeps no per-call state.
+        self._apps: dict[tuple, App] = {}
 
     def _load(self, deployment: Deployment, search_path: str | None = None) -> App:
-        target = load_entrypoint(deployment.entrypoint, deployment.executable_digest, search_path)
-        if not isinstance(target, type) or not issubclass(target, App):
-            raise TypeError(f"{deployment.entrypoint!r} is not an App")
-        return target(**deployment.parameters)
+        key = (deployment.entrypoint, deployment.executable_digest, _json(deployment.parameters), search_path)
+        if key not in self._apps:
+            target = load_entrypoint(deployment.entrypoint, deployment.executable_digest, search_path)
+            if not isinstance(target, type) or not issubclass(target, App):
+                raise TypeError(f"{deployment.entrypoint!r} is not an App")
+            self._apps[key] = target(**deployment.parameters)
+        return self._apps[key]
 
     def _client(self, graph: object) -> _QueryFacade:
         return _QueryFacade(_GraphQueryClient(graph, self.query_resolver, self.record_resolver))
@@ -363,28 +377,38 @@ class BindingPlanner:
                 definitions.append(_PlannedDefinition(name, text, Deployment.from_json(text), tuple(merge(deployed))))
         apps = {d.key: self._load(d.deployment, search_path) for d in definitions}
         definitions = [replace(d, queried=type(apps[d.key]).build_query is not App.build_query) for d in definitions]
-        named = [(d.name, d.deployed, output_triples(d.name, {}, port, _port(d, port, {})))
+        named = [_publication(d.name, d.deployed, output_triples(d.name, {}, port, _port(d, port, {})))
                  for d in definitions for port, spec in d.deployment.outputs.items() if spec.stream_name is not None]
-        cache: dict[tuple, tuple[_MatchRow, ...]] = {}
+        versions = self.graph.model_versions()
+        version_at = {start: self.graph.model_version(start) for start, _ in versions}
+        starts_of_versions = [start for start, _ in versions]
+        cache = self._query_cache
         rows: dict[tuple, list[tuple[_MatchRow, list[Interval]]]] = {}
-        generated: list[tuple[str, tuple[Interval, ...], Graph]] = []
+        generated: list[tuple[str, tuple[Interval, ...], Graph, str]] = []
         for _ in range(len(definitions) + 2):
             published = named + generated
-            pieces = _refine(self.graph.model_versions(), [span for _, spans, _ in published for span in spans])
+            pieces = _refine(versions, [span for _, spans, _, _ in published for span in spans])
             current = {}
             for definition in definitions:
                 found = []
+                if not definition.queried:
+                    current[definition.key] = []
+                    continue
                 for start, end in pieces:
-                    version = self.graph.model_version(start)
-                    graph = Graph()
-                    for owner, spans, triples in published:
-                        if owner != definition.name and any(left <= start < right for left, right in spans):
-                            graph += triples
-                    view = _VersionGraph(self.graph, version, graph)
-                    key = (definition.key, view.key)
+                    version = version_at[starts_of_versions[bisect_right(starts_of_versions, start) - 1]]
+                    included = [item for item in published
+                                if item[0] != definition.name and any(left <= start < right for left, right in item[1])]
+                    published_key = sha256("|".join(sorted(item[3] for item in included)).encode()).hexdigest() if included else ""
+                    key = (definition.key, version.digest, published_key)
                     if key not in cache:
+                        graph = Graph()
+                        for item in included:
+                            graph += item[2]
+                        view = _VersionGraph(self.graph, version, graph, published_key)
                         query = _build_query(apps[definition.key], self._client(view))
                         cache[key] = () if query is None else _query_rows(query)
+                        while len(cache) > 20_000:
+                            cache.pop(next(iter(cache)))
                     found.append((start, end, cache[key]))
                 current[definition.key] = _row_lives(found)
             if current == rows:
@@ -590,8 +614,14 @@ def _port(definition: _PlannedDefinition, port: str, inputs: Mapping[str, Iterab
     return output_port(definition.name, port, inputs, definition.deployment.outputs[port])
 
 
+def _publication(view: str, times: tuple[Interval, ...], triples: Graph) -> tuple[str, tuple[Interval, ...], Graph, str]:
+    """A published output: its view, when it is published, its triples, and
+    a digest of the triples that identifies it in query caches."""
+    return view, times, triples, _graph_digest(triples)
+
+
 def _generated(definition: _PlannedDefinition, rows: list[tuple[_MatchRow, list[Interval]]]):
-    """``(view, times, triples)`` for the generated outputs of a definition."""
+    """Publications of the generated outputs of a definition."""
     ports = [port for port, spec in definition.deployment.outputs.items() if spec.stream_name is None]
     if definition.deployment.grouping == "per_match":
         for row, life in rows:
@@ -599,10 +629,10 @@ def _generated(definition: _PlannedDefinition, rows: list[tuple[_MatchRow, list[
             if present:
                 inputs = _descriptors(row)
                 for port in ports:
-                    yield definition.name, present, output_triples(definition.name, inputs, port, _port(definition, port, inputs))
+                    yield _publication(definition.name, present, output_triples(definition.name, inputs, port, _port(definition, port, inputs)))
     else:
         for port in ports:
-            yield definition.name, definition.deployed, output_triples(definition.name, {}, port, _port(definition, port, {}))
+            yield _publication(definition.name, definition.deployed, output_triples(definition.name, {}, port, _port(definition, port, {})))
 
 
 def _named_streams(definitions: Iterable[_PlannedDefinition]) -> dict[str, set[str]]:
