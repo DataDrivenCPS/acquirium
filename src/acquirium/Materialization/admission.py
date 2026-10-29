@@ -1,20 +1,20 @@
 """Admission of a view set, and the evaluation schedule it implies.
 
-A deployment change is admitted only if the whole view set, over every
-definition each name has ever had, passes three checks:
+Every input and every output of a view is a column of its query's result, so
+the view graph is found from the matches: it has an edge ``W -> V`` labelled
+``l`` when some row of ``V`` reads, with lookahead ``l`` (negative: a delay),
+a stream that some row of ``W`` writes. A state of the model and the view set
+is admitted only if
 
-- stratified selection: no view selects (through its query) the outputs of a
-  view that, directly or indirectly, selects its own outputs;
-- the delay rule: every loop of the view graph has lookaheads summing to less
-  than zero, so going once around a loop moves strictly into the past;
-- a finite start for every view on a loop, the base case of its recursion.
+- every loop of the view graph has lookaheads summing to less than zero, so
+  going once around a loop moves strictly into the past, and
+- every view on a loop has a finite start, the base case of its recursion.
 
-The view graph has an edge ``W -> V`` labelled ``l`` when ``V`` may read
-``W``'s outputs with lookahead ``l`` (negative: a delay). If the delay rule
-holds there are offsets ``phi`` and a step ``epsilon > 0`` with
-``phi[V] >= phi[W] + l + epsilon`` on every edge. Then ``t + phi[V]`` drops
-by at least ``epsilon`` along every dependency between output points, which
-makes the outputs well defined and gives the order to compute them in.
+If the first check holds there are offsets ``phi`` and a step
+``epsilon > 0`` with ``phi[V] >= phi[W] + l + epsilon`` on every edge. Then
+``t + phi[V]`` drops by at least ``epsilon`` along every dependency between
+output points, which makes the outputs well defined and gives the order to
+compute them in.
 
 Times and durations are integer microseconds.
 """
@@ -32,31 +32,17 @@ class AdmissionError(ValueError):
 
 
 @dataclass(frozen=True)
-class ViewShape:
-    """What admission needs to know about one view name, collected over every
-    definition the name has had.
-
-    ``upstream`` holds the views whose outputs the query may select.
-    ``lookahead`` is the largest lookahead of the roles the query binds;
-    ``named`` lists ``(view, lookahead)`` for each named role. ``start`` is
-    the earliest time the name is deployed, ``NEG_INF`` for all history.
-    """
-    upstream: frozenset[str] = frozenset()
-    lookahead: int = 0
-    named: tuple[tuple[str, int], ...] = ()
-    start: int = NEG_INF
-
-
-@dataclass(frozen=True)
 class Schedule:
     """The result of admission.
 
-    ``order`` lists every view after the views it selects from. ``phi`` and
-    ``epsilon`` are the offsets and step described in the module docstring;
-    ``epsilon`` is ``None`` when the view graph has no loop. ``loops`` holds
-    the views that lie on a loop.
+    ``components`` lists the strongly connected components of the view graph,
+    each after every component it reads from; a component of more than one
+    view, or of a view that reads itself, is a loop. ``phi`` and ``epsilon``
+    are the offsets and step described in the module docstring; ``epsilon``
+    is ``None`` when the view graph has no loop. ``loops`` holds the views
+    that lie on a loop.
     """
-    order: tuple[str, ...]
+    components: tuple[tuple[str, ...], ...]
     phi: Mapping[str, Fraction]
     epsilon: Fraction | None
     loops: frozenset[str]
@@ -66,40 +52,38 @@ class Schedule:
         return at + self.phi[view]
 
 
-def edges(views: Mapping[str, ViewShape]) -> dict[tuple[str, str], int]:
-    """The view graph: ``(W, V) -> l`` for the largest lookahead with which
-    ``V`` reads ``W``. Views that are not in the set have no edges."""
+def view_graph(reads: Iterable[tuple[str, str, int]]) -> dict[tuple[str, str], int]:
+    """``(W, V) -> l`` for the largest lookahead ``l`` with which ``V`` reads a
+    stream ``W`` writes, from ``(writer, reader, lookahead)`` triples."""
     out: dict[tuple[str, str], int] = {}
-
-    def add(source: str, target: str, lookahead: int) -> None:
-        if source in views:
-            key = (source, target)
-            out[key] = max(out.get(key, lookahead), lookahead)
-
-    for name, shape in views.items():
-        for source in shape.upstream:
-            add(source, name, shape.lookahead)
-        for source, lookahead in shape.named:
-            add(source, name, lookahead)
+    for writer, reader, lookahead in reads:
+        key = (writer, reader)
+        out[key] = max(out.get(key, lookahead), lookahead)
     return out
 
 
-def admit(views: Mapping[str, ViewShape]) -> Schedule:
-    """Check the view set and return its schedule, or raise ``AdmissionError``."""
-    order = _selection_order(views)
-    graph = edges(views)
-    names = sorted(views)
+def admit(starts: Mapping[str, int], reads: Iterable[tuple[str, str, int]]) -> Schedule:
+    """Check the view graph and return its schedule, or raise ``AdmissionError``.
+
+    ``starts`` maps every view to the earliest time it is deployed
+    (``NEG_INF`` for all history); ``reads`` are ``(writer, reader,
+    lookahead)`` triples over every time and definition.
+    """
+    graph = view_graph(reads)
+    names = sorted(set(starts) | {name for edge in graph for name in edge})
     cycle = _loop_without_delay(names, graph)
     if cycle is not None:
         total = sum(graph[(a, b)] for a, b in zip(cycle, cycle[1:]))
         raise AdmissionError(
             f"loop {' -> '.join(cycle)} does not move into the past: its lookaheads sum to "
-            f"{_seconds(total)}; every loop must sum to less than zero, so give one of its "
-            "named inputs a longer delay"
+            f"{_seconds(total)}; every loop must sum to less than zero, so one of its "
+            "inputs needs a longer delay"
         )
-    loops = _on_loops(names, graph)
+    components = _components(names, graph)
+    loops = frozenset(name for component in components for name in component
+                      if len(component) > 1 or (name, name) in graph)
     for name in sorted(loops):
-        if views[name].start == NEG_INF:
+        if starts.get(name, NEG_INF) == NEG_INF:
             raise AdmissionError(
                 f"view {name!r} is on a loop, so it needs a finite start: its first output "
                 "is the base case of the recursion"
@@ -107,40 +91,11 @@ def admit(views: Mapping[str, ViewShape]) -> Schedule:
     mean = _max_cycle_mean(names, graph)
     epsilon = None if mean is None else -mean
     phi = _longest_paths(names, graph, epsilon or Fraction(0))
-    return Schedule(order, phi, epsilon, loops)
+    return Schedule(components, phi, epsilon, loops)
 
 
 def _seconds(micros: int) -> str:
     return f"{'+' if micros >= 0 else ''}{micros / 1_000_000:g}s"
-
-
-def _selection_order(views: Mapping[str, ViewShape]) -> tuple[str, ...]:
-    """Topological order of the selection relation; raise on a cycle."""
-    order: list[str] = []
-    state: dict[str, int] = {}
-    path: list[str] = []
-
-    def visit(name: str) -> None:
-        if state.get(name) == 2:
-            return
-        if state.get(name) == 1:
-            cycle = path[path.index(name):] + [name]
-            raise AdmissionError(
-                f"views select each other's outputs in a cycle: {' -> '.join(reversed(cycle))}; "
-                "whether a view's inputs exist cannot be delayed, so selection must not loop"
-            )
-        state[name] = 1
-        path.append(name)
-        for source in sorted(views[name].upstream):
-            if source in views:
-                visit(source)
-        path.pop()
-        state[name] = 2
-        order.append(name)
-
-    for name in sorted(views):
-        visit(name)
-    return tuple(order)
 
 
 def _loop_without_delay(names: list[str], graph: Mapping[tuple[str, str], int]) -> list[str] | None:
@@ -181,16 +136,16 @@ def _loop_without_delay(names: list[str], graph: Mapping[tuple[str, str], int]) 
     return cycle
 
 
-def _on_loops(names: list[str], graph: Mapping[tuple[str, str], int]) -> frozenset[str]:
-    """The views in a strongly connected component that contains a cycle."""
+def _components(names: list[str], graph: Mapping[tuple[str, str], int]) -> tuple[tuple[str, ...], ...]:
+    """Strongly connected components, each after the components it reads from."""
     children: dict[str, list[str]] = {name: [] for name in names}
-    for source, target in graph:
+    for source, target in sorted(graph):
         children[source].append(target)
     index: dict[str, int] = {}
     low: dict[str, int] = {}
     stack: list[str] = []
     on_stack: set[str] = set()
-    found: set[str] = set()
+    found: list[tuple[str, ...]] = []
     counter = 0
 
     def connect(node: str) -> None:
@@ -213,13 +168,14 @@ def _on_loops(names: list[str], graph: Mapping[tuple[str, str], int]) -> frozens
                 component.append(member)
                 if member == node:
                     break
-            if len(component) > 1 or (node, node) in graph:
-                found.update(component)
+            found.append(tuple(sorted(component)))
 
     for name in names:
         if name not in index:
             connect(name)
-    return frozenset(found)
+    # Tarjan finishes a component after every component reachable from it,
+    # that is, after its readers; reverse for writers first.
+    return tuple(reversed(found))
 
 
 def _max_cycle_mean(names: list[str], graph: Mapping[tuple[str, str], int]) -> Fraction | None:

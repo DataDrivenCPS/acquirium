@@ -27,10 +27,9 @@ from acquirium.internals.intervals import (
 )
 from acquirium.Materialization.admission import (
     AdmissionError,
-    ViewShape,
     _loop_without_delay,
     admit,
-    edges,
+    view_graph,
 )
 from acquirium.Materialization.deployments import (
     DeploymentChange,
@@ -152,65 +151,53 @@ def test_deployment_log_matches_the_definition():
 
 
 # -------------------- admission --------------------
-def test_views_without_loops_are_admitted_in_selection_order():
-    schedule = admit({
-        "raw_avg": ViewShape(),
-        "efficiency": ViewShape(upstream=frozenset({"raw_avg"}), lookahead=5 * MIN),
-        "report": ViewShape(upstream=frozenset({"efficiency", "raw_avg"})),
-    })
-    assert schedule.order.index("raw_avg") < schedule.order.index("efficiency") < schedule.order.index("report")
+# A read edge is (writer, reader, lookahead): some row of the reader reads,
+# with that lookahead, a stream some row of the writer writes.
+def test_views_without_loops_are_admitted_writers_first():
+    schedule = admit({"raw_avg": NEG_INF, "efficiency": NEG_INF, "report": NEG_INF}, [
+        ("raw_avg", "efficiency", 5 * MIN),
+        ("efficiency", "report", 0),
+        ("raw_avg", "report", 0),
+    ])
+    assert schedule.components == (("raw_avg",), ("efficiency",), ("report",))
     assert schedule.epsilon is None and schedule.loops == frozenset()
     # a 5 min lookahead means efficiency waits 5 min longer than raw_avg
     assert schedule.phi["efficiency"] - schedule.phi["raw_avg"] >= 5 * MIN
 
 
-def test_selection_must_not_loop():
-    with pytest.raises(AdmissionError, match="select each other's outputs in a cycle"):
-        admit({"a": ViewShape(upstream=frozenset({"b"})), "b": ViewShape(upstream=frozenset({"a"}))})
-    with pytest.raises(AdmissionError, match="a -> a"):
-        admit({"a": ViewShape(upstream=frozenset({"a"}))})
-
-
 def test_a_view_may_read_its_own_earlier_output():
-    schedule = admit({"ewma": ViewShape(named=(("ewma", -MIN),), start=0)})
+    schedule = admit({"ewma": 0}, [("ewma", "ewma", -MIN)])
     assert schedule.loops == frozenset({"ewma"})
     assert schedule.epsilon == MIN
 
 
 def test_a_loop_without_delay_is_rejected():
     with pytest.raises(AdmissionError, match=r"ewma -> ewma .* sum to \+0s"):
-        admit({"ewma": ViewShape(named=(("ewma", 0),), start=0)})
+        admit({"ewma": 0}, [("ewma", "ewma", 0)])
 
 
 def test_a_loop_needs_a_finite_start():
     with pytest.raises(AdmissionError, match="needs a finite start"):
-        admit({"ewma": ViewShape(named=(("ewma", -MIN),))})
+        admit({"ewma": NEG_INF}, [("ewma", "ewma", -MIN)])
 
 
 def test_estimator_and_controller_loop():
-    # E reads C over [t - 2 min, t - 1 min] through a named role; C selects
-    # E's output with 30 s lookahead.
-    views = {
-        "E": ViewShape(named=(("C", -MIN),), start=0),
-        "C": ViewShape(upstream=frozenset({"E"}), lookahead=30 * S, start=0),
-    }
-    schedule = admit(views)
+    # E reads C's output over [t - 2 min, t - 1 min]; C reads E's output with
+    # 30 s lookahead.
+    reads = [("C", "E", -MIN), ("E", "C", 30 * S)]
+    schedule = admit({"E": 0, "C": 0}, reads)
+    assert schedule.components == (("C", "E"),)
     assert schedule.epsilon == 15 * S  # the loop moves 30 s back over 2 edges
     assert 30 * S < schedule.phi["C"] - schedule.phi["E"] < 60 * S
-    views["C"] = ViewShape(upstream=frozenset({"E"}), lookahead=90 * S, start=0)
     with pytest.raises(AdmissionError, match=r"sum to \+30s"):
-        admit(views)
+        admit({"E": 0, "C": 0}, [("C", "E", -MIN), ("E", "C", 90 * S)])
 
 
 def test_the_union_over_time_catches_a_contradiction_no_snapshot_shows():
-    # A read B with lookahead 1 s before time a; B reads A with lookback 1 s
-    # from a on. Admission sees both definitions of the union.
-    views = {
-        "A": ViewShape(named=(("B", S),), start=0),
-        "B": ViewShape(named=(("A", 0),), start=0),
-    }
+    # A read B's output with lookahead 1 s before time a; B reads A's output
+    # with lookback 1 s from a on. The view graph holds both edges.
     with pytest.raises(AdmissionError, match=r"sum to \+1s"):
-        admit(views)
+        admit({"A": 0, "B": 0}, [("B", "A", S), ("A", "B", 0)])
 
 
 def simple_cycles(graph):
@@ -235,23 +222,27 @@ def test_admission_matches_the_delay_rule_on_random_graphs():
     rng = random.Random(4)
     for _ in range(400):
         names = [f"v{i}" for i in range(rng.randint(1, 5))]
-        views = {}
-        for name in names:
-            named = tuple((rng.choice(names), rng.randint(-3, 2)) for _ in range(rng.randint(0, 3)))
-            views[name] = ViewShape(named=named, start=0)
-        graph = edges(views)
+        reads = [(rng.choice(names), rng.choice(names), rng.randint(-3, 2))
+                 for _ in range(rng.randint(0, 3 * len(names)))]
+        starts = {name: 0 for name in names}
+        graph = view_graph(reads)
         cycles = simple_cycles(graph)
         sums = [sum(graph[(a, b)] for a, b in zip(c, c[1:])) for c in cycles]
         if all(total < 0 for total in sums):
-            schedule = admit(views)
+            schedule = admit(starts, reads)
             means = [Fraction(total, len(c) - 1) for c, total in zip(cycles, sums)]
             assert schedule.epsilon == (-max(means) if means else None)
             step = schedule.epsilon or 0
             for (source, target), weight in graph.items():
                 assert schedule.phi[target] >= schedule.phi[source] + weight + step
+            # components come writers first
+            position = {n: i for i, comp in enumerate(schedule.components) for n in comp}
+            for source, target in graph:
+                assert position[source] <= position[target]
+            assert schedule.loops == {n for c in cycles for n in c}
         else:
             with pytest.raises(AdmissionError):
-                admit(views)
-            cycle = _loop_without_delay(sorted(views), graph)
+                admit(starts, reads)
+            cycle = _loop_without_delay(sorted(starts), graph)
             assert cycle[0] == cycle[-1]
             assert sum(graph[(a, b)] for a, b in zip(cycle, cycle[1:])) >= 0
