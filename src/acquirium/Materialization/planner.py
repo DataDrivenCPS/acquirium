@@ -22,6 +22,7 @@ from acquirium.Materialization.models import (
 )
 from acquirium.Materialization.worker import load_entrypoint
 from acquirium.Materialization.definitions import source_digest
+from acquirium.internals.intervals import Interval, lives
 from acquirium.internals.models import compute_ref_uri, looks_like_uri
 
 
@@ -55,6 +56,20 @@ class _GraphQueryClient:
         return value if looks_like_uri(value) else self._best_uri(self._resolver(value, kind, **kwargs))
     def expand_uri(self, value: str) -> str: return value
     def graph_version(self) -> int: return int(self._graph.graph_status().get("published_version", 0))
+
+
+class _VersionGraph:
+    """One model version behind the surface planning queries use.
+
+    The version key is derived from the content digest, so query-builder
+    caches keyed by graph version never mix two versions.
+    """
+    def __init__(self, store: object, version: object) -> None:
+        self._store, self._version = store, version
+    def sparql_query(self, query: str, include_dependencies: bool = True, *, wait_for_fresh: bool = False) -> dict:
+        return self._store.query_version(self._version, query, include_dependencies)
+    def graph_status(self) -> dict:
+        return {"published_version": int(self._version.digest[:15], 16)}
 
 
 @dataclass(frozen=True)
@@ -269,6 +284,39 @@ class BindingPlanner:
                  record_resolver: Callable[..., Any] | None = None) -> None:
         self.graph, self.query_resolver, self.record_resolver = graph, query_resolver, record_resolver
 
+    def _load(self, deployment: Deployment, search_path: str | None = None) -> App:
+        target = load_entrypoint(deployment.entrypoint, deployment.executable_digest, search_path)
+        if not isinstance(target, type) or not issubclass(target, App):
+            raise TypeError(f"{deployment.entrypoint!r} is not an App")
+        app = target(**deployment.parameters)
+        app.backfill, app.batch_delay, app.min_interval = deployment.backfill, deployment.batch_delay, deployment.min_interval
+        return app
+
+    def _client(self, graph: object) -> _QueryFacade:
+        return _QueryFacade(_GraphQueryClient(graph, self.query_resolver, self.record_resolver))
+
+    def match_history(self, deployment: Deployment, *, search_path: str | None = None) -> list[tuple[_MatchRow, list[Interval]]]:
+        """Every row the deployment's query has at some time, with its life:
+        where it is a row, over all of time.
+
+        The query runs once per model version, on the inferred model of that
+        version alone (Acquirium's own graph is not part of the model).
+        """
+        app = self._load(deployment, search_path)
+        pieces = []
+        rows_by_key: dict[str, _MatchRow] = {}
+        for start, end in self.graph.model_versions():
+            version = self.graph.model_version(start)
+            rows = _query_rows(app.build_query(self._client(_VersionGraph(self.graph, version))))
+            keys = []
+            for row in rows:
+                key = _json({"streams": row.streams, "columns": row.columns})
+                rows_by_key[key] = row
+                keys.append(key)
+            pieces.append((start, end, keys))
+        return sorted(((rows_by_key[key], life) for key, life in lives(pieces).items()),
+                      key=lambda item: _json(item[0].columns))
+
     def compile(self, deployments: Iterable[Deployment], graph_revision: int,
                 *, search_path: str | None = None) -> tuple[ApplicationGraph, dict[str, App]]:
         before = int(self.graph.graph_status().get("published_version", 0))
@@ -276,12 +324,8 @@ class BindingPlanner:
             raise RuntimeError("graph changed before materialization planning began")
         bindings, applications = [], {}
         for deployment in deployments:
-            target = load_entrypoint(deployment.entrypoint, deployment.executable_digest, search_path)
-            if not isinstance(target, type) or not issubclass(target, App):
-                raise TypeError(f"{deployment.entrypoint!r} is not an App")
-            app = target(**deployment.parameters)
-            app.backfill, app.batch_delay, app.min_interval = deployment.backfill, deployment.batch_delay, deployment.min_interval
-            query = app.build_query(_QueryFacade(_GraphQueryClient(self.graph, self.query_resolver, self.record_resolver)))
+            app = self._load(deployment, search_path)
+            query = app.build_query(self._client(self.graph))
             rows = _query_rows(query)
             # Choose which matches share a call before assigning output names.
             # Inferring grouping from named outputs would silently change the

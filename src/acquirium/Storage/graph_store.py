@@ -6,6 +6,7 @@ import logging
 import os
 import re
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Condition, RLock, Thread
@@ -107,6 +108,36 @@ def _closure_triples(graph: Graph) -> frozenset:
 # ``inferred + dependencies`` cache instead of leaving it in the query dataset.
 _DEPENDENCY_QUERY_GRAPH = URIRef(str(ACQUIRIUM_NS.ImportsUnionGraph))
 _INFERRED_DATA_GRAPH = URIRef(str(ACQUIRIUM_NS.InferredDataGraph))
+
+
+def _solutions(result) -> dict:
+    """An Oxigraph query result as ``{"columns": [...], "rows": [[...]]}``."""
+    if isinstance(result, ox.QueryBoolean):
+        return {"columns": [], "rows": [[bool(result)]]}
+    if isinstance(result, ox.QuerySolutions):
+        cols = [str(v.value) for v in result.variables]
+        return {"columns": cols, "rows": [[from_ox(cell) for cell in row] for row in result]}
+    if isinstance(result, ox.QueryTriples):
+        triples = Graph()
+        triples += (from_ox(t) for t in result)
+        return {"columns": ["triple"], "rows": [[triple] for triple in triples]}
+    raise ValueError(f"Unexpected query result: {result!r}")
+
+
+VERSION_GRAPH_PREFIX = "urn:acquirium:graph:version:"
+
+
+@dataclass(frozen=True)
+class ModelVersion:
+    """The inferred model of one version, identified by the digest of its
+    asserted content."""
+
+    digest: str
+    graph: Graph
+
+    @property
+    def uri(self) -> URIRef:
+        return URIRef(f"{VERSION_GRAPH_PREFIX}{self.digest}")
 
 
 def _replace_named_graph(dataset: Dataset, graph: Graph, graph_uri: URIRef) -> None:
@@ -286,7 +317,9 @@ class OxigraphGraphStore:
         self.history = history
         self._source_version = self._load_source_version()
         self._history_head = self._load_source_state().get("history_head")
-        self._inferred_versions: dict[str, Graph] = {}
+        self._inferred_versions: dict[str, ModelVersion] = {}
+        self._loaded_versions: set[str] = set()
+        self._drop_version_graphs()
         self._closure_version = 0
         self._dependency_graph_cache: Graph | None = None
         self._dependency_graph_closure_version = -1
@@ -844,18 +877,7 @@ class OxigraphGraphStore:
                         default_graph=default_graphs,
                     )
             with timed_debug(_logger,"sparql_query--output processing:"):
-                if isinstance(result, ox.QueryBoolean):
-                    out = {"columns": [], "rows": [[bool(result)]]}
-                elif isinstance(result, ox.QuerySolutions):
-                    cols = [str(v.value) for v in result.variables]
-                    rows = [[from_ox(cell) for cell in row] for row in result]
-                    out = {"columns": cols, "rows": rows}
-                elif isinstance(result, ox.QueryTriples):
-                    triples = Graph()
-                    triples += (from_ox(t) for t in result)
-                    out = {"columns": ["triple"], "rows": [[triple] for triple in triples]}
-                else:
-                    raise ValueError(f"Unexpected query result: {result!r}")
+                out = _solutions(result)
         _logger.debug("sparql_query: %d rows", len(out["rows"]))
         return out
 
@@ -1313,7 +1335,15 @@ class OxigraphGraphStore:
         overlay_documents(merged, metadata)
         return merged
 
-    def inferred_model_at(self, at: datetime | int, *, as_of: int | None = None) -> Graph:
+    def model_versions(self, start: int = NEG_INF, end: int = POS_INF) -> list[tuple[int, int]]:
+        """The versions of the whole model inside ``[start, end)``: maximal
+        intervals over which no versioned graph changes."""
+        if self.history is None:
+            raise RuntimeError("this graph store keeps no model history")
+        points = [start, *self.history.boundaries(start, end), end]
+        return list(zip(points, points[1:]))
+
+    def model_version(self, at: datetime | int, *, as_of: int | None = None) -> ModelVersion:
         """``model_at`` with inference applied, cached per distinct content.
 
         The ontology closure is fixed: the one the live graph resolves.
@@ -1321,16 +1351,56 @@ class OxigraphGraphStore:
         data = self.model_at(at, as_of=as_of)
         digest = hashlib.sha256("\n".join(sorted(nt(t) for t in data)).encode()).hexdigest()
         with self._lock:
-            cached = self._inferred_versions.get(digest)
+            cached = self._inferred_versions.pop(digest, None)
             if cached is not None:
+                self._inferred_versions[digest] = cached
                 return cached
             shapes = Graph() + self._ensure_dependency_cache_current()
-        inferred = self._build_query_views(data, shapes)
+        version = ModelVersion(digest, self._build_query_views(data, shapes))
         with self._lock:
-            self._inferred_versions[digest] = inferred
+            self._inferred_versions[digest] = version
             while len(self._inferred_versions) > 16:
-                self._inferred_versions.pop(next(iter(self._inferred_versions)))
-        return inferred
+                evicted = self._inferred_versions.pop(next(iter(self._inferred_versions)))
+                if evicted.digest in self._loaded_versions:
+                    self.query_dataset.store._inner.remove_graph(NamedNode(str(evicted.uri)))
+                    self._loaded_versions.discard(evicted.digest)
+        return version
+
+    def inferred_model_at(self, at: datetime | int, *, as_of: int | None = None) -> Graph:
+        return self.model_version(at, as_of=as_of).graph
+
+    def query_version(self, version: ModelVersion, query: str, include_dependencies: bool = True) -> dict:
+        """Run a SPARQL query on one model version, with the ontologies when
+        ``include_dependencies``. Same result shape as ``sparql_query``.
+
+        The version is loaded as a named graph of the query store next to the
+        ontology graph, so the ontologies are not copied per version.
+        """
+        with self._lock:
+            # Only the ontology graph is shared with the live cache; it does
+            # not wait for an inference rebuild of the live data.
+            if include_dependencies and self._dependency_query_graph_closure_version != self._closure_version:
+                self._replace_query_graph(Graph() + self._ensure_dependency_cache_current(),
+                                          self.dependency_query_graph_uri, label="dependencies")
+                self._dependency_query_graph_closure_version = self._closure_version
+            if version.digest not in self._loaded_versions:
+                _replace_named_graph(self.query_dataset, version.graph, version.uri)
+                self._loaded_versions.add(version.digest)
+            graphs = [NamedNode(str(version.uri))]
+            if include_dependencies:
+                graphs.append(NamedNode(str(self.dependency_query_graph_uri)))
+            result = self.query_dataset.store._inner.query(
+                query, use_default_graph_as_union=False, default_graph=graphs,
+            )
+            # Convert under the lock: an eviction may remove the graph.
+            return _solutions(result)
+
+    def _drop_version_graphs(self) -> None:
+        """Version graphs are a per-process cache; drop any left on disk."""
+        store = self.query_dataset.store._inner
+        for graph in list(store.named_graphs()):
+            if isinstance(graph, NamedNode) and graph.value.startswith(VERSION_GRAPH_PREFIX):
+                store.remove_graph(graph)
 
     def namespace_manager(self) -> NamespaceManager :
         return self.query_dataset.namespace_manager

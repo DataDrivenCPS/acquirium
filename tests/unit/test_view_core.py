@@ -246,3 +246,44 @@ def test_admission_matches_the_delay_rule_on_random_graphs():
             cycle = _loop_without_delay(sorted(starts), graph)
             assert cycle[0] == cycle[-1]
             assert sum(graph[(a, b)] for a, b in zip(cycle, cycle[1:])) >= 0
+
+
+# -------------------- instances, view graph, one writer --------------------
+from acquirium.Materialization.temporal import Row, ViewDefinition, instances, reads, writer_conflicts  # noqa: E402
+
+
+def ewma(rows, deployed=((0, POS_INF),), delay=MIN):
+    return ViewDefinition("ewma", "def-1", "per_match", tuple(deployed), tuple(rows),
+                          frozenset({"estimate"}), {"sensor": 0, "estimate": -delay})
+
+
+def test_an_instance_is_present_where_its_row_exists_and_the_view_is_deployed():
+    row = Row("r1", {"sensor": ("s1",), "estimate": ("e1",)}, ((NEG_INF, 50), (80, POS_INF)))
+    (instance,) = instances(ewma([row], deployed=[(10, 100)]))
+    assert instance.present == ((10, 50), (80, 100))
+    assert instance.written() == {"e1": [(10, 50), (80, 100)]}
+
+
+def test_reading_the_column_one_writes_is_a_loop_with_its_delay():
+    row = Row("r1", {"sensor": ("s1",), "estimate": ("e1",)}, ((NEG_INF, POS_INF),))
+    assert reads([ewma([row])]) == [("ewma", "ewma", -MIN)]
+    assert admit({"ewma": 0}, reads([ewma([row])])).epsilon == MIN
+
+
+def test_a_stream_written_by_two_instances_at_one_time_is_a_conflict():
+    shared = Row("r1", {"sensor": ("s1",), "estimate": ("e1",)}, ((0, 100),))
+    other = Row("r2", {"sensor": ("s2",), "estimate": ("e1",)}, ((60, 200),))
+    (conflict,) = writer_conflicts([ewma([shared, other])])
+    assert conflict.stream == "e1" and conflict.times == ((60, 100),)
+    # one after the other is fine: a soft sensor may take over a stream
+    later = Row("r2", {"sensor": ("s2",), "estimate": ("e1",)}, ((100, 200),))
+    assert writer_conflicts([ewma([shared, later])]) == []
+
+
+def test_an_aggregate_writes_while_any_of_its_rows_exists():
+    rows = [Row(f"r{i}", {"flow": (f"f{i}",), "total": ("t",)}, ((10 * i, 10 * i + 15),)) for i in range(3)]
+    total = ViewDefinition("total", "def", "all_matches", ((0, POS_INF),), tuple(rows),
+                           frozenset({"total"}), {"flow": 0})
+    (instance,) = instances(total)
+    assert instance.present == ((0, 35),)
+    assert instance.written() == {"t": [(0, 35)]}

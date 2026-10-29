@@ -232,6 +232,18 @@ class ModelHistory:
         pieces.append((left, end, frozenset(current)))
         return pieces
 
+    def boundaries(self, start: int, end: int) -> list[int]:
+        """The times strictly inside ``(start, end)`` at which some versioned
+        graph changes, ascending."""
+        with self.store._own_conn() as conn:
+            rows = execute(
+                conn,
+                "SELECT valid_from AS b FROM model_triples WHERE recorded_to IS NULL AND valid_from > ? AND valid_from < ? "
+                "UNION SELECT valid_to AS b FROM model_triples WHERE recorded_to IS NULL AND valid_to > ? AND valid_to < ?",
+                [start, end, start, end],
+            ).fetchall()
+        return sorted(int(row[0]) for row in rows)
+
     def next_touch(self, graph_uri: str, triples: Iterable[str], after: int) -> dict[str, int]:
         """For each triple, the first start or end after *after* of a recorded
         change that deletes or inserts it, ``POS_INF`` if there is none.
