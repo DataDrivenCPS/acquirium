@@ -1,16 +1,21 @@
 """Admission of a view set, and the evaluation schedule it implies.
 
-Every input and every output of a view is a column of its query's result, so
-the view graph is found from the matches: it has an edge ``W -> V`` labelled
-``l`` when some row of ``V`` reads, with lookahead ``l`` (negative: a delay),
-a stream that some row of ``W`` writes. A state of the model and the view set
-is admitted only if
+A view reads the streams its query binds and the streams it names, so the
+view graph is found from the matches: it has an edge ``W -> V`` labelled
+``l`` when ``V`` reads, with lookahead ``l`` (negative: a delay), a stream that
+``W`` writes, through its query or by name. ``V`` *selects* ``W`` when its
+query binds a generated output of ``W``, which exists only while the instance
+of ``W`` writing it does. Named outputs exist wherever their view is
+deployed, so reading them is never selection. A state of the model and the
+view set is admitted only if
 
+- selection is acyclic, since whether an instance exists at a time cannot be
+  delayed,
 - every loop of the view graph has lookaheads summing to less than zero, so
   going once around a loop moves strictly into the past, and
 - every view on a loop has a finite start, the base case of its recursion.
 
-If the first check holds there are offsets ``phi`` and a step
+If the delay rule holds there are offsets ``phi`` and a step
 ``epsilon > 0`` with ``phi[V] >= phi[W] + l + epsilon`` on every edge. Then
 ``t + phi[V]`` drops by at least ``epsilon`` along every dependency between
 output points, which makes the outputs well defined and gives the order to
@@ -40,12 +45,14 @@ class Schedule:
     view, or of a view that reads itself, is a loop. ``phi`` and ``epsilon``
     are the offsets and step described in the module docstring; ``epsilon``
     is ``None`` when the view graph has no loop. ``loops`` holds the views
-    that lie on a loop.
+    that lie on a loop. ``selection_order`` lists every view after the views
+    whose generated outputs its query binds.
     """
     components: tuple[tuple[str, ...], ...]
     phi: Mapping[str, Fraction]
     epsilon: Fraction | None
     loops: frozenset[str]
+    selection_order: tuple[str, ...] = ()
 
     def sigma(self, view: str, at: int) -> Fraction:
         """The schedule time of ``view``'s output at ``at``."""
@@ -62,15 +69,19 @@ def view_graph(reads: Iterable[tuple[str, str, int]]) -> dict[tuple[str, str], i
     return out
 
 
-def admit(starts: Mapping[str, int], reads: Iterable[tuple[str, str, int]]) -> Schedule:
+def admit(starts: Mapping[str, int], reads: Iterable[tuple[str, str, int]],
+          selects: Iterable[tuple[str, str]] = ()) -> Schedule:
     """Check the view graph and return its schedule, or raise ``AdmissionError``.
 
     ``starts`` maps every view to the earliest time it is deployed
     (``NEG_INF`` for all history); ``reads`` are ``(writer, reader,
-    lookahead)`` triples over every time and definition.
+    lookahead)`` triples and ``selects`` ``(reader, writer)`` pairs, over
+    every time and definition.
     """
     graph = view_graph(reads)
-    names = sorted(set(starts) | {name for edge in graph for name in edge})
+    names = sorted(set(starts) | {name for edge in graph for name in edge}
+                   | {name for pair in selects for name in pair})
+    order = _selection_order(names, selects)
     cycle = _loop_without_delay(names, graph)
     if cycle is not None:
         total = sum(graph[(a, b)] for a, b in zip(cycle, cycle[1:]))
@@ -91,11 +102,43 @@ def admit(starts: Mapping[str, int], reads: Iterable[tuple[str, str, int]]) -> S
     mean = _max_cycle_mean(names, graph)
     epsilon = None if mean is None else -mean
     phi = _longest_paths(names, graph, epsilon or Fraction(0))
-    return Schedule(components, phi, epsilon, loops)
+    return Schedule(components, phi, epsilon, loops, order)
 
 
 def _seconds(micros: int) -> str:
     return f"{'+' if micros >= 0 else ''}{micros / 1_000_000:g}s"
+
+
+def _selection_order(names: list[str], selects: Iterable[tuple[str, str]]) -> tuple[str, ...]:
+    """Every view after the views it selects; raise on a cycle."""
+    selected: dict[str, set[str]] = {name: set() for name in names}
+    for reader, writer in selects:
+        selected[reader].add(writer)
+    order: list[str] = []
+    state: dict[str, int] = {}
+    path: list[str] = []
+
+    def visit(name: str) -> None:
+        if state.get(name) == 2:
+            return
+        if state.get(name) == 1:
+            cycle = path[path.index(name):] + [name]
+            raise AdmissionError(
+                f"queries select each other's generated outputs in a cycle: {' -> '.join(cycle)}; "
+                "whether an instance exists cannot be delayed, so read one of them through a "
+                "named output instead"
+            )
+        state[name] = 1
+        path.append(name)
+        for writer in sorted(selected[name]):
+            visit(writer)
+        path.pop()
+        state[name] = 2
+        order.append(name)
+
+    for name in names:
+        visit(name)
+    return tuple(order)
 
 
 def _loop_without_delay(names: list[str], graph: Mapping[tuple[str, str], int]) -> list[str] | None:

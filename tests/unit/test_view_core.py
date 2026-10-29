@@ -249,41 +249,62 @@ def test_admission_matches_the_delay_rule_on_random_graphs():
 
 
 # -------------------- instances, view graph, one writer --------------------
-from acquirium.Materialization.temporal import Row, ViewDefinition, instances, reads, writer_conflicts  # noqa: E402
+from acquirium.Materialization.temporal import Row, ViewDefinition, instances, view_graph as graph_of, writer_conflicts  # noqa: E402
+
+EWMA = "urn:derived/ewma"
+ALL = ((NEG_INF, POS_INF),)
 
 
-def ewma(rows, deployed=((0, POS_INF),), delay=MIN):
-    return ViewDefinition("ewma", "def-1", "per_match", tuple(deployed), tuple(rows),
-                          frozenset({"estimate"}), {"sensor": 0, "estimate": -delay})
+def ewma(deployed=((0, POS_INF),), delay=MIN):
+    # reads a fixed sensor and, by name, its own named output with a delay
+    return ViewDefinition("ewma", "def-1", None, tuple(deployed),
+                          named_inputs={"sensor": "urn:raw/s1", "previous": EWMA},
+                          lookahead={"sensor": 0, "previous": -delay},
+                          outputs={"estimate": EWMA})
 
 
-def test_an_instance_is_present_where_its_row_exists_and_the_view_is_deployed():
-    row = Row("r1", {"sensor": ("s1",), "estimate": ("e1",)}, ((NEG_INF, 50), (80, POS_INF)))
-    (instance,) = instances(ewma([row], deployed=[(10, 100)]))
-    assert instance.present == ((10, 50), (80, 100))
-    assert instance.written() == {"e1": [(10, 50), (80, 100)]}
+def test_a_view_without_a_query_has_one_instance_over_its_deployment():
+    (instance,) = instances(ewma(deployed=[(10, 100), (150, POS_INF)]))
+    assert instance.present == ((10, 100), (150, POS_INF))
+    assert instance.written() == {EWMA: [(10, 100), (150, POS_INF)]}
 
 
-def test_reading_the_column_one_writes_is_a_loop_with_its_delay():
-    row = Row("r1", {"sensor": ("s1",), "estimate": ("e1",)}, ((NEG_INF, POS_INF),))
-    assert reads([ewma([row])]) == [("ewma", "ewma", -MIN)]
-    assert admit({"ewma": 0}, reads([ewma([row])])).epsilon == MIN
+def test_reading_ones_own_named_output_is_a_loop_with_its_delay():
+    graph = graph_of([ewma()])
+    assert graph.reads == (("ewma", "ewma", -MIN),) and graph.selects == ()
+    assert admit({"ewma": 0}, graph.reads, graph.selects).epsilon == MIN
 
 
-def test_a_stream_written_by_two_instances_at_one_time_is_a_conflict():
-    shared = Row("r1", {"sensor": ("s1",), "estimate": ("e1",)}, ((0, 100),))
-    other = Row("r2", {"sensor": ("s2",), "estimate": ("e1",)}, ((60, 200),))
-    (conflict,) = writer_conflicts([ewma([shared, other])])
-    assert conflict.stream == "e1" and conflict.times == ((60, 100),)
-    # one after the other is fine: a soft sensor may take over a stream
-    later = Row("r2", {"sensor": ("s2",), "estimate": ("e1",)}, ((100, 200),))
-    assert writer_conflicts([ewma([shared, later])]) == []
+def per_match(rows, outputs=None, generated=frozenset({"out"})):
+    return ViewDefinition("norm", "def", "per_match", ((0, POS_INF),), tuple(rows),
+                          lookahead={"input": 0}, outputs=outputs or {}, generated=generated)
 
 
-def test_an_aggregate_writes_while_any_of_its_rows_exists():
-    rows = [Row(f"r{i}", {"flow": (f"f{i}",), "total": ("t",)}, ((10 * i, 10 * i + 15),)) for i in range(3)]
-    total = ViewDefinition("total", "def", "all_matches", ((0, POS_INF),), tuple(rows),
-                           frozenset({"total"}), {"flow": 0})
-    (instance,) = instances(total)
-    assert instance.present == ((0, 35),)
-    assert instance.written() == {"t": [(0, 35)]}
+def test_per_match_instances_follow_their_rows_and_share_named_inputs():
+    rows = [Row("r1", {"input": ("s1",)}, ((NEG_INF, 50),), {"out": "g1"}),
+            Row("r2", {"input": ("s2",)}, ((20, POS_INF),), {"out": "g2"})]
+    first, second = instances(per_match(rows))
+    assert (first.present, first.outputs) == (((0, 50),), {"out": "g1"})
+    assert (second.present, second.outputs) == (((20, POS_INF),), {"out": "g2"})
+
+
+def test_binding_a_generated_output_is_selection_and_must_not_loop():
+    upstream = per_match([Row("r1", {"input": ("s1",)}, ALL, {"out": "g1"})])
+    downstream = ViewDefinition("avg", "def", "all_matches", ((0, POS_INF),),
+                                (Row("r1", {"input": ("g1",)}, ALL),), lookahead={"input": 0},
+                                outputs={"out": "g-avg"}, generated=frozenset({"out"}))
+    graph = graph_of([upstream, downstream])
+    assert graph.selects == (("avg", "norm"),)
+    assert admit({"norm": 0, "avg": 0}, graph.reads, graph.selects).selection_order == ("norm", "avg")
+    with pytest.raises(AdmissionError, match="select each other's generated outputs"):
+        admit({"a": 0, "b": 0}, [], [("a", "b"), ("b", "a")])
+
+
+def test_a_named_output_written_by_two_instances_at_one_time_is_a_conflict():
+    rows = [Row("r1", {"input": ("s1",)}, ((0, 100),)), Row("r2", {"input": ("s2",)}, ((60, 200),))]
+    (conflict,) = writer_conflicts([per_match(rows, outputs={"total": "named"}, generated=frozenset())])
+    assert conflict.stream == "named" and conflict.times == ((60, 100),)
+    # one after the other is fine
+    rows[1] = Row("r2", {"input": ("s2",)}, ((100, 200),))
+    assert writer_conflicts([per_match(rows, outputs={"total": "named"}, generated=frozenset())]) == []
+
