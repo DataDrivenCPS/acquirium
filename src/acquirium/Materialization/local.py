@@ -20,7 +20,6 @@ from acquirium.Materialization.checks import check_entry, check_outputs
 
 from datetime import datetime, timezone
 from dataclasses import replace
-from acquirium.Materialization.revision_store import RevisionStore
 from typing import Any
 
 import pyarrow as pa
@@ -93,6 +92,22 @@ def _stream_set(client: Any, alias: str, descriptors: tuple[StreamDescriptor, ..
     return StreamSet(alias, window, descriptors, table, table, converter=converter)
 
 
+def _output_window(binding: Any, changed: TimeWindow) -> TimeWindow:
+    """The outputs a change to ``changed`` affects: the lookahead before it,
+    the lookback after it, whole buckets."""
+    from datetime import timedelta
+    if binding.custom_window is not None:
+        window = binding.custom_window(changed)
+        if not isinstance(window, TimeWindow):
+            raise TypeError("output_window must return a TimeWindow")
+        return window
+    window = TimeWindow(changed.start - binding.lookahead, changed.end + (binding.lookback or timedelta()))
+    if binding.every is not None:
+        floor = lambda t: _EPOCH + ((t - _EPOCH) // binding.every) * binding.every
+        window = TimeWindow(floor(window.start), floor(window.end) + binding.every - timedelta(microseconds=1))
+    return window
+
+
 def check_app(client: Any, target: type, *, parameters: dict | None = None,
               limit: int | None = None) -> dict[str, Any]:
     """Compile and run ``target`` here, against ``client``'s server data.
@@ -129,12 +144,14 @@ def check_app(client: Any, target: type, *, parameters: dict | None = None,
         extent = [value.window for value in inputs.values() if value.collect().num_rows]
         window = TimeWindow(min(w.start for w in extent), max(w.end for w in extent))
         entry["read_window"] = [window.start.isoformat(), window.end.isoformat()]
-        owned = RevisionStore._output_window(binding, window)
+        owned = _output_window(binding, window)
         read = window if binding.lookback is None else TimeWindow(owned.start - binding.lookback, owned.end + binding.lookahead)
         inputs = {alias: replace(value, window=read, every=binding.every, _scheduled=True) for alias, value in inputs.items()}
         entry["read_window"] = [read.start.isoformat(), read.end.isoformat()]
+        # A per-match call sees its own row only; an aggregate sees every row.
         context = InputBatch(binding.signature, revision, 0, revision, window, read,
-                             binding.row, binding.result, output_window=owned)
+                             binding.row, () if binding.row is not None and deployment.grouping == "per_match"
+                             else binding.result, output_window=owned)
         builder = OutputBuilder(binding.outputs)
         # No try/except: a breakpoint stops here and a traceback reaches the
         # caller, which is the whole reason to run locally.

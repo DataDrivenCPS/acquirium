@@ -201,9 +201,7 @@ class Materializer:
         errors = {}
         if self._plan_error:
             errors["plan"] = self._plan_error
-        report = self.evaluator.last_report
-        if report is not None:
-            errors.update(report.errors)
+        errors.update(self.evaluator.errors)
         return errors
 
     def reprocess(self, name: str, start: datetime, end: datetime) -> dict[str, Any]:
@@ -278,8 +276,7 @@ class Materializer:
         for instance in instances:
             for port in instance.outputs.values():
                 writer[port.ref_uri] = instance.id
-        report = self.evaluator.last_report
-        errors = report.errors if report else {}
+        errors = self.evaluator.errors
         nodes, edges = [], []
         for instance in instances:
             node = instance.id
@@ -388,9 +385,11 @@ class _DryReader(_Reader):
         self.captured: dict[str, dict[int, Any]] = defaultdict(dict)
         self.rows_read: dict[str, int] = defaultdict(int)
 
-    def replace(self, ref, window, values, *, port, application):
+    def stage(self, ref, window, values, *, port, application):
         self.captured[ref].update(values)
-        return []
+
+    def flush(self):
+        return {}
 
 
 def _check_outputs(instance, captured: dict[str, dict[int, Any]], limit: int | None) -> dict[str, Any]:

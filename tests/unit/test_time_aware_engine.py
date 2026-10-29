@@ -7,6 +7,7 @@ submission runs a step and a read after a write sees the write.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
@@ -23,6 +24,7 @@ from acquirium.Materialization.runtime import Materializer
 from acquirium.Storage.duckdb_store import DuckDBStore
 from acquirium.Storage.graph_registry import PLANT_GRAPH_URI
 from acquirium.Storage.model_history import ModelHistory
+from acquirium.Storage.metadata_outbox import execute
 from acquirium.Storage.publication.types import MUTATION_SCHEMA
 
 UTC = timezone.utc
@@ -48,6 +50,15 @@ class FakeOntoEnv:
         return None
 
 
+def _open_store(tmp_path):
+    """DuckDB by default; ENGINE_TEST_BACKEND=timescale runs the same tests on
+    the database at ACQUIRIUM_TEST_PG_DSN, emptied first."""
+    if os.getenv("ENGINE_TEST_BACKEND") == "timescale":
+        from acquirium.Storage.timescale_store import TimescaleStore
+        return TimescaleStore(dsn=os.environ["ACQUIRIUM_TEST_PG_DSN"], recreate=True)
+    return DuckDBStore(tmp_path / "ts.duckdb")
+
+
 class World:
     def __init__(self, tmp_path, monkeypatch):
         now = to_micros(NOW)
@@ -60,7 +71,7 @@ class World:
         monkeypatch.setattr(graph_store_module, "OntoEnv", FakeOntoEnv)
         monkeypatch.setattr(graph_store_module, "load_bundled_graph", lambda fname, canonical: Graph())
         monkeypatch.setattr(graph_store_module.OxigraphGraphStore, "_start_query_rebuild_locked", lambda self: None)
-        self.store = DuckDBStore(tmp_path / "ts.duckdb")
+        self.store = _open_store(tmp_path)
         self.graphs = graph_store_module.OxigraphGraphStore(
             store_path=tmp_path / "graph", env_root=tmp_path / "env", history=ModelHistory(self.store))
         self.views = Materializer(self.store, self.graphs)
@@ -94,7 +105,7 @@ class World:
 
     def read(self, ref: str) -> list[tuple[datetime, float]]:
         with self.store._own_conn() as conn:
-            rows = conn.execute(
+            rows = execute(conn,
                 "SELECT t.ts, t.numeric_value FROM timeseries t JOIN ref_ids r ON r.ref_id = t.ref_id "
                 "WHERE r.ref_uri = ? AND NOT t.deleted ORDER BY t.ts", [ref]).fetchall()
         return [(ts.replace(tzinfo=UTC), value) for ts, value in rows]
@@ -256,14 +267,14 @@ def test_removal_retracts_outputs_from_its_time_and_purge_removes_all(world):
     world.views.remove("double", at=to_micros(at(5)))
     world.views.step()
     with world.store._own_conn() as conn:
-        rows = conn.execute("SELECT t.ts FROM timeseries t JOIN ref_ids r ON r.ref_id = t.ref_id "
+        rows = execute(conn, "SELECT t.ts FROM timeseries t JOIN ref_ids r ON r.ref_id = t.ref_id "
                             "JOIN streams s ON s.ref_uri = r.ref_uri WHERE s.source_id = 'derived:double' "
                             "AND NOT t.deleted ORDER BY t.ts").fetchall()
     assert [ts.replace(tzinfo=UTC) for (ts,) in rows] == [at(m) for m in range(5)]
     world.views.remove("double", purge=True)
     world.views.step()
     with world.store._own_conn() as conn:
-        left = conn.execute("SELECT count(*) FROM timeseries t JOIN ref_ids r ON r.ref_id = t.ref_id "
+        left = execute(conn, "SELECT count(*) FROM timeseries t JOIN ref_ids r ON r.ref_id = t.ref_id "
                             "JOIN streams s ON s.ref_uri = r.ref_uri WHERE s.source_id = 'derived:double' "
                             "AND NOT t.deleted").fetchone()[0]
     assert left == 0
@@ -344,3 +355,81 @@ def test_a_model_write_that_breaks_admission_is_undone(world):
         world.views.model_changed()
     assert world.graphs.history.head() == head
     assert len(world.graphs.model_at(to_micros(NOW))) == 2  # only point 1's two triples
+
+
+def test_a_step_that_fails_halfway_leaves_nothing_and_the_next_one_redoes_it(world, monkeypatch):
+    import acquirium.Materialization.evaluation as evaluation
+    world.model(point(1))
+    world.deploy(Double)
+    original = evaluation._Reader.flush
+
+    def broken(self):
+        raise RuntimeError("the database went away")
+
+    monkeypatch.setattr(evaluation._Reader, "flush", broken)
+    with pytest.raises(RuntimeError):
+        world.write("urn:ex/r1", [(at(0), 1.0)])
+    assert world.read("urn:ex/r1") == []          # the raw rows did not commit either
+    assert world.views.engine.pending() == 1       # the entry is still in the inbox
+    monkeypatch.setattr(evaluation._Reader, "flush", original)
+    world.views.step()
+    assert world.views.engine.pending() == 0
+    (values,) = world.outputs("double").values()
+    assert values == [(at(0), 2.0)]
+
+
+# -------------------- check and lineage --------------------
+class Undeclared(Double):
+    name = "undeclared"
+    def transform(self, inputs, output, context):
+        output["typo"] = inputs["t"].collect().select(["time", "value"])
+
+
+class Tagged(App):
+    name = "tagged"
+    grouping = "per_match"
+    outputs = {"out": output.stream(value_kind="numeric", data_source="lab", label=None)}
+    def build_query(self, plant): return plant.query().measurement(alias="t", quantity_kind=TEMPERATURE)
+    def transform(self, inputs, output, context): pass
+
+
+def test_check_computes_without_writing_anything(world):
+    world.model(point(1))
+    world.write("urn:ex/r1", [(at(m), float(m)) for m in range(5)])
+    with world.store._own_conn() as conn:
+        revision = execute(conn, "SELECT current_revision FROM system_state").fetchone()[0]
+    result = world.views.check(Deployment.from_class(Double), limit=2)
+    (binding,) = result["bindings"]
+    assert binding["error"] is None
+    assert binding["inputs"] == {"t": [{"ref_uri": "urn:ex/r1", "label": None, "unit": None}]}
+    out = binding["outputs"]["out"]
+    assert out["rows"] == 5 and out["truncated"] and [v["value"] for v in out["values"]] == [0.0, 2.0]
+    with world.store._own_conn() as conn:
+        assert execute(conn, "SELECT count(*) FROM streams WHERE source_id LIKE 'derived:%'").fetchone()[0] == 0
+        assert execute(conn, "SELECT current_revision FROM system_state").fetchone()[0] == revision
+    assert world.views._log.changes() == []
+
+
+def test_check_reports_a_failing_or_undeclared_output_as_a_result(world):
+    world.model(point(1))
+    world.write("urn:ex/r1", [(at(0), 1.0)])
+    (binding,) = world.views.check(Deployment.from_class(Undeclared))["bindings"]
+    assert "not declared" in binding["error"] and "typo" in binding["error"]
+
+
+def test_the_outputs_present_now_are_published_into_acquiriums_graph(world):
+    from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI
+    from acquirium.internals.internals_namespaces import DATA_SOURCE, HAS_EXTERNAL_REFERENCE, PRODUCED_BY, PRODUCES
+    from rdflib import Literal, RDFS
+    world.model(point(1))
+    world.deploy(Tagged)
+    graph = world.graphs.source_dataset.graph(URIRef(ACQUIRIUM_GRAPH_URI))
+    (port,) = world.views.current_plan()[0].instances[0].outputs.values()
+    point_uri, ref = URIRef(port.point_uri), URIRef(port.ref_uri)
+    assert (point_uri, HAS_EXTERNAL_REFERENCE, ref) in graph
+    assert (point_uri, PRODUCED_BY, Literal("tagged")) in graph
+    assert (point_uri, DATA_SOURCE, Literal("lab")) in graph
+    assert any(graph.triples((None, PRODUCES, ref)))
+    assert str(next(graph.objects(point_uri, RDFS.label))).startswith("tagged[out]")
+    # planning never reads this graph: the model has no derived points
+    assert not any(world.graphs.model_at(to_micros(NOW)).triples((point_uri, None, None)))

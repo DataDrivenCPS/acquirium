@@ -8,8 +8,8 @@ import pytest
 from rdflib import URIRef
 
 from acquirium.Materialization import (
-    App, ApplicationGraph, Binding, InProcessExecutor, InputBatch, OutputPort, RevisionStore,
-    Scheduler, StreamDescriptor, StreamSet, TimeWindow, align, output,
+    App, ApplicationGraph, Binding, InputBatch, OutputPort,
+    StreamDescriptor, StreamSet, TimeWindow, align, output,
 )
 from acquirium.Materialization.planner import BindingPlanner, Deployment, output_port
 
@@ -17,7 +17,6 @@ from acquirium.Materialization.planner import BindingPlanner, Deployment, output
 def _port(name="out", ref="urn:out", spec=None):
     """A resolved output port, for tests that build a Binding by hand."""
     return OutputPort(ref, name, f"urn:point:{name}", spec or output.stream(value_kind="numeric"))
-from acquirium.Materialization.runtime import Materializer
 from acquirium.Storage.duckdb_store import DuckDBStore
 from acquirium.internals.models import compute_ref_uri
 
@@ -32,7 +31,6 @@ def _context(row, result):
 
 class Mean(App):
     grouping = "per_match"
-    backfill = True
     lookback = "1m"
     outputs = {"mean": output.stream(value_kind="numeric")}
 
@@ -87,7 +85,6 @@ class NamedTotal(App):
 
 class Copy(App):
     grouping = "per_match"
-    backfill = True
     outputs = {"out": output.stream(value_kind="numeric")}
 
     def transform(self, inputs, output, context):
@@ -106,26 +103,9 @@ class ConfiguredLookback(App):
 class WholeStream(App):
     grouping = "per_match"
     lookback = "all"
-    backfill = True
-    min_interval = "5m"
+    windows = {"source": ("-1h", "-1m")}
+    named_inputs = {"previous": "whole-stream-out"}
     outputs = {"out": output.stream(value_kind="numeric")}
-
-
-class ConcurrentProbeExecutor(InProcessExecutor):
-    def __init__(self):
-        self.active = self.peak = 0
-        self.lock = Lock()
-
-    def execute(self, application, batch, ports):
-        with self.lock:
-            self.active += 1
-            self.peak = max(self.peak, self.active)
-        try:
-            sleep(0.05)
-            return super().execute(application, batch, ports)
-        finally:
-            with self.lock:
-                self.active -= 1
 
 
 class LineageGraph:
@@ -181,24 +161,6 @@ class LinearFakeConverter:
         return value * 9.0 / 5.0 + 32.0
 
 
-def test_revision_frontier_commits_coherent_output_and_converges(tmp_path):
-    store = DuckDBStore(tmp_path / "timeseries.duckdb")
-    timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    store.upsert_rows("urn:left", [(timestamp, 2.0)], value_kind="numeric")
-    store.upsert_rows("urn:right", [(timestamp, 4.0)], value_kind="numeric")
-    inputs = {"left": (StreamDescriptor("urn:left"),), "right": (StreamDescriptor("urn:right"),)}
-    binding = Binding("mean", "digest", inputs, {
-        "mean": output_port("mean", "mean", inputs, Mean.outputs["mean"]),
-    }, timedelta(minutes=1))
-    scheduler = Scheduler(RevisionStore(store), InProcessExecutor())
-
-    assert scheduler.run_once(binding, Mean())
-    assert not scheduler.run_once(binding, Mean())
-    assert RevisionStore(store).current_revision() == 3
-    output = list(store.timeseries(binding.outputs["mean"].ref_uri, value_mode="numeric"))[0]
-    assert output.column("value").to_pylist() == [3.0]
-    with store._own_conn() as conn:
-        assert conn.execute("SELECT source_id FROM streams WHERE ref_uri=?", [binding.outputs["mean"].ref_uri]).fetchone()[0] == "derived:mean"
 
 
 def test_graph_rejects_cycles_and_duplicate_output_ownership():
@@ -292,8 +254,10 @@ def test_whole_stream_attributes_round_trip():
     restored = Deployment.from_json(deployment.to_json())
 
     assert restored.lookback is None          # "all"
-    assert restored.backfill is True
-    assert restored.min_interval == timedelta(minutes=5)
+    assert restored.windows == {"source": (timedelta(hours=-1), timedelta(minutes=-1))}
+    assert restored.named_inputs == {"previous": "whole-stream-out"}
+    assert restored.window("source") == (3_600_000_000, -60_000_000)
+    assert restored == deployment
 
 
 def test_named_outputs_aggregate_the_complete_query_result():
@@ -320,22 +284,6 @@ def test_per_match_outputs_bind_one_group_per_query_row():
     }
 
 
-def test_progress_survives_code_and_parameter_edits(tmp_path):
-    store = DuckDBStore(tmp_path / "progress.duckdb")
-    timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    store.upsert_rows("urn:left", [(timestamp, 1.0)], value_kind="numeric")
-    inputs = {"source": (StreamDescriptor("urn:left"),)}
-    ports = {"out": _port(ref="urn:out:left", spec=Copy.outputs["out"])}
-    before = Binding("copy", "digest-before-edit", inputs, ports)
-    after = Binding("copy", "digest-after-edit", inputs, ports, parameters={"tweak": 1})
-    scheduler = Scheduler(RevisionStore(store), InProcessExecutor())
-
-    assert before.signature != after.signature
-    assert before.progress_key == after.progress_key
-    assert scheduler.run_once(before, Copy())
-    # The edited deployment reads the same inputs and writes the same outputs,
-    # so it resumes the frontier instead of resetting or skipping anything.
-    assert not scheduler.run_once(after, Copy())
 
 
 def test_in_unit_converts_every_accessor_of_the_stream_set():
@@ -432,23 +380,6 @@ def test_per_match_binds_one_stream_per_alias_even_for_paired_rows():
         assert all(len(streams) == 1 for streams in binding.inputs.values())
 
 
-def test_context_carries_the_match_and_not_the_data(tmp_path):
-    store = DuckDBStore(tmp_path / "context.duckdb")
-    timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    store.upsert_rows("urn:left", [(timestamp, 1.0)], value_kind="numeric")
-    inputs = {"source": (StreamDescriptor("urn:left"),)}
-    binding = Binding("copy", "digest", inputs, {"out": _port(ref="urn:out:left", spec=Copy.outputs["out"])},
-                      row={"hx": "urn:plant/hx-1"}, result=({"hx": "urn:plant/hx-1"},))
-    revisions = RevisionStore(store)
-    revisions.initialise(binding, True)
-
-    batch = revisions.preview_batch(binding)
-
-    # The data arrives beside the context, never inside it.
-    assert not hasattr(batch.context, "inputs")
-    assert batch.context.row == {"hx": "urn:plant/hx-1"}
-    assert batch.context.result["hx"].to_list() == ["urn:plant/hx-1"]
-    assert batch.inputs["source"].stream.ref_uri == "urn:left"
 
 
 def test_output_schema_violations_name_the_port():
@@ -502,37 +433,8 @@ def test_align_resamples_every_stream_onto_one_clock():
     assert frame["flow"].to_list()[0] == 1.0 and frame["flow"].to_list()[1] is None
 
 
-def test_scheduler_runs_independent_topological_wave_concurrently(tmp_path):
-    store = DuckDBStore(tmp_path / "parallel.duckdb")
-    timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    store.upsert_rows("urn:left", [(timestamp, 1.0)], value_kind="numeric")
-    store.upsert_rows("urn:right", [(timestamp, 2.0)], value_kind="numeric")
-    spec = Copy.outputs["out"]
-    left = Binding("left-copy", "copy", {"source": (StreamDescriptor("urn:left"),)}, {"out": _port(ref="urn:out:left", spec=spec)})
-    right = Binding("right-copy", "copy", {"source": (StreamDescriptor("urn:right"),)}, {"out": _port(ref="urn:out:right", spec=spec)})
-    graph = ApplicationGraph((left, right))
-    assert len(graph.layers()) == 1
-    assert {binding.signature for binding in graph.layers()[0]} == {left.signature, right.signature}
-    executor = ConcurrentProbeExecutor()
-    scheduler = Scheduler(RevisionStore(store), executor)
-
-    assert scheduler.run_graph_once(graph, {left.signature: Copy(), right.signature: Copy()}, max_workers=2)
-    assert executor.peak == 2
 
 
-def test_scheduler_commits_completed_chunk_in_one_revision(tmp_path):
-    store = DuckDBStore(tmp_path / "async-wave.duckdb")
-    timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    store.upsert_rows("urn:left", [(timestamp, 1.0)], value_kind="numeric")
-    store.upsert_rows("urn:right", [(timestamp, 2.0)], value_kind="numeric")
-    spec = Copy.outputs["out"]
-    left = Binding("left-copy", "copy", {"source": (StreamDescriptor("urn:left"),)}, {"out": _port(ref="urn:out:left", spec=spec)})
-    right = Binding("right-copy", "copy", {"source": (StreamDescriptor("urn:right"),)}, {"out": _port(ref="urn:out:right", spec=spec)})
-    executor = InProcessExecutor()
-    scheduler = Scheduler(RevisionStore(store), executor)
-
-    assert scheduler.run_graph_once(ApplicationGraph((left, right)), {left.signature: Copy(), right.signature: Copy()})
-    assert RevisionStore(store).current_revision() == 3
 
 
 class EntityRowGraph(LineageGraph):
@@ -596,90 +498,14 @@ class CheckUndeclared(CheckDouble):
         output["dubbled"] = inputs["input"].collect()
 
 
-def test_check_returns_computed_rows_without_writing_anything(tmp_path):
-    store = DuckDBStore(tmp_path / "check.duckdb")
-    timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    store.upsert_rows("urn:input", [(timestamp, 2.0), (timestamp + timedelta(minutes=1), 3.0)],
-                      value_kind="numeric")
-    materializer = Materializer(store, LineageGraph())
-    revision_before = materializer._revisions.current_revision()
-
-    result = materializer.check(Deployment.from_class(CheckDouble))
-
-    (binding,) = result["bindings"]
-    assert binding["error"] is None
-    assert binding["inputs"]["input"][0]["ref_uri"] == "urn:input"
-    assert binding["input_rows"] == {"input": 2}
-    doubled = binding["outputs"]["doubled"]
-    assert [row["value"] for row in doubled["values"]] == [4.0, 6.0]
-    assert doubled["rows"] == 2 and doubled["truncated"] is False
-
-    # A check is a dry run: no derived stream, no progress, no new revision.
-    with store._own_conn() as conn:
-        assert conn.execute("SELECT count(*) FROM streams WHERE source_id LIKE 'derived:%'").fetchone()[0] == 0
-        assert conn.execute("SELECT count(*) FROM binding_progress").fetchone()[0] == 0
-        assert conn.execute("SELECT count(*) FROM view_deployments").fetchone()[0] == 0
-    assert materializer._revisions.current_revision() == revision_before
 
 
-def test_check_limit_heads_the_output_and_says_so(tmp_path):
-    store = DuckDBStore(tmp_path / "check-limit.duckdb")
-    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    store.upsert_rows("urn:input", [(start + timedelta(minutes=i), float(i)) for i in range(10)],
-                      value_kind="numeric")
-    materializer = Materializer(store, LineageGraph())
-
-    full = materializer.check(Deployment.from_class(CheckDouble))
-    headed = materializer.check(Deployment.from_class(CheckDouble), limit=3)
-
-    assert len(full["bindings"][0]["outputs"]["doubled"]["values"]) == 10
-    assert full["bindings"][0]["outputs"]["doubled"]["truncated"] is False
-    headed_output = headed["bindings"][0]["outputs"]["doubled"]
-    assert [row["value"] for row in headed_output["values"]] == [0.0, 2.0, 4.0]
-    assert headed_output["rows"] == 10 and headed_output["truncated"] is True
 
 
-def test_check_reports_a_failing_transform_as_a_result(tmp_path):
-    store = DuckDBStore(tmp_path / "check-broken.duckdb")
-    store.upsert_rows("urn:input", [(datetime(2026, 1, 1, tzinfo=timezone.utc), 2.0)], value_kind="numeric")
-    materializer = Materializer(store, LineageGraph())
-
-    result = materializer.check(Deployment.from_class(CheckBroken))
-
-    assert "sensor calibration missing" in result["bindings"][0]["error"]
 
 
-def test_check_flags_an_assignment_to_an_undeclared_output(tmp_path):
-    store = DuckDBStore(tmp_path / "check-undeclared.duckdb")
-    store.upsert_rows("urn:input", [(datetime(2026, 1, 1, tzinfo=timezone.utc), 2.0)], value_kind="numeric")
-    materializer = Materializer(store, LineageGraph())
-
-    result = materializer.check(Deployment.from_class(CheckUndeclared))
-
-    error = result["bindings"][0]["error"]
-    assert "'dubbled'" in error and "not declared" in error and "'doubled'" in error
 
 
-def test_preview_batch_leaves_the_deployed_apps_progress_alone(tmp_path):
-    store = DuckDBStore(tmp_path / "preview.duckdb")
-    timestamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    store.upsert_rows("urn:left", [(timestamp, 1.0)], value_kind="numeric")
-    inputs = {"source": (StreamDescriptor("urn:left"),)}
-    binding = Binding("copy", "digest", inputs, {"out": _port(ref="urn:out:left", spec=Copy.outputs["out"])})
-    revisions = RevisionStore(store)
-    scheduler = Scheduler(revisions, InProcessExecutor())
-    assert scheduler.run_once(binding, Copy())
-
-    # The frontier is caught up, so a real batch is None while a preview still
-    # reads every stored row.
-    assert revisions.next_batch(binding) is None
-    preview = revisions.preview_batch(binding)
-
-    assert preview is not None and preview.inputs["source"].collect().num_rows == 1
-    with store._own_conn() as conn:
-        consumed = conn.execute("SELECT consumed_revision FROM binding_progress WHERE progress_key=?",
-                                [binding.progress_key]).fetchone()[0]
-    assert consumed == revisions.current_revision()
 
 
 def test_output_declarations_are_validated_before_deployment():
@@ -708,20 +534,6 @@ def test_output_declarations_are_validated_before_deployment():
         Deployment.from_class(Colliding)
 
 
-def test_remove_forgets_the_apps_durable_progress(tmp_path):
-    store = DuckDBStore(tmp_path / "remove.duckdb")
-    materializer = Materializer(store, LineageGraph())
-    materializer.deploy(Deployment.from_class(LineageCopy))
-    materializer.refresh()
-    with store._own_conn() as conn:
-        (progress_key,) = conn.execute("SELECT DISTINCT progress_key FROM materialization_lineage").fetchone()
-    with store._lock, store._write_conn() as conn:
-        conn.execute("INSERT INTO binding_progress VALUES (?, ?)", [progress_key, 7])
-
-    materializer.remove("lineage-copy")
-
-    with store._own_conn() as conn:
-        assert conn.execute("SELECT count(*) FROM binding_progress").fetchone()[0] == 0
 
 
 def test_a_derived_point_uri_survives_a_code_or_metadata_edit(tmp_path):
@@ -777,85 +589,9 @@ def test_a_generated_label_names_the_subject_and_its_app():
     assert _default_label(many, "average", named) == "plant-average-flow"
 
 
-def test_only_a_runtime_owned_point_gets_a_generated_label(tmp_path):
-    """A point the author supplied is theirs; do not add a second name to it."""
-    from rdflib import RDFS
-
-    graph = LineageGraph()
-    materializer = Materializer(DuckDBStore(tmp_path / "labels.duckdb"), graph)
-    materializer.deploy(Deployment.from_class(BorrowedPoint))
-    materializer.refresh()
-
-    published = graph.published[0]
-    assert not list(published.triples((URIRef("urn:plant/T-101"), RDFS.label, None)))
 
 
-def test_a_declared_data_source_tag_is_queryable(tmp_path):
-    """The tag lands on the point, which is what measurement(data_source=) filters."""
-    from rdflib import Literal, URIRef
-
-    from acquirium.internals.internals_namespaces import DATA_SOURCE, HAS_EXTERNAL_REFERENCE
-
-    graph = LineageGraph()
-    materializer = Materializer(DuckDBStore(tmp_path / "tagged.duckdb"), graph)
-    materializer.deploy(Deployment.from_class(TaggedOutput))
-    materializer.refresh()
-
-    published = graph.published[0]
-    tagged = {subject for subject, _, _ in published.triples((None, DATA_SOURCE, Literal("normalized")))}
-    assert tagged, "the declared data_source tag was not published"
-    # Every tagged subject is a point carrying the derived reference, not the
-    # reference itself; a filter on the reference would match nothing.
-    for point in tagged:
-        assert list(published.triples((point, URIRef(HAS_EXTERNAL_REFERENCE), None)))
 
 
-def test_a_derived_point_records_the_app_that_made_it(tmp_path):
-    """measurement(app="…") finds one app's output without a hand-written tag."""
-    from rdflib import Graph, Literal, RDF, URIRef
-
-    from acquirium.Client.explore.core import Query
-    from acquirium.internals.internals_namespaces import (
-        HAS_EXTERNAL_REFERENCE, HAS_QUANTITY_KIND, TIMESERIES_REFERENCE,
-    )
-
-    class UriOnlyClient:
-        """Enough client for compiling a query whose values are already URIs."""
-        def resolve(self, value, kind=None, **kwargs): return value
-        def expand_uri(self, value): return value
-        def graph_version(self): return 1
-
-    quantity_kind = URIRef("urn:qk/Temperature")
-    graph = LineageGraph()
-    materializer = Materializer(DuckDBStore(tmp_path / "produced.duckdb"), graph)
-    materializer.deploy(Deployment.from_class(TaggedOutput))
-    materializer.refresh()
-
-    # One raw sensor of the same quantity kind, as a driver would leave it.
-    model = graph.published[0]
-    raw_point, raw_ref = URIRef("urn:plant/T-101"), URIRef("urn:acquirium#raw")
-    model.add((raw_point, HAS_QUANTITY_KIND, quantity_kind))
-    model.add((raw_point, URIRef(HAS_EXTERNAL_REFERENCE), raw_ref))
-    model.add((raw_ref, RDF.type, URIRef(TIMESERIES_REFERENCE)))
-    for point, _, _ in model.triples((None, URIRef(HAS_EXTERNAL_REFERENCE), None)):
-        model.add((point, HAS_QUANTITY_KIND, quantity_kind))
-
-    def matches(**attrs):
-        sparql = Query(client=UriOnlyClient()).measurement(
-            alias="t", quantity_kind=str(quantity_kind), **attrs).to_sparql()
-        return {str(row[0]) for row in model.query(sparql)}
-
-    everything = matches()
-    derived = matches(app="tagged-output")
-
-    assert str(raw_point) in everything and len(everything) == 2
-    assert derived == everything - {str(raw_point)}
 
 
-def test_compiled_binding_publishes_structural_lineage(tmp_path):
-    graph = LineageGraph()
-    materializer = Materializer(DuckDBStore(tmp_path / "lineage.duckdb"), graph)
-    materializer.deploy(Deployment.from_class(LineageCopy))
-    materializer.refresh()
-    triples = list(graph.published[0])
-    assert any(str(subject).startswith("urn:acquirium:binding:") for subject, _, _ in triples)

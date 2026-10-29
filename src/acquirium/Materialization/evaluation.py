@@ -92,6 +92,7 @@ class _Reader:
         self.store, self.conn = store, conn
         self.postgres = getattr(store, "materialization_backend", None) == "postgres"
         self.revision: int | None = None
+        self._staged: list = []
 
     def _t(self, micros: int) -> datetime:
         value = _dt(micros)
@@ -178,42 +179,88 @@ class _Reader:
             self.revision = self.store._next_revision(self.conn)
         return self.revision
 
-    def replace(self, ref: str, window: Interval, values: Mapping[int, Any], *, port: Any, application: str) -> list[int]:
-        """Make ``ref`` hold exactly ``values`` inside ``window``; return the
-        times whose value changed."""
-        old = self.output_rows(ref, window)
-        changed = sorted(t for t in set(old) | set(values) if old.get(t) != values.get(t))
+    def stage(self, ref: str, window: Interval, values: Mapping[int, Any], *, port: Any, application: str) -> None:
+        """Make ``ref`` hold exactly ``values`` inside ``window`` at the next
+        ``flush``. Staged windows of one stream must not overlap."""
+        self._staged.append((ref, window, dict(values), port, application))
+
+    def retract(self, ref: str, window: Interval) -> None:
+        self.stage(ref, window, {}, port=None, application="")
+
+    def flush(self) -> dict[str, list[int]]:
+        """Write everything staged with one read of the old rows and one insert;
+        return the times whose value changed, per stream."""
+        staged, self._staged = self._staged, []
+        if not staged:
+            return {}
+        hull: dict[str, Interval] = {}
+        for ref, window, *_ in staged:
+            low, high = hull.get(ref, window)
+            hull[ref] = (min(low, window[0]), max(high, window[1]))
+        old = self._rows(hull)
+        changed: dict[str, list[int]] = defaultdict(list)
+        tombstones, rows, register = [], [], {}
+        for ref, window, values, port, application in staged:
+            before = {t: v for t, v in old.get(ref, {}).items() if window[0] <= t < window[1]}
+            diff = sorted(t for t in set(before) | set(values) if before.get(t) != values.get(t))
+            if not diff:
+                continue
+            changed[ref].extend(diff)
+            numeric = port is None or port.spec.value_kind == "numeric"
+            if any(t not in values for t in diff):
+                tombstones.append((ref, window))
+                written = sorted(values)
+            else:
+                written = [t for t in diff if t in values]
+            rows.extend((ref, t, values[t], numeric) for t in written)
+            if port is not None:
+                register[ref] = (port, application)
         if not changed:
-            return []
+            return {}
         revision = self._revision()
-        removed = [t for t in changed if t not in values]
-        if removed:
+        for ref, window in tombstones:
             self._q(
                 "UPDATE timeseries SET deleted = TRUE, last_revision = ? WHERE ref_id = "
                 "(SELECT ref_id FROM ref_ids WHERE ref_uri = ?) AND ts >= ? AND ts < ? AND NOT deleted",
                 [revision, ref, self._t(window[0]), self._t(window[1])])
-            written = sorted(values)
-        else:
-            written = [t for t in changed if t in values]
-        if port is not None:
-            self._q("INSERT INTO streams (ref_uri, point_uri, source_id, ref_name, value_kind) VALUES (?, ?, ?, ?, ?) "
-                    "ON CONFLICT (ref_uri) DO NOTHING",
-                    [ref, port.point_uri, f"derived:{application}", port.ref_name, port.spec.value_kind])
-        if written:
-            numeric = port is None or port.spec.value_kind == "numeric"
+        if register:
+            refs = sorted(register)
+            marks = ",".join("?" for _ in refs)
+            known = {row[0] for row in self._q(f"SELECT ref_uri FROM streams WHERE ref_uri IN ({marks})", refs).fetchall()}
+            for ref in refs:
+                if ref not in known:
+                    port, application = register[ref]
+                    self._q("INSERT INTO streams (ref_uri, point_uri, source_id, ref_name, value_kind) "
+                            "VALUES (?, ?, ?, ?, ?) ON CONFLICT (ref_uri) DO NOTHING",
+                            [ref, port.point_uri, f"derived:{application}", port.ref_name, port.spec.value_kind])
+        if rows:
             frame = pl.DataFrame({
-                "ref_uri": [ref] * len(written),
-                "ts": pl.Series([_dt(t) for t in written], dtype=pl.Datetime("us", "UTC")),
-                "numeric_value": pl.Series([float(values[t]) if numeric else None for t in written], dtype=pl.Float64),
-                "text_value": pl.Series([None if numeric else str(values[t]) for t in written], dtype=pl.String),
+                "ref_uri": [r[0] for r in rows],
+                "ts": pl.Series([_dt(r[1]) for r in rows], dtype=pl.Datetime("us", "UTC")),
+                "numeric_value": pl.Series([float(r[2]) if r[3] else None for r in rows], dtype=pl.Float64),
+                "text_value": pl.Series([None if r[3] else str(r[2]) for r in rows], dtype=pl.String),
             })
             if not self.postgres:
                 frame = frame.with_columns(pl.col("ts").dt.replace_time_zone(None))
             self.store._insert_frame(self.conn, frame, revision)
         return changed
 
-    def retract(self, ref: str, window: Interval) -> list[int]:
-        return self.replace(ref, window, {}, port=None, application="")
+    def _rows(self, hull: Mapping[str, Interval]) -> dict[str, dict[int, Any]]:
+        refs = sorted(hull)
+        marks = ",".join("?" for _ in refs)
+        low = min(span[0] for span in hull.values())
+        high = max(span[1] for span in hull.values())
+        rows = self._q(
+            f"SELECT r.ref_uri, t.ts, t.numeric_value, t.text_value FROM timeseries t JOIN ref_ids r ON r.ref_id = t.ref_id "
+            f"WHERE r.ref_uri IN ({marks}) AND NOT t.deleted AND t.ts >= ? AND t.ts < ?",
+            [*refs, self._t(low), self._t(high)]).fetchall()
+        out: dict[str, dict[int, Any]] = defaultdict(dict)
+        for ref, ts, numeric, text_value in rows:
+            t = to_micros(ts)
+            span = hull[ref]
+            if span[0] <= t < span[1]:
+                out[ref][t] = text_value if text_value is not None else numeric
+        return out
 
     def derived_streams(self, application: str) -> list[str]:
         return [row[0] for row in self._q("SELECT ref_uri FROM streams WHERE source_id = ?",
@@ -234,6 +281,7 @@ class _Runner:
 
     def __init__(self, plan: TemporalPlan, reader: _Reader, unit_converter: Any, report: EvaluationReport) -> None:
         self.plan, self.reader, self.converter, self.report = plan, reader, unit_converter, report
+        self._extents: dict[int, Interval | None] = {}
         self.by_view: dict[str, list[PlannedInstance]] = defaultdict(list)
         for instance in plan.instances:
             self.by_view[instance.view].append(instance)
@@ -286,21 +334,32 @@ class _Runner:
         return self.reader.extent(refs)
 
     # ---- one call ----
-    def compute(self, instance: PlannedInstance, window: Interval) -> dict[str, list[int]]:
+    def compute(self, instance: PlannedInstance, window: Interval) -> None:
         """Recompute ``instance`` over ``window`` (inside its presence) and
-        write the results; return the changed times per output stream."""
-        changed: dict[str, list[int]] = defaultdict(list)
+        stage the results; ``flush`` writes them."""
         if window[0] >= window[1]:
-            return changed
+            return
         inputs = self.inputs(instance)
         cuts = sorted({p for item in inputs for span in item.life for p in span if window[0] < p < window[1]})
         points = [window[0], *cuts, window[1]]
         for left, right in zip(points, points[1:]):
-            for stream, times in self._call(instance, (left, right), inputs).items():
-                changed[stream].extend(times)
-        return changed
+            self._call(instance, (left, right), inputs)
 
-    def _call(self, instance: PlannedInstance, window: Interval, inputs: list[_Input]) -> dict[str, list[int]]:
+    def flush(self) -> dict[str, list[Interval]]:
+        """Write what is staged; the changed points per stream, as intervals."""
+        started = perf_counter()
+        changed = self.reader.flush()
+        self.report.timings["write"] += perf_counter() - started
+        self.report.points_changed += sum(len(times) for times in changed.values())
+        return {stream: merge((t, t + 1) for t in times) for stream, times in changed.items()}
+
+    def extent_of(self, instance: PlannedInstance) -> Interval | None:
+        key = id(instance)
+        if key not in self._extents:
+            self._extents[key] = self.extent(instance)
+        return self._extents[key]
+
+    def _call(self, instance: PlannedInstance, window: Interval, inputs: list[_Input]) -> None:
         deployment = self.deployment(instance)
         app = self.plan.apps[instance.definition]
         started = perf_counter()
@@ -352,7 +411,6 @@ class _Runner:
         self.report.timings["transform"] += perf_counter() - computing
         self.report.calls += 1
         writing = perf_counter()
-        changed: dict[str, list[int]] = {}
         for port_name, port in instance.outputs.items():
             if port_name not in builder.values:
                 continue
@@ -360,12 +418,8 @@ class _Runner:
             times = pc.cast(out["time"], pa.int64()).to_pylist()
             values = {t: v for t, v in zip(times, out["value"].to_pylist()) if window[0] <= t < window[1]}
             self.report.points_written += len(values)
-            moved = self.reader.replace(port.ref_uri, window, values, port=port, application=instance.view)
-            if moved:
-                changed[port.ref_uri] = moved
-                self.report.points_changed += len(moved)
+            self.reader.stage(port.ref_uri, window, values, port=port, application=instance.view)
         self.report.timings["write"] += perf_counter() - writing
-        return changed
 
     # ---- affected regions ----
     def data_affected(self, instance: PlannedInstance, changed: Mapping[str, list[Interval]]) -> list[Interval]:
@@ -403,6 +457,10 @@ class ViewEvaluator:
         self.store, self.materializer, self.unit_converter = store, materializer, unit_converter
         self.timings: dict[str, float] = {}
         self.last_report: EvaluationReport | None = None
+        # Instances whose transform failed, until a later call succeeds. Their
+        # windows are queued in view_pending and retried by every step.
+        self.errors: dict[str, str] = {}
+        self._failed: list[tuple[str, Interval]] = []
         with store._lock, store._write_conn() as conn:
             execute(conn, """CREATE TABLE IF NOT EXISTS view_engine_state (
                 id INTEGER PRIMARY KEY, data_revision BIGINT NOT NULL,
@@ -446,12 +504,16 @@ class ViewEvaluator:
         for name, start, end in execute(conn, "SELECT name, valid_from, valid_to FROM view_pending").fetchall():
             structural[name].append((int(start), int(end)))
         execute(conn, "DELETE FROM view_pending")
+        self._failed = []
         report.timings["changes"] = perf_counter() - started
         runner = _Runner(plan, reader, self.unit_converter, report)
         changed: dict[str, list[Interval]] = defaultdict(list)
         for ref, spans in data.items():
             changed[ref].extend(spans)
         self._run(plan, runner, structural, changed, report, old_plan[0] if old_plan else None)
+        for name, (start, end) in self._failed:
+            execute(conn, "INSERT INTO view_pending VALUES (?, ?, ?)", [name, start, end])
+        report.errors = dict(self.errors)
         final = reader.current_revision()
         if state is None:
             execute(conn, "INSERT INTO view_engine_state VALUES (1, ?, ?, ?)", [final, model_head, deployment_head])
@@ -471,7 +533,9 @@ class ViewEvaluator:
         # Views of the old plan that are gone keep streams to retract.
         views_in_order = [name for component in schedule.components for name in component]
         for name in sorted(set(structural) - set(views_in_order)):
-            self._retract_view(runner, name, structural[name], {}, changed)
+            self._retract_view(runner, name, structural[name], {})
+        for stream, spans in runner.flush().items():
+            changed[stream].extend(spans)
         for component in schedule.components:
             loop = any(name in schedule.loops for name in component)
             if loop:
@@ -479,6 +543,15 @@ class ViewEvaluator:
             else:
                 (name,) = component
                 self._run_view(runner, name, structural.get(name, []), changed, report)
+
+    def _compute(self, runner: _Runner, instance: PlannedInstance, window: Interval) -> None:
+        try:
+            runner.compute(instance, window)
+        except Exception as error:
+            self.errors[instance.id] = f"{type(error).__name__}: {error}"
+            self._failed.append((instance.view, window))
+        else:
+            self.errors.pop(instance.id, None)
 
     def _structural(self, runner: _Runner, instance: PlannedInstance, region: list[Interval]) -> list[Interval]:
         if not region:
@@ -493,7 +566,8 @@ class ViewEvaluator:
         region = intersect(region, instance.present)
         if not region:
             return []
-        region = runner.clamp(instance, region, runner.extent(instance))
+        if region[0][0] == NEG_INF or region[-1][1] == POS_INF:
+            region = runner.clamp(instance, region, runner.extent_of(instance))
         return intersect(runner.bucketed(instance, region), instance.present)
 
     def _run_view(self, runner: _Runner, name: str, structural: list[Interval],
@@ -504,17 +578,15 @@ class ViewEvaluator:
                 written[port.ref_uri].extend(instance.present)
             region = self._regions(runner, instance, structural, changed)
             for window in region:
-                try:
-                    for stream, times in runner.compute(instance, window).items():
-                        changed[stream].extend(merge((t, t + 1) for t in times))
-                except Exception as error:
-                    report.errors[instance.id] = f"{type(error).__name__}: {error}"
-        self._retract_view(runner, name, structural, written, changed)
+                self._compute(runner, instance, window)
+        self._retract_view(runner, name, structural, written)
+        for stream, spans in runner.flush().items():
+            changed[stream].extend(spans)
 
     def _retract_view(self, runner: _Runner, name: str, structural: list[Interval],
-                      written: Mapping[str, list[Interval]], changed: dict[str, list[Interval]]) -> None:
-        """Remove a view's outputs where no present instance writes them, inside
-        its structural change."""
+                      written: Mapping[str, list[Interval]]) -> None:
+        """Stage the removal of a view's outputs where no present instance
+        writes them, inside its structural change."""
         if not structural:
             return
         for ref in runner.reader.derived_streams(name):
@@ -525,9 +597,7 @@ class ViewEvaluator:
             if extent is None:
                 continue
             for window in intersect(gone, [extent]):
-                times = runner.reader.retract(ref, window)
-                if times:
-                    changed[ref].extend(merge((t, t + 1) for t in times))
+                runner.reader.retract(ref, window)
 
     def _run_loop(self, plan: TemporalPlan, runner: _Runner, component: tuple[str, ...],
                   structural: Mapping[str, list[Interval]], changed: dict[str, list[Interval]],
@@ -536,7 +606,6 @@ class ViewEvaluator:
         epsilon = schedule.epsilon
         members = [instance for name in component for instance in runner.by_view.get(name, [])]
         index = {id(instance): instance for instance in members}
-        extents = {id(instance): runner.extent(instance) for instance in members}
         pending: dict[int, list[Interval]] = {}
         for instance in members:
             pending[id(instance)] = self._regions(runner, instance, structural.get(instance.view, []), changed)
@@ -549,7 +618,6 @@ class ViewEvaluator:
             low = min(start for start, _ in starts)
             high = low + epsilon
             report.slabs += 1
-            produced: dict[str, list[Interval]] = defaultdict(list)
             for key, spans in list(pending.items()):
                 instance = index[key]
                 phi = schedule.phi[instance.view]
@@ -557,11 +625,8 @@ class ViewEvaluator:
                 part = intersect(spans, [(lo, hi)])
                 pending[key] = subtract(spans, [(lo, hi)])
                 for window in part:
-                    try:
-                        for stream, times in runner.compute(instance, window).items():
-                            produced[stream].extend(merge((t, t + 1) for t in times))
-                    except Exception as error:
-                        report.errors[instance.id] = f"{type(error).__name__}: {error}"
+                    self._compute(runner, instance, window)
+            produced = runner.flush()
             for stream, spans in produced.items():
                 changed[stream].extend(spans)
                 if stream not in own:
@@ -574,7 +639,8 @@ class ViewEvaluator:
                     lb, la = deployment.window(item.name)
                     touched = intersect(spans, item.life)
                     region = intersect(expand(touched, lookback=lb, lookahead=la), reader_instance.present)
-                    region = runner.clamp(reader_instance, region, extents[key])
+                    if region and (region[0][0] == NEG_INF or region[-1][1] == POS_INF):
+                        region = runner.clamp(reader_instance, region, runner.extent_of(reader_instance))
                     region = intersect(runner.bucketed(reader_instance, region), reader_instance.present)
                     pending[key] = merge(pending[key] + region)
         written: dict[str, list[Interval]] = defaultdict(list)
@@ -582,7 +648,9 @@ class ViewEvaluator:
             for port in instance.outputs.values():
                 written[port.ref_uri].extend(instance.present)
         for name in component:
-            self._retract_view(runner, name, structural.get(name, []), written, changed)
+            self._retract_view(runner, name, structural.get(name, []), written)
+        for stream, spans in runner.flush().items():
+            changed[stream].extend(spans)
 
 
 def _names(plan: TemporalPlan | None) -> set[str]:

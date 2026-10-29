@@ -335,7 +335,7 @@ def app_inspect(
     server_url: _ServerUrlOpt = None,
     server_port: _ServerPortOpt = None,
 ) -> None:
-    """Show declared output schemas, settings, resolved streams, and progress."""
+    """Show declared output schemas, settings, resolved streams, and where each instance is present."""
     result = _read_apps(_server_base_url(load_config(config).data, server_url, server_port), name)
     if as_json:
         typer.echo(json.dumps(result, indent=2))
@@ -346,11 +346,17 @@ def app_inspect(
     typer.echo(f"Entrypoint: {item['entrypoint']}")
     typer.echo(f"Grouping: {item['grouping']}")
     typer.echo(f"Plan: graph revision {item['graph_revision']}, current={item['plan_current']}")
-    for key in ("every", "lookback", "lookahead", "batch_delay", "min_interval"):
+    for key in ("every", "lookback", "lookahead"):
         value = definition[key]
         rendered = f"{value / 1_000_000:g}s" if isinstance(value, int) else value or "disabled"
         typer.echo(f"{key}: {rendered}")
-    typer.echo(f"backfill: {definition['backfill']}")
+    for name, (start, end) in sorted(definition.get("windows", {}).items()):
+        render = lambda v: v if isinstance(v, str) else f"{v / 1_000_000:g}s"
+        typer.echo(f"window {name}: [{render(start)}, {render(end)}]")
+    for name, stream in sorted(definition.get("named_inputs", {}).items()):
+        typer.echo(f"named input {name}: {stream}")
+    for start, end in item.get("deployed", []):
+        typer.echo(f"deployed: {start} to {end}")
     typer.echo(f"parameters: {json.dumps(definition['parameters'], sort_keys=True)}")
     if item["error"]:
         typer.echo(f"Error: {item['error']}")
@@ -366,7 +372,7 @@ def app_inspect(
         typer.echo(f"  {binding['binding_signature']}: {binding['status']}")
         typer.echo(f"    inputs: {json.dumps(binding['inputs'], sort_keys=True)}")
         typer.echo(f"    outputs: {json.dumps(binding['outputs'], sort_keys=True)}")
-        typer.echo(f"    revision: {binding['consumed_revision']} / {binding['current_revision']}; last success: {binding['last_success']}")
+        typer.echo(f"    present: {json.dumps(binding['present'])}")
         if binding["error"]:
             typer.echo(f"    Error: {binding['error']}")
 
