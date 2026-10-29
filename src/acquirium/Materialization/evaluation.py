@@ -32,8 +32,8 @@ import math
 from bisect import bisect_left, insort
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from fractions import Fraction
 from time import perf_counter
 from typing import Any
@@ -408,7 +408,6 @@ class _Runner:
 
     def preload(self, instance: PlannedInstance, windows: Iterable[Interval]) -> dict[str, list[Interval]]:
         """What computing ``instance`` over ``windows`` reads and writes."""
-        deployment = self.deployment(instance)
         needs: dict[str, list[Interval]] = defaultdict(list)
         for window in windows:
             for item in self.inputs(instance):
@@ -503,7 +502,6 @@ class _Runner:
 
     # ---- affected regions ----
     def data_affected(self, instance: PlannedInstance, changed: Mapping[str, list[Interval]]) -> list[Interval]:
-        deployment = self.deployment(instance)
         app = self.plan.apps[instance.definition]
         custom = type(app).output_window is not App.output_window
         out: list[Interval] = []

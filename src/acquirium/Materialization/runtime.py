@@ -28,7 +28,7 @@ from acquirium.Materialization.deployments import DeploymentChange, DeploymentLo
 from acquirium.Materialization.engine import Engine
 from acquirium.Materialization.evaluation import EvaluationReport, SAFE_HIGH, SAFE_LOW, ViewEvaluator, _Reader, _Runner
 from acquirium.Materialization.planner import BindingPlanner, Deployment, TemporalPlan
-from acquirium.Materialization.publication import _default_label, output_triples  # noqa: F401
+from acquirium.Materialization.publication import output_triples
 from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI
 from acquirium.Storage.metadata_outbox import execute
 

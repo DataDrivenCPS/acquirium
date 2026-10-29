@@ -559,7 +559,7 @@ def test_a_derived_point_uri_survives_a_code_or_metadata_edit(tmp_path):
 
 
 def test_a_generated_label_names_the_subject_and_its_app():
-    from acquirium.Materialization.runtime import _default_label
+    from acquirium.Materialization.publication import _default_label
 
     spec = output.stream(value_kind="numeric")
     sensor = StreamDescriptor("urn:ref:raw", label="Basin 1 inlet temperature")

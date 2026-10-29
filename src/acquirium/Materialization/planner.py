@@ -28,7 +28,7 @@ from acquirium.Materialization.worker import load_entrypoint
 from acquirium.Materialization.definitions import source_digest
 from acquirium.internals.intervals import POS_INF, Interval, intersect, lives, merge
 from acquirium.Materialization.admission import AdmissionError, Schedule, admit
-from acquirium.Materialization.deployments import DeploymentChange, deployment, names as deployment_names
+from acquirium.Materialization.deployments import DeploymentChange, deployment as deployment_pieces, names as deployment_names
 from acquirium.Materialization.publication import output_triples
 from acquirium.Materialization.temporal import Row, ViewDefinition, view_graph, writer_conflicts
 from acquirium.Storage.model_history import nt
@@ -371,7 +371,7 @@ class BindingPlanner:
         definitions = []
         for name in deployment_names(changes):
             spans: dict[str, list[Interval]] = defaultdict(list)
-            for start, end, text in deployment(changes, name):
+            for start, end, text in deployment_pieces(changes, name):
                 spans[text].append((start, end))
             for text, deployed in sorted(spans.items()):
                 definitions.append(_PlannedDefinition(name, text, Deployment.from_json(text), tuple(merge(deployed))))
