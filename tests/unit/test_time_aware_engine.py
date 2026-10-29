@@ -571,3 +571,63 @@ def test_outputs_do_not_depend_on_how_writes_are_batched_into_steps(tmp_path, mo
     finally:
         eager.close()
         lazy.close()
+
+
+# -------------------- redefinition and a write that closes a loop --------------------
+class Scale(App):
+    name = "scale"
+    grouping = "per_match"
+    outputs = {"out": output.stream(value_kind="numeric")}
+    def __init__(self, factor: float = 2.0):
+        self.factor = factor
+    def build_query(self, plant): return plant.query().measurement(alias="t", quantity_kind=TEMPERATURE)
+    def transform(self, inputs, output, context):
+        table = inputs["t"].collect()
+        output["out"] = pa.table({"time": table["time"], "value": pa.compute.multiply(table["value"], self.factor)})
+
+
+def test_a_redefinition_from_a_time_keeps_the_outputs_before_it(world):
+    world.model(point(1))
+    world.write("urn:ex/r1", [(at(m), 1.0) for m in range(10)])
+    world.views.deploy(Deployment.from_class(Scale, parameters={"factor": 2.0}), start=NEG_INF)
+    world.views.deploy(Deployment.from_class(Scale, parameters={"factor": 3.0}), start=to_micros(at(5)))
+    world.views.step()
+    plan = world.views.current_plan()[0]
+    (ref,) = {port.ref_uri for i in plan.instances for port in i.outputs.values()}
+    assert world.read(ref) == [(at(m), 2.0 if m < 5 else 3.0) for m in range(10)]
+
+
+class ReadsByName(App):
+    """Reads the other view's named output at the same time."""
+    name = "reads-by-name"
+    grouping = "all_matches"
+    named_inputs = {"b": "b-out"}
+    windows = {"b": ("0s", "0s")}
+    outputs = {"a": output.named("a-out", value_kind="numeric", point_uri="urn:ex/p9")}
+    def transform(self, inputs, output, context): pass
+
+
+class SelectsPoint(App):
+    """Selects temperature points; the other view's output becomes one when
+    the model says its point measures temperature."""
+    name = "selects-point"
+    grouping = "all_matches"
+    outputs = {"b": output.named("b-out", value_kind="numeric")}
+    def build_query(self, plant): return plant.query().measurement(alias="t", quantity_kind=TEMPERATURE)
+    def transform(self, inputs, output, context): pass
+
+
+def test_a_model_write_that_closes_a_loop_without_delay_is_undone(world):
+    world.model(point(1))
+    world.deploy(ReadsByName, start=at(0))
+    world.deploy(SelectsPoint, start=at(0))
+    head = world.graphs.history.head()
+    # p9 is reads-by-name's output point; saying it measures temperature makes
+    # selects-point read it at the same time it writes what reads-by-name reads
+    world.graphs.insert_graph(f"<urn:ex/p9> <{QK}> <{TEMPERATURE}> .", format="nt", graph_uri=URIRef(PLANT_GRAPH_URI))
+    with pytest.raises(AdmissionError, match="does not move into the past"):
+        world.views.model_changed()
+    assert world.graphs.history.head() == head
+    assert not any(world.graphs.source_dataset.graph(URIRef(PLANT_GRAPH_URI)).triples((URIRef("urn:ex/p9"), None, None)))
+    world.views.step()  # the engine carries on with the admitted model
+    assert not world.views.failures()
