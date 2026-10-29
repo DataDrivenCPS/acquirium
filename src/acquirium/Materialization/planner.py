@@ -328,9 +328,9 @@ class BindingPlanner:
         """Plan every deployment of the log over all of time.
 
         Each definition's query runs on every model version, together with
-        the output nodes published at that time: the named outputs of every
-        view deployed then, and the generated outputs of the instances
-        present then. Generated outputs depend on the rows found, so planning
+        the output nodes the other views publish at that time: the named
+        outputs of every view deployed then, and the generated outputs of the
+        instances present then. A query never sees its own view's outputs. Generated outputs depend on the rows found, so planning
         repeats until the rows stop changing; with stratified selection that
         takes at most one round per view plus one. Raises ``AdmissionError``
         when the view set is not admitted.
@@ -344,22 +344,22 @@ class BindingPlanner:
             for text, deployed in sorted(spans.items()):
                 definitions.append(_PlannedDefinition(name, text, Deployment.from_json(text), tuple(merge(deployed))))
         apps = {d.key: self._load(d.deployment, search_path) for d in definitions}
-        named = [(d.deployed, output_triples(d.name, {}, port, _port(d, port, {})))
+        named = [(d.name, d.deployed, output_triples(d.name, {}, port, _port(d, port, {})))
                  for d in definitions for port, spec in d.deployment.outputs.items() if spec.stream_name is not None]
         cache: dict[tuple, tuple[_MatchRow, ...]] = {}
         rows: dict[tuple, list[tuple[_MatchRow, list[Interval]]]] = {}
-        generated: list[tuple[tuple[Interval, ...], Graph]] = []
+        generated: list[tuple[str, tuple[Interval, ...], Graph]] = []
         for _ in range(len(definitions) + 2):
             published = named + generated
-            pieces = _refine(self.graph.model_versions(), [span for spans, _ in published for span in spans])
+            pieces = _refine(self.graph.model_versions(), [span for _, spans, _ in published for span in spans])
             current = {}
             for definition in definitions:
                 found = []
                 for start, end in pieces:
                     version = self.graph.model_version(start)
                     graph = Graph()
-                    for spans, triples in published:
-                        if any(left <= start < right for left, right in spans):
+                    for owner, spans, triples in published:
+                        if owner != definition.name and any(left <= start < right for left, right in spans):
                             graph += triples
                     view = _VersionGraph(self.graph, version, graph)
                     key = (definition.key, view.key)
@@ -521,7 +521,7 @@ def _port(definition: _PlannedDefinition, port: str, inputs: Mapping[str, Iterab
 
 
 def _generated(definition: _PlannedDefinition, rows: list[tuple[_MatchRow, list[Interval]]]):
-    """``(times, triples)`` for the generated outputs of a definition."""
+    """``(view, times, triples)`` for the generated outputs of a definition."""
     ports = [port for port, spec in definition.deployment.outputs.items() if spec.stream_name is None]
     if definition.deployment.grouping == "per_match":
         for row, life in rows:
@@ -529,10 +529,10 @@ def _generated(definition: _PlannedDefinition, rows: list[tuple[_MatchRow, list[
             if present:
                 inputs = _descriptors(row)
                 for port in ports:
-                    yield present, output_triples(definition.name, inputs, port, _port(definition, port, inputs))
+                    yield definition.name, present, output_triples(definition.name, inputs, port, _port(definition, port, inputs))
     else:
         for port in ports:
-            yield definition.deployed, output_triples(definition.name, {}, port, _port(definition, port, {}))
+            yield definition.name, definition.deployed, output_triples(definition.name, {}, port, _port(definition, port, {}))
 
 
 def _temporal_definition(definition: _PlannedDefinition, rows) -> ViewDefinition:

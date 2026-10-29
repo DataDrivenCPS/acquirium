@@ -175,6 +175,16 @@ def test_a_named_output_exists_wherever_its_view_is_deployed(graphs):
 
 
 def test_queries_that_select_each_others_generated_outputs_are_rejected(graphs):
+    # two unfiltered views each match the other's generated outputs
     graphs.insert_graph(point(1), format="nt", graph_uri=URIRef(PLANT_GRAPH_URI))
     with pytest.raises(AdmissionError, match="generated outputs"):
         BindingPlanner(graphs).temporal_plan(deployed(EveryMeasurement, EveryMeasurementAgain))
+
+
+def test_a_query_never_sees_its_own_views_outputs(graphs):
+    # unfiltered, every-measurement also matches measurements other views
+    # write, but never its own outputs, so it settles on the raw stream
+    graphs.insert_graph(point(1), format="nt", graph_uri=URIRef(PLANT_GRAPH_URI))
+    plan = BindingPlanner(graphs).temporal_plan(deployed(EveryMeasurement))
+    (definition,) = plan.definitions
+    assert [row.streams["input"] for row in definition.rows] == [("urn:ex/r1",)]
