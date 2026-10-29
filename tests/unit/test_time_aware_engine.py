@@ -50,17 +50,17 @@ class FakeOntoEnv:
         return None
 
 
-def _open_store(tmp_path):
+def _open_store(tmp_path, recreate=False):
     """DuckDB by default; ENGINE_TEST_BACKEND=timescale runs the same tests on
     the database at ACQUIRIUM_TEST_PG_DSN, emptied first."""
     if os.getenv("ENGINE_TEST_BACKEND") == "timescale":
         from acquirium.Storage.timescale_store import TimescaleStore
         return TimescaleStore(dsn=os.environ["ACQUIRIUM_TEST_PG_DSN"], recreate=True)
-    return DuckDBStore(tmp_path / "ts.duckdb")
+    return DuckDBStore(tmp_path / "ts.duckdb", recreate=recreate)
 
 
 class World:
-    def __init__(self, tmp_path, monkeypatch):
+    def __init__(self, tmp_path, monkeypatch, *, store_root=None, recreate=False):
         now = to_micros(NOW)
         for module in (graph_store_module,):
             monkeypatch.setattr(module, "now_micros", lambda: now)
@@ -71,7 +71,7 @@ class World:
         monkeypatch.setattr(graph_store_module, "OntoEnv", FakeOntoEnv)
         monkeypatch.setattr(graph_store_module, "load_bundled_graph", lambda fname, canonical: Graph())
         monkeypatch.setattr(graph_store_module.OxigraphGraphStore, "_start_query_rebuild_locked", lambda self: None)
-        self.store = _open_store(tmp_path)
+        self.store = _open_store(store_root or tmp_path, recreate)
         self.graphs = graph_store_module.OxigraphGraphStore(
             store_path=tmp_path / "graph", env_root=tmp_path / "env", history=ModelHistory(self.store))
         self.views = Materializer(self.store, self.graphs)
@@ -571,6 +571,28 @@ def test_outputs_do_not_depend_on_how_writes_are_batched_into_steps(tmp_path, mo
     finally:
         eager.close()
         lazy.close()
+
+
+def test_a_recreated_store_starts_the_views_from_scratch(tmp_path, monkeypatch):
+    first = World(tmp_path / "first", monkeypatch, store_root=tmp_path)
+    first.model(point(1))
+    first.deploy(Double)
+    for m in range(5):
+        first.write("urn:ex/r1", [(at(m), 1.0)])
+    first.close()
+    # The same model write and deployment again before any step, so the first
+    # step sees the heads the old engine state ended with.
+    second = World(tmp_path / "second", monkeypatch, store_root=tmp_path, recreate=True)
+    try:
+        second.views.engine.deferred = True
+        second.graphs.insert_graph(point(1), format="nt", graph_uri=URIRef(PLANT_GRAPH_URI))
+        second.views.model_changed()
+        second.views.deploy(Deployment.from_class(Double), start=NEG_INF)
+        second.write("urn:ex/r1", [(at(0), 3.0)])
+        second.views.step()
+        assert list(second.outputs("double").values()) == [[(at(0), 6.0)]]
+    finally:
+        second.close()
 
 
 # -------------------- redefinition and a write that closes a loop --------------------

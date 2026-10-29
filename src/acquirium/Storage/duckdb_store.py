@@ -119,7 +119,11 @@ class DuckDBStore:
                     "experiment_metadata_resolutions",
                     "materialization_work",
                     "materialization_lineage",
+                    "materialization_inbox",
+                    "materialization_steps",
                     "view_deployments",
+                    "view_engine_state",
+                    "view_pending",
                     "model_writes",
                     "model_events",
                     "model_triples",
@@ -133,6 +137,7 @@ class DuckDBStore:
                     REF_IDS_TABLE,
                 ):
                     conn.execute(f"DROP TABLE IF EXISTS {tbl}")
+                conn.execute("DROP SEQUENCE IF EXISTS materialization_inbox_seq")
                 conn.execute(f"DROP SEQUENCE IF EXISTS {REF_IDS_SEQ}")
         self.ensure_table()
         logger.debug("DuckDBStore.__init__: ready at %s", self.db_path)
