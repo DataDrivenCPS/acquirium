@@ -631,3 +631,66 @@ def test_a_model_write_that_closes_a_loop_without_delay_is_undone(world):
     assert not any(world.graphs.source_dataset.graph(URIRef(PLANT_GRAPH_URI)).triples((URIRef("urn:ex/p9"), None, None)))
     world.views.step()  # the engine carries on with the admitted model
     assert not world.views.failures()
+
+
+# -------------------- clipping of named inputs and of all-matches rows --------------------
+class SumWithReference(App):
+    """Per sensor: its value plus the sum of a fixed reference stream over
+    the last 10 minutes, read by name."""
+    name = "sum-with-reference"
+    grouping = "per_match"
+    named_inputs = {"ref": "urn:ex/reference"}
+    windows = {"ref": ("-10m", "0s")}
+    outputs = {"out": output.stream(value_kind="numeric")}
+    def build_query(self, plant): return plant.query().measurement(alias="t", quantity_kind=TEMPERATURE)
+    def transform(self, inputs, output, context):
+        t, ref = _named_series(inputs, "t"), _named_series(inputs, "ref")
+        window = context.output_window
+        output["out"] = _series([(s, v + sum(r for u, r in ref.items() if s - timedelta(minutes=10) <= u <= s))
+                                 for s, v in sorted(t.items()) if window.start <= s <= window.end])
+
+
+class RollingTotal(App):
+    """All sensors together: the sum of every sample in the last 10 minutes."""
+    name = "rolling-total"
+    grouping = "all_matches"
+    lookback = "10m"
+    every = None
+    outputs = {"total": output.named("rolling-total", value_kind="numeric")}
+    def build_query(self, plant): return plant.query().measurement(alias="t", quantity_kind=TEMPERATURE)
+    def transform(self, inputs, output, context):
+        table = inputs["t"].collect()
+        samples = list(zip(table["time"].to_pylist(), table["value"].to_pylist()))
+        window = context.output_window
+        times = sorted({t for t, _ in samples if window.start <= t <= window.end})
+        output["total"] = _series([(t, sum(v for u, v in samples if t - timedelta(minutes=10) < u <= t)) for t in times])
+
+
+def test_a_per_match_named_input_is_clipped_by_the_run_of_its_row(world):
+    world.model(point(1))
+    world.write("urn:ex/reference", [(at(m), 1.0) for m in range(20)])
+    world.write("urn:ex/r1", [(at(m), 0.0) for m in range(20)])
+    world.deploy(SumWithReference)
+    # p1 leaves the model over [5, 8): after it comes back, the reference is
+    # read only from 8 on
+    world.unmodel(point(1), effective_from=from_micros(to_micros(at(5))), effective_until=from_micros(to_micros(at(8))))
+    (values,) = world.outputs("sum-with-reference").values()
+    by_time = dict(values)
+    assert by_time[at(4)] == 5.0         # reference at 0..4
+    assert at(6) not in by_time
+    assert by_time[at(9)] == 2.0         # reference at 8 and 9 only, not 0..4
+    assert by_time[at(19)] == 11.0       # 9..19 inside the run
+
+
+def test_an_all_matches_view_clips_each_row_by_its_own_run(world):
+    world.model(point(1) + "\n" + point(2))
+    world.write("urn:ex/r1", [(at(m), 1.0) for m in range(20)])
+    world.write("urn:ex/r2", [(at(m), 10.0) for m in range(20)])
+    world.deploy(RollingTotal)
+    world.unmodel(point(2), effective_from=from_micros(to_micros(at(5))), effective_until=from_micros(to_micros(at(8))))
+    (values,) = world.outputs("rolling-total").values()
+    by_time = dict(values)
+    # at 9: r1 over (-1, 9] is 10 samples; r2 only from its new run, 8 and 9
+    assert by_time[at(9)] == 10 * 1.0 + 2 * 10.0
+    # inside p2's gap only r1 counts
+    assert by_time[at(6)] == 7 * 1.0
