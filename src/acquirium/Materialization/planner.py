@@ -176,7 +176,8 @@ def _query_rows(query: Query) -> tuple[_MatchRow, ...]:
         # Bind each distinct alias-to-stream set once, deterministically.
         key = _json({alias: sorted(item["ref_uri"] for item in values) for alias,values in streams.items()})
         if key in seen and seen[key] != columns:
-            raise ValueError("query matches the same streams with different entity bindings; disambiguate the query")
+            # Both rows would write the same generated outputs: one writer per point.
+            raise AdmissionError("query matches the same streams with different entity bindings; disambiguate the query")
         if streams and key not in seen:
             seen[key] = columns
             rows.append(_MatchRow({alias: tuple(values) for alias, values in streams.items()}, columns))
