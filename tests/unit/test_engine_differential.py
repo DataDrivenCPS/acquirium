@@ -8,8 +8,8 @@ its view is deployed; a read is clipped to the run of the row that binds it;
 a view reading its own named output does so through its window.
 
 Random operations (backdated model changes, late and out-of-order samples,
-deployments from arbitrary starts, removals at arbitrary times, purges) are
-applied to both, and after every operation the stored outputs must equal the
+stream replacements, bursts of writes taken by one step, deployments from
+arbitrary starts, removals at arbitrary times, purges) are applied to both, and after every operation the stored outputs must equal the
 reference exactly.
 """
 from __future__ import annotations
@@ -27,7 +27,7 @@ from acquirium.Materialization.runtime import Materializer
 from acquirium.Storage.metadata_outbox import execute
 
 from .test_time_aware_engine import (  # noqa: F401  (the world fixture)
-    BASE, Double, Ewma, RollingSum, SumOfDoubles, TenMinuteMean, World, at, point, world,
+    BASE, Double, Ewma, RollingSum, SumOfDoubles, TenMinuteMean, World, at, point, readings, world,
 )
 from rdflib import URIRef
 from acquirium.Storage.graph_registry import PLANT_GRAPH_URI
@@ -164,13 +164,28 @@ def bound(m: int | None, *, end: bool):
     return from_micros(to_micros(minute(m)))
 
 
+def _write(world: World, ref: Reference, rng: random.Random, *, replace: bool) -> None:
+    """Late and out-of-order samples for one point, or its whole stream
+    replaced (possibly by nothing)."""
+    p = rng.choice(POINTS)
+    samples = [(rng.randrange(0, HORIZON), float(rng.randrange(1, 9))) for _ in range(rng.randint(0 if replace else 1, 4))]
+    samples = list(dict(samples).items())
+    rows = [(minute(m), v) for m, v in samples]
+    if replace:
+        world.views.engine.submit("replace", readings(f"urn:ex/r{p}", rows), ref_uri=f"urn:ex/r{p}")
+        ref.data[p] = dict(samples)
+    else:
+        world.write(f"urn:ex/r{p}", rows)
+        ref.data[p].update(samples)
+
+
 def run(world: World, seed: int, operations: int) -> None:
     rng = random.Random(seed)
     ref = Reference()
     deployed = set()
     # sum-of-doubles and ewma depend on the others; deploy in any order anyway
     for step in range(operations):
-        kind = rng.choice(["model", "model", "data", "data", "data", "deploy", "remove", "restart"])
+        kind = rng.choice(["model", "model", "data", "data", "data", "deploy", "remove", "restart", "replace", "burst"])
         if kind == "restart":
             # a new process over the same database and graph: the plan and the
             # loaded code are rebuilt, the frontier and the log are durable
@@ -192,12 +207,16 @@ def run(world: World, seed: int, operations: int) -> None:
             world.views.step()
             ref.change_model(op, p, lo, hi)
         elif kind == "data":
-            p = rng.choice(POINTS)
-            samples = [(rng.randrange(0, HORIZON), float(rng.randrange(1, 9))) for _ in range(rng.randint(1, 4))]
-            samples = list(dict(samples).items())
-            world.write(f"urn:ex/r{p}", [(minute(m), v) for m, v in samples])
-            for m, v in samples:
-                ref.data[p][m] = v
+            _write(world, ref, rng, replace=False)
+        elif kind == "replace":
+            _write(world, ref, rng, replace=True)
+        elif kind == "burst":
+            # several writes and replacements queued, then taken by one step
+            world.views.engine.deferred = True
+            for _ in range(rng.randint(2, 6)):
+                _write(world, ref, rng, replace=rng.random() < 0.3)
+            world.views.engine.deferred = False
+            world.views.step()
         elif kind == "deploy":
             name = rng.choice(sorted(APPS))
             start = rng.choice([None, rng.randrange(0, HORIZON)])
