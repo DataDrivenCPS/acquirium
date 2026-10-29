@@ -61,13 +61,13 @@ class _NoOntologies:
         return None
 
 
-def open_world(args, root: Path):
+def open_world(args, root: Path, *, recreate: bool = True):
     if not args.ontologies:
         graph_store_module.OntoEnv = _NoOntologies
         graph_store_module.load_bundled_graph = lambda fname, canonical: Graph()
     if args.backend == "timescale":
         from acquirium.Storage.timescale_store import TimescaleStore
-        store = TimescaleStore(dsn=args.dsn, recreate=True)
+        store = TimescaleStore(dsn=args.dsn, recreate=recreate)
     else:
         from acquirium.Storage.duckdb_store import DuckDBStore
         store = DuckDBStore(root / "ts.duckdb")
