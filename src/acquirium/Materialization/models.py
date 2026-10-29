@@ -44,6 +44,28 @@ def _duration(value: timedelta | str) -> timedelta:
     return result
 
 
+def parse_offset(value: timedelta | str) -> timedelta:
+    """A signed duration relative to an output's time: ``"-2m"``, ``"30s"``."""
+    if isinstance(value, timedelta):
+        return value
+    if not isinstance(value, str):
+        raise TypeError("window offsets must be strings or timedeltas")
+    text = value.strip()
+    sign = -1 if text.startswith("-") else 1
+    return sign * _duration(text.lstrip("+-"))
+
+
+def parse_window(value: tuple) -> tuple[timedelta | None, timedelta]:
+    """A ``(start, end)`` window; a start of ``"all"`` reads all history."""
+    if not isinstance(value, (tuple, list)) or len(value) != 2:
+        raise ValueError("a window is a (start, end) pair of offsets")
+    start = None if value[0] == "all" else parse_offset(value[0])
+    end = parse_offset(value[1])
+    if start is not None and start > end:
+        raise ValueError(f"window {value!r} starts after it ends")
+    return start, end
+
+
 def parse_lookback(value: timedelta | str) -> timedelta | None:
     """Parse a lookback: a duration, or ``"all"`` for the whole stored extent.
 
@@ -527,27 +549,27 @@ class _AppMeta(type):
 
 
 class App(metaclass=_AppMeta):
-    """A stateless calculation over streams selected by a semantic query.
+    """A stateless calculation over streams selected by a semantic query and
+    streams named directly.
 
     Every concrete app must explicitly set grouping to ``"per_match"`` or
     ``"all_matches"``. It selects per-match calls or one aggregate call
-    independently of output naming. every declares complete resampling buckets. lookback
-    and lookahead describe trailing and leading input dependencies; their
-    effects also determine which outputs a correction recomputes.
-    backfill processes retained history on first activation. batch_delay and
-    min_interval are advanced operational controls: batch_delay collects rapid
-    changes before an invocation, while min_interval waits between successful
-    invocations of an expensive computation. Their process-local timing state
-    is not a failure retry backoff. They do not affect event-time windows.
+    independently of output naming. every declares complete resampling buckets.
+    lookback and lookahead describe the trailing and leading window of every
+    input; ``windows`` overrides them per input with ``(start, end)`` offsets
+    relative to the output time, such as ``("-2m", "-1m")`` for a one-minute
+    window that ends one minute before (a delay). ``named_inputs`` maps input
+    names to streams read without a query: a view's named output
+    (``output.named``), or a raw stream's reference URI. An app may name its own
+    named output to read its earlier values, with a delay.
     """
     name: str | None = None
     every: timedelta | str | None = None
     grouping: str | None = None
     lookback: timedelta | str = "0s"
     lookahead: timedelta | str = "0s"
-    backfill: bool = False
-    batch_delay: timedelta | str = "0s"
-    min_interval: timedelta | str | None = None
+    windows: Mapping[str, tuple[timedelta | str, timedelta | str]] = {}
+    named_inputs: Mapping[str, str] = {}
     outputs: Mapping[str, OutputSpec] = {}
     def build_query(self, plant: Any) -> Any: raise NotImplementedError
     def transform(self, inputs: Mapping[str, StreamSet], output: OutputBuilder, context: InputBatch) -> None: raise NotImplementedError

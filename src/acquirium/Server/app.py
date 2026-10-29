@@ -650,6 +650,9 @@ async def lifespan(app: FastAPI):
     # Materialization runs through one coordinator and a bounded local pool.
     m = Manager.from_env()
     m.materializer.configure_workers(worker_count)
+    # The server's materialization loop runs the steps; an ingestion request
+    # is acknowledged once it is in the inbox.
+    m.materializer.engine.deferred = True
     app.state.manager = m
     app.state.read_batch_size = int(server_cfg.get("read_batch_size", 50_000))
 
@@ -896,13 +899,17 @@ def inspect_app(name: str) -> dict[str, Any]:
 
 
 @app.put("/apps/{name}")
-def deploy_app(name: str, request: AppRegistration) -> dict[str, Any]:
-    """Validate and select an immutable definition for a named deployment."""
+def deploy_app(name: str, request: AppRegistration, effective_from: str | None = None) -> dict[str, Any]:
+    """Deploy a definition from ``effective_from`` on (ISO time or
+    ``-infinity``; now if omitted). A definition the view set cannot admit is
+    rejected."""
     try:
         if name != request.name:
             raise ValueError("deployment name must match the definition name")
         deployment = Deployment.from_json(request.model_dump_json())
-        return {"ok": True, **app.state.manager.deploy_app(deployment)}
+        start = None if effective_from is None else (
+            effective_from if effective_from == "-infinity" else datetime.fromisoformat(effective_from))
+        return {"ok": True, **app.state.manager.deploy_app(deployment, effective_from=start)}
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
 
@@ -926,11 +933,16 @@ def check_app(request: AppRegistration, limit: int | None = None,
 
 
 @app.delete("/apps/{name}")
-def remove_app(name: str) -> dict[str, Any]:
+def remove_app(name: str, effective_from: str | None = None, purge: bool = False) -> dict[str, Any]:
+    """Remove an app from ``effective_from`` on (now if omitted); ``purge``
+    removes it over all time, outputs included."""
     try:
-        return {"ok": True, **app.state.manager.remove_app(name)}
+        start = None if effective_from is None else datetime.fromisoformat(effective_from)
+        return {"ok": True, **app.state.manager.remove_app(name, effective_from=start, purge=purge)}
     except KeyError:
         raise HTTPException(status_code=404, detail=f"unknown app {name!r}")
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
 
 
 @app.post("/apps/{name}/reprocess")
@@ -941,6 +953,17 @@ def reprocess_app(name: str, start: datetime, end: datetime) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"unknown app {name!r}")
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
+
+
+@app.post("/materialization/step")
+def materialization_step() -> dict[str, Any]:
+    """Apply everything in the inbox now, as one step, and report it."""
+    report = app.state.manager.materializer.step()
+    if report is None:
+        return {"ok": True, "stepped": False, "step_no": app.state.manager.materializer.engine.last_step()}
+    return {"ok": True, "stepped": True, "step_no": report.step_no, "revision": report.revision,
+            "entries": report.entries, "rows": report.rows, "seconds": report.seconds,
+            "timings": dict(report.timings)}
 
 
 @app.get("/materialization/dag")

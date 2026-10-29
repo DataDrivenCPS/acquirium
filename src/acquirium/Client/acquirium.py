@@ -474,13 +474,15 @@ class Acquirium:
         self.client.register_streams(streams)
 
     def deploy_app(
-        self, target: object, *, parameters: Mapping[str, Any] | None = None
+        self, target: object, *, parameters: Mapping[str, Any] | None = None,
+        effective_from: datetime | str | None = None,
     ) -> dict[str, Any]:
-        """Deploy a stateless app against the current graph."""
+        """Deploy a stateless app from ``effective_from`` on: now if omitted,
+        a time in the past, or ``"-infinity"`` for all history."""
         if not isinstance(target, type) or not issubclass(target, App):
             raise ValueError("deploy_app expects an App class")
         deployment = Deployment.from_class(target, parameters=parameters)
-        return self.client.deploy_app(json.loads(deployment.to_json()))
+        return self.client.deploy_app(json.loads(deployment.to_json()), effective_from=effective_from)
 
     def list_apps(self) -> dict[str, Any]:
         """List every deployment, including apps with no matches or errors."""
@@ -490,8 +492,10 @@ class Acquirium:
         """Inspect declared output schemas, settings, streams, and progress."""
         return self.client.inspect_app(name)
 
-    def remove_app(self, name: str) -> dict[str, Any]:
-        return self.client.remove_app(name)
+    def remove_app(self, name: str, *, effective_from: datetime | None = None, purge: bool = False) -> dict[str, Any]:
+        """Remove an app from ``effective_from`` on (now if omitted); its
+        outputs before that stay. ``purge`` removes it over all time."""
+        return self.client.remove_app(name, effective_from=effective_from, purge=purge)
 
     def reprocess_app(self, name: str, start: datetime, end: datetime) -> dict[str, Any]:
         """Recompute a retained output interval without resetting ingestion progress."""

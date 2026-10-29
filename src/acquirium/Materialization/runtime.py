@@ -1,491 +1,405 @@
-"""Coordinate deployments, graph changes, and incremental execution.
+"""Deployments over time, admission, and the steps that keep views current.
 
-Materializer owns the currently installed plan and execution cadence. Planning
-resolves app queries; RevisionStore owns snapshot reads and atomic publication;
-Scheduler executes independent bindings. Keeping these responsibilities separate
-lets graph/deployment updates revoke work without waiting for transforms to end.
+``Materializer`` owns the deployment log, the plan of every deployment over
+all of time, and the engine whose steps apply the inbox and recompute what
+changed (``evaluation.ViewEvaluator``). A deployment change and a model write
+are checked against the whole plan before they hold: a deployment that fails
+admission is not recorded, and a model write that fails it is undone. The
+plan is cached per (model history head, deployment log head).
 
-The SQL registry and lineage survive restart. The DAG, loaded App instances,
-generation tokens, and scheduling timers are rebuilt in this process. A graph
-refresh reconciles the durable record with current query matches and schedules
-repairs before acknowledging changed query context in stored lineage.
+The timeseries database is the recovery authority: the deployment log, the
+inbox, the evaluator's frontier and every output survive a restart. The plan
+and the loaded app code are rebuilt in the process.
 """
 from __future__ import annotations
 
-from acquirium.Materialization.checks import check_entry, check_outputs
-
 import json
-from dataclasses import replace
-from uuid import uuid4
-from hashlib import sha256
+from collections import defaultdict
 from datetime import datetime
+from threading import RLock
 from typing import Any
-from time import monotonic
-from threading import Lock, RLock
+
 from rdflib import Graph, URIRef
 
-from acquirium.Materialization.models import ApplicationGraph, OutputBuilder, TimeWindow, _duration
-from acquirium.Materialization.revision_store import RevisionStore
-from acquirium.Materialization.scheduler import InProcessExecutor, Scheduler
-from acquirium.Materialization.deployments import DeploymentLog
-from acquirium.Materialization.planner import BindingPlanner, Deployment
-from acquirium.Materialization.publication import _default_label, output_triples  # noqa: F401
-from acquirium.internals.intervals import NEG_INF, POS_INF, now_micros
-from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI
 from acquirium.internals.internals_namespaces import IS_CALCULATED_FROM, PRODUCES
+from acquirium.internals.intervals import NEG_INF, POS_INF, Interval, from_micros, merge, now_micros, to_micros
+from acquirium.Materialization.admission import AdmissionError
+from acquirium.Materialization.deployments import DeploymentChange, DeploymentLog, changed, deployment
+from acquirium.Materialization.engine import Engine
+from acquirium.Materialization.evaluation import EvaluationReport, SAFE_HIGH, SAFE_LOW, ViewEvaluator, _Reader, _Runner
+from acquirium.Materialization.planner import BindingPlanner, Deployment, TemporalPlan
+from acquirium.Materialization.publication import _default_label, output_triples  # noqa: F401
+from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI
+from acquirium.Storage.metadata_outbox import execute
 
 
 class Materializer:
-    """Manage a plan while allowing already-started transforms to finish.
+    """Deploy, remove and check apps; run steps; describe the plan."""
 
-    Lock order, when combined, is coordinator -> plan -> backend write lock.
-    The coordinator lock serializes ticks, reprocessing requests, and executor
-    replacement. The reentrant plan lock protects compilation and plan swaps;
-    a tick releases it before running transforms. Deployment updates only need
-    the plan and backend locks, so they can revoke a generation during execution.
-
-    Publication uses the backend lock to check active generations and progress
-    in the same critical section as its writes. A worker finishing after removal
-    or replacement is discarded there rather than cancelled mid-transform.
-    """
     def __init__(self, store: Any, graph: Any, *, query_resolver=None, record_resolver=None,
                  unit_converter=None, max_workers: int = 2) -> None:
         self._store, self._graph = store, graph
         self._planner = BindingPlanner(graph, query_resolver=query_resolver, record_resolver=record_resolver)
-        self._revisions = RevisionStore(store, unit_converter=unit_converter)
-        self._scheduler = Scheduler(self._revisions, InProcessExecutor(), max_workers=max_workers)
-        self._coordinator_lock = Lock()
-        self._generations: dict[str, str] = {}
-        self._plan_errors: dict[str, str] = {}
-        # The DAG and its application instances are one immutable plan. A
-        # graph refresh replaces them together, while workers execute a local
-        # snapshot without holding this lock.
-        self._plan_lock = RLock()
-        self._graph_revision = -1
-        self._dag = ApplicationGraph(())
-        self._applications: dict[str, Any] = {}
-        self._lineage_signatures: frozenset[str] = frozenset()
-        self._pending_since: dict[str, float] = {}
-        self._last_run: dict[str, float] = {}
         self._log = DeploymentLog(store)
-        with store._lock, store._write_conn() as conn:
-            self._execute(conn, """CREATE TABLE IF NOT EXISTS materialization_lineage (
-                binding_signature VARCHAR NOT NULL, progress_key VARCHAR NOT NULL,
-                application_name VARCHAR NOT NULL,
-                executable_digest VARCHAR NOT NULL, input_alias VARCHAR NOT NULL,
-                input_ref_uri VARCHAR NOT NULL, output_name VARCHAR NOT NULL,
-                output_ref_uri VARCHAR NOT NULL, context_hash VARCHAR NOT NULL,
-                PRIMARY KEY (binding_signature, input_alias, input_ref_uri, output_name))""")
+        self._unit_converter = unit_converter
+        self._lock = RLock()
+        self._plan: tuple[TemporalPlan, int, int] | None = None
+        self._applied: tuple[TemporalPlan, int, int] | None = None
+        self._plan_error: str | None = None
+        self._published_lineage: int | None = None
+        self.evaluator = ViewEvaluator(store, self, unit_converter)
+        self.engine = Engine(store, evaluator=self.evaluator)
+        self._admitted_head = self._model_head()
 
-    def _execute(self, conn: Any, query: str, params=()):
-        if getattr(self._store, "materialization_backend", None) == "postgres":
-            query = query.replace("?", "%s")
-        return conn.execute(query, list(params))
+    # -------------------- heads and plans --------------------
+    def _model_head(self) -> int:
+        history = getattr(self._graph, "history", None)
+        return history.head() if history is not None else 0
 
-    def deploy(self, deployment: Deployment, *, start: int | None = None) -> None:
-        """Deploy ``deployment`` from ``start`` on (microseconds; ``NEG_INF``
-        for all history). Without a start, a backfilling app starts at the
-        beginning of history and any other app now."""
-        if start is None:
-            start = NEG_INF if deployment.backfill else now_micros()
-        with self._plan_lock:
-            deployments = [d for d in self._deployments() if d.name != deployment.name]
-            deployments.append(deployment)
-            revision = int(self._graph.graph_status().get("published_version", 0))
-            # Validate the proposed app together with existing deployments:
-            # individually valid apps can still form a cycle or share an output.
-            # Persist and revoke only after this succeeds, leaving the active
-            # definition intact if import, query, or graph validation fails.
-            self._planner.compile(deployments, revision)
-            with self._store._lock, self._store._write_conn() as conn:
-                self._log.record([(deployment.name, deployment.to_json(), start, POS_INF)], conn=conn)
-                # Renew even if the definition is identical. Redeploying must
-                # revoke work from the prior activation without resetting its
-                # durable progress or changing its derived stream identities.
-                self._generations[deployment.name] = uuid4().hex
-                self._revoke(deployment.name)
-            self._graph_revision = -1
+    def current_plan(self) -> tuple[TemporalPlan, int, int] | None:
+        """The plan for the current heads, planned once per pair of heads."""
+        with self._lock:
+            key = (self._model_head(), self._log.head())
+            if self._plan is not None and self._plan[1:] == key:
+                return self._plan
+            try:
+                plan = self._planner.temporal_plan(self._log.changes())
+            except Exception as error:
+                self._plan_error = f"{type(error).__name__}: {error}"
+                return None
+            self._plan_error = None
+            self._plan = (plan, *key)
+            self._publish_lineage(plan)
+            return self._plan
 
-    def _revoke(self, name: str) -> None:
-        if self._revisions.active_bindings is not None:
-            for binding in self._dag.bindings:
-                if binding.application_name == name:
-                    self._revisions.active_bindings.pop(binding.progress_key, None)
+    def applied_plan(self) -> tuple[TemporalPlan, int, int] | None:
+        return self._applied
+
+    def step_committed(self, applied: tuple[TemporalPlan, int, int]) -> None:
+        self._applied = applied
+
+    def changed_region(self, old_model: int, model_head: int, old_deployment: int, deployment_head: int) -> list[Interval]:
+        """Where model writes and deployment changes between two pairs of
+        heads changed anything, for any view."""
+        region: list[Interval] = []
+        history = getattr(self._graph, "history", None)
+        if history is not None:
+            for r in range(old_model + 1, model_head + 1):
+                for spans in history.changed(r).values():
+                    region.extend(spans)
+        changes = self._log.changes()
+        for r in range(old_deployment + 1, deployment_head + 1):
+            for spans in changed(changes, r).values():
+                region.extend(spans)
+        return merge(region)
+
+    def refresh(self) -> None:
+        self.current_plan()
+
+    # -------------------- deployment changes --------------------
+    def deploy(self, deployment_: Deployment, *, start: int | None = None) -> None:
+        """Deploy from ``start`` (microseconds, ``NEG_INF`` for all history;
+        now if omitted) on. A view on a loop that asks for all history starts
+        at the earliest raw sample it depends on."""
+        start = now_micros() if start is None else start
+        text = deployment_.to_json()
+        with self._lock:
+            changes = self._log.changes()
+            head = max((c.r for c in changes), default=0)
+            proposed = changes + [DeploymentChange(head + 1, deployment_.name, text, start, POS_INF)]
+            try:
+                plan = self._planner.temporal_plan(proposed)
+            except AdmissionError as error:
+                if start != NEG_INF or "needs a finite start" not in str(error):
+                    raise
+                start = self._earliest_input(changes, deployment_, head)
+                proposed[-1] = DeploymentChange(head + 1, deployment_.name, text, start, POS_INF)
+                plan = self._planner.temporal_plan(proposed)
+            self._log.record([(deployment_.name, text, start, POS_INF)])
+            self._plan = (plan, self._model_head(), self._log.head())
+            self._publish_lineage(plan)
+
+    def _earliest_input(self, changes: list[DeploymentChange], deployment_: Deployment, head: int) -> int:
+        """The earliest raw sample a view depends on, directly or through other
+        views; now if there is none."""
+        now = now_micros()
+        probe = changes + [DeploymentChange(head + 1, deployment_.name, deployment_.to_json(), now, POS_INF)]
+        plan = self._planner.temporal_plan(probe)
+        writers: dict[str, list] = defaultdict(list)
+        for instance in plan.instances:
+            for port in instance.outputs.values():
+                writers[port.ref_uri].append(instance)
+        seen, raw = set(), set()
+        frontier = [i for i in plan.instances if i.view == deployment_.name]
+        while frontier:
+            instance = frontier.pop()
+            if id(instance) in seen:
+                continue
+            seen.add(id(instance))
+            refs = [d.ref_uri for row in instance.rows for ds in row.streams.values() for d in ds]
+            refs += [d.ref_uri for d in instance.named.values()]
+            for ref in refs:
+                if ref in writers:
+                    frontier.extend(writers[ref])
+                else:
+                    raw.add(ref)
+        with self._store._own_conn() as conn:
+            extent = _Reader(self._store, conn).extent(raw)
+        return extent[0] if extent is not None else now
 
     def remove(self, name: str, *, at: int | None = None, purge: bool = False) -> None:
-        """Remove a deployed app from ``at`` on (now if omitted); its outputs
-        before that stay. ``purge`` removes it over all time."""
-        if name not in self._log.current():
-            raise KeyError(name)
-        start = NEG_INF if purge else (now_micros() if at is None else at)
-        with self._plan_lock, self._store._lock, self._store._write_conn() as conn:
-            self._log.record([(name, None, start, POS_INF)], conn=conn)
-            self._execute(conn, """DELETE FROM binding_progress WHERE progress_key IN
-                (SELECT progress_key FROM materialization_lineage WHERE application_name=?)""", [name])
-            self._execute(conn, """DELETE FROM materialization_work WHERE progress_key IN
-                (SELECT progress_key FROM materialization_lineage WHERE application_name=?)""", [name])
-            self._revoke(name)
-            self._generations.pop(name, None)
-            self._graph_revision = -1
+        """Remove an app from ``at`` (now if omitted) on; its outputs before
+        that stay. ``purge`` removes it over all time, outputs included."""
+        with self._lock:
+            changes = self._log.changes()
+            known = {c.name for c in changes}
+            if name not in (known if purge else self._log.current()):
+                raise KeyError(name)
+            start = NEG_INF if purge else (now_micros() if at is None else at)
+            head = max((c.r for c in changes), default=0)
+            plan = self._planner.temporal_plan(changes + [DeploymentChange(head + 1, name, None, start, POS_INF)])
+            self._log.record([(name, None, start, POS_INF)])
+            self._plan = (plan, self._model_head(), self._log.head())
+            self._publish_lineage(plan)
 
-    def close(self) -> None:
-        with self._coordinator_lock:
-            self._scheduler.close()
+    def model_changed(self) -> None:
+        """Admit the model as recorded now, or undo every write since the last
+        admitted one and raise."""
+        with self._lock:
+            head = self._model_head()
+            if head == self._admitted_head:
+                return
+            try:
+                plan = self._planner.temporal_plan(self._log.changes())
+            except AdmissionError:
+                self._graph.undo_writes(self._admitted_head)
+                raise
+            except Exception as error:
+                # A query that fails is the view's problem, not the model's.
+                self._plan_error = f"{type(error).__name__}: {error}"
+                self._admitted_head = head
+                return
+            self._admitted_head = head
+            self._plan = (plan, head, self._log.head())
+            self._plan_error = None
+            self._publish_lineage(plan)
+
+    # -------------------- steps --------------------
+    def run_once(self) -> bool:
+        return self.engine.step() is not None
+
+    def step(self):
+        return self.engine.step()
 
     def configure_workers(self, count: int) -> None:
-        with self._coordinator_lock:
-            self._scheduler.close()
-            self._scheduler = Scheduler(self._revisions, max_workers=count)
+        """Transforms run inside the step, one after another."""
+
+    def close(self) -> None:
+        pass
 
     def failures(self) -> dict[str, str]:
-        errors = dict(self._plan_errors)
-        for binding in self._dag.bindings:
-            error = self._scheduler.errors.get(binding.signature)
-            if error:
-                errors[f"{binding.application_name}[{binding.signature[:8]}]"] = error
+        errors = {}
+        if self._plan_error:
+            errors["plan"] = self._plan_error
+        report = self.evaluator.last_report
+        if report is not None:
+            errors.update(report.errors)
         return errors
 
     def reprocess(self, name: str, start: datetime, end: datetime) -> dict[str, Any]:
-        window = TimeWindow(start, end)
-        with self._coordinator_lock, self._plan_lock:
-            if name not in {d.name for d in self._deployments()}:
-                raise KeyError(name)
-            dag, applications = self._plan_snapshot()
-            bindings = [b for b in dag.bindings if b.application_name == name]
-            for binding in bindings:
-                self._revisions.initialise(binding, applications[binding.signature].backfill)
-            self._revisions.request_reprocess(bindings, window)
-        return {"name": name, "status": "reprocessing", "bindings": len(bindings)}
+        """Recompute an app's outputs over ``[start, end]`` in the next step."""
+        if name not in self._log.current():
+            raise KeyError(name)
+        if end < start:
+            raise ValueError("reprocess end precedes its start")
+        with self._store._lock, self._store._write_conn() as conn:
+            execute(conn, "INSERT INTO view_pending VALUES (?, ?, ?)", [name, to_micros(start), to_micros(end) + 1])
+        return {"name": name, "status": "reprocessing"}
 
-    def check(self, deployment: Deployment, *, limit: int | None = None,
+    # -------------------- dry runs --------------------
+    def check(self, deployment_: Deployment, *, limit: int | None = None,
               search_path: str | None = None) -> dict[str, Any]:
-        """Run an app against real stored data and return what it computed.
+        """Run an app against stored data and return what it computed.
 
-        Nothing is written: the app is not registered, its derived streams are
-        not created, no progress is recorded, and the computed rows are
-        returned instead of stored. Each binding reads every retained input
-        row, so a check shows what the app would produce from a full backfill.
-
-        Every computed row is returned unless ``limit`` keeps only the first
-        few of each output. ``search_path`` is a directory the server looks in
-        for the app's module, so a file that is not otherwise importable there
-        can still be checked.
+        Nothing is written: the app is not deployed, no derived stream is
+        created and no frontier moves. The app is planned over all of time
+        next to the deployed apps (whose outputs its query may select), and
+        each of its instances runs over all the data it reads.
         """
-        if limit is not None and limit < 0: raise ValueError("limit must not be negative")
-        # Compile against the live graph without persisting the deployment or
-        # publishing lineage, so a check cannot disturb what is deployed.
-        revision = int(self._graph.graph_status().get("published_version", 0))
-        dag, applications = self._planner.compile((deployment,), revision, search_path=search_path)
-        bindings = []
-        for binding in dag.bindings:
-            entry = check_entry(binding)
-            bindings.append(entry)
-            batch = self._revisions.preview_batch(binding)
-            if batch is None:
-                entry["error"] = "no stored data for these inputs"
-                continue
-            entry["read_window"] = [batch.context.read_window.start.isoformat(),
-                                    batch.context.read_window.end.isoformat()]
-            entry["input_rows"] = {alias: stream_set.collect().num_rows
-                                   for alias, stream_set in batch.inputs.items()}
-            builder = OutputBuilder(binding.outputs)
-            try:
-                applications[binding.signature].transform(batch.inputs, builder, batch.context)
-            except BaseException as error:
-                # A failing transform is the normal reason to run a check, so
-                # report it as a result rather than an unhandled error.
-                entry["error"] = f"{type(error).__name__}: {error}"
-                continue
-            entry["outputs"] = check_outputs(binding, batch.context, builder.values, limit)
-        return {"app": deployment.name, "graph_revision": revision, "bindings": bindings}
-
-    def _deployments(self) -> tuple[Deployment, ...]:
-        current = self._log.current()
-        return tuple(Deployment.from_json(current[name]) for name in sorted(current))
-
-    def refresh(self) -> None:
-        """Reconcile the plan with persisted deployments and the graph version.
-
-        Compile each deployment independently so an unavailable module or failed
-        query does not remove healthy apps. Validate the combined DAG before
-        installing it. SQL lineage records both output ownership and query
-        context, which lets restart detect repairs needed by membership changes.
-        """
-        with self._plan_lock:
-            revision = int(self._graph.graph_status().get("published_version", 0))
-            if revision == self._graph_revision: return
-            bindings, applications, self._plan_errors = [], {}, {}
-            for deployment in self._deployments():
+        if limit is not None and limit < 0:
+            raise ValueError("limit must not be negative")
+        changes = [c for c in self._log.changes() if c.name != deployment_.name]
+        head = max((c.r for c in self._log.changes()), default=0)
+        proposed = changes + [DeploymentChange(head + 1, deployment_.name, deployment_.to_json(), NEG_INF, POS_INF)]
+        plan = self._planner.temporal_plan(proposed, search_path=search_path)
+        entries = []
+        with self._store._own_conn() as conn:
+            reader = _DryReader(self._store, conn)
+            runner = _Runner(plan, reader, self._unit_converter, EvaluationReport())
+            for instance in (i for i in plan.instances if i.view == deployment_.name):
+                inputs: dict[str, list] = defaultdict(list)
+                for row in instance.rows:
+                    for alias, streams in row.streams.items():
+                        inputs[alias].extend({"ref_uri": d.ref_uri, "label": d.label, "unit": d.unit} for d in streams)
+                for name, d in instance.named.items():
+                    inputs[name].append({"ref_uri": d.ref_uri, "label": d.label, "unit": d.unit})
+                entry = {"inputs": dict(inputs),
+                         "row": dict(instance.rows[0].columns) if deployment_.grouping == "per_match" and instance.rows else None,
+                         "outputs": {}, "error": None}
+                entries.append(entry)
+                extent = runner.extent(instance)
+                if extent is None:
+                    entry["error"] = "no stored data for these inputs"
+                    continue
+                entry["read_window"] = [from_micros(max(extent[0], SAFE_LOW)).isoformat(),
+                                        from_micros(min(extent[1], SAFE_HIGH) - 1).isoformat()]
+                reader.captured.clear()
                 try:
-                    partial, loaded = self._planner.compile((deployment,), revision)
-                    # Signature covers code and policy; the context hash covers
-                    # the match row (or the whole table for an aggregate).
-                    # Either changing must invalidate old publications.
-                    generation = self._generations.setdefault(deployment.name, uuid4().hex)
-                    bindings.extend(replace(b, generation=f"{generation}:{b.signature}:{b.context_hash}") for b in partial.bindings)
-                    applications.update(loaded)
-                except Exception as error:
-                    self._plan_errors[deployment.name] = f"{type(error).__name__}: {error}"
-                    # Retain the last compiled plan for this deployment and
-                    # expose the failure instead of silently dropping its
-                    # bindings when a query or import temporarily fails.
-                    for binding in self._dag.bindings:
-                        if binding.application_name == deployment.name:
-                            bindings.append(binding)
-                            applications[binding.signature] = self._applications[binding.signature]
-            try:
-                dag = ApplicationGraph(bindings)
-            except ValueError as error:
-                self._plan_errors["graph"] = str(error)
-                return
-            with self._store._own_conn() as conn:
-                prior_outputs = dict(self._execute(conn, "SELECT output_ref_uri, progress_key FROM materialization_lineage").fetchall())
-                prior_context = dict(self._execute(conn, "SELECT progress_key, context_hash FROM materialization_lineage").fetchall())
-            # A stable named output may now have different inputs; a binding's
-            # own match row may have changed while its inputs did not. Both can
-            # alter historical results. Compare with persisted lineage rather
-            # than the old in-memory plan so restart detects this too. A change
-            # to other rows of the fleet leaves a per-match binding alone.
-            repair = [b for b in dag.bindings if
-                      any(p.ref_uri in prior_outputs and prior_outputs[p.ref_uri] != b.progress_key for p in b.outputs.values())
-                      or (prior_context.get(b.progress_key) and prior_context[b.progress_key] != b.context_hash)]
-            # Materialization-owned provenance is a complete projection of the
-            # current DAG. Publish it only when the projection actually changed:
-            # lineage writes advance the graph's published_version, so publishing
-            # on every refresh would self-trigger a perpetual recompile loop.
-            signatures = frozenset(binding.signature for binding in dag.bindings)
-            if signatures != self._lineage_signatures:
-                self._publish_graph_lineage(dag.bindings)
-                self._lineage_signatures = signatures
-            # Schedule repair before recording the new context fingerprint.
-            # A crash can repeat a repair, but cannot forget that it is needed.
-            with self._store._lock:
-                self._revisions.active_bindings = {b.progress_key: b.generation for b in dag.bindings}
-            for binding in repair:
-                window = self._revisions.retained_window(binding)
-                if window is None:
+                    for window in runner.clamp(instance, list(instance.present), extent):
+                        runner.compute(instance, window)
+                except BaseException as error:
+                    entry["error"] = f"{type(error).__name__}: {error}"
                     continue
-                self._revisions.initialise(binding, applications[binding.signature].backfill)
-                with self._store._lock, self._store._write_conn() as conn:
-                    keys = {binding.progress_key} | {prior_outputs[p.ref_uri] for p in binding.outputs.values() if p.ref_uri in prior_outputs}
-                    for key in keys:
-                        self._execute(conn, "DELETE FROM materialization_work WHERE progress_key=?", [key])
-                self._revisions.request_reprocess([binding], window)
-            with self._store._lock, self._store._write_conn() as conn:
-                self._revisions.active_bindings = {b.progress_key: b.generation for b in dag.bindings}
-                failed = list(self._plan_errors)
-                if failed:
-                    marks = ','.join('?' for _ in failed)
-                    self._execute(conn, f"DELETE FROM materialization_lineage WHERE application_name NOT IN ({marks})", failed)
-                else:
-                    self._execute(conn, "DELETE FROM materialization_lineage")
-                for binding in dag.bindings:
-                    rows = [(binding.signature, binding.progress_key, binding.application_name, binding.executable_digest,
-                        alias, stream.ref_uri, output_name, output_ref, binding.context_hash)
-                        for alias, streams in binding.inputs.items() for stream in streams
-                        for output_name, output in binding.outputs.items()
-                        for output_ref in (output.ref_uri,)]
-                    if not rows:
-                        # Empty aggregates retain output ownership across restart.
-                        # Empty alias/ref fields represent no input edge in SQL.
-                        rows = [(binding.signature, binding.progress_key, binding.application_name,
-                                 binding.executable_digest, "", "", name, port.ref_uri,
-                                 binding.context_hash)
-                                for name, port in binding.outputs.items()]
-                    if getattr(self._store, "materialization_backend", None) == "postgres":
-                        with conn.cursor() as cur:
-                            cur.executemany("INSERT INTO materialization_lineage VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING", rows)
-                    else:
-                        conn.executemany("INSERT OR REPLACE INTO materialization_lineage VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
-            self._dag, self._applications, self._graph_revision = dag, applications, revision
+                entry["input_rows"] = dict(reader.rows_read)
+                entry["outputs"] = _check_outputs(instance, reader.captured, limit)
+        return {"app": deployment_.name, "graph_revision": self._model_head(), "bindings": entries}
 
-    def _plan_snapshot(self) -> tuple[ApplicationGraph, dict[str, Any]]:
-        """Return a coherent plan without serializing transformation execution."""
-        with self._plan_lock:
-            self.refresh()
-            return self._dag, dict(self._applications)
-
-
-    def _publish_graph_lineage(self, bindings) -> None:
-        if not hasattr(self._graph, "insert_graph"):
-            return
-        # Replace the dedicated materialization graph as a whole. Incremental
-        # updates would leave provenance behind for removed bindings.
-        graph = Graph()
-        for binding in bindings:
-            binding_uri = URIRef(f"urn:acquirium:binding:{binding.signature}")
-            for alias, inputs in binding.inputs.items():
-                for item in inputs:
-                    graph.add((binding_uri, IS_CALCULATED_FROM, URIRef(item.ref_uri)))
-            for name, output in binding.outputs.items():
-                graph.add((binding_uri, PRODUCES, URIRef(output.ref_uri)))
-                graph += output_triples(binding.application_name, binding.inputs, name, output)
-        self._graph.insert_graph(
-            graph,
-            format="turtle",
-            replace=True,
-            graph_uri=URIRef(ACQUIRIUM_GRAPH_URI),
-        )
-
-    def run_once(self) -> bool:
-        if not self._coordinator_lock.acquire(blocking=False):
-            return False
-        try:
-            return self._run_once()
-        finally:
-            self._coordinator_lock.release()
-
-    def _run_once(self) -> bool:
-        dag, applications = self._plan_snapshot()
-        ran = False
-        blocked = set()
-        # Explicit repairs can be pending even when their input frontier is
-        # current. Readiness must account for durable work as well as revisions.
-        pending_work = self._revisions.pending_keys()
-        # A completed wave publishes before a dependent wave reads its next
-        # revision, preserving DAG semantics across this scheduler tick.
-        index, index_floor = None, 0
-        for wave in dag.layers():
-            blocked.update(target for source, target, _ in dag.edges if source in blocked)
-            now = monotonic()
-            current, progress = self._revisions.progress_snapshot()
-            for binding in wave:
-                if progress.get(binding.progress_key) is None:
-                    progress[binding.progress_key] = self._revisions.initialise(
-                        binding, applications[binding.signature].backfill)
-            # One indexed scan tells which streams changed since the oldest
-            # frontier in this wave. A binding whose inputs are absent from it
-            # has nothing to read: its frontier moves in one batched update
-            # instead of a snapshot read and a write per binding. The index
-            # is rebuilt after a wave publishes, so a dependent wave sees it.
-            floor = min((progress[b.progress_key] for b in wave), default=current)
-            if index is None or floor < index_floor or index[0] < current:
-                index, index_floor = self._revisions.change_index(floor), floor
-            target, changed, resets = index
-            ready, previous, idle = [], {}, []
-            for binding in wave:
-                if binding.signature in blocked:
-                    continue
-                app = applications[binding.signature]
-                consumed = progress[binding.progress_key]
-                refs = [d.ref_uri for values in binding.inputs.values() for d in values]
-                touched = any(changed.get(ref, 0) > consumed or resets.get(ref, 0) > consumed for ref in refs)
-                if not touched and binding.progress_key not in pending_work:
-                    if consumed < target:
-                        idle.append((binding, consumed, target))
-                    self._pending_since.pop(binding.signature, None)
-                    continue
-                first = self._pending_since.setdefault(binding.signature, now)
-                # Delay from the first pending change, then enforce the rate cap.
-                min_interval = _duration(app.min_interval) if app.min_interval is not None else None
-                if min_interval is not None and now - self._last_run.get(binding.signature, 0) < min_interval.total_seconds():
-                    continue
-                if now - first < _duration(app.batch_delay).total_seconds():
-                    continue
-                ready.append(binding)
-                previous[binding.signature] = consumed
-            self._revisions.advance_idle(idle)
-            if not ready:
-                blocked.update(b.signature for b in wave if b.signature in self._scheduler.errors)
-                continue
-            successes = {b.signature: self._scheduler.last_success.get(b.signature) for b in ready}
-            published = self._scheduler.run_layer(ready, applications)
-            ran = published or ran
-            if published:
-                index = None
-            blocked.update(b.signature for b in ready if b.signature in self._scheduler.errors)
-            _, progressed = self._revisions.progress_snapshot()
-            for binding in ready:
-                # A frontier advance alone is not a successful calculation:
-                # skipping unrelated writes must not start the rate-limit timer.
-                # A committed chunk can also succeed without advancing its
-                # frontier, so use the scheduler's publication record here.
-                executed = successes[binding.signature] != self._scheduler.last_success.get(binding.signature)
-                if executed:
-                    self._last_run[binding.signature] = now
-                if executed or progressed.get(binding.progress_key, 0) > previous[binding.signature]:
-                    self._pending_since.pop(binding.signature, None)
-        return ran
+    # -------------------- description --------------------
+    def _deployed(self) -> dict[str, Deployment]:
+        current = self._log.current()
+        return {name: Deployment.from_json(text) for name, text in sorted(current.items())}
 
     def dag(self) -> dict[str, Any]:
-        """Combine durable progress and process-local diagnostics for display.
-
-        These reads are observational, not one transactional scheduling snapshot.
-        A global revision gap may come from unrelated streams; "pending" does
-        not prove that this binding has input changes requiring a transform.
-        """
-        dag, applications = self._plan_snapshot()
-        return self._dag_status(dag, applications)
+        """The current plan as nodes (instances) and edges (stream reads)."""
+        prepared = self.current_plan()
+        plan = prepared[0] if prepared else None
+        instances = plan.instances if plan else ()
+        writer: dict[str, str] = {}
+        for instance in instances:
+            for port in instance.outputs.values():
+                writer[port.ref_uri] = instance.id
+        report = self.evaluator.last_report
+        errors = report.errors if report else {}
+        nodes, edges = [], []
+        for instance in instances:
+            node = instance.id
+            inputs: dict[str, list[str]] = defaultdict(list)
+            for row in instance.rows:
+                for alias, streams in row.streams.items():
+                    inputs[alias].extend(d.ref_uri for d in streams)
+            for name, d in instance.named.items():
+                inputs[name].append(d.ref_uri)
+            error = errors.get(instance.id)
+            nodes.append({"binding_signature": node, "application_name": instance.view,
+                          "inputs": dict(inputs), "outputs": {p: o.ref_uri for p, o in instance.outputs.items()},
+                          "present": [[_render(s), _render(e)] for s, e in instance.present],
+                          "status": "failed" if error else "idle", "error": error})
+            for refs in inputs.values():
+                for ref in refs:
+                    if ref in writer:
+                        edges.append({"source": writer[ref], "target": node, "ref_uri": ref})
+        return {"graph_revision": self._model_head(), "deployment_revision": self._log.head(),
+                "nodes": nodes, "edges": edges, "errors": self.failures(),
+                "inbox": self.engine.pending(), "last_step": self.engine.last_step(),
+                "loops": sorted(plan.schedule.loops) if plan else []}
 
     def list_apps(self) -> list[dict[str, Any]]:
-        """Summarize every registered deployment without running or replanning it."""
-        return self._inspect_deployments()
+        return self._inspect()
 
     def inspect_app(self, name: str) -> dict[str, Any]:
-        """Describe a deployment and its latest compiled bindings, without writes."""
-        return self._inspect_deployments(name)[0]
+        return self._inspect(name)[0]
 
-    def _inspect_deployments(self, name: str | None = None) -> list[dict[str, Any]]:
-        with self._plan_lock:
-            deployments = [d for d in self._deployments() if name is None or d.name == name]
-            if name is not None and not deployments:
-                raise KeyError(name)
-            snapshot = self._dag_status(self._dag, self._applications)
-            plan_current = self._graph_revision == int(self._graph.graph_status().get("published_version", 0))
-            by_app: dict[str, list[dict[str, Any]]] = {}
-            for node in snapshot["nodes"]:
-                by_app.setdefault(node["application_name"], []).append(node)
-            results = []
-            for deployment in deployments:
-                bindings = by_app.get(deployment.name, [])
-                counts: dict[str, int] = {}
-                for binding in bindings:
-                    state = binding["status"]
-                    counts[state] = counts.get(state, 0) + 1
-                error = snapshot["errors"].get(deployment.name) or snapshot["errors"].get("graph")
-                status = ("failed" if error else "planning" if not plan_current else
-                          next((s for s in ("failed", "running", "reprocessing", "waiting", "pending", "idle")
-                                if s in counts), "no_matches"))
-                result = {"name": deployment.name, "entrypoint": deployment.entrypoint,
-                          "grouping": deployment.grouping, "status": status,
-                          "binding_count": len(bindings), "binding_statuses": counts,
-                          "graph_revision": snapshot["graph_revision"], "plan_current": plan_current,
-                          "error": error}
-                if name is not None:
-                    result["definition"] = json.loads(deployment.to_json())
-                    result["output_schemas"] = {
-                        key: {"time": {"type": "timestamp[us, tz=UTC]", "nullable": False},
-                              "value": {"type": "float64" if spec.value_kind == "numeric" else "string",
-                                        "nullable": False}}
-                        for key, spec in deployment.outputs.items()}
-                    result["bindings"] = bindings
-                results.append(result)
-            return results
+    def _inspect(self, name: str | None = None) -> list[dict[str, Any]]:
+        deployed = self._deployed()
+        if name is not None and name not in deployed:
+            raise KeyError(name)
+        snapshot = self.dag()
+        by_app: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for node in snapshot["nodes"]:
+            by_app[node["application_name"]].append(node)
+        changes = self._log.changes()
+        results = []
+        for app_name, definition in deployed.items():
+            if name is not None and app_name != name:
+                continue
+            bindings = by_app.get(app_name, [])
+            counts: dict[str, int] = defaultdict(int)
+            for binding in bindings:
+                counts[binding["status"]] += 1
+            error = self._plan_error or next(
+                (e for k, e in snapshot["errors"].items() if k.startswith(f"{app_name}:")), None)
+            status = "failed" if error else ("idle" if bindings else "no_matches")
+            result = {"name": app_name, "entrypoint": definition.entrypoint, "grouping": definition.grouping,
+                      "status": status, "binding_count": len(bindings), "binding_statuses": dict(counts),
+                      "graph_revision": snapshot["graph_revision"], "plan_current": self._plan_error is None,
+                      "error": error,
+                      "deployed": [[_render(s), _render(e)] for s, e, _ in deployment(changes, app_name)]}
+            if name is not None:
+                result["definition"] = json.loads(definition.to_json())
+                result["output_schemas"] = {
+                    key: {"time": {"type": "timestamp[us, tz=UTC]", "nullable": False},
+                          "value": {"type": "float64" if spec.value_kind == "numeric" else "string", "nullable": False}}
+                    for key, spec in definition.outputs.items()}
+                result["bindings"] = bindings
+            results.append(result)
+        return results
 
-    def _dag_status(self, dag: ApplicationGraph, applications: dict[str, Any]) -> dict[str, Any]:
-        """Read progress for a captured plan; do not advance the coordinator."""
-        current = self._revisions.current_revision()
-        pending_work = self._revisions.pending_keys()
-        with self._store._own_conn() as conn:
-            progress = dict(self._execute(conn, "SELECT progress_key, consumed_revision FROM binding_progress").fetchall())
-        blocked = set(self._scheduler.errors)
-        for wave in dag.layers():
-            blocked.update(target for source, target, _ in dag.edges if source in blocked)
-        nodes = []
-        for binding in dag.bindings:
-            consumed = progress.get(binding.progress_key)
-            nodes.append({"binding_signature": binding.signature, "application_name": binding.application_name,
-                "inputs": {key: [item.ref_uri for item in value] for key,value in binding.inputs.items()},
-                "outputs": {key: output.ref_uri for key, output in binding.outputs.items()},
-                "lookback": "all" if binding.lookback is None else str(binding.lookback),
-                "backfill": bool(applications[binding.signature].backfill),
-                "consumed_revision": consumed, "current_revision": current,
-                "status": ("running" if binding.signature in self._scheduler.running else
-                           "failed" if binding.signature in self._scheduler.errors else
-                           "waiting" if binding.signature in blocked else
-                           "reprocessing" if binding.progress_key in pending_work else
-                           "pending" if consumed is None or consumed < current else "idle"),
-                "last_success": self._scheduler.last_success.get(binding.signature),
-                "error": self._scheduler.errors.get(binding.signature)})
-        return {"graph_revision": self._graph_revision, "nodes": nodes, "errors": dict(self._plan_errors),
-                "edges": [{"source": source, "target": target, "ref_uri": ref} for source,target,ref in dag.edges]}
+    # -------------------- lineage for the live graph --------------------
+    def _publish_lineage(self, plan: TemporalPlan) -> None:
+        """Publish the outputs present now into Acquirium's own graph, where
+        live queries find them. Planning never reads this graph."""
+        if not hasattr(self._graph, "insert_graph"):
+            return
+        now = now_micros()
+        graph = Graph()
+        for instance in plan.instances:
+            if not any(s <= now < e for s, e in instance.present):
+                continue
+            binding_uri = URIRef(f"urn:acquirium:binding:{instance.id.replace(':', '/').replace('*', 'all')}")
+            inputs: dict[str, list] = defaultdict(list)
+            for row in instance.rows:
+                for alias, streams in row.streams.items():
+                    inputs[alias].extend(streams)
+            for name, d in instance.named.items():
+                inputs[name].append(d)
+            for streams in inputs.values():
+                for d in streams:
+                    graph.add((binding_uri, IS_CALCULATED_FROM, URIRef(d.ref_uri)))
+            for port_name, port in instance.outputs.items():
+                graph.add((binding_uri, PRODUCES, URIRef(port.ref_uri)))
+                graph += output_triples(instance.view, dict(inputs), port_name, port)
+        digest = hash(frozenset(graph))
+        if digest == self._published_lineage:
+            return
+        self._graph.insert_graph(graph, format="turtle", replace=True, graph_uri=URIRef(ACQUIRIUM_GRAPH_URI))
+        self._published_lineage = digest
+
+
+def _render(value: int) -> str:
+    rendered = from_micros(value)
+    return rendered if isinstance(rendered, str) else rendered.isoformat()
+
+
+class _DryReader(_Reader):
+    """A reader that captures outputs instead of writing them."""
+
+    def __init__(self, store: Any, conn: Any) -> None:
+        super().__init__(store, conn)
+        self.captured: dict[str, dict[int, Any]] = defaultdict(dict)
+        self.rows_read: dict[str, int] = defaultdict(int)
+
+    def replace(self, ref, window, values, *, port, application):
+        self.captured[ref].update(values)
+        return []
+
+
+def _check_outputs(instance, captured: dict[str, dict[int, Any]], limit: int | None) -> dict[str, Any]:
+    outputs = {}
+    for name, port in instance.outputs.items():
+        values = sorted(captured.get(port.ref_uri, {}).items())
+        shown = values if limit is None else values[:limit]
+        outputs[name] = {"stream": port.ref_uri, "ref_name": port.ref_name, "value_kind": port.spec.value_kind,
+                         "rows": len(values), "assigned": port.ref_uri in captured,
+                         "truncated": len(shown) < len(values),
+                         "values": [{"time": from_micros(t).isoformat(), "value": v} for t, v in shown]}
+    return outputs

@@ -9,7 +9,7 @@ dry runs can use the same compiler without activating the result.
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import timedelta
 from hashlib import sha256
 import json
@@ -21,7 +21,7 @@ from acquirium.Client.explore.core import Query
 from acquirium.Client.explore.expr import AttrProxy
 from acquirium.Materialization.models import (
     App, ApplicationGraph, Binding, OutputPort, OutputSpec, StreamDescriptor,
-    _duration, parse_lookback,
+    _duration, parse_lookback, parse_window,
 )
 from acquirium.Materialization.worker import load_entrypoint
 from acquirium.Materialization.definitions import source_digest
@@ -204,13 +204,15 @@ def _validated_outputs(name: str, declared: Mapping[str, Any]) -> dict[str, Outp
 
 @dataclass(frozen=True)
 class Deployment:
-    """The durable record of one deployed app: identity, outputs, scheduling.
+    """The durable record of one deployed app: identity, inputs, outputs.
 
     The wire format uses whole microseconds and ``"all"`` for unbounded
     lookback; Python instances use timedeltas and None respectively. Keeping
     conversion at this boundary lets scheduling use one duration representation.
     Entrypoint and digest identify code to import, not serialized App instances.
     Parameters are persisted so the planner can reconstruct those instances.
+    ``windows`` maps an input to its ``(start, end)`` offsets (start None: all
+    history); other inputs use ``lookback`` and ``lookahead``.
     """
     name: str
     entrypoint: str
@@ -218,15 +220,14 @@ class Deployment:
     outputs: Mapping[str, OutputSpec]
     lookback: timedelta | None = timedelta()
     lookahead: timedelta = timedelta()
-    backfill: bool = False
-    batch_delay: timedelta = timedelta()
-    min_interval: timedelta | None = None
     parameters: Mapping[str, Any] = field(default_factory=dict)
     every: timedelta | None = None
     grouping: str | None = None
+    windows: Mapping[str, tuple[timedelta | None, timedelta]] = field(default_factory=dict)
+    named_inputs: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self):
-        for value in (self.lookback, self.lookahead, self.batch_delay, self.min_interval):
+        for value in (self.lookback, self.lookahead):
             if value is not None:
                 _duration(value)
         if self.grouping not in ("per_match", "all_matches"):
@@ -236,6 +237,18 @@ class Deployment:
             )
         if self.every is not None and self.every <= timedelta():
             raise ValueError("every must be positive")
+        for name, stream in self.named_inputs.items():
+            if not isinstance(name, str) or not name or not isinstance(stream, str) or not stream:
+                raise ValueError("named inputs map non-empty input names to stream names")
+
+    def window(self, name: str) -> tuple[int, int]:
+        """``(lookback, lookahead)`` of one input in microseconds; a lookback
+        of ``POS_INF`` reads all history and a negative lookahead is a delay."""
+        micros = lambda value: int(value.total_seconds() * 1_000_000)
+        if name in self.windows:
+            start, end = self.windows[name]
+            return (POS_INF if start is None else -micros(start)), micros(end)
+        return (POS_INF if self.lookback is None else micros(self.lookback)), micros(self.lookahead)
 
     @classmethod
     def from_class(cls, target: type[App], *, parameters: Mapping[str, Any] | None = None) -> "Deployment":
@@ -254,37 +267,44 @@ class Deployment:
         app = target(**params)
         name = target.name or target.__name__
         outputs = _validated_outputs(name, app.outputs)
+        windows = {key: parse_window(value) for key, value in dict(app.windows).items()}
         return cls(name, f"{target.__module__}:{target.__qualname__}", source_digest(target),
-                   outputs, parse_lookback(app.lookback), _duration(app.lookahead), bool(app.backfill),
-                   _duration(app.batch_delay),
-                   _duration(app.min_interval) if app.min_interval is not None else None,
-                   params, _duration(app.every) if app.every is not None else None, app.grouping)
+                   outputs, parse_lookback(app.lookback), _duration(app.lookahead),
+                   params, _duration(app.every) if app.every is not None else None, app.grouping,
+                   windows, dict(app.named_inputs))
 
     def to_json(self) -> str:
         micros = lambda value: None if value is None else int(value.total_seconds() * 1_000_000)
         return _json({"name": self.name, "entrypoint": self.entrypoint,
             "executable_digest": self.executable_digest, "outputs": {k: asdict(v) for k,v in self.outputs.items()},
             "lookback": "all" if self.lookback is None else micros(self.lookback),
-            "lookahead": micros(self.lookahead), "backfill": self.backfill,
-            "batch_delay": micros(self.batch_delay),
-            "min_interval": micros(self.min_interval), "parameters": dict(self.parameters),
-            "every": micros(self.every), "grouping": self.grouping})
+            "lookahead": micros(self.lookahead), "parameters": dict(self.parameters),
+            "every": micros(self.every), "grouping": self.grouping,
+            "windows": {k: ["all" if start is None else micros(start), micros(end)]
+                        for k, (start, end) in sorted(self.windows.items())},
+            "named_inputs": dict(sorted(self.named_inputs.items()))})
 
     @classmethod
     def from_json(cls, text: str) -> "Deployment":
         """Decode the deployment wire format, including its required grouping."""
         data = json.loads(text)
+        # Definitions recorded before inputs had windows carried scheduling
+        # knobs that no longer exist; they never changed what was computed.
+        for legacy in ("backfill", "batch_delay", "min_interval"):
+            data.pop(legacy, None)
         unknown = data.keys() - {item.name for item in fields(cls)}
         if unknown:
             raise ValueError(f"unknown deployment fields: {', '.join(sorted(unknown))}")
         duration = lambda value: None if value is None else timedelta(microseconds=int(value))
         lookback = None if data["lookback"] == "all" else duration(data["lookback"])
+        windows = {key: (None if start == "all" else duration(start), duration(end))
+                   for key, (start, end) in (data.get("windows") or {}).items()}
         return cls(data["name"], data["entrypoint"], data["executable_digest"],
             {key: OutputSpec(**value) for key, value in data["outputs"].items()},
-            lookback, duration(data.get("lookahead")) or timedelta(), bool(data.get("backfill")),
-            duration(data.get("batch_delay", 0)) or timedelta(),
-            duration(data.get("min_interval")), dict(data.get("parameters") or {}),
-            duration(data.get("every")), data.get("grouping"))
+            lookback, duration(data.get("lookahead")) or timedelta(),
+            dict(data.get("parameters") or {}),
+            duration(data.get("every")), data.get("grouping"), windows,
+            dict(data.get("named_inputs") or {}))
 
 
 class BindingPlanner:
@@ -303,9 +323,7 @@ class BindingPlanner:
         target = load_entrypoint(deployment.entrypoint, deployment.executable_digest, search_path)
         if not isinstance(target, type) or not issubclass(target, App):
             raise TypeError(f"{deployment.entrypoint!r} is not an App")
-        app = target(**deployment.parameters)
-        app.backfill, app.batch_delay, app.min_interval = deployment.backfill, deployment.batch_delay, deployment.min_interval
-        return app
+        return target(**deployment.parameters)
 
     def _client(self, graph: object) -> _QueryFacade:
         return _QueryFacade(_GraphQueryClient(graph, self.query_resolver, self.record_resolver))
@@ -344,6 +362,7 @@ class BindingPlanner:
             for text, deployed in sorted(spans.items()):
                 definitions.append(_PlannedDefinition(name, text, Deployment.from_json(text), tuple(merge(deployed))))
         apps = {d.key: self._load(d.deployment, search_path) for d in definitions}
+        definitions = [replace(d, queried=type(apps[d.key]).build_query is not App.build_query) for d in definitions]
         named = [(d.name, d.deployed, output_triples(d.name, {}, port, _port(d, port, {})))
                  for d in definitions for port, spec in d.deployment.outputs.items() if spec.stream_name is not None]
         cache: dict[tuple, tuple[_MatchRow, ...]] = {}
@@ -364,7 +383,8 @@ class BindingPlanner:
                     view = _VersionGraph(self.graph, version, graph)
                     key = (definition.key, view.key)
                     if key not in cache:
-                        cache[key] = _query_rows(apps[definition.key].build_query(self._client(view)))
+                        query = _build_query(apps[definition.key], self._client(view))
+                        cache[key] = () if query is None else _query_rows(query)
                     found.append((start, end, cache[key]))
                 current[definition.key] = _row_lives(found)
             if current == rows:
@@ -374,7 +394,8 @@ class BindingPlanner:
         else:
             raise AdmissionError("queries select each other's generated outputs without end; "
                                  "read one of them through a named output instead")
-        temporal = tuple(_temporal_definition(d, rows[d.key]) for d in definitions)
+        named_streams = _named_streams(definitions)
+        temporal = tuple(_temporal_definition(d, rows[d.key], named_streams) for d in definitions)
         graph = view_graph(temporal)
         starts: dict[str, int] = {}
         for d in definitions:
@@ -383,7 +404,9 @@ class BindingPlanner:
         conflicts = writer_conflicts(temporal)
         if conflicts:
             raise AdmissionError("; ".join(str(conflict) for conflict in conflicts))
-        return TemporalPlan(temporal, {d.text: d.deployment for d in definitions}, rows, schedule)
+        instances = tuple(item for d in definitions for item in _instances(d, rows[d.key], named_streams))
+        return TemporalPlan(temporal, {d.text: d.deployment for d in definitions}, rows, schedule,
+                            instances, {d.key: apps[d.key] for d in definitions})
 
     def compile(self, deployments: Iterable[Deployment], graph_revision: int,
                 *, search_path: str | None = None) -> tuple[ApplicationGraph, dict[str, App]]:
@@ -463,6 +486,7 @@ class _PlannedDefinition:
     text: str
     deployment: Deployment
     deployed: tuple[Interval, ...]
+    queried: bool = True
 
     @property
     def key(self) -> tuple[str, str]:
@@ -475,12 +499,58 @@ class TemporalPlan:
 
     ``definitions`` are the admission-level descriptions (instances, reads,
     writes); ``deployments`` maps definition texts to their deployments;
-    ``rows`` holds each definition's query rows with their lives.
+    ``rows`` holds each definition's query rows with their lives;
+    ``instances`` are what a step evaluates and ``apps`` the loaded code per
+    definition.
     """
     definitions: tuple[ViewDefinition, ...]
     deployments: Mapping[str, Deployment]
     rows: Mapping[tuple[str, str], list[tuple[_MatchRow, list[Interval]]]]
     schedule: Schedule
+    instances: tuple["PlannedInstance", ...] = ()
+    apps: Mapping[tuple[str, str], App] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PlannedRow:
+    """One query row of an instance: its columns, streams and life."""
+    columns: Mapping[str, str | None]
+    streams: Mapping[str, tuple[StreamDescriptor, ...]]
+    life: tuple[Interval, ...]
+
+
+@dataclass(frozen=True)
+class PlannedInstance:
+    """What evaluating one instance needs.
+
+    ``key`` is the row key of a per-match instance and ``"*"`` otherwise.
+    ``named`` holds the resolved named inputs; ``match_life`` is the life of a
+    per-match instance's row, which also clips its named inputs.
+    """
+    view: str
+    text: str
+    key: str
+    present: tuple[Interval, ...]
+    rows: tuple[PlannedRow, ...]
+    named: Mapping[str, StreamDescriptor]
+    outputs: Mapping[str, OutputPort]
+    match_life: tuple[Interval, ...] | None = None
+
+    @property
+    def definition(self) -> tuple[str, str]:
+        return (self.view, self.text)
+
+    @property
+    def id(self) -> str:
+        """A short, stable name: the view and a digest of the row key."""
+        return f"{self.view}:{'*' if self.key == '*' else sha256(self.key.encode()).hexdigest()[:12]}"
+
+
+def _build_query(app: App, facade: _QueryFacade) -> Any:
+    """The app's query, or None for an app that reads only named inputs."""
+    if type(app).build_query is App.build_query:
+        return None
+    return app.build_query(facade)
 
 
 def _refine(pieces: Iterable[tuple[int, int]], spans: Iterable[Interval]) -> list[tuple[int, int]]:
@@ -535,13 +605,41 @@ def _generated(definition: _PlannedDefinition, rows: list[tuple[_MatchRow, list[
             yield definition.name, definition.deployed, output_triples(definition.name, {}, port, _port(definition, port, {}))
 
 
-def _temporal_definition(definition: _PlannedDefinition, rows) -> ViewDefinition:
+def _named_streams(definitions: Iterable[_PlannedDefinition]) -> dict[str, set[str]]:
+    """Each named output's stream name, with the reference URIs it has: one
+    per view that declares it, over every definition."""
+    found: dict[str, set[str]] = defaultdict(set)
+    for definition in definitions:
+        for port, spec in definition.deployment.outputs.items():
+            if spec.stream_name is not None:
+                found[spec.stream_name].add(_port(definition, port, {}).ref_uri)
+    return found
+
+
+def _resolve_named(definition: _PlannedDefinition, named_streams: Mapping[str, set[str]]) -> dict[str, str]:
+    """Named inputs as reference URIs. A URI is a raw (or derived) stream as
+    is; a name is a view's named output. A name no deployed view declares
+    reads nothing until one does."""
+    resolved = {}
+    for name, stream in definition.deployment.named_inputs.items():
+        if looks_like_uri(stream):
+            resolved[name] = stream
+            continue
+        refs = named_streams.get(stream, set())
+        if len(refs) > 1:
+            raise AdmissionError(f"view {definition.name!r}: named input {name!r} = {stream!r} is the "
+                                 "named output of more than one view")
+        if refs:
+            resolved[name] = next(iter(refs))
+    return resolved
+
+
+def _temporal_definition(definition: _PlannedDefinition, rows, named_streams) -> ViewDefinition:
     spec = definition.deployment
     generated = frozenset(port for port, item in spec.outputs.items() if item.stream_name is None)
     per_match = spec.grouping == "per_match"
     single = {port: _port(definition, port, {}).ref_uri for port in spec.outputs
               if port not in generated or not per_match}
-    lookahead = int(spec.lookahead.total_seconds() * 1_000_000)
     temporal_rows = []
     aliases = set()
     for row, life in rows:
@@ -549,6 +647,31 @@ def _temporal_definition(definition: _PlannedDefinition, rows) -> ViewDefinition
         aliases.update(streams)
         outputs = {port: _port(definition, port, _descriptors(row)).ref_uri for port in generated} if per_match else {}
         temporal_rows.append(Row(_row_key(row), streams, tuple(life), outputs))
-    return ViewDefinition(definition.name, definition.text, spec.grouping, definition.deployed,
-                          tuple(temporal_rows), lookahead={alias: lookahead for alias in aliases},
+    named = _resolve_named(definition, named_streams)
+    # A bucketed output at a bucket's start reads to the bucket's end.
+    bucket = int(spec.every.total_seconds() * 1_000_000) if spec.every is not None else 0
+    lookahead = {alias: spec.window(alias)[1] + bucket for alias in aliases | set(named)}
+    return ViewDefinition(definition.name, definition.text, spec.grouping if definition.queried else None,
+                          definition.deployed,
+                          tuple(temporal_rows), named_inputs=named, lookahead=lookahead,
                           outputs=single, generated=generated)
+
+
+def _instances(definition: _PlannedDefinition, rows, named_streams) -> list[PlannedInstance]:
+    spec = definition.deployment
+    named = {name: StreamDescriptor(ref_uri=ref) for name, ref in _resolve_named(definition, named_streams).items()}
+    planned = [(row, PlannedRow(dict(row.columns), _descriptors(row), tuple(life))) for row, life in rows]
+    if spec.grouping == "per_match" and definition.queried:
+        out = []
+        for row, item in planned:
+            present = tuple(intersect(item.life, definition.deployed))
+            if present:
+                inputs = _descriptors(row)
+                ports = {port: _port(definition, port, inputs if spec.outputs[port].stream_name is None else {})
+                         for port in spec.outputs}
+                out.append(PlannedInstance(definition.name, definition.text, _row_key(row), present,
+                                           (item,), named, ports, item.life))
+        return out
+    ports = {port: _port(definition, port, {}) for port in spec.outputs}
+    return [PlannedInstance(definition.name, definition.text, "*", definition.deployed,
+                            tuple(item for _, item in planned), named, ports)]

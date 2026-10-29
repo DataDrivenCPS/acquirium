@@ -327,6 +327,21 @@ class ModelHistory:
             execute(conn, "DELETE FROM model_triples WHERE recorded_from = ? AND recorded_to = ?", [r, r])
         return r
 
+    def undo(self, r: int) -> list[str]:
+        """Remove the last write, ``r``, as if it had never been recorded, and
+        return the graphs it wrote. Used when a write is rejected after it was
+        recorded; only the newest write can be undone."""
+        with self.store._lock, self.store._write_conn() as conn:
+            head = int(execute(conn, "SELECT COALESCE(MAX(r), 0) FROM model_writes").fetchone()[0])
+            if r != head or r == 0:
+                raise ValueError(f"only the newest write can be undone (head {head}, asked {r})")
+            graphs = [row[0] for row in execute(conn, "SELECT DISTINCT graph_uri FROM model_writes WHERE r = ?", [r]).fetchall()]
+            execute(conn, "DELETE FROM model_triples WHERE recorded_from = ?", [r])
+            execute(conn, "UPDATE model_triples SET recorded_to = NULL WHERE recorded_to = ?", [r])
+            execute(conn, "DELETE FROM model_events WHERE r = ?", [r])
+            execute(conn, "DELETE FROM model_writes WHERE r = ?", [r])
+        return graphs
+
     def _apply_step(self, conn, graph_uri: str, r: int, step: Step) -> None:
         items = self._stage(
             conn,

@@ -104,12 +104,12 @@ class AppRegistration(BaseModel):
     # Durations travel as whole microseconds; lookback may be the string "all".
     lookback: int | str
     lookahead: int = 0
-    backfill: bool = False
-    batch_delay: int = 0
-    min_interval: int | None = None
     parameters: dict[str, Any] = {}
     every: int | None = None
     grouping: Literal["per_match", "all_matches"]
+    # Per-input (start, end) offsets in microseconds; a start may be "all".
+    windows: dict[str, list[int | str]] = {}
+    named_inputs: dict[str, str] = {}
 
 
 Order = Literal["asc", "desc"]

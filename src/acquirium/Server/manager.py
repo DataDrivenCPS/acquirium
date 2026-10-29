@@ -19,7 +19,7 @@ from acquirium.Storage import (
 )
 from acquirium.Storage.graph_store import select_values
 from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
-from acquirium.Storage.model_history import ModelHistory
+from acquirium.Storage.model_history import ModelHistory, parse_bound
 from acquirium.Storage.publication.types import PublicationReceipt, PublicationRequest, PublicationStore
 from acquirium.Storage.values import normalize_value_kind
 from acquirium.Experiments import ExperimentStore
@@ -134,8 +134,6 @@ class Manager:
                 )
             else:
                 raise ValueError("timeseries_backend must be 'duckdb' or 'timescale'")
-            from acquirium.Storage.publication.revision import RevisionPublisher
-            publication: PublicationStore = RevisionPublisher(timeseries_store)
 
         # Caller-supplied converter or graph wins; otherwise the converter
         # is built lazily in _ensure_qudt_converter from the QUDT unit
@@ -156,14 +154,17 @@ class Manager:
         self.timeseries_store = timeseries_store
         self.timescale = timeseries_store
         self.graph_store = graph
-        self.publication = publication
         self.experiments = ExperimentStore(
             timeseries_store, graph_store=graph, resolve=self._resolve_experiment_metadata,
         )
+        from acquirium.Materialization.engine import InboxPublisher
         from acquirium.Materialization.runtime import Materializer
         self.materializer = Materializer(timeseries_store, graph,
             query_resolver=self.resolve_text, record_resolver=self.resolve_record,
             unit_converter=self._ensure_qudt_converter)
+        # Every time-series write goes through the inbox; a step applies it
+        # and recomputes the views it affects in one transaction.
+        self.publication: PublicationStore = InboxPublisher(self.materializer.engine)
         # Published graph revision seen by the last stream-ref resync. It gates
         # the expensive rebuild in _registered_value_kind so repeated writes to
         # an unregistered ref do not each trigger a full inferred-graph rebuild.
@@ -568,22 +569,30 @@ class Manager:
             raise
 
     def _record_materialization_graph_revision(self) -> None:
-        """A graph change invalidates only the compiled in-memory plan."""
-        self.materializer._graph_revision = -1
+        """Admit the model as written, or undo the write and raise."""
+        from acquirium.Materialization.admission import AdmissionError
+        try:
+            self.materializer.model_changed()
+        except AdmissionError as error:
+            raise ValueError(f"the model write was rejected and undone: {error}") from error
 
     def recover_materialization_state(self) -> None:
         """Recompile deployed bindings; pending rows are rediscovered by revision."""
         self.materializer.refresh()
 
-    def deploy_app(self, deployment) -> dict[str, Any]:
-        """Persist and compile one durable app deployment."""
-        self.materializer.deploy(deployment)
-        self.materializer.refresh()
+    def deploy_app(self, deployment, *, effective_from: datetime | str | None = None) -> dict[str, Any]:
+        """Deploy an app from ``effective_from`` on: now if omitted, a time in
+        the past, or ``"-infinity"`` for all history."""
+        self.materializer.deploy(deployment, start=parse_bound(effective_from, end=False))
         return {"name": deployment.name, "status": "deployed"}
 
-    def remove_app(self, name: str) -> dict[str, Any]:
-        self.materializer.remove(name)
-        return {"name": name, "status": "removed"}
+    def remove_app(self, name: str, *, effective_from: datetime | str | None = None,
+                   purge: bool = False) -> dict[str, Any]:
+        """Remove an app from ``effective_from`` on (now if omitted); its
+        outputs before that stay. ``purge`` removes it over all time."""
+        start = parse_bound(effective_from, end=False)
+        self.materializer.remove(name, at=start, purge=purge)
+        return {"name": name, "status": "purged" if purge else "removed"}
 
     def check_app(self, deployment, limit: int | None = None,
                   search_path: str | None = None) -> dict[str, Any]:
@@ -659,6 +668,7 @@ class Manager:
             effective_from="-infinity",
             effective_until="infinity",
         )
+        self._record_materialization_graph_revision()
         return source_id
 
     def publish(

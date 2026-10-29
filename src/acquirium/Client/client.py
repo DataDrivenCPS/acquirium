@@ -776,15 +776,26 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
-    def deploy_app(self, definition: dict) -> dict:
+    def deploy_app(self, definition: dict, *, effective_from: datetime | str | None = None) -> dict:
+        params = {} if effective_from is None else {
+            "effective_from": effective_from if isinstance(effective_from, str) else effective_from.isoformat()}
         response = self._http.put(
-            f"{self.base_url}/apps/{definition['name']}", json=definition
+            f"{self.base_url}/apps/{definition['name']}", json=definition, params=params
         )
         _raise_for_status(response)
         return response.json()
 
-    def remove_app(self, name: str) -> dict:
-        response = self._http.delete(f"{self.base_url}/apps/{name}")
+    def remove_app(self, name: str, *, effective_from: datetime | None = None, purge: bool = False) -> dict:
+        params: dict[str, Any] = {"purge": "true"} if purge else {}
+        if effective_from is not None:
+            params["effective_from"] = effective_from.isoformat()
+        response = self._http.delete(f"{self.base_url}/apps/{name}", params=params)
+        _raise_for_status(response)
+        return response.json()
+
+    def materialization_step(self) -> dict:
+        """Apply the inbox now, as one step, and report it."""
+        response = self._http.post(f"{self.base_url}/materialization/step")
         _raise_for_status(response)
         return response.json()
 

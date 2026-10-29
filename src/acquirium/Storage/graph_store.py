@@ -1318,6 +1318,28 @@ class OxigraphGraphStore:
         self._history_head = head
         self._write_source_version()
 
+    def undo_writes(self, after: int) -> None:
+        """Undo every recorded write after recording time ``after``, newest
+        first, and rebuild the live graphs they wrote."""
+        if self.history is None:
+            raise RuntimeError("this graph store keeps no model history")
+        with self._lock:
+            touched: set[str] = set()
+            while (head := self.history.head()) > after:
+                touched.update(self.history.undo(head))
+            now = now_micros()
+            for uri in touched:
+                target = self.source_dataset.graph(URIRef(uri))
+                target.remove((None, None, None))
+                for triple in parse_lines(self.history.graph_at(uri, now)):
+                    target.add(triple)
+            self._commit_dataset(self.source_dataset)
+            self._history_head = self.history.head()
+            self._mark_source_changed()
+            self._mark_closure_changed()
+            self._write_source_version()
+            self._start_query_rebuild_locked()
+
     def model_at(self, at: datetime | int, *, as_of: int | None = None) -> Graph:
         """The asserted model at time ``at``, as known at recording time
         ``as_of`` (the latest when omitted): every versioned graph, metadata
