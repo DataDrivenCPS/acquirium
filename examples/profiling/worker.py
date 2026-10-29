@@ -15,7 +15,7 @@ import os
 import sys
 from pathlib import Path
 
-# Escapement 8bd90b0 (python/worker.py, unchanged through 64e6712). Changing
+# Escapement 8bd90b0 (python/worker.py, unchanged through 4661cc5). Changing
 # the native worker requires reviewing these boundaries before updating this
 # digest. 8bd90b0 only added text output checks after the function call, which
 # output_ns now includes.

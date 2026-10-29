@@ -60,23 +60,12 @@ class EscapementSamples:
         return sum((snapshot.stats(ref) or {"count": 0})["count"] for ref in refs)
 
     def clear(self, refs) -> None:
-        """Delete every sample of ``refs``, one request-sized page at a time,
-        and wait until the deletions are published."""
-        snapshot = self.core.engine.snapshot()
-        receipt = None
-        for ref in refs:
-            start = None
-            while page := snapshot.query(ref, start=start, limit=MAX_REQUEST_ROWS):
-                times = [reading.event_time_ns for reading in page]
-                receipt = self.core.ingest("experiments", str(uuid.uuid4()), pl.DataFrame({
-                    "ref_uri": pl.Series([ref] * len(times), dtype=pl.String),
-                    "ts": pl.Series(times, dtype=pl.Int64).cast(pl.Datetime("ns", "UTC")),
-                    "value": pl.Series([None] * len(times), dtype=pl.Float64),
-                    "operation": ["delete"] * len(times),
-                }))
-                start = times[-1] + 1
-        if receipt is not None:
-            self.core.wait(receipt, timeout=self.timeout)
+        """Delete every sample of ``refs`` and wait until that is published."""
+        refs = list(refs)
+        for offset in range(0, len(refs), MAX_REQUEST_ROWS):
+            receipt = self.core.clear("experiments", str(uuid.uuid4()), refs[offset:offset + MAX_REQUEST_ROWS])
+        if refs:
+            self.wait(receipt.sequence)
 
     def usage(self, refs) -> tuple[int, int]:
         """Sample count and their bytes: 8 for each time and 8 for each number."""
