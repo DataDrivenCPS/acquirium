@@ -144,6 +144,12 @@ class _Reader:
             out[str(ref)].append(to_micros(ts))
         return out
 
+    def reset_streams(self, after: int, upto: int) -> list[str]:
+        """Streams cleared physically (a replacement) at a revision in ``(after, upto]``."""
+        rows = self._q("SELECT ref_uri FROM stream_resets WHERE last_revision > ? AND last_revision <= ?",
+                       [after, upto]).fetchall()
+        return [str(ref) for (ref,) in rows]
+
     def current_revision(self) -> int:
         return int(self._q("SELECT current_revision FROM system_state").fetchone()[0])
 
@@ -588,6 +594,9 @@ class ViewEvaluator:
                         structural[view] = list(region)
             points = reader.changed_points(data_revision, current)
             data = {ref: merge((t, t + 1) for t in times) for ref, times in points.items()}
+            # A replaced stream left no trace of where its old points were.
+            for ref in reader.reset_streams(data_revision, current):
+                data[ref] = list(ALL)
         for name, start, end in execute(conn, "SELECT name, valid_from, valid_to FROM view_pending").fetchall():
             structural[name].append((int(start), int(end)))
         execute(conn, "DELETE FROM view_pending")

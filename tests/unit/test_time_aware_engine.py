@@ -59,6 +59,15 @@ def _open_store(tmp_path, recreate=False):
     return DuckDBStore(tmp_path / "ts.duckdb", recreate=recreate)
 
 
+def readings(ref: str, samples) -> pa.Table:
+    return pa.table({
+        "operation": ["upsert"] * len(samples), "ref_uri": [ref] * len(samples),
+        "ts": pa.array([t for t, _ in samples], pa.timestamp("us", tz="UTC")),
+        "numeric_value": pa.array([float(v) for _, v in samples], pa.float64()),
+        "text_value": pa.array([None] * len(samples), pa.string()),
+    }, schema=MUTATION_SCHEMA)
+
+
 class World:
     def __init__(self, tmp_path, monkeypatch, *, store_root=None, recreate=False):
         now = to_micros(NOW)
@@ -95,13 +104,7 @@ class World:
 
     # ---- data ----
     def write(self, ref: str, samples):
-        table = pa.table({
-            "operation": ["upsert"] * len(samples), "ref_uri": [ref] * len(samples),
-            "ts": pa.array([t for t, _ in samples], pa.timestamp("us", tz="UTC")),
-            "numeric_value": pa.array([float(v) for _, v in samples], pa.float64()),
-            "text_value": pa.array([None] * len(samples), pa.string()),
-        }, schema=MUTATION_SCHEMA)
-        self.views.engine.submit("readings", table)
+        self.views.engine.submit("readings", readings(ref, samples))
 
     def read(self, ref: str) -> list[tuple[datetime, float]]:
         with self.store._own_conn() as conn:
@@ -251,6 +254,23 @@ def test_a_step_applies_the_inbox_and_computes_in_one_transaction(world):
     world.write("urn:ex/r1", [(at(2), 5.0)])
     (values,) = world.outputs("double").values()
     assert values[-1] == (at(2), 10.0)
+
+
+def test_entries_of_one_step_apply_in_sequence_order(world):
+    world.model(point(1))
+    world.deploy(Double)
+    world.views.engine.deferred = True
+    world.write("urn:ex/r1", [(at(0), 1.0), (at(1), 2.0)])
+    world.write("urn:ex/r1", [(at(1), 3.0)])
+    world.views.step()
+    assert world.read("urn:ex/r1") == [(at(0), 1.0), (at(1), 3.0)]
+    world.write("urn:ex/r1", [(at(4), 7.0)])
+    world.views.engine.submit("replace", readings("urn:ex/r1", [(at(2), 4.0)]), ref_uri="urn:ex/r1")
+    world.write("urn:ex/r1", [(at(3), 5.0), (at(2), 6.0)])
+    world.views.step()
+    assert world.read("urn:ex/r1") == [(at(2), 6.0), (at(3), 5.0)]
+    (values,) = world.outputs("double").values()
+    assert values == [(at(2), 12.0), (at(3), 10.0)]
 
 
 def test_a_deployment_writes_only_from_its_start_but_reads_before_it(world):
