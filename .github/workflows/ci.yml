@@ -163,11 +163,17 @@ jobs:
       - name: Install dependencies
         run: uv sync --python ${{ matrix.python-version }} --locked --extra mqtt
 
+      # A service container cannot take a command, and Mosquitto 2's default
+      # configuration accepts only local connections.
+      - name: Start Mosquitto
+        run: docker run -d --name mosquitto -p 1883:1883 eclipse-mosquitto:2 mosquitto -c /mosquitto-no-auth.conf
+
       - name: Run integration tests
         env:
           ACQUIRIUM_TEST_PG_DSN: postgresql://acquirium:acquirium@localhost:5432/acquirium_test
+          ACQUIRIUM_TEST_MQTT: localhost:1883
         run: |
-          uv run --no-sync pytest tests/integration/test_native_runtime.py tests/integration/test_soft_sensors.py tests/integration/test_streaming_workload.py tests/integration/test_execution_profiling.py tests/integration/test_local_runtime.py tests/integration/test_graph_store.py tests/integration/test_experiment_models.py \
+          uv run --no-sync pytest tests/integration/test_native_runtime.py tests/integration/test_soft_sensors.py tests/integration/test_streaming_workload.py tests/integration/test_execution_profiling.py tests/integration/test_local_runtime.py tests/integration/test_graph_store.py tests/integration/test_experiment_models.py tests/integration/test_mqtt_acknowledgments.py \
             tests/test_experiment_ledger_transactions.py tests/test_experiment_metadata_outbox.py tests/test_experiment_refinement.py tests/test_experiment_restart.py tests/test_experiment_store_contract.py tests/test_schema_migrations.py \
             -v \
             --tb=short \

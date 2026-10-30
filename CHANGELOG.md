@@ -174,6 +174,17 @@ change in any release.
   instead of failing on an empty shapes graph.
 
 ### Changed
+- The MQTT driver no longer loses messages it had received but not stored. It
+  connects with MQTT 5 and a persistent session under a client ID that stays
+  the same across restarts, subscribes at QoS 1 by default (was 0), and
+  acknowledges each message only once the server has accepted it. A crash or
+  restart redelivers the rest. New settings: `mqtt_client_id`,
+  `mqtt_receive_maximum` (default 1000) and `mqtt_session_expiry` (default 7
+  days).
+- Driver inserts return once the server accepts them, without waiting for
+  publication. Event drivers send readings within 0.1 s of arrival instead of
+  at the next tick. `IngestDriver.when_accepted(callback)` runs a callback once
+  everything added before it is accepted.
 - Reads take readings from Escapement as Arrow batches (`query_arrow`) instead
   of one Python object per reading. Reading 1M numbers over HTTP takes 0.08 s
   instead of 0.41 s. Requires the Escapement Arrow-query release.
