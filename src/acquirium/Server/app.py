@@ -1034,6 +1034,7 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()], wait: floa
             receipt = app.state.manager.insert_timeseries_batch(source_id, observations,
                                                                request_id=request_id)
             receipts.append(_receipt(receipt, source_id, request_id, wait))
+        insert_stats.record(origin="http", rows=total, streams=[s.ref_name for s in streams])
         return {"ok": True, "rows_inserted": total, "receipts": receipts}
     except Exception as error:
         raise _engine_http_error(error) from error
@@ -1054,6 +1055,8 @@ async def insert_timeseries_arrow(request: Request, wait: float = Query(30, ge=0
             receipt = await asyncio.to_thread(app.state.manager.insert_timeseries_arrow,
                 source_id, source_frame.drop("source_id").to_arrow(), request_id=request_id)
             receipts.append(await asyncio.to_thread(_receipt, receipt, source_id, request_id, wait))
+        insert_stats.record(origin="arrow", rows=len(frame),
+                            streams=frame["ref_name"].unique().to_list())
         return {"ok": True, "rows_inserted": len(frame), "receipts": receipts}
     except Exception as error:
         raise _engine_http_error(error) from error
