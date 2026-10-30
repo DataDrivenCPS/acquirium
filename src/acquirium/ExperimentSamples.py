@@ -11,9 +11,7 @@ import polars as pl
 from escapement import Receipt
 
 from acquirium.core import Core
-
-# Escapement accepts at most this many mutations per request.
-MAX_REQUEST_ROWS = 10_000
+from acquirium.internals.models import MAX_REQUEST_ROWS
 
 
 def sample_frame(ref_uri: str, rows) -> pl.DataFrame:

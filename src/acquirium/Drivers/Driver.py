@@ -15,14 +15,12 @@ from typing import TYPE_CHECKING, Any
 from rdflib import URIRef
 
 from acquirium.DriverState import DriverState
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import MAX_REQUEST_ROWS, compute_ref_uri
 from acquirium.Storage.values import assign_stream_value_kind
 from acquirium.internals._log import timed_debug
 
 logger = logging.getLogger("acquirium.driver")
 
-# Server-side cap on rows per insert request (see Core.ingest).
-MAX_INSERT_ROWS = 10_000
 # Seconds the last request of an insert waits for publication on the server.
 INSERT_WAIT_S = 30
 # How long a request refused with HTTP 503 (a full inbox, or the engine or its
@@ -556,18 +554,18 @@ class IngestDriver(Driver):
                 for (source,), source_df in df.partition_by("source_id", as_dict=True).items()
             ]
 
-        # The server rejects requests over MAX_INSERT_ROWS, so a large frame
+        # The server rejects requests over MAX_REQUEST_ROWS, so a large frame
         # (e.g. a whole file) goes up as several requests.
         chunks = []
         for source, payload, source_request_id in batches:
-            for offset in range(0, len(payload), MAX_INSERT_ROWS):
+            for offset in range(0, len(payload), MAX_REQUEST_ROWS):
                 chunk_request_id = (
                     f"{source_request_id}:{offset}"
-                    if source_request_id and len(payload) > MAX_INSERT_ROWS
+                    if source_request_id and len(payload) > MAX_REQUEST_ROWS
                     else source_request_id
                 )
                 # A stable ID lets a chunk refused for capacity be resent as-is.
-                chunks.append((source, payload.slice(offset, MAX_INSERT_ROWS),
+                chunks.append((source, payload.slice(offset, MAX_REQUEST_ROWS),
                                chunk_request_id or str(uuid.uuid4())))
 
         total = 0
