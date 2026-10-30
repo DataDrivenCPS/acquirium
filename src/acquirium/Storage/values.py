@@ -68,7 +68,7 @@ def assign_stream_value_kind(
 
 
 def _as_text(value: Any) -> str | None:
-    if value is None or (isinstance(value, float) and math.isnan(value)):
+    if value is None or (isinstance(value, float) and not math.isfinite(value)):
         return None
     return str(value)
 
@@ -96,14 +96,15 @@ def split_values(frame: pl.DataFrame) -> pl.DataFrame:
     elif dtype.is_numeric() or isinstance(dtype, pl.Decimal):
         parsed = value.cast(pl.Float64)
         number = pl.when(numeric & parsed.is_finite()).then(parsed)
-        text = pl.when(~numeric & ~parsed.is_nan()).then(value.cast(pl.String))
+        text = pl.when(~numeric & parsed.is_finite()).then(value.cast(pl.String))
     elif dtype == pl.String:
         stripped = value.str.strip_chars()
         parsed = stripped.cast(pl.Float64, strict=False)
         number = pl.when(numeric & parsed.is_finite()).then(parsed)
-        # Unparseable, non-blank values on a numeric stream are kept as text.
+        # Unparseable values on a numeric stream are kept as text; blank
+        # values are no reading on either kind.
         text = pl.when(
-            ~numeric | (parsed.is_null() & stripped.str.len_chars().gt(0))
+            stripped.str.len_chars().gt(0) & (~numeric | parsed.is_null())
         ).then(value)
     else:
         raise ValueError(f"unsupported value column type {dtype}")

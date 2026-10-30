@@ -97,12 +97,13 @@ def test_values_are_stored_as_their_stream_kind(core):
     numeric = frame(list(range(len(values))), values).with_columns(
         pl.lit("numeric").alias("value_kind")
     )
-    text = frame([0, 1], [20, "21.5"], stream="urn:status").with_columns(
+    text_values = [20, "21.5", None, "", "  ", float("nan"), float("inf")]
+    text = frame(list(range(len(text_values))), text_values, stream="urn:status").with_columns(
         pl.lit("text").alias("value_kind")
     )
     snapshot = core.wait(core.ingest("gateway", "kinds", pl.concat([numeric, text])))
     # Numbers (and numeric strings) are numbers on a numeric stream, anything
-    # else is kept as text, and rows with no reading are dropped.
+    # else is kept as text, and rows with no reading are dropped on either kind.
     assert [r.value for r in snapshot.readings("urn:sensor")] == [20, 21.5, "Bad", "True"]
     assert [r.value for r in snapshot.readings("urn:status")] == ["20", "21.5"]
     read = lambda mode: pa.Table.from_batches(list(core.batches("urn:sensor", mode=mode)))
