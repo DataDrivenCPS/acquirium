@@ -7,6 +7,7 @@ execution, history, publication, and recovery of accepted computation.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+import functools
 from hashlib import sha256
 import json
 import os
@@ -372,6 +373,9 @@ class Apps:
             for selection in app.inputs:
                 if not selection.role:
                     raise ValueError("input roles must be nonempty")
+                conversion = (
+                    self._conversions(selection.target_unit) if selection.target_unit else None
+                )
                 matches[name].setdefault(selection.role, 0)
                 result = self.graph.sparql_query(selection.query, wait_for_fresh=True)
                 columns = result.get("columns", [])
@@ -418,22 +422,10 @@ class Apps:
                     unit = unit or (
                         row.get(selection.point_unit) if selection.point_unit else None
                     )
-                    if selection.target_unit:
+                    if conversion is not None:
                         if not unit or self.converter is None:
                             raise ValueError("input unit is required for conversion")
-                        converter = self.converter()
-                        source, target = (
-                            converter.resolve_unit(str(unit)),
-                            converter.resolve_unit(selection.target_unit),
-                        )
-                        if not converter._check_compatible(source, target):
-                            raise ValueError("incompatible input/output units")
-                        context.update(
-                            from_multiplier=str(source.multiplier),
-                            from_offset=str(source.offset),
-                            to_multiplier=str(target.multiplier),
-                            to_offset=str(target.offset),
-                        )
+                        context.update(conversion(str(unit)))
                     groups.setdefault(str(group), []).append(
                         Input(str(stream), selection.role, context=context)
                     )
@@ -501,6 +493,30 @@ class Apps:
             for name in matches
         }
         return operators, metadata, report
+
+    def _conversions(self, target_unit):
+        """The conversion context an input in each unit carries to
+        ``target_unit``. Each unit resolves once, on first use, however many
+        streams a selection matches."""
+
+        @functools.cache
+        def target():
+            return self.converter().resolve_unit(target_unit)
+
+        @functools.cache
+        def context(unit):
+            converter = self.converter()
+            source = converter.resolve_unit(unit)
+            if not converter.check_compatible(source, target()):
+                raise ValueError("incompatible input/output units")
+            return dict(
+                from_multiplier=str(source.multiplier),
+                from_offset=str(source.offset),
+                to_multiplier=str(target().multiplier),
+                to_offset=str(target().offset),
+            )
+
+        return context
 
     def _metadata_changes(self, metadata):
         """Apps whose output metadata differs from the published graph."""
