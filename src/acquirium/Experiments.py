@@ -113,6 +113,8 @@ ARTIFACT_CHUNK_BYTES = 4 << 20
 class ExperimentStore:
     """Transactional recordings and durable handoff to graph-owned metadata."""
     def __init__(self, store: Any, *, graph_store, resolve=None) -> None:
+        if store.samples is None:
+            raise ValueError("an experiment ledger needs a sample store for its time-series samples")
         self.store = store
         self._live_resolve = resolve
         self.metadata = ExperimentMetadata(store, graph_store, self._resolve)
@@ -438,9 +440,9 @@ class ExperimentStore:
                 self._check_recording(conn, run_id, batch)
                 self._own_streams(conn, run_id, batch.registrations)
         series = [item for item in batch.observations if item.ref_uri is not None]
-        if series and (batch.frame is not None or self.store.samples is not None):
+        if series:
             # A batch of references writes nothing and only notes the sequence.
-            accepted = self._write_samples(f"experiment/{run_id}", batch.frame)
+            accepted = self.store.samples.write(f"experiment/{run_id}", batch.frame)
             for item in series:
                 item.accepted = accepted
         results = []
@@ -478,11 +480,6 @@ class ExperimentStore:
             self._execute(conn, "INSERT INTO experiment_streams (ref_uri, run_id, source_id, ref_name) VALUES (?, ?, ?, ?) "
                           "ON CONFLICT (ref_uri) DO NOTHING", [ref, run_id, source, name])
 
-    def _write_samples(self, source, frame) -> int:
-        if self.store.samples is None:
-            raise RuntimeError("this experiment ledger has no sample store")
-        return self.store.samples.write(source, frame)
-
     def _cleanup_streams(self) -> None:
         """Clear the samples of streams whose run is gone, then forget them.
 
@@ -495,8 +492,7 @@ class ExperimentStore:
             with self.store._own_conn() as conn:
                 refs = [row[0] for row in self._execute(conn, "SELECT ref_uri FROM experiment_streams "
                         "WHERE run_id NOT IN (SELECT run_id FROM experiment_runs)").fetchall()]
-            # Without Escapement the rows are all that find these samples later.
-            if not refs or self.store.samples is None:
+            if not refs:
                 return
             self.store.samples.clear(refs)
             with self.store._lock, self.store._write_conn() as conn:
@@ -842,10 +838,9 @@ class ExperimentStore:
         # Wait for the newest data these observations name, then find the
         # epoch each was recorded at: one lookup for the whole selection.
         accepted = [row[20] for row in rows]
-        if self.store.samples is not None:
-            epochs = self.store.samples.epochs(sequence for sequence in accepted if sequence is not None)
-            for item, sequence in zip(result, accepted):
-                item["epoch"] = epochs.get(sequence)
+        epochs = self.store.samples.epochs(sequence for sequence in accepted if sequence is not None)
+        for item, sequence in zip(result, accepted):
+            item["epoch"] = epochs.get(sequence)
         result = self.read_observation_metadata(result)
         return self._filter_metadata(result, EXPERIMENT.Run, "experiment_id", metadata)
 
@@ -889,8 +884,7 @@ class ExperimentStore:
                 if users:
                     raise ValueError("other experiments reference streams these runs recorded: "
                                      + ", ".join(row[0] for row in users))
-                if self.store.samples is not None:
-                    removed["samples"] = self.store.samples.count(refs)
+                removed["samples"] = self.store.samples.count(refs)
             for run_id, sequence, variable_id in self._execute(conn, f"""
                     SELECT run_id, sequence, variable_id FROM experiment_observations
                     WHERE run_id IN ({marks})""", run_ids).fetchall():
@@ -1062,7 +1056,7 @@ class ExperimentStore:
                     """, selected).fetchone()
                 usage["files"], usage["file_bytes"] = int(files[0]), int(files[1])
                 refs = self._owned_refs(conn, selected)
-                if refs and self.store.samples is not None:
+                if refs:
                     usage["samples"], usage["sample_bytes"] = self.store.samples.usage(refs)
         usage["total_bytes"] = usage["sample_bytes"] + usage["file_bytes"] + usage["ledger_bytes"]
         return usage
