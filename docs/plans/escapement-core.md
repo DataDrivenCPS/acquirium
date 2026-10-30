@@ -1,26 +1,68 @@
 # Make Escapement the core of Acquirium
 
-Status: initial mandatory replacement implemented on this branch; operating-scale validation remains.
-Updated on 2026-10-18 on branch `plan/escapement-core`.
+Status: implemented on branch `gtf-escapement-core`. Operating limits,
+packaging and the items under [Remaining work](#remaining-work) are open.
+Updated 2026-10-30. Sections below the remaining-work list are the original
+plan, with notes where the design has since moved.
 
 ## Implementation progress
 
-The initial numeric replacement is implemented: required pinned dependency,
-one native owner, raw mutation/history/snapshot transport, semantic app
-compilation and durable activation intent, and removal of the old stores,
-publication layer, scheduler, and Timescale/Grafana services. Public APIs,
-drivers, examples, and configuration now follow the native contract.
+Steps 1–3 are done. Escapement is a required dependency and the only
+time-series store; the old stores, publication layer, scheduler, and
+Timescale/Grafana services are deleted. Semantic apps compile into complete
+native plans with durable activation intent. Public APIs, drivers, examples and
+configuration follow the native contract.
 
-Tests exercise native paging/precision/retries, semantic query discovery,
-metadata repair, app chains, invalid-plan rollback, paused artifact recovery,
-and restart. A real `aq.init()` server test covers a native Python function,
-DataObject reads, corrections, deletion, and restart. The current Escapement
-revision suffices for this slice; future native API changes are explicitly in
-scope, including stream statistics, bulk Arrow exchange, richer windows/values,
-and controlled failed-prefix recovery. The soft-sensor authoring and execution
-slice below is implemented, including a runnable chain and integration coverage.
-Step 4's representative operating-scale measurements and release/CI native
-packaging remain subsequent work.
+Since the first slice, the contract has grown in Escapement rather than in a
+second Acquirium engine:
+
+- **Values:** each reading is a finite number or text, stored as its stream's
+  `value_kind`; null, blank and non-finite values are dropped.
+- **Windows and functions:** pointwise, fixed-bucket and rolling windows; native
+  functions (`mean`, `sum`, `max`, `min`, `count`, `threshold`) that need no
+  Python; Python functions per window or batched (`batch=True`); per-group
+  typed parameters; `Selection.outputs_of()` for app chains.
+- **Deploys:** `dry_run=True` reports a deploy's work through `Engine.preview`.
+- **Storage:** the engine store can be PostgreSQL (`engine_path` URL).
+  Experiment records moved to a SQL ledger (DuckDB or PostgreSQL) beside
+  Escapement; their samples are Escapement streams.
+- **Reads:** stream counts and bounds come from native statistics.
+- **Drivers:** Ray is gone; each driver runs as a child process of the server.
+- **Admission:** a full inbox answers 503 before anything commits. The client
+  resends engine writes and recordings (`retry_for`, 60 s by default; drivers
+  allow 5 minutes).
+
+Tests cover native paging, precision and retries; semantic discovery; metadata
+repair; app chains; invalid-plan rollback; failure, repair and retry; restart;
+and a real `aq.init()` server through Python functions, reads, corrections and
+deletion.
+
+## Remaining work
+
+1. **Operating limits (step 4).** Only smoke runs (60 and 120 requests) and the
+   [execution profile](../profiling/2026-10-18/README.md) exist. Measure memory
+   against history size, restart and backfill cost, Python worker overhead and
+   queue latency, then document supported workload and admission bounds.
+2. **Packaging.** Escapement is pinned to a Git revision over SSH and CI needs a
+   deploy key. Publish wheels for the supported platforms.
+3. **Retention.** The engine keeps current values in memory and never prunes
+   history; its API has no retention call. Retention and larger histories
+   belong in Escapement.
+4. **Bulk Arrow reads.** Escapement returns readings as Python objects and
+   Acquirium builds Arrow batches row by row. A native Arrow read would remove
+   that copy.
+5. **Reproducible Python functions.** Bundle helper modules, dependencies and
+   model artifacts with a function's identity, allow per-app environments, and
+   measure worker-pool scaling.
+6. **Stateful operators.** These need a native checkpoint and replay contract.
+7. **A domain soft sensor.** `tests/unit/test_ro_permeate_toc_alarm.py` tests a
+   rolling sign-test alarm, but `examples/ro_permeate_toc_alarm/` was never
+   committed, so the test fails at collection. Commit the example or drop the test.
+8. **Shutdown without drain.** Retry after a failed function is tested; a
+   shutdown that cannot drain is not.
+9. **Streaming.** Broker-specific acknowledgments, and durable buffering for
+   drivers other than the standalone source driver.
+10. **Importing pre-Escapement data.** Optional; not a release requirement.
 
 ## Continuous workload slice
 
@@ -43,8 +85,8 @@ and abrupt server termination after acceptance.
 Initial 60-request/restart and 120-request/steady runs pass full verification.
 These are smoke measurements, not a sustained capacity guarantee. Broker-specific
 acknowledgments, storage/retention bounds, and longer operating-scale experiments
-remain subsequent work. The standalone source driver does not replace the
-existing Ray supervisor or claim durable buffering for other drivers.
+remain subsequent work. Only the standalone source driver buffers durably; other
+drivers do not.
 
 ## Native soft sensors
 
@@ -183,7 +225,7 @@ flowchart TD
     R[App declarations] --> C
     C --> P[Complete-plan controller]
     P --> E
-    E --> S[Escapement DuckDB: observations, history, plans, epochs]
+    E --> S[Escapement store, DuckDB or PostgreSQL: observations, history, plans, epochs]
     S --> Q[Snapshot and Arrow query adapters]
     Q --> U[Acquirium Python and HTTP clients]
     S --> X[Committed provenance and change consumers]
@@ -191,9 +233,8 @@ flowchart TD
 
 One server process owns one Escapement database and the embedded graph. Drivers
 submit observations through Acquirium; they do not open the core database.
-`aq.init()` uses the same server lifecycle. Ray may continue supervising existing
-drivers during this work; it has no role in computation scheduling. Replacing
-Ray is independent of replacing the timeseries core.
+`aq.init()` uses the same server lifecycle. Drivers run as child processes of the
+server; Ray, which once supervised them, has been removed.
 
 Keep `compute_ref_uri(source_id, ref_name)` as a useful canonical identity helper,
 not as a compatibility obligation. Use external references as core stream keys;
@@ -224,14 +265,14 @@ following deliberately smaller contract:
 
 | Area | Required new behavior |
 | --- | --- |
-| Values | Finite non-null numeric observations. Reject text, booleans, nulls, and nonfinite values before admission. No text fallback store. |
+| Values | Finite non-null numeric observations. Reject text, booleans, nulls, and nonfinite values before admission. No text fallback store. *Since revised: readings are numbers or text, stored by `value_kind`; null, blank and non-finite values are dropped.* |
 | Time | UTC nanoseconds; half-open ranges throughout. No microsecond compatibility casts or inclusive-window adapters. |
 | Keys | One value per stream and timestamp initially: sample key zero. Require operator outputs to follow this restriction. |
 | Ingestion | Explicit upserts/deletes with stable source/request IDs. Use native receipts and the documented bounded retry window. |
 | Publication | Durable acceptance and committed visibility are separate. Return a receipt; expose wait/read-after. Timeout after acceptance means pending, not rejected. |
 | Bulk writes | Reject requests outside native row/byte bounds. Explicit chunked imports have per-chunk admission, not whole-import atomicity. |
 | Reads | Native snapshots/epoch tokens, Arrow ranges, and version history. Complete paging with explicit limits; never silently truncate at the bridge's 10,000-row default. |
-| Operators | Pointwise and fixed buckets with native timestamp anchoring. Every port is returned; empty outputs retract old group results. |
+| Operators | Pointwise and fixed buckets with native timestamp anchoring. Every port is returned; empty outputs retract old group results. *Rolling windows and native functions have since been added.* |
 | Activation | Complete plans; normal native historical recomputation. No legacy `backfill=False`, `batch_delay`, or `min_interval` behavior. |
 | Metadata | Recompile explicit input/context lists on relevant graph changes. Historical repair by default; prospective validity intervals can be added explicitly later. |
 | Code changes | Immutable operator versions; native rebuild on redefinition. No old progress-key or explicit-reprocess compatibility. |
@@ -239,10 +280,10 @@ following deliberately smaller contract:
 | Failure | One failed operator blocks the whole epoch and pauses the processor. Expose that state and explicit retry; do not add a parallel failure scheduler. |
 | Inspection | Active plan, snapshots, frontiers, backlog, paused error, provenance, and explain. No SQL progress tables. |
 
-Text/null support, rolling windows, full-history/custom-timestamp computation,
-clock-driven outputs, atomic whole-stream replacement, and independent failure
-domains are optional **Escapement extensions** if product requirements demand
-them. They are not compatibility gates for the initial replacement. Do not
+Text values and rolling windows have since been added this way. Null support,
+full-history/custom-timestamp computation, clock-driven outputs, atomic
+whole-stream replacement, and independent failure domains remain optional
+**Escapement extensions** if product requirements demand them. They are not compatibility gates for the initial replacement. Do not
 implement missing engine features in an Acquirium side engine. Retire unsupported
 examples and clearly reject unsupported declarations/observations.
 
@@ -284,7 +325,8 @@ observation schema in the transport and core adapter.
 
 Change config to one engine path plus native worker/admission limits. Remove
 backend selection, PostgreSQL DSNs, old materialization polling, and alternate
-storage initialization. Stop producers and in-flight API callers before closing
+storage initialization. *Since revised: `engine_path` may be a PostgreSQL URL,
+and the experiment ledger has its own `experiments_path`.* Stop producers and in-flight API callers before closing
 the native processor. Pending accepted work must survive restart.
 
 **Acceptance:** mandatory native engine in both server and `aq.init()`; raw
@@ -343,6 +385,7 @@ unused compatibility layers:
   Docker services, and Timescale test fixtures.
 - Direct Python `duckdb` and `psycopg` runtime dependencies once their callers are
   removed. DuckDB persistence is supplied by Escapement's bundled Rust dependency.
+  *Since revised: both are dependencies again, for the experiment ledger.*
 - SQL logbook, SQL-query, and direct SQL dashboard endpoints/integrations removed
   from the new supported surface.
 
@@ -366,8 +409,8 @@ not make those limits disappear. Set supported workload/admission bounds and
 surface capacity failures. Exercise paused-prefix recovery and shutdown, including
 failure to drain. Do not promise independent app progress on a global failure.
 
-Prioritize any subsequent typed values, rolling windows, replacement, retention,
-schema upgrades, or failure-domain work in Escapement. Acquirium consumes those
+Prioritize any subsequent replacement, retention, schema upgrades, or
+failure-domain work in Escapement, as typed values and rolling windows were. Acquirium consumes those
 capabilities through the same small adapter. No requirement to reimplement all
 old features before this mandatory architecture ships.
 
