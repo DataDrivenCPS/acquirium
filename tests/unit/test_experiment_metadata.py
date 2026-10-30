@@ -384,9 +384,9 @@ def test_variable_user_queries_use_namespace_and_semantics_keep_their_paths(ac):
 
 
 @pytest.fixture
-def local(tmp_path):
+def local(tmp_path, samples):
     """The server's ledger on a DuckDB store and a memory graph."""
-    store = DuckDBLedger(tmp_path / "experiments.duckdb", recreate=True)
+    store = DuckDBLedger(tmp_path / "experiments.duckdb", samples=samples, recreate=True)
     graph = MemoryGraphStore()
 
     def resolve(text, kind):
@@ -504,8 +504,8 @@ class NamespacedGraphStore(MemoryGraphStore):
         return self.dataset.namespace_manager
 
 
-def test_uri_values_under_a_bound_namespace_are_written_as_uris(tmp_path):
-    store = DuckDBLedger(tmp_path / "experiments.duckdb", recreate=True)
+def test_uri_values_under_a_bound_namespace_are_written_as_uris(tmp_path, samples):
+    store = DuckDBLedger(tmp_path / "experiments.duckdb", samples=samples, recreate=True)
     graph = NamespacedGraphStore()
     ledger = ExperimentStore(store, graph_store=graph, resolve=lambda *_: None)
     study = ledger.define("namespaces")["template_id"]
@@ -664,3 +664,12 @@ def test_each_read_hydrates_its_result_batch_once(local, monkeypatch):
         read.reset_mock()
         fetch()
         assert read.call_count == 1
+
+
+def test_an_experiment_store_needs_a_sample_store(tmp_path):
+    store = DuckDBLedger(tmp_path / "experiments.duckdb")
+    try:
+        with pytest.raises(ValueError, match="sample store"):
+            ExperimentStore(store, graph_store=MemoryGraphStore())
+    finally:
+        store.close()

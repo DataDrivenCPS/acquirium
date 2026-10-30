@@ -87,33 +87,39 @@ def insert_sample_csv_streams(acq, *, source_id: str = SAMPLE_SOURCE_ID) -> None
     acq.insert_timeseries_batch(source_id, stream_rows)
 
 
-@pytest.fixture(params=["duckdb", "postgres"])
-def experiment_ledger(request, tmp_path):
-    """An experiment ledger on each SQL backend, sending samples to an
-    in-memory Escapement."""
+@pytest.fixture
+def samples():
+    """Experiment samples sent to an in-memory Escapement."""
     from acquirium.core import Core
     from acquirium.ExperimentSamples import EscapementSamples
+
+    core = Core(":memory:")
+    try:
+        yield EscapementSamples(core)
+    finally:
+        core.close(drain=False)
+
+
+@pytest.fixture(params=["duckdb", "postgres"])
+def experiment_ledger(request, tmp_path, samples):
+    """An experiment ledger on each SQL backend, sending samples to an
+    in-memory Escapement."""
     from acquirium.Storage.ledger import open_ledger
     from tests.local_server import postgres_schema
 
-    core = Core(":memory:")
-    samples = EscapementSamples(core)
-    try:
-        if request.param == "duckdb":
-            ledger = open_ledger(tmp_path / "experiments.duckdb", samples=samples)
+    if request.param == "duckdb":
+        ledger = open_ledger(tmp_path / "experiments.duckdb", samples=samples)
+        try:
+            yield ledger
+        finally:
+            ledger.close()
+    else:
+        with postgres_schema() as url:
+            ledger = open_ledger(url, samples=samples)
             try:
                 yield ledger
             finally:
                 ledger.close()
-        else:
-            with postgres_schema() as url:
-                ledger = open_ledger(url, samples=samples)
-                try:
-                    yield ledger
-                finally:
-                    ledger.close()
-    finally:
-        core.close(drain=False)
 
 
 @pytest.fixture(scope="session")

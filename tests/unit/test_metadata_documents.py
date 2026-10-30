@@ -156,7 +156,7 @@ def test_indexed_object_selection_applies_casts_at_the_original_position():
     assert query.metadata_objects() == [{"item": {"id": uri, "items": [None, {"cost": "1"}, None]}}]
 
 
-def test_http_documents_preserve_types_and_read_asserted_source(tmp_path, monkeypatch):
+def test_http_documents_preserve_types_and_read_asserted_source(tmp_path, monkeypatch, samples):
     from types import SimpleNamespace
     from importlib import import_module
     from fastapi.testclient import TestClient
@@ -164,7 +164,7 @@ def test_http_documents_preserve_types_and_read_asserted_source(tmp_path, monkey
     from acquirium.Experiments import ExperimentStore
     from acquirium.Storage.ledger import DuckDBLedger
     graph = MemoryGraphStore()
-    store = DuckDBLedger(tmp_path / "documents.duckdb")
+    store = DuckDBLedger(tmp_path / "documents.duckdb", samples=samples)
     ledger = ExperimentStore(store, graph_store=graph)
     uri = "urn:example:document"
     values = {"metadata": PAYLOAD, "date": date(2026, 1, 1)}
