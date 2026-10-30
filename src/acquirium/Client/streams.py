@@ -2,20 +2,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from typing import Any
 
+from acquirium.core import time_ns
 from acquirium.ExperimentValues import timestamp as _utc
 import polars as pl
-
-
-_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 def _after_ns(value: datetime | str) -> int:
     """UTC nanoseconds just after the microsecond ``value`` names: a half-open
     read up to it includes every sample within that microsecond."""
-    return ((_utc(value) - _EPOCH) // timedelta(microseconds=1) + 1) * 1000
+    return time_ns(_utc(value)) + 1000
 
 
 def samples_frame(frame: pl.DataFrame) -> pl.DataFrame:
