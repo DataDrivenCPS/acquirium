@@ -58,8 +58,10 @@ deletion.
 7. **A domain soft sensor.** `tests/unit/test_ro_permeate_toc_alarm.py` tests a
    rolling sign-test alarm, but `examples/ro_permeate_toc_alarm/` was never
    committed, so the test fails at collection. Commit the example or drop the test.
-8. **Shutdown without drain.** Retry after a failed function is tested; a
-   shutdown that cannot drain is not.
+8. **Shutdown that cannot drain.** Closing after a failed function is tested:
+   the stop fails, the stores still close, and a restart publishes the pending
+   writes. A slow function delays shutdown until every pending write is
+   processed, with no time limit; a function that never returns would block it.
 9. **Streaming.** Broker-specific acknowledgments, and durable buffering for
    drivers other than the standalone source driver.
 10. **Importing pre-Escapement data.** Optional; not a release requirement.

@@ -342,6 +342,73 @@ def test_restart_reconciles_desired_plan_and_retains_history(tmp_path):
         manager.close()
 
 
+def test_closing_after_a_failed_function_keeps_pending_writes(tmp_path, caplog):
+    import logging
+    from escapement import ExecutionError, PythonFunction
+
+    ref = str(compute_ref_uri("halted", "temperature"))
+    output = output_reference("halted-app", "urn:tank", "mean")
+    flag = tmp_path / "fail"
+    module = tmp_path / "calculation.py"
+    module.write_text(
+        "import pathlib\n"
+        "def calculate(frame, context):\n"
+        f"    if pathlib.Path({str(flag)!r}).exists():\n"
+        '        raise RuntimeError("sensor offline")\n'
+        '    return {"mean": frame.select("event_time_ns", "sample_key", "value", "quality")}\n'
+    )
+    declaration = mean("halted-app", ref)
+    declaration = App(
+        declaration.name,
+        declaration.inputs,
+        declaration.outputs,
+        PythonFunction.from_file(module, "calculate"),
+    )
+
+    def write(manager, time, value):
+        return manager.insert_timeseries(
+            source_id="halted",
+            ref_name="temperature",
+            rows=[(time, value)],
+            request_id=f"write-{time}",
+        )
+
+    manager = Manager(data_dir=tmp_path / "data", exact_only=True)
+    try:
+        manager.insert_graph(
+            f'<{ref}> <urn:acquirium#sourceId> "halted" ; <urn:acquirium#refName> "temperature" .',
+            source_id="halted",
+        )
+        manager.deploy_app(declaration)
+        manager.core.wait(write(manager, 1, 10))
+        flag.touch()
+        write(manager, 2, 20)
+        last = write(manager, 3, 30)
+        with pytest.raises(ExecutionError):
+            manager.core.wait(last, timeout=10)
+        assert manager.core.processor.status()["error"]
+        assert manager.core.engine.status()["pending_requests"] == 2
+    finally:
+        # Stopping cannot drain a failed processor. The failure is logged and
+        # the rest still closes, or the reopen below could not take the stores.
+        caplog.clear()
+        with caplog.at_level(logging.ERROR, logger="acquirium.manager"):
+            manager.close()
+    assert [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR] == [
+        "Manager.close: failed to close Escapement"
+    ]
+
+    flag.unlink()
+    manager = Manager(data_dir=tmp_path / "data", exact_only=True)
+    try:
+        manager.recover_apps()
+        snapshot = manager.core.wait(last)
+        assert [snapshot.value(output, time) for time in (1, 2, 3)] == [10, 20, 30]
+        assert manager.core.engine.status()["pending_requests"] == 0
+    finally:
+        manager.close()
+
+
 def test_frozen_unit_factors_execute_in_native_python_worker(system):
     from pathlib import Path
     from escapement import PythonFunction
