@@ -32,7 +32,6 @@ from acquirium.internals.models import (
     StreamInsert,
     RegisterDatasourceRequest,
 )
-from acquirium.internals.internals_namespaces import PLANT_URI
 
 import pyarrow.ipc as ipc
 import pyarrow as pa
@@ -1116,8 +1115,6 @@ def get_timeseries(
             batch_size=request.app.state.read_batch_size,
             value_mode=value_mode,
         )
-
-        accept = request.headers.get("accept", "")
 
         def arrow_stream() -> Iterator[bytes]:
             buf = io.BytesIO()

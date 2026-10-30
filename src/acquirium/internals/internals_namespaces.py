@@ -88,9 +88,6 @@ HAS_QUANTITY_KIND = QUDT.hasQuantityKind
 HAS_ENUMERATION_KIND = QUDT.hasEnumerationKind
 HAS_UNIT = QUDT.hasUnit
 
-HAS_LOG = ACQUIRIUM_NS.hasLog
-PLANT_URI = str(ACQUIRIUM_NS.Plant)  # Generic URI representing the entire plant
-
 
 # Origin tag literal on a point (e.g. "Lab", "SCADA").
 DATA_SOURCE = ACQUIRIUM_NS.dataSource

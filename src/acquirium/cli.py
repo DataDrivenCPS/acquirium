@@ -30,7 +30,7 @@ import signal
 import sys
 from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Iterator, Optional
+from typing import TYPE_CHECKING, Annotated, Iterator, Optional
 
 import typer
 

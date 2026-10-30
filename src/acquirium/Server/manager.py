@@ -273,6 +273,9 @@ class Manager:
           OPTIONAL {{ ?point <{HAS_EXTERNAL_REFERENCE}> ?ref_node . }}
         }}
         """
+        # Read the revision first: a change landing during the query leaves
+        # it behind, so the next check syncs again.
+        revision = self.graph_store.graph_status()["source_version"]
         # Stream registrations may be completed by ontology rules, so query the
         # fresh inferred deployment graph with shapes rather than only asserted
         # source data. The graph store coalesces concurrent rebuilds.
@@ -284,44 +287,28 @@ class Manager:
             )
         rows = res.get("rows", [])
         logger.debug("_sync_stream_refs_from_graph: %d candidate rows", len(rows))
-        # Validate every row first, then hand the whole batch to the store in one
-        # statement. Upserting row by row costs a round trip each, which grows with
-        # the graph: ~3.6s for 1000 refs versus ~16ms batched.
-        refs: list[tuple[str | None, str, str, URIRef, str]] = []
+        # Built aside and swapped in whole, so readers never see a partial map.
+        stream_refs: dict[str, dict[str, str]] = {}
+        point_refs: dict[str, set[str]] = {}
         for point_uri, ref_node, source_id, ref_name, value_kind in rows:
+            sid, name, ref = str(source_id), str(ref_name), str(ref_node)
+            expected = str(compute_ref_uri(sid, name))
+            if ref != expected:
+                raise ValueError(
+                    f"Managed reference URI mismatch for point {point_uri}: "
+                    f"graph has {ref}, expected {expected} from "
+                    f"source_id={sid!r}, ref_name={name!r}"
+                )
             try:
-                sid = str(source_id)
-                rn  = str(ref_name)
-                expected = compute_ref_uri(sid, rn)
-                actual = URIRef(str(ref_node))
-                if actual != expected:
-                    raise ValueError(
-                        f"Managed reference URI mismatch for point {point_uri}: "
-                        f"graph has {actual}, expected {expected} from "
-                        f"source_id={sid!r}, ref_name={rn!r}"
-                    )
-                point = str(point_uri) if point_uri is not None else None
-                refs.append((
-                    point,
-                    sid,
-                    rn,
-                    actual,
-                    normalize_value_kind(
-                        str(value_kind) if value_kind is not None else "numeric"
-                    ),
-                ))
-            except Exception:
-                logger.warning("Failed to ensure stream ref %s / %s → %s", point_uri, source_id, ref_name, exc_info=True)
-                raise
-        self._stream_refs = {str(ref): {"source_id": sid, "ref_name": name, "value_kind": kind}
-                             for point, sid, name, ref, kind in refs}
-        point_refs = {}
-        for point, sid, name, ref, kind in refs:
-            if point:
-                point_refs.setdefault(point, set()).add(str(ref))
-        self._point_refs = point_refs
-        self._refs_revision = self.graph_store.graph_status()["source_version"]
-        return len(self._stream_refs)
+                kind = normalize_value_kind(value_kind)
+            except ValueError as error:
+                raise ValueError(f"stream {ref}: {error}") from error
+            stream_refs[ref] = {"source_id": sid, "ref_name": name, "value_kind": kind}
+            if point_uri is not None:
+                point_refs.setdefault(str(point_uri), set()).add(ref)
+        self._stream_refs, self._point_refs = stream_refs, point_refs
+        self._refs_revision = revision
+        return len(stream_refs)
 
     # ----- Embedding index methods -----
 

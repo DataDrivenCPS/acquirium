@@ -30,7 +30,6 @@ from acquirium.Client.explore.attributes import (
     normalize_value,
 )
 from acquirium.Client.explore.compile import attr_var, compile_parts, compile_sparql
-from acquirium.Client.explore.directions import EQUIPMENT_STEPS, PROPERTY_STEPS
 from acquirium.Client.explore.expr import ORDERING, BoolOp, Compare, Expr
 from acquirium.Client.explore.expr import attr_name as _path_name
 from acquirium.Client.explore.relations import RELATIONS
