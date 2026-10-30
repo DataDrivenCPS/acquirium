@@ -44,25 +44,13 @@ def open_ledger(location: str | Path, *, samples: Any = None, recreate: bool = F
     return DuckDBLedger(location, samples=samples, recreate=recreate)
 
 
-class DuckDBLedger:
-    def __init__(self, path: str | Path, *, samples: Any = None, recreate: bool = False) -> None:
-        import duckdb
+class _Ledger:
+    """The connection protocol both backends share; each supplies
+    ``_connect()`` and ``_write_conn()``."""
 
-        self._duckdb = duckdb
-        self.db_path = Path(path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, *, samples: Any) -> None:
         self.samples = samples
         self._lock = threading.Lock()
-        # Held open so per-operation connections attach to a cached database
-        # instead of reopening the file.
-        self._anchor_conn = duckdb.connect(str(self.db_path))
-        if recreate:
-            with self._lock, self._own_conn() as conn:
-                for table in LEDGER_TABLES:
-                    conn.execute(f"DROP TABLE IF EXISTS {table}")
-
-    def _connect(self):
-        return self._duckdb.connect(str(self.db_path))
 
     @contextmanager
     def _own_conn(self):
@@ -71,6 +59,29 @@ class DuckDBLedger:
             yield conn
         finally:
             conn.close()
+
+    def _drop_tables(self, suffix: str = "") -> None:
+        with self._lock, self._own_conn() as conn:
+            for table in LEDGER_TABLES:
+                conn.execute(f"DROP TABLE IF EXISTS {table}{suffix}")
+
+
+class DuckDBLedger(_Ledger):
+    def __init__(self, path: str | Path, *, samples: Any = None, recreate: bool = False) -> None:
+        import duckdb
+
+        super().__init__(samples=samples)
+        self._duckdb = duckdb
+        self.db_path = Path(path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        # Held open so per-operation connections attach to a cached database
+        # instead of reopening the file.
+        self._anchor_conn = duckdb.connect(str(self.db_path))
+        if recreate:
+            self._drop_tables()
+
+    def _connect(self):
+        return self._duckdb.connect(str(self.db_path))
 
     @contextmanager
     def _write_conn(self):
@@ -90,31 +101,20 @@ class DuckDBLedger:
         self._anchor_conn.close()
 
 
-class PostgresLedger:
+class PostgresLedger(_Ledger):
     def __init__(self, dsn: str, *, samples: Any = None, recreate: bool = False) -> None:
         import psycopg
 
+        super().__init__(samples=samples)
         self._psycopg = psycopg
         self.dsn = dsn
-        self.samples = samples
-        self._lock = threading.Lock()
         # Writes share one connection so a transaction governs every statement.
         self.conn = psycopg.connect(dsn, autocommit=True)
         if recreate:
-            with self._lock, self._own_conn() as conn:
-                for table in LEDGER_TABLES:
-                    conn.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
+            self._drop_tables(" CASCADE")
 
     def _connect(self):
         return self._psycopg.connect(self.dsn, autocommit=True)
-
-    @contextmanager
-    def _own_conn(self):
-        conn = self._connect()
-        try:
-            yield conn
-        finally:
-            conn.close()
 
     @contextmanager
     def _write_conn(self):
