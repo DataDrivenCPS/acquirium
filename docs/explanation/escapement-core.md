@@ -61,6 +61,12 @@ retry identity, so returning to an earlier plan activates it again.
 A function that fails publishes nothing from its epoch and pauses the processor,
 for every app. Fix the cause, then call `retry_engine()`.
 
+Shutdown waits up to `drain_timeout` seconds for pending writes to publish.
+Escapement cannot interrupt a running function, so one still running at the
+deadline is left to the process's exit. Writes that were accepted but not
+published stay in the inbox and are processed at the next start, as they are
+after a failed function or a crash.
+
 Graph writes and epochs are separate transactions. App inspection reports the
 graph revision a plan was compiled against; nothing promises an atomic graph
 and data change.

@@ -55,6 +55,10 @@ change in any release.
   `PythonFunction.from_file(path, entrypoint, batch=True)` to receive every
   affected window in one call (Escapement batch functions). `examples/bulk_ingest
   --batch` runs its six apps this way: 7.6 s instead of 47.1 s.
+- `[server] drain_timeout` (default 10 seconds, `ACQUIRIUM_DRAIN_TIMEOUT`)
+  bounds how long shutdown waits for Escapement to publish pending writes. A
+  function still running at the deadline is left to the process's exit, and
+  the unpublished writes are processed at the next start.
 - `engine_status()` includes Escapement's per-operator totals under
   `stats.operators` and rolls them up per app under `apps` (groups, input rows,
   changed rows, compute time).

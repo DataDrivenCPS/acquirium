@@ -409,6 +409,28 @@ def test_closing_after_a_failed_function_keeps_pending_writes(tmp_path, caplog):
         manager.close()
 
 
+def test_closing_reports_work_left_by_a_drain_timeout(caplog):
+    import logging
+    from types import SimpleNamespace
+
+    closed = []
+    manager = Manager.__new__(Manager)
+    manager.drain_timeout = 0.5
+    manager.ledger = SimpleNamespace(close=lambda: closed.append("ledger"))
+    manager.graph_store = SimpleNamespace(close=lambda: closed.append("graph"))
+    manager.core = SimpleNamespace(
+        close=lambda timeout: closed.append(("engine", timeout)) and False,
+        engine=SimpleNamespace(status=lambda: {"pending_requests": 3}),
+    )
+    with caplog.at_level(logging.WARNING, logger="acquirium.manager"):
+        manager.close()
+    assert closed == ["ledger", ("engine", 0.5), "graph"]
+    assert [r.getMessage() for r in caplog.records] == [
+        "Manager.close: Escapement did not drain within 0.5s; leaving 3 "
+        "pending request(s) for the next start"
+    ]
+
+
 def test_frozen_unit_factors_execute_in_native_python_worker(system):
     from pathlib import Path
     from escapement import PythonFunction
