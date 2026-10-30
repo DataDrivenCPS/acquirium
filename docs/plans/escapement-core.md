@@ -48,9 +48,10 @@ deletion.
 3. **Retention.** The engine keeps current values in memory and never prunes
    history; its API has no retention call. Retention and larger histories
    belong in Escapement.
-4. **Bulk Arrow reads.** Escapement returns readings as Python objects and
-   Acquirium builds Arrow batches row by row. A native Arrow read would remove
-   that copy.
+4. **Bulk Arrow reads.** Done: Escapement's `query_arrow` returns a stream's
+   readings as one Arrow batch, and a 1M-reading HTTP read takes 0.08 s instead
+   of 0.41 s. Most of what remains is the response's `uri` column, which repeats
+   the stream URI on every row (54 of 70 MB at 1M readings).
 5. **Reproducible Python functions.** Bundle helper modules, dependencies and
    model artifacts with a function's identity, allow per-app environments, and
    measure worker-pool scaling.
