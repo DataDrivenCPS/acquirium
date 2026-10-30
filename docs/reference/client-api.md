@@ -55,6 +55,7 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 |---|---|
 | `query() -> Query` | Create a new empty `Query` bound to this instance. |
 | `explore() -> Query` | Alias of `query()`. |
+| `find_all_data(*, _class=None, uri=None) -> Query` | Every registered measurement point: `query().measurement(type=_class, uri=uri)`. |
 | `attr` | Property: the root of attribute paths for `where()`, `include()` and `options()`; see [Attribute expressions](#attribute-expressions). |
 
 ### Graph
@@ -119,13 +120,6 @@ Declare variables on a Study, start an Experiment, and save values with
 [experiment reference](experiments.md) for grouped method tables, return types,
 and metadata rules.
 
-### Deprecated
-
-| method | description |
-|---|---|
-| `find_entity(*, _class=None, alias=None, uri=None) -> Q` | The previous query builder; see [Coming from the old interface](#coming-from-the-old-interface). |
-| `find_all_data(*, _class=None, uri=None) -> Q` | The previous query builder |
-
 ## Query
 
 `Query` is immutable: every verb returns a new query and leaves the old one
@@ -140,7 +134,7 @@ See the [querying tutorial](../tutorials/querying.md) and
 |---|---|
 | `entity(cls=None, *, uri=None, alias=None, **attrs) -> Query` | Add an entity node for a class (URI or free text) or one instance (`uri=`, CURIEs accepted); keyword attributes filter inline. |
 | `related(cls=None, *, uri=None, alias=None, frm=None, via="any", direction=None, max_depth=None, nearest=None, **attrs) -> Query` | Add an entity connected to `frm` (default: the current node); `via=` restricts predicates, `direction=` walks the piping topology; `max_depth` defaults to 3 (1 for predicate lists), `nearest` to `True` for plain `via="any"`. |
-| `measurement(*, frm=None, alias=None, direction=None, max_depth=3, nearest=None, include_connection_points=True, **attrs) -> Query` | Attach the measurement points of `frm` (default: the current node; `"*"` for every entity, or a list of aliases); on an empty query, every registered stream. With `direction=`, `nearest` defaults to `True` and each source keeps the first place along the flow (own connection points, pipe, next entity with its connection points, ...) holding a match; `nearest=False` returns everything within `max_depth`. |
+| `measurement(*, frm=None, alias=None, direction=None, max_depth=3, nearest=None, include_connection_points=True, uri=None, **attrs) -> Query` | Attach the measurement points of `frm` (default: the current node; `"*"` for every entity, or a list of aliases); on an empty query, every registered stream. With `direction=`, `nearest` defaults to `True` and each source keeps the first place along the flow (own connection points, pipe, next entity with its connection points, ...) holding a match; `nearest=False` returns everything within `max_depth`. `uri=` pins the node to one point. |
 | `context(cls=None, *, uri=None, alias=None, frm=None, via="entity", **attrs) -> Query` | From a measurement node, add the entity it is about and point at it; `via=` names a relation (`"entity"`, `"upstream"`, `"downstream"`, or one registered with `register_relation`) or gives explicit predicates or step chains. One fixed step, compiled to SPARQL. |
 | `where(target=None, *exprs, **attrs) -> Query` | Filter a node (`target=` by alias, default the current node). Keyword values are URIs, free text, lists (OR) or `Not(value)`; positional arguments are [attribute expressions](#attribute-expressions). Everything in one call is AND. |
 | `include(*names, of=None, required=False, type=None, strict=True) -> Query` | Add `alias.attr` columns for a node, or un-drop a node; names are strings or `acq.attr` paths; `required=True` drops rows lacking the attribute. `type=` casts the named columns (`"string"`, `"int"`, `"float"`, `"bool"`, `"date"`, `"datetime"`, `"struct"`, `"object"`, or a Python type / polars dtype), list cells element by element; `strict=True` raises on a value that does not convert, `strict=False` makes it `null`. `"all"` on an entity node adds every attribute (a measurement point is an entity too) except `type` and `cp_type`; on a measurement node it adds the measurement attributes except `type`, `app` and `label`. Entity nodes accept any attribute named explicitly; a measurement node refuses entity-only ones (`process`, `cp_type`); a list attribute appears once, under its collapsed name, as a `pl.List` column. A parent key (`"product_info"`) is one `pl.Struct` column with the union of its sub-keys, fields sorted by name, nested dicts nested. A column whose values do not fit one dtype (a dict and a string, an integer and a string) is `pl.Object` with the values as written, unless `type=` casts it. |
@@ -169,8 +163,8 @@ only.
 | `metadata_objects(*, include_dependencies=True) -> list[dict]` | The rows of `metadata()` as Python dicts: each alias maps to `{"id": <saved id, else the URI>, "label": ..., <attributes as saved>}`. A dict is a dict, a list a list in written order whatever its elements (a list of dicts, a nested list), a plain value plain even when another node holds a list under the key; dates are `date`, URIs full URIs (only the table compacts to CURIEs), a cast applies under its key. Each object holds only what was saved on that node: absent keys, and struct fields other nodes introduced, are left out (the table keeps its shared schema). |
 | `schema() -> pl.Schema` | The schema `metadata()` will return, without running the query: node columns `String`, a measurement's `alias.label`, attribute columns typed from what the graph holds for each attribute (lists as `List`, parent keys as `Struct`, mixtures as `Object`, casts as their target). The one difference from `metadata().schema`: an `alias.label` column that is null on every row is dropped there. |
 | `metadata(*, include_internals=False, include_dependencies=True) -> pl.DataFrame` | The pattern matches, one column per node plus `alias.attr` and `alias.label` columns. Node columns are CURIE strings; attribute columns are typed from the graph (`Int64`, `Float64`, `Boolean`, `Date`, `Datetime`, `String`). A column mixing integers and floats is `Float64`; any other mixture is `pl.Object`, cells as written. A user attribute written as a list is one `pl.List` cell per node in written order (a scalar under the same key becomes a one-element list); built-ins with several values keep one row per value. |
-| `data(*, start=None, end=None, limit=None, order="asc", include_dependencies=True, cast_value="float", value_mode="default") -> DataObject` | A lazy `DataObject` over the matched streams. |
-| `dataframe(shape="wide", *, start=None, end=None, limit=None, order="asc", include_dependencies=True, cast_value="str", value_mode="default", include_ref=False, compact=True) -> pl.DataFrame` | `data(...).dataframe(...)` in one call. |
+| `data(*, start=None, end=None, limit=None, order="asc", include_dependencies=True, cast_value=None, value_mode="default") -> DataObject` | A lazy `DataObject` over the matched streams. |
+| `dataframe(shape="wide", *, start=None, end=None, limit=None, order="asc", include_dependencies=True, cast_value=None, value_mode="default", include_ref=False, compact=True) -> pl.DataFrame` | `data(...).dataframe(...)` in one call. |
 | `options(attr_name, *, of=None, include_dependencies=True) -> pl.DataFrame` | Distinct values of one attribute (a name or an `acq.attr` path) across the matches, with counts. Values are typed like `metadata()` columns; a date and the same text as a string are two values, in an `Object` column. |
 | `facets(*, of=None, include_dependencies=True) -> FacetSummary` | Value counts for every attribute `include("all")` would add to the node, user attributes included and printed with their column type (`<Int64>`, `<List(String)>`, `<Object>`), keys under one parent grouped below it, a list attribute once; prints compactly, indexes like a dict, `attrs()` lists the attributes. |
 | `resolved_nodes(*, alias=None, only_data_nodes=False, include_dependencies=True) -> list[str]` | The URIs the pattern currently matches. |
@@ -304,16 +298,16 @@ See the [data tutorial](../tutorials/data.md).
 
 | method | description |
 |---|---|
-| `dataframe(shape="wide", *, start=None, end=None, limit=None, order="asc", include_ref=False, compact=True) -> pl.DataFrame` | The values as one frame; the window filters the fetched rows (`limit` per stream). |
-| `d["alias"] -> pl.DataFrame` | One alias as `[time, value]`, plus `point_uri` when the alias covers several points. |
-| `metadata(*, include_ref_uris=False) -> pl.DataFrame` | Unique `(data_alias, point_label, point_uri, entity__*)` rows. |
-| `units() -> dict[str, str \| None]` | The effective unit URI per alias. |
-| `convert_to(to_unit, *, from_unit=None, alias=None) -> DataObject` | A new object with values converted to `to_unit`; `from_unit=` for points with no unit, `alias=` to convert one alias. |
-| `iter(alias) -> Iterator[tuple[str, pl.DataFrame]]` | `(point_uri, frame)` per point of an alias. |
+| `dataframe(shape="wide", *, start=None, end=None, limit=None, order="asc", include_ref=False, compact=True, streams=None) -> pl.DataFrame` | The values as one frame; the window filters the fetched rows (`limit` per stream). `streams=` keeps only the listed streams, by their `stream_info()` number or ref URI. |
+| `d["alias"] -> pl.DataFrame` | One alias as `[time, value]`, plus `point_uri` when the alias covers several points. `KeyError` for an unknown alias. |
+| `"alias" in d`, `iter(d)`, `len(d)` | Membership, iteration and count over `aliases`; none of them fetch. |
+| `metadata(*, include_ref_uris=False) -> pl.DataFrame` | Unique `(data_alias, point_label, point_uri, unit, entity__*)` rows; `include_ref_uris=True` adds `ref_uri`, `source_id` and `ref_name`. |
+| `units() -> dict[str, list[str \| None]]` | The distinct unit URIs of each alias's points; `metadata()` has the unit per point. |
+| `convert_to(to_unit, *, from_unit=None, alias=None) -> DataObject` | A new object with values converted to `to_unit`, each point from its own unit; `from_unit=` for points with no unit, `alias=` to convert one alias. |
 | `by(entity_alias) -> Iterator[tuple[str, DataObject]]` | A sub-object per entity. |
-| `latest(alias) -> pl.DataFrame` | The newest row of an alias (fetches the window first). |
-| `is_empty() -> bool` | Whether any rows exist. |
-| `ref_info(alias) -> list[tuple[int, str]]` | `(index, ref_uri)` per stream behind an alias. |
+| `latest(alias=None, *, streams=None) -> pl.DataFrame` | The newest reading per point, from its own one-row-per-stream fetch within the object's window; all bindings as `[data_alias, point_uri, time, value]` without an alias. `streams=` as in `dataframe()`. |
+| `is_empty() -> bool` | Whether any rows exist; from stream statistics (ignoring the window) until the values are fetched. |
+| `stream_info(alias=None) -> pl.DataFrame` | One row per stream: `stream` (its number in this object, for `streams=`), `alias`, `point_uri`, `ref_uri`, `source_id`, `ref_name`. |
 | `aliases`, `entity_aliases` | Properties: the data and entity aliases present. |
 | `total_rows`, `time_range` | Properties: row count and `(earliest, latest)` from stream statistics, without fetching. |
 | `bindings` | Property: read-only binding metadata per stream. |
@@ -327,8 +321,8 @@ See the [data tutorial](../tutorials/data.md).
 | `shape` | `"wide"` (one column per point) or `"narrow"` (one row per reading) |
 | `compact` | `True` renders URIs as CURIEs and identifies points by `point_id`; `False` returns raw `point_uri` and `ref_uri` columns |
 | `include_ref` | add the reference URI column in the compact layout |
-| `cast_value` | client-side cast: `"float"`, `"int"`, anything else leaves values as sent (`Query` only) |
-| `value_mode` | `"default"` or `"numeric"`; the engine stores numeric observations |
+| `cast_value` | client-side cast (`Query` only): `"float"` parses numeric text into `value_numeric`; `"int"` also returns `Int64` columns and warns when it truncates fractional values; `"str"` puts every value in `value_text`; `None` (default) leaves values as sent; anything else is a `ValueError` |
+| `value_mode` | `"default"`, `"numeric"`, `"text"` or `"coalesce"` (`Query` only) |
 | `include_dependencies` | query the ontology and shape triples alongside the plant data (`Query` only) |
 
 ## AcquiriumClient
@@ -402,8 +396,8 @@ and are listed once above.
 Optional. Skip this unless you have queries written against the previous
 `find_*` methods.
 
-Those methods still exist, reachable through `acq.find_entity()` and
-`acq.find_all_data()`, but they are deprecated and will not gain features.
+The old builder (`acquirium.Q`, `acq.find_entity()`) has been removed.
+`acq.find_all_data()` remains as a shorthand for `acq.query().measurement()`.
 The rewrite is usually mechanical: one verb per old method, one `where()` in
 place of the `filter_by_*` family.
 
@@ -415,7 +409,9 @@ place of the `filter_by_*` family.
 | `find_related(direction=)` | `related(direction=)` |
 | `find_data(_from=, alias=, filters_dict=)` | `measurement(frm=, alias=, **attrs)` |
 | `find_all_data()` | `measurement(frm="*")`, or `measurement()` on an empty query |
+| `find_all_data(uri=)` | `measurement(uri=)` |
 | `find_related_data(...)` | `related(...).measurement(...)` |
+| `relate_to(other, _from=, hops=)` | `related(cls, frm=, max_depth=)` |
 | `filter_by_unit(v)` | `where(unit=v)` |
 | `filter_by_medium(v)` | `where(medium=v)` |
 | `filter_by_substance(v)` | `where(substance=v)` |

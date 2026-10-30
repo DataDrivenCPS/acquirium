@@ -87,7 +87,6 @@ The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acq
 - [Inserting data](how-to/write-data.md) — register streams and write rows without a driver
 - [Resolve text to URIs](how-to/resolve-text.md) — `resolve()`, units and conversion, tuning
 
-
 ## Reference
 
 The reference guides contain complete interface of each module:

@@ -6,6 +6,8 @@ from rdflib.namespace import RDF, RDFS
 from acquirium.internals.internals_namespaces import *
 from acquirium.internals.models import compute_ref_uri
 from acquirium.Storage.values import normalize_value_kind
+from acquirium.Client.explore.attributes import raw_predicate
+from acquirium.Client.metadata import is_uri
 
 # Known point-metadata fields → the resolver ``kind`` each is resolved as.
 # The field name is the semantic role, so callers supply no ``kind``.
@@ -117,12 +119,9 @@ def _build_stream_triples(
     if label is not None:
         g.add((subj, RDFS.label, Literal(label)))
 
-    from acquirium.Client.explore.attributes import raw_predicate
-
     for field, pred in POINT_FIELD_PREDICATES.items():
         raw = stream.get(field)
-        if isinstance(raw, str) and not isinstance(raw, URIRef) and not (
-                "://" in raw or raw.startswith("urn:")):
+        if isinstance(raw, str) and not is_uri(raw):
             # the free text as written, kept even when it did not resolve
             g.add((subj, URIRef(raw_predicate(field)), Literal(raw)))
         provided = _coerce_resolved(resolved, field, raw)
