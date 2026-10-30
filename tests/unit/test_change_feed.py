@@ -179,6 +179,8 @@ def test_a_recording_refused_at_capacity_is_retryable_and_left_uncommitted(tmp_p
             assert http.post(f"/experiments/runs/{run}/record", json=entries).status_code == 200
             response = http.post(f"/experiments/runs/{run}/record", json=entries)
             assert response.status_code == 503 and response.headers["Retry-After"] == "1"
+            # The route's own error statuses are not remapped as engine errors.
+            assert http.post("/experiments/runs/missing/record", json=entries).status_code == 404
         finally:
             http.close()
             manager.core.engine.step()

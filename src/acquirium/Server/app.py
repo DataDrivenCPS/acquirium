@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import importlib
 import importlib.util
+import inspect
 import io
 import json
 import logging
@@ -43,6 +45,42 @@ from acquirium.Drivers.supervisor import DriverSupervisor
 
 
 log = logging.getLogger("acquirium.api")
+
+
+def _engine_http_error(error: Exception) -> HTTPException:
+    """Bad input is the client's to fix (400). A full inbox, or an engine or
+    database failure, may clear, so clients retry it (503). Anything else is a
+    server bug (500)."""
+    if isinstance(error, (CapacityError, EngineError, OSError)):
+        return HTTPException(status_code=503, detail=str(error), headers={"Retry-After": "1"})
+    if isinstance(error, (ValueError, KeyError)):
+        return HTTPException(status_code=400, detail=str(error))
+    log.exception("engine request failed")
+    return HTTPException(status_code=500, detail=str(error))
+
+
+def _engine_errors(route):
+    """Map the errors a route raises with ``_engine_http_error``; an
+    ``HTTPException`` the route raises itself passes through."""
+    if inspect.iscoroutinefunction(route):
+        @functools.wraps(route)
+        async def mapped(*args, **kwargs):
+            try:
+                return await route(*args, **kwargs)
+            except HTTPException:
+                raise
+            except Exception as error:
+                raise _engine_http_error(error) from error
+    else:
+        @functools.wraps(route)
+        def mapped(*args, **kwargs):
+            try:
+                return route(*args, **kwargs)
+            except HTTPException:
+                raise
+            except Exception as error:
+                raise _engine_http_error(error) from error
+    return mapped
 
 
 def _cell_datatype(cell: dict[str, Any] | None) -> str | None:
@@ -268,6 +306,8 @@ def observe_experiment_batch(run_id: str, request: list[ExperimentBatchObservati
     except KeyError: raise HTTPException(status_code=404, detail="unknown experiment run or variable")
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
 
+# A full inbox fails before the observations commit, so a retry is safe.
+@_engine_errors
 def record_experiment_batch(run_id: str, request: list[ExperimentRecordEntry]):
     try:
         return app.state.manager.experiments.record_batch(run_id, [item.model_dump(exclude_unset=True) for item in request])
@@ -275,9 +315,6 @@ def record_experiment_batch(run_id: str, request: list[ExperimentRecordEntry]):
         raise HTTPException(status_code=404, detail="unknown experiment run or variable")
     except TypeError as error:
         raise HTTPException(status_code=400, detail=str(error))
-    except Exception as error:
-        # A full inbox fails before the observations commit, so a retry is safe.
-        raise _engine_http_error(error) from error
 
 def annotate_experiment_stream(run_id: str, request: ExperimentStreamAnnotationRequest):
     try:
@@ -994,17 +1031,6 @@ def resolve_storage_keys(req: ResolveStorageKeysRequest) -> dict[str, str]:
         raise HTTPException(status_code=400, detail=str(e))
 
 
-def _engine_http_error(error: Exception) -> HTTPException:
-    """Bad input is the client's to fix (400). A full inbox, or an engine or
-    database failure, may clear, so clients retry it (503). Anything else is a
-    server bug (500)."""
-    if isinstance(error, (CapacityError, EngineError, OSError)):
-        return HTTPException(status_code=503, detail=str(error), headers={"Retry-After": "1"})
-    if isinstance(error, (ValueError, KeyError)):
-        return HTTPException(status_code=400, detail=str(error))
-    log.exception("engine request failed")
-    return HTTPException(status_code=500, detail=str(error))
-
 
 def _receipt(receipt, source_id, request_id, wait):
     core = app.state.manager.core
@@ -1021,44 +1047,40 @@ def _receipt(receipt, source_id, request_id, wait):
 
 
 @app.post("/insert_timeseries")
+@_engine_errors
 def insert_timeseries(streams: Annotated[list[StreamInsert], Body()], wait: float = Query(30, ge=0)):
-    try:
-        receipts, total = [], 0
-        groups = {}
-        for stream in streams:
-            group = groups.setdefault((stream.source_id, stream.request_id), {})
-            group.setdefault(stream.ref_name, []).extend(stream.values)
-            total += len(stream.values)
-        for (source_id, request_id), observations in groups.items():
-            receipt = app.state.manager.insert_timeseries_batch(source_id, observations,
-                                                               request_id=request_id)
-            receipts.append(_receipt(receipt, source_id, request_id, wait))
-        insert_stats.record(origin="http", rows=total, streams=[s.ref_name for s in streams])
-        return {"ok": True, "rows_inserted": total, "receipts": receipts}
-    except Exception as error:
-        raise _engine_http_error(error) from error
+    receipts, total = [], 0
+    groups = {}
+    for stream in streams:
+        group = groups.setdefault((stream.source_id, stream.request_id), {})
+        group.setdefault(stream.ref_name, []).extend(stream.values)
+        total += len(stream.values)
+    for (source_id, request_id), observations in groups.items():
+        receipt = app.state.manager.insert_timeseries_batch(source_id, observations,
+                                                           request_id=request_id)
+        receipts.append(_receipt(receipt, source_id, request_id, wait))
+    insert_stats.record(origin="http", rows=total, streams=[s.ref_name for s in streams])
+    return {"ok": True, "rows_inserted": total, "receipts": receipts}
 
 
 @app.post("/insert_timeseries_arrow")
+@_engine_errors
 async def insert_timeseries_arrow(request: Request, wait: float = Query(30, ge=0)):
-    try:
-        body = await request.body()
-        table = ipc.RecordBatchStreamReader(pa.BufferReader(body)).read_all()
-        frame = pl.from_arrow(table)
-        request_id = request.headers.get("X-Acquirium-Request-Id")
-        if not request_id:
-            raise ValueError("X-Acquirium-Request-Id is required")
-        receipts = []
-        for key, source_frame in frame.partition_by("source_id", as_dict=True).items():
-            source_id = str(key[0])
-            receipt = await asyncio.to_thread(app.state.manager.insert_timeseries_arrow,
-                source_id, source_frame.drop("source_id").to_arrow(), request_id=request_id)
-            receipts.append(await asyncio.to_thread(_receipt, receipt, source_id, request_id, wait))
-        insert_stats.record(origin="arrow", rows=len(frame),
-                            streams=frame["ref_name"].unique().to_list())
-        return {"ok": True, "rows_inserted": len(frame), "receipts": receipts}
-    except Exception as error:
-        raise _engine_http_error(error) from error
+    body = await request.body()
+    table = ipc.RecordBatchStreamReader(pa.BufferReader(body)).read_all()
+    frame = pl.from_arrow(table)
+    request_id = request.headers.get("X-Acquirium-Request-Id")
+    if not request_id:
+        raise ValueError("X-Acquirium-Request-Id is required")
+    receipts = []
+    for key, source_frame in frame.partition_by("source_id", as_dict=True).items():
+        source_id = str(key[0])
+        receipt = await asyncio.to_thread(app.state.manager.insert_timeseries_arrow,
+            source_id, source_frame.drop("source_id").to_arrow(), request_id=request_id)
+        receipts.append(await asyncio.to_thread(_receipt, receipt, source_id, request_id, wait))
+    insert_stats.record(origin="arrow", rows=len(frame),
+                        streams=frame["ref_name"].unique().to_list())
+    return {"ok": True, "rows_inserted": len(frame), "receipts": receipts}
 
 
 class DeleteObservations(BaseModel):
@@ -1069,13 +1091,11 @@ class DeleteObservations(BaseModel):
 
 
 @app.post("/delete_timeseries")
+@_engine_errors
 def delete_timeseries(request: DeleteObservations, wait: float = Query(30, ge=0)):
-    try:
-        receipt = app.state.manager.delete_timeseries(request.source_id, request.ref_name,
-            request.timestamps, request_id=request.request_id)
-        return _receipt(receipt, request.source_id, request.request_id, wait)
-    except Exception as error:
-        raise _engine_http_error(error) from error
+    receipt = app.state.manager.delete_timeseries(request.source_id, request.ref_name,
+        request.timestamps, request_id=request.request_id)
+    return _receipt(receipt, request.source_id, request.request_id, wait)
 
 
 def _parse_dt(s: Optional[str]) -> Optional[datetime]:
@@ -1087,6 +1107,7 @@ def _parse_dt(s: Optional[str]) -> Optional[datetime]:
 
 #### TIMESERIES API ENDPOINTS ####
 @app.get("/timeseries")
+@_engine_errors
 def get_timeseries(
     request: Request,
     uri: str,
@@ -1100,57 +1121,52 @@ def get_timeseries(
     end_ns: int | None = None,
     after: int | None = None,
     ):
-    try:
-        if order not in ("asc", "desc"):
-            raise ValueError("order must be 'asc' or 'desc'")
-    
-        batches: Iterator[pa.RecordBatch] = app.state.manager.timeseries_batch(
-            uri=uri,
-            start=start_ns if start_ns is not None else start,
-            end=end_ns if end_ns is not None else end,
-            epoch=epoch,
-            after=after,
-            limit=limit,
-            order=order,        # type: ignore[arg-type]
-            batch_size=request.app.state.read_batch_size,
-            value_mode=value_mode,
-        )
+    if order not in ("asc", "desc"):
+        raise ValueError("order must be 'asc' or 'desc'")
 
-        def arrow_stream() -> Iterator[bytes]:
-            buf = io.BytesIO()
-            writer: ipc.RecordBatchStreamWriter | None = None
-            try:
-                for batch in batches:
-                    if writer is None:
-                        writer = ipc.new_stream(buf, batch.schema)
-                    writer.write_batch(batch)
-                    data = buf.getvalue()
-                    if data:
-                        yield data
-                        buf.seek(0)
-                        buf.truncate(0)
-            finally:
-                if writer is not None:
-                    writer.close()
-            data = buf.getvalue()
-            if data:
-                yield data
+    batches: Iterator[pa.RecordBatch] = app.state.manager.timeseries_batch(
+        uri=uri,
+        start=start_ns if start_ns is not None else start,
+        end=end_ns if end_ns is not None else end,
+        epoch=epoch,
+        after=after,
+        limit=limit,
+        order=order,        # type: ignore[arg-type]
+        batch_size=request.app.state.read_batch_size,
+        value_mode=value_mode,
+    )
 
-        return StreamingResponse(
-            arrow_stream(),
-            media_type="application/vnd.apache.arrow.stream",
-        )
+    def arrow_stream() -> Iterator[bytes]:
+        buf = io.BytesIO()
+        writer: ipc.RecordBatchStreamWriter | None = None
+        try:
+            for batch in batches:
+                if writer is None:
+                    writer = ipc.new_stream(buf, batch.schema)
+                writer.write_batch(batch)
+                data = buf.getvalue()
+                if data:
+                    yield data
+                    buf.seek(0)
+                    buf.truncate(0)
+        finally:
+            if writer is not None:
+                writer.close()
+        data = buf.getvalue()
+        if data:
+            yield data
 
-    except Exception as error:
-        raise _engine_http_error(error) from error
+    return StreamingResponse(
+        arrow_stream(),
+        media_type="application/vnd.apache.arrow.stream",
+    )
+
 
 
 @app.post("/timeseries_info")
+@_engine_errors
 def timeseries_info(req: TimeseriesInfoRequest) -> dict[str, Any]:
-    try:
-        return app.state.manager.timeseries_info_batch(req.uris)
-    except Exception as error:
-        raise _engine_http_error(error) from error
+    return app.state.manager.timeseries_info_batch(req.uris)
 
 
 @app.get("/sparql_json")
