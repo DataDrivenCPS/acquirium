@@ -134,8 +134,12 @@ change in any release.
   fetches them in one batch request the first time `total_rows`,
   `time_range`, `bindings` or `is_empty()` (before the values are fetched)
   needs them, so `dataframe()`, `latest()` and `Query.dataframe()` skip the
-  server-side count of every matched stream. The repr of a lazy object
-  shows its stream count until the statistics are loaded.
+  server-side count of every matched stream. That one request covers every
+  stream of the `data()` call and is shared with the sub-objects `by()` and
+  `convert_to()` return, so a `by()` loop that checks each entity makes one
+  request, not one per entity, and all of them read the same snapshot.
+  `refresh_stats()` fetches it again. The repr of a lazy object shows its
+  stream count until the statistics are loaded.
 - `cast_value` is validated (`"float"`, `"int"`, `"str"` or `None`) and
   defaults to `None`; `"float"` parses numeric text into `value_numeric`
   without logging, `"int"` returns `Int64` columns and warns when it

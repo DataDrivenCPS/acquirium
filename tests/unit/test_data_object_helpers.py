@@ -325,16 +325,18 @@ class TestLazyStats:
     T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
     T1 = datetime(2026, 1, 2, tzinfo=timezone.utc)
 
-    def _data(self):
+    def _data(self, *, entities=("urn:t#A", "urn:t#A")):
         from types import SimpleNamespace
         from unittest.mock import MagicMock
         from acquirium.Client.explore.core import Query
 
         client = MagicMock()
-        # one entity hosting two points, one stream each
+        # two points with one stream each, hosted by ``entities`` (one by
+        # default, so by("a") yields a single sub-object)
         client.sparql_query.return_value = {
-            "columns": ["v0", "v1", "ext1"],
-            "rows": [["urn:t#A", "urn:t#p1", self.R1], ["urn:t#A", "urn:t#p2", self.R2]],
+            "columns": ["v0", "v1", "ext1", "unit1"],
+            "rows": [[entities[0], "urn:t#p1", self.R1, "urn:unit#m"],
+                     [entities[1], "urn:t#p2", self.R2, "urn:unit#m"]],
         }
         client.timeseries_info_batch.return_value = {
             self.R1: SimpleNamespace(row_count=3, earliest=self.T0, latest=self.T1),
@@ -399,9 +401,68 @@ class TestLazyStats:
         assert sub.total_rows == 3
         client.timeseries_info_batch.assert_called_once()
 
-    def test_sub_objects_fetch_their_own_stats(self):
+    def test_by_loop_fetches_stats_once_for_the_whole_family(self):
+        # One request for every stream of the data() call, whichever
+        # sub-object reads first; the siblings and the parent reuse it.
+        data, client = self._data(entities=("urn:t#A", "urn:t#B"))
+        seen = {}
+        for uri, sub in data.by("a"):
+            seen[uri] = (sub.is_empty(), sub.total_rows, sub.time_range)
+        assert seen == {
+            "urn:t#A": (False, 3, (self.T0, self.T1)),
+            "urn:t#B": (True, 0, (None, None)),
+        }
+        assert data.total_rows == 3
+        client.timeseries_info_batch.assert_called_once()
+        (uris,), _ = client.timeseries_info_batch.call_args
+        assert sorted(uris) == [self.R1, self.R2]
+
+    def test_by_does_not_fetch_until_a_statistic_is_read(self):
+        data, client = self._data(entities=("urn:t#A", "urn:t#B"))
+        subs = dict(data.by("a"))
+        for sub in subs.values():
+            sub.metadata()
+            sub.stream_info()
+            repr(sub)
+        client.timeseries_info_batch.assert_not_called()
+
+    def test_convert_to_shares_the_stats(self):
+        data, client = self._data()
+        client.resolve_conversion.return_value = {
+            "factors": {"from_uri": "urn:unit#m", "to_uri": "urn:unit#km", "factor": 0.001}
+        }
+        converted = data.convert_to("urn:unit#km")
+        client.timeseries_info_batch.assert_not_called()
+        assert converted.total_rows == 3
+        assert data.total_rows == 3
+        assert [b.row_count for b in data.bindings] == [3, 0]
+        client.timeseries_info_batch.assert_called_once()
+
+    def test_refresh_stats_refetches_for_the_whole_family(self):
+        from types import SimpleNamespace
         data, client = self._data()
         (_, sub), = data.by("a")
-        client.timeseries_info_batch.assert_not_called()
         assert sub.total_rows == 3
+        client.timeseries_info_batch.return_value = {
+            self.R1: SimpleNamespace(row_count=5, earliest=self.T0, latest=self.T1),
+            self.R2: SimpleNamespace(row_count=1, earliest=self.T1, latest=self.T1),
+        }
+        assert data.total_rows == 3  # cached snapshot, no refetch
+        sub.refresh_stats()
+        assert data.total_rows == 6
+        assert sub.total_rows == 6
+        assert client.timeseries_info_batch.call_count == 2
+
+    def test_object_built_without_a_cache_fetches_its_own(self):
+        from acquirium.Client.data_object import DataObject
+        data, client = self._data()
+        own = DataObject(
+            _bindings=list(data._bindings[:1]),
+            _entity_columns=data._entity_columns,
+            _query_graph=data._query_graph,
+            _client=client,
+        )
+        assert own.total_rows == 3
         client.timeseries_info_batch.assert_called_once()
+        (uris,), _ = client.timeseries_info_batch.call_args
+        assert uris == [self.R1]

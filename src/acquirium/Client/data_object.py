@@ -376,15 +376,42 @@ def _graph_entity_columns(qg: QueryGraph | None) -> list[str]:
 
 
 @dataclass
+class _StreamStats:
+    """Statistics for every stream of one ``data()`` call, fetched once.
+
+    The root ``DataObject`` owns one and hands the same instance to the
+    sub-objects ``by()`` and ``convert_to()`` derive, so whichever of them
+    reads a statistic first fetches the whole family's in one batch request
+    and the rest read from that snapshot. ``refresh()`` forgets it.
+    """
+    client: AcquiriumClient | None
+    ref_uris: list[str]
+    info: dict[str, Any] | None = None
+
+    def get(self) -> dict[str, Any]:
+        if self.info is None:
+            self.info = (
+                self.client.timeseries_info_batch(list(self.ref_uris))
+                if self.ref_uris and self.client is not None else {}
+            )
+        return self.info
+
+    def refresh(self) -> None:
+        self.info = None
+
+
+@dataclass
 class DataObject:
     """Lazy, alias-driven structured access to sensor data.
 
     On construction only SPARQL metadata is fetched. The per-stream
     statistics (row count, time range) are fetched in one batch request the
     first time ``total_rows``, ``time_range``, ``bindings``, or
-    ``is_empty()`` (before materialization) needs them. The actual
-    time-series data is materialized on demand when ``__getitem__``,
-    ``dataframe()``, or ``latest()`` are called.
+    ``is_empty()`` (before materialization) needs them. That request covers
+    every stream of the ``data()`` call, and the sub-objects ``by()`` and
+    ``convert_to()`` return share its result; ``refresh_stats()`` fetches
+    it again. The actual time-series data is materialized on demand when
+    ``__getitem__``, ``dataframe()``, or ``latest()`` are called.
 
     Lightweight operations such as ``aliases``, ``metadata()``,
     ``stream_info()``, and ``by()`` work without fetching either.
@@ -403,10 +430,10 @@ class DataObject:
     _materialized: bool = field(default=False, repr=False)
     _metadata_df: pl.DataFrame | None = field(default=None, repr=False)
 
-    # Whether the bindings carry stream statistics yet; _load_stats() fills
-    # them on first use. False is the safe default: an object that inherits
-    # loaded bindings without the flag refetches rather than reads zeros.
-    _stats_loaded: bool = field(default=False, repr=False)
+    # Stream statistics, shared by reference with the sub-objects by() and
+    # convert_to() derive; _stats_bindings() fills them in on first use. An
+    # object built without one makes its own from its bindings.
+    _stats: _StreamStats | None = field(default=None, repr=False)
 
     # Conversions recorded by convert_to() on a lazy object, applied when the
     # values are fetched: ((alias, point_uri, ref_uri), from_uri, to_uri),
@@ -503,29 +530,47 @@ class DataObject:
             },
             _tall=None,
             _materialized=False,
+            _stats=_StreamStats(query.client, sorted({b.ref_uri for b in bindings})),
         )
 
-    def _load_stats(self) -> None:
-        """Fill the bindings' row_count / earliest / latest. Idempotent.
+    def _stats_bindings(self) -> list[BindingInfo]:
+        """The bindings with row_count / earliest / latest filled in.
 
-        One batch request covering every stream, which counts each stream's
-        samples on the server; only the statistic readers call it.
+        Reads the shared statistics cache, fetching it on first use: one
+        batch request covering every stream of the ``data()`` call, which
+        counts each stream's samples on the server. Only the statistic
+        readers call this.
         """
-        if self._stats_loaded:
-            return
-        if self._bindings:
-            stats = self._client.timeseries_info_batch(list({b.ref_uri for b in self._bindings}))
-            loaded: list[BindingInfo] = []
-            for b in self._bindings:
-                info = stats.get(b.ref_uri)
-                loaded.append(replace(
-                    b,
-                    row_count=info.row_count if info else 0,
-                    earliest=info.earliest if info else None,
-                    latest=info.latest if info else None,
-                ))
-            self._bindings = loaded
-        self._stats_loaded = True
+        if not self._bindings:
+            return []
+        if self._stats is None:
+            self._stats = _StreamStats(self._client, sorted({b.ref_uri for b in self._bindings}))
+        stats = self._stats.get()
+        filled: list[BindingInfo] = []
+        for b in self._bindings:
+            info = stats.get(b.ref_uri)
+            filled.append(replace(
+                b,
+                row_count=info.row_count if info else 0,
+                earliest=info.earliest if info else None,
+                latest=info.latest if info else None,
+            ))
+        return filled
+
+    @property
+    def _stats_loaded(self) -> bool:
+        """Whether the statistics are in the cache (no fetch)."""
+        return self._stats is not None and self._stats.info is not None
+
+    def refresh_stats(self) -> None:
+        """Forget the cached stream statistics.
+
+        The next read of ``total_rows``, ``time_range``, ``bindings`` or
+        ``is_empty()`` fetches them again. The cache is shared with the
+        sub-objects of the same ``data()`` call, so they see the refresh too.
+        """
+        if self._stats is not None:
+            self._stats.refresh()
 
     # ------------------------------------------------------------------
     # Materialization
@@ -866,7 +911,7 @@ class DataObject:
                     _query_params=self._query_params,
                     _tall=sub_tall,
                     _materialized=True,
-                    _stats_loaded=self._stats_loaded,
+                    _stats=self._stats,
                 )
             return
 
@@ -897,7 +942,7 @@ class DataObject:
                 _tall=None,
                 _materialized=False,
                 _pending_conversions=list(self._pending_conversions),
-                _stats_loaded=self._stats_loaded,
+                _stats=self._stats,
             )
 
     # ------------------------------------------------------------------
@@ -1234,8 +1279,7 @@ class DataObject:
         """
         if self._materialized:
             return self._tall.is_empty()
-        self._load_stats()
-        return all(b.row_count == 0 for b in self._bindings)
+        return all(b.row_count == 0 for b in self._stats_bindings())
 
     # ------------------------------------------------------------------
     # Stats (fetched on first use, no materialization needed)
@@ -1244,22 +1288,20 @@ class DataObject:
     @property
     def total_rows(self) -> int:
         """Total row count across all bindings (from stats, no materialization)."""
-        self._load_stats()
-        return sum(b.row_count for b in self._bindings)
+        return sum(b.row_count for b in self._stats_bindings())
 
     @property
     def time_range(self) -> tuple[datetime | None, datetime | None]:
         """Overall (earliest, latest) across all bindings (from stats)."""
-        self._load_stats()
-        earliests = [b.earliest for b in self._bindings if b.earliest is not None]
-        latests = [b.latest for b in self._bindings if b.latest is not None]
+        bindings = self._stats_bindings()
+        earliests = [b.earliest for b in bindings if b.earliest is not None]
+        latests = [b.latest for b in bindings if b.latest is not None]
         return (min(earliests) if earliests else None, max(latests) if latests else None)
 
     @property
     def bindings(self) -> list[BindingInfo]:
         """Read-only access to binding metadata, stream statistics included."""
-        self._load_stats()
-        return list(self._bindings)
+        return self._stats_bindings()
 
     # ------------------------------------------------------------------
     # Unit conversion
@@ -1373,7 +1415,7 @@ class DataObject:
                 _query_params=self._query_params,
                 _tall=tall,
                 _materialized=True,
-                _stats_loaded=self._stats_loaded,
+                _stats=self._stats,
             )
 
         # Lazy path: record the conversions for _materialize(). The bindings
@@ -1389,7 +1431,7 @@ class DataObject:
             _tall=None,
             _materialized=False,
             _pending_conversions=pending,
-            _stats_loaded=self._stats_loaded,
+            _stats=self._stats,
         )
 
     # ------------------------------------------------------------------

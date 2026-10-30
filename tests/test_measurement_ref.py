@@ -93,3 +93,15 @@ def test_stats_are_fetched_once_on_first_read(hist, stats_calls):
     assert {b.ref_name: b.row_count for b in data.bindings} == {"FT_feed": 3, "FT_perm": 2}
     assert len(stats_calls) == 1
     assert sorted(stats_calls[0]) == sorted(r.ref_uri for r in refs)
+
+
+def test_refresh_stats_sees_new_rows(hist, stats_calls):
+    hist.register_streams([{"point_uri": "urn:test:refstats#extra", "source_id": SOURCE,
+                            "ref_name": "FT_extra", "value_kind": "numeric"}])
+    data = hist.query().measurement(ref=hist.stream(SOURCE, "FT_extra")).data()
+    assert data.total_rows == 0
+    hist.insert_timeseries_batch(SOURCE, {"FT_extra": [(T0, 1.0)]})
+    assert data.total_rows == 0  # the cached snapshot
+    data.refresh_stats()
+    assert data.total_rows == 1
+    assert len(stats_calls) == 2

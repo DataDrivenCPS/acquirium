@@ -299,8 +299,9 @@ source-owned documents for the same key.
 
 `DataObject` is returned by `Query.data()`.
 It is lazy: row counts and time ranges come from stream statistics, fetched in
-one batch request the first time one is read, and values are fetched on the
-first call that needs them.
+one batch request the first time one is read (shared with the sub-objects
+`by()` and `convert_to()` return), and values are fetched on the first call
+that needs them.
 See the [data tutorial](../tutorials/data.md).
 
 | method | description |
@@ -318,6 +319,7 @@ See the [data tutorial](../tutorials/data.md).
 | `aliases`, `entity_aliases` | Properties: the data and entity aliases present. |
 | `total_rows`, `time_range` | Properties: row count and `(earliest, latest)` from stream statistics, without fetching the values. |
 | `bindings` | Property: read-only binding metadata per stream, with its statistics. |
+| `refresh_stats() -> None` | Forget the cached stream statistics so the next read fetches them again; the sub-objects of the same `data()` call see the refresh too. |
 
 ### Parameters shared by data() and dataframe()
 
