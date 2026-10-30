@@ -562,7 +562,12 @@ def _node_constraint_clauses(v: str, node, registry: Mapping = REGISTRY) -> List
 
 def _data_node_clauses(v: str, nid: int, info, registry: Mapping = REGISTRY) -> List[str]:
     """ext-ref triple, unit/label/stream-identity OPTIONALs, and filters for one data node."""
-    clauses: List[str] = [f"{v} <{HAS_EXTERNAL_REFERENCE}> ?ext{nid} ."]
+    clauses: List[str] = []
+    refs = getattr(info, "refs", None)
+    if refs is not None:
+        # measurement(ref=): pin the reference; an empty tuple matches nothing
+        clauses.append(f"VALUES ?ext{nid} {{ {' '.join(f'<{r}>' for r in refs)} }}")
+    clauses.append(f"{v} <{HAS_EXTERNAL_REFERENCE}> ?ext{nid} .")
     clauses.append(f"OPTIONAL {{ {v} <{HAS_UNIT}> ?unit{nid} . }}")
     clauses.append(f"OPTIONAL {{ ?ext{nid} <{HAS_UNIT}> ?extunit{nid} . }}")
     clauses.append(f"OPTIONAL {{ {v} <{RDFS.label}> ?lbl{nid} . }}")

@@ -626,6 +626,15 @@ class Manager:
         raw = self.timeseries_store.timeseries_info_batch(list(key_to_uri.keys()))
         return {key_to_uri[k]: v for k, v in raw.items()}
 
+    def timeseries_exists_batch(self, uris: list[str]) -> list[str]:
+        """The stream or point URIs among ``uris`` that have any row."""
+        if not uris:
+            return []
+        uri_to_key = self.timeseries_store.resolve_storage_keys(uris)
+        key_to_uri = {v: k for k, v in uri_to_key.items()}
+        found = self.timeseries_store.timeseries_exists_batch(list(key_to_uri.keys()))
+        return sorted(key_to_uri[k] for k in found)
+
     @staticmethod
     def _sparql_value(value: Any) -> str | None:
         if value is None:

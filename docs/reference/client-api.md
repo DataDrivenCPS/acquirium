@@ -138,7 +138,7 @@ See the [querying tutorial](../tutorials/querying.md) and
 |---|---|
 | `entity(cls=None, *, uri=None, alias=None, **attrs) -> Query` | Add an entity node for a class (URI or free text) or one instance (`uri=`, CURIEs accepted); keyword attributes filter inline. |
 | `related(cls=None, *, uri=None, alias=None, frm=None, via="any", direction=None, max_depth=None, nearest=None, **attrs) -> Query` | Add an entity connected to `frm` (default: the current node); `via=` restricts predicates, `direction=` walks the piping topology; `max_depth` defaults to 3 (1 for predicate lists), `nearest` to `True` for plain `via="any"`. |
-| `measurement(*, frm=None, alias=None, direction=None, max_depth=3, nearest=None, include_connection_points=True, uri=None, **attrs) -> Query` | Attach the measurement points of `frm` (default: the current node; `"*"` for every entity, or a list of aliases); on an empty query, every registered stream. With `direction=`, `nearest` defaults to `True` and each source keeps the first place along the flow (own connection points, pipe, next entity with its connection points, ...) holding a match; `nearest=False` returns everything within `max_depth`. `uri=` pins the node to one point. |
+| `measurement(*, frm=None, alias=None, direction=None, max_depth=3, nearest=None, include_connection_points=True, uri=None, ref=None, **attrs) -> Query` | Attach the measurement points of `frm` (default: the current node; `"*"` for every entity, or a list of aliases); on an empty query, every registered stream. With `direction=`, `nearest` defaults to `True` and each source keeps the first place along the flow (own connection points, pipe, next entity with its connection points, ...) holding a match; `nearest=False` returns everything within `max_depth`. `uri=` pins the node to one point; `ref=` keeps only the given streams (reference URIs or `Stream` handles, one or a list). |
 | `context(cls=None, *, uri=None, alias=None, frm=None, via="entity", **attrs) -> Query` | From a measurement node, add the entity it is about and point at it; `via=` names a relation (`"entity"`, `"upstream"`, `"downstream"`, or one registered with `register_relation`) or gives explicit predicates or step chains. One fixed step, compiled to SPARQL. |
 | `where(target=None, *exprs, **attrs) -> Query` | Filter a node (`target=` by alias, default the current node). Keyword values are URIs, free text, lists (OR) or `Not(value)`; positional arguments are [attribute expressions](#attribute-expressions). Everything in one call is AND. |
 | `include(*names, of=None, required=False, type=None, strict=True) -> Query` | Add `alias.attr` columns for a node, or un-drop a node; names are strings or `acq.attr` paths; `required=True` drops rows lacking the attribute. `type=` casts the named columns (`"string"`, `"int"`, `"float"`, `"bool"`, `"date"`, `"datetime"`, `"struct"`, `"object"`, or a Python type / polars dtype), list cells element by element; `strict=True` raises on a value that does not convert, `strict=False` makes it `null`. `"all"` on an entity node adds every attribute (a measurement point is an entity too) except `type` and `cp_type`; on a measurement node it adds the measurement attributes except `type`, `app` and `label`. Entity nodes accept any attribute named explicitly; a measurement node refuses entity-only ones (`process`, `cp_type`); a list attribute appears once, under its collapsed name, as a `pl.List` column. A parent key (`"product_info"`) is one `pl.Struct` column with the union of its sub-keys, fields sorted by name, nested dicts nested. A column whose values do not fit one dtype (a dict and a string, an integer and a string) is `pl.Object` with the values as written, unless `type=` casts it. |
@@ -298,13 +298,15 @@ source-owned documents for the same key.
 ## Data
 
 `DataObject` is returned by `Query.data()`.
-It is lazy: row counts and time ranges come from stream statistics, and values
-are fetched on the first call that needs them.
+It is lazy: row counts and time ranges come from stream statistics, fetched in
+one batch request the first time one is read (shared with the sub-objects
+`by()` and `convert_to()` return), `is_empty()` asks only which streams have a
+row, and values are fetched on the first call that needs them.
 See the [data tutorial](../tutorials/data.md).
 
 | method | description |
 |---|---|
-| `dataframe(shape="wide", *, start=None, end=None, limit=None, order="asc", include_ref=False, compact=True, streams=None) -> pl.DataFrame` | The values as one frame; the window filters the fetched rows (`limit` per stream). `streams=` keeps only the listed streams, by their `stream_info()` number or ref URI. |
+| `dataframe(shape="wide", *, start=None, end=None, limit=None, order="asc", include_ref=False, compact=True, streams=None) -> pl.DataFrame` | The values as one frame; the window filters the fetched rows (`limit` per stream). `streams=` keeps only the listed streams, by their `stream_info()` number, ref URI, or `Stream` handle. |
 | `d["alias"] -> pl.DataFrame` | One alias as `[time, value]`, plus `point_uri` when the alias covers several points. `KeyError` for an unknown alias. |
 | `"alias" in d`, `iter(d)`, `len(d)` | Membership, iteration and count over `aliases`; none of them fetch. |
 | `metadata(*, include_ref_uris=False) -> pl.DataFrame` | Unique `(data_alias, point_label, point_uri, unit, entity__*)` rows; `include_ref_uris=True` adds `ref_uri`, `source_id` and `ref_name`. |
@@ -312,11 +314,12 @@ See the [data tutorial](../tutorials/data.md).
 | `convert_to(to_unit, *, from_unit=None, alias=None) -> DataObject` | A new object with values converted to `to_unit`, each point from its own unit; `from_unit=` for points with no unit, `alias=` to convert one alias. |
 | `by(entity_alias) -> Iterator[tuple[str, DataObject]]` | A sub-object per entity. |
 | `latest(alias=None, *, streams=None) -> pl.DataFrame` | The newest reading per point, from its own one-row-per-stream fetch within the object's window; all bindings as `[data_alias, point_uri, time, value]` without an alias. `streams=` as in `dataframe()`. |
-| `is_empty() -> bool` | Whether any rows exist; from stream statistics (ignoring the window) until the values are fetched. |
+| `is_empty() -> bool` | Whether any rows exist. Until the values are fetched it asks the server which streams have any row (ignoring the window), without counting them, or reads the statistics if they are loaded. |
 | `stream_info(alias=None) -> pl.DataFrame` | One row per stream: `stream` (its number in this object, for `streams=`), `alias`, `point_uri`, `ref_uri`, `source_id`, `ref_name`. |
 | `aliases`, `entity_aliases` | Properties: the data and entity aliases present. |
-| `total_rows`, `time_range` | Properties: row count and `(earliest, latest)` from stream statistics, without fetching. |
-| `bindings` | Property: read-only binding metadata per stream. |
+| `total_rows`, `time_range` | Properties: row count and `(earliest, latest)` from stream statistics, without fetching the values. |
+| `bindings` | Property: read-only binding metadata per stream, with its statistics. |
+| `refresh_stats() -> None` | Forget the cached stream statistics and which streams have rows, so the next read asks the server again; the sub-objects of the same `data()` call see the refresh too. |
 
 ### Parameters shared by data() and dataframe()
 

@@ -65,6 +65,8 @@ def test_timeseries_mutation_and_query_contract(contract_store, contract_uri_pre
     assert batch_info[ref_uri].row_count == 2
     assert batch_info[missing_ref].row_count == 0
     assert list(store.timeseries(missing_ref)) == []
+    assert store.timeseries_exists_batch([ref_uri, missing_ref]) == {ref_uri}
+    assert store.timeseries_exists_batch([]) == set()
 
     assert store.replace_rows(ref_uri, [(_utc(2026, 1, 3), 3.0)], value_kind="numeric") == 1
     assert _values(store, ref_uri) == [3.0]

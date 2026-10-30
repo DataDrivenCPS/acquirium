@@ -147,9 +147,11 @@ def test_http_replacement_preserves_ingestion_contract(materialization_store, mo
     assert send([[a, 1.], [b, 2.]], True).json() == {'ok': True, 'rows_inserted': 2}
     assert send([[a, 3.]]).status_code == 200
     assert store.timeseries_info(ref).row_count == 2
+    assert store.timeseries_exists_batch([ref]) == {ref}
     assert send([[b, 'Manual Control'], [b, 4.]], True).json() == {'ok': True, 'rows_inserted': 1}
     original = _snapshot(store)
     assert send([['invalid timestamp', 1.]], True).status_code == 422
     assert _snapshot(store) == original
     assert send([], True).json() == {'ok': True, 'rows_inserted': 0}
     assert store.timeseries_info(ref).row_count == 0
+    assert store.timeseries_exists_batch([ref]) == set()  # replaced rows are tombstoned
