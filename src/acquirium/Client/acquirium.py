@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, Optional, TYPE_CHECKING
+from typing import Any, Iterable, Mapping, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     import pyarrow as pa
