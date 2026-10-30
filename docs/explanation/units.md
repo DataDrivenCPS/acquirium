@@ -79,12 +79,16 @@ to the point's unit, which is the one `units()` reports.
 The conversion happens per stream, client side, when a `DataObject` fetches
 its rows; the factors are fetched from the server once per unit pair.
 
-If the two are not convertible, the readings come through untouched and a
-warning is logged rather than an exception raised.
+If the two are not convertible, the readings come through untouched, in the
+stream's unit, and a `UserWarning` names the point and both units.
 A mismatch should not break a query that did not ask for a conversion; the
-warning indicates that the model needs a fix.
+warning says that the model needs a fix.
 Since registration rejects a non-convertible unit, this only happens when the
-graph was edited by hand or by an older version.
+graph was edited after the stream was registered.
+
+A conversion you asked for with `convert_to()` is different: if it cannot be
+applied when the values are fetched, the fetch raises `ValueError` rather
+than returning values in the wrong unit.
 
 **TODO:** We need to test and demonstrate this feature
 

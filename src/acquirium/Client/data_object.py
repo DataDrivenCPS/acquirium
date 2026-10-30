@@ -2,16 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from typing import Any, Iterator, TYPE_CHECKING
+from typing import Any, Iterator, Sequence, TYPE_CHECKING
 import polars as pl
-import logging
+import warnings
 
 if TYPE_CHECKING:
     from acquirium.Client.explore.core import Query
     from acquirium.Client.query_graph import QueryGraph
     from acquirium.Client.client import AcquiriumClient
 
-logger = logging.getLogger(__name__)
 
 
 def _parse_sparql_bindings(
@@ -43,18 +42,30 @@ def _parse_sparql_bindings(
     data_node_ids = set(qg.data_nodes.keys())
 
     # Map column index -> node id for v<N>, ext<N>, unit<N>, extunit<N>,
-    # lbl<N> columns
+    # lbl<N>, extsrc<N>, extname<N> columns
     col_to_id: dict[int, int] = {}
     ext_ref_col_to_id: dict[int, int] = {}
     unit_col_to_id: dict[int, int] = {}
     extunit_col_to_id: dict[int, int] = {}
     lbl_col_to_id: dict[int, int] = {}
+    extsrc_col_to_id: dict[int, int] = {}
+    extname_col_to_id: dict[int, int] = {}
     for i, c in enumerate(cols):
         if not isinstance(c, str):
             continue
         if c.startswith("extunit"):
             try:
                 extunit_col_to_id[i] = int(c[7:])
+            except ValueError:
+                pass
+        elif c.startswith("extsrc"):
+            try:
+                extsrc_col_to_id[i] = int(c[6:])
+            except ValueError:
+                pass
+        elif c.startswith("extname"):
+            try:
+                extname_col_to_id[i] = int(c[7:])
             except ValueError:
                 pass
         elif c.startswith("ext"):
@@ -82,6 +93,11 @@ def _parse_sparql_bindings(
     nid_to_unit_col: dict[int, int] = {v: k for k, v in unit_col_to_id.items()}
     nid_to_extunit_col: dict[int, int] = {v: k for k, v in extunit_col_to_id.items()}
     nid_to_lbl_col: dict[int, int] = {v: k for k, v in lbl_col_to_id.items()}
+    nid_to_extsrc_col: dict[int, int] = {v: k for k, v in extsrc_col_to_id.items()}
+    nid_to_extname_col: dict[int, int] = {v: k for k, v in extname_col_to_id.items()}
+
+    def _cell(r, col):
+        return str(r[col]) if col is not None and col < len(r) and r[col] is not None else None
 
     data_col_indices = [i for i, nid in col_to_id.items() if nid in data_node_ids]
     ref_col_indices = [i for i, nid in ext_ref_col_to_id.items() if nid in data_node_ids]
@@ -99,9 +115,10 @@ def _parse_sparql_bindings(
     property_units: dict[tuple[int, str, str], str | None] = {}
     ref_units: dict[tuple[int, str, str], str | None] = {}
     point_labels: dict[tuple[int, str, str], str | None] = {}
+    stream_ids: dict[tuple[int, str, str], tuple[str | None, str | None]] = {}
 
     if not data_col_indices or not ref_col_indices:
-        return [], {}, {}, {}, {}
+        return [], {}, {}, {}, {}, {}
 
     for r in rows:
         # Build entity context for this row
@@ -146,9 +163,10 @@ def _parse_sparql_bindings(
                     point_labels[key] = str(r[lbl_col])
                 else:
                     point_labels[key] = None
+                stream_ids[key] = (_cell(r, nid_to_extsrc_col.get(nid)), _cell(r, nid_to_extname_col.get(nid)))
             entity_context.setdefault(key, []).append(row_entities)
 
-    return point_ref_uris, entity_context, property_units, ref_units, point_labels
+    return point_ref_uris, entity_context, property_units, ref_units, point_labels, stream_ids
 
 
 def _deduplicate_contexts(contexts: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -166,13 +184,45 @@ def _deduplicate_contexts(contexts: list[dict[str, str]]) -> list[dict[str, str]
 def _is_numeric_dtype(dtype: pl.DataType) -> bool:
     return bool(getattr(dtype, "is_numeric", lambda: False)())
 
-def _split_value_column(df: pl.DataFrame) -> pl.DataFrame:
+_CAST_VALUES = ("float", "int", "str", None)
+
+
+def _validate_cast_value(cast_value: str | None) -> str | None:
+    if cast_value not in _CAST_VALUES:
+        raise ValueError(f"cast_value must be 'float', 'int', 'str' or None, got {cast_value!r}")
+    return cast_value
+
+
+def _split_value_column(df: pl.DataFrame, cast_value: str | None = None) -> pl.DataFrame:
+    """Split the server's ``value`` column into ``value_numeric``/``value_text``.
+
+    A numeric column goes to ``value_numeric`` and a text column to
+    ``value_text``. ``cast_value`` changes that: ``"float"``/``"int"`` send
+    every text value that reads as a number to ``value_numeric`` and only the
+    rest stays text, so a status stream carrying ``"12.5"`` next to ``"ON"``
+    keeps both; ``"str"`` sends every value to ``value_text``. Both are
+    vectorized polars casts, not per-row Python.
+    """
     if "value" not in df.columns:
         return df
+    if cast_value == "str":
+        return df.with_columns([
+            pl.lit(None, dtype=pl.Float64).alias("value_numeric"),
+            pl.col("value").cast(pl.Utf8).alias("value_text"),
+        ]).drop("value")
     if _is_numeric_dtype(df.schema["value"]):
         return df.with_columns([
             pl.col("value").cast(pl.Float64).alias("value_numeric"),
             pl.lit(None, dtype=pl.Utf8).alias("value_text"),
+        ]).drop("value")
+    if cast_value in ("float", "int"):
+        parsed = pl.col("value").cast(pl.Utf8).str.strip_chars().cast(pl.Float64, strict=False)
+        return df.with_columns([
+            parsed.alias("value_numeric"),
+            pl.when(parsed.is_null())
+            .then(pl.col("value").cast(pl.Utf8))
+            .otherwise(pl.lit(None, dtype=pl.Utf8))
+            .alias("value_text"),
         ]).drop("value")
     return df.with_columns([
         pl.lit(None, dtype=pl.Float64).alias("value_numeric"),
@@ -181,11 +231,24 @@ def _split_value_column(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def _restore_single_value_column(df: pl.DataFrame) -> pl.DataFrame:
+    """Fold ``value_numeric``/``value_text`` back into one ``value`` column.
+
+    Numeric-only rows give a Float64 column, text-only rows a String column.
+    A frame mixing both (an alias spanning a sensor and a status point) gives
+    a String column with the numbers rendered as text, so no value is lost
+    and the dtype shows the caller the alias is mixed.
+    """
     if "value_numeric" not in df.columns or "value_text" not in df.columns:
         return df
-    if df.is_empty() or df["value_numeric"].null_count() < df.height:
-        return df.with_columns(pl.col("value_numeric").alias("value"))
-    return df.with_columns(pl.col("value_text").alias("value"))
+    has_text = df["value_text"].null_count() < df.height
+    has_numeric = df["value_numeric"].null_count() < df.height
+    if has_text and has_numeric:
+        return df.with_columns(
+            pl.coalesce(pl.col("value_text"), pl.col("value_numeric").cast(pl.Utf8)).alias("value")
+        )
+    if has_text:
+        return df.with_columns(pl.col("value_text").alias("value"))
+    return df.with_columns(pl.col("value_numeric").alias("value"))
 
 
 def _as_utc_datetime(v: "datetime | str | None") -> datetime | None:
@@ -220,6 +283,19 @@ def _apply_window(
             .head(limit)
         )
     return tall
+
+
+def _with_mapped_column(tall: pl.DataFrame, keys: list[str], fn, name: str) -> pl.DataFrame:
+    """Add column ``name`` = ``fn(*key values)``.
+
+    ``fn`` runs once per distinct key, not once per row: a frame of a million
+    readings over ten points costs ten calls. The result is joined back, so
+    the row order of ``tall`` is kept.
+    """
+    distinct = tall.select(keys).unique()
+    values = [fn(*row) for row in distinct.iter_rows()]
+    mapping = distinct.with_columns(pl.Series(name, values, dtype=pl.Utf8))
+    return tall.join(mapping, on=keys, how="left")
 
 
 def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
@@ -272,6 +348,24 @@ class BindingInfo:
     property_unit: str | None = None    # unit URI from qudt:hasUnit on the property
     ref_unit: str | None = None         # unit URI from qudt:hasUnit on the ext reference
     point_label: str | None = None      # rdfs:label on the property (display name)
+    source_id: str | None = None        # acq:sourceId on the ext reference (the datasource)
+    ref_name: str | None = None         # acq:refName on the ext reference (the driver's stream name)
+
+
+def _graph_data_aliases(qg: QueryGraph | None) -> list[str]:
+    """Aliases of the query graph's data nodes, as ``_from_query`` names them."""
+    data_nodes = getattr(qg, "data_nodes", None) or {}
+    return sorted({qg.aliases_reverse.get(nid, str(nid)) for nid in data_nodes})
+
+
+def _graph_entity_columns(qg: QueryGraph | None) -> list[str]:
+    """``entity__<alias>`` for each non-data node of the query graph."""
+    nodes = getattr(qg, "nodes", None) or {}
+    data_nodes = getattr(qg, "data_nodes", None) or {}
+    return sorted(
+        f"entity__{qg.aliases_reverse.get(nid, str(nid))}"
+        for nid in nodes if nid not in data_nodes
+    )
 
 
 @dataclass
@@ -280,8 +374,8 @@ class DataObject:
 
     On construction only SPARQL metadata and per-series stats (row count,
     time range) are fetched.  The actual time-series data is materialized
-    on demand when ``__getitem__``, ``dataframe()``, ``iter()``, or
-    ``latest()`` are called.
+    on demand when ``__getitem__``, ``dataframe()``, or ``latest()`` are
+    called.
 
     Lightweight operations such as ``aliases``, ``metadata()``,
     ``is_empty()``, ``total_rows``, ``time_range``, and ``by()`` all work
@@ -301,9 +395,12 @@ class DataObject:
     _materialized: bool = field(default=False, repr=False)
     _metadata_df: pl.DataFrame | None = field(default=None, repr=False)
 
-    # Pending unit conversions: list of (alias_pattern, from_unit, to_unit)
-    # alias_pattern is "*" for all aliases, or a specific alias name
-    _pending_conversions: list[tuple[str, str, str]] = field(default_factory=list, repr=False)
+    # Conversions recorded by convert_to() on a lazy object, applied when the
+    # values are fetched: ((alias, point_uri, ref_uri), from_uri, to_uri),
+    # one per binding.
+    _pending_conversions: list[tuple[tuple[str, str, str], str, str]] = field(
+        default_factory=list, repr=False
+    )
 
     # ------------------------------------------------------------------
     # Construction
@@ -312,23 +409,17 @@ class DataObject:
     @classmethod
     def _empty(cls, qg: QueryGraph, *, cast_value: str | None = "float",
                client: "AcquiriumClient | None" = None) -> DataObject:
-        return cls(
+        # No rows to derive the entity columns from, so take them from the
+        # query graph: the empty result keeps the shape of a non-empty one.
+        obj = cls(
             _bindings=[],
-            _entity_columns=[],
+            _entity_columns=_graph_entity_columns(qg),
             _query_graph=qg,
             _client=client,
-            _tall=pl.DataFrame(
-                schema={
-                    "data_alias": pl.Utf8,
-                    "point_uri": pl.Utf8,
-                    "ref_uri": pl.Utf8,
-                    "time": pl.Datetime(time_zone="UTC"),
-                    "value_numeric": pl.Float64,
-                    "value_text": pl.Utf8,
-                }
-            ),
             _materialized=True,
         )
+        obj._tall = obj._empty_tall()
+        return obj
 
     @classmethod
     def _from_query(
@@ -340,15 +431,16 @@ class DataObject:
         limit: int | None = None,
         order: str = "asc",
         include_dependencies: bool = True,
-        cast_value: str | None = "float",
+        cast_value: str | None = None,
         value_mode: str = "default",
     ) -> DataObject:
         qg = query.query_graph
+        _validate_cast_value(cast_value)
 
         if not getattr(qg, "data_nodes", None):
             return cls._empty(qg, cast_value=cast_value, client=query.client)
 
-        point_ref_uris, entity_context, prop_units, ext_ref_units, point_labels = _parse_sparql_bindings(
+        point_ref_uris, entity_context, prop_units, ext_ref_units, point_labels, stream_ids = _parse_sparql_bindings(
             query,
             include_dependencies=include_dependencies,
         )
@@ -387,6 +479,8 @@ class DataObject:
                 property_unit=prop_units.get(key),
                 ref_unit=ext_ref_units.get(key),
                 point_label=point_labels.get(key),
+                source_id=stream_ids.get(key, (None, None))[0],
+                ref_name=stream_ids.get(key, (None, None))[1],
             ))
 
         return cls(
@@ -435,53 +529,68 @@ class DataObject:
             counts[lbl] = counts.get(lbl, 0) + 1
         return {uri: lbl for uri, lbl in pairs if counts[lbl] == 1}
 
-    def _resolve_effective_units(self) -> dict[str, str | None]:
-        """Determine the effective unit for each alias, handling Case 3.2/3.2.1.
+    @staticmethod
+    def _key(b: BindingInfo) -> tuple[str, str, str]:
+        return (b.alias, b.point_uri, b.ref_uri)
 
-        Returns {alias: effective_unit_uri_or_None}.
+    @staticmethod
+    def _binding_mask(key: tuple[str, str, str]) -> pl.Expr:
+        alias, point_uri, ref_uri = key
+        return (
+            (pl.col("data_alias") == alias)
+            & (pl.col("point_uri") == point_uri)
+            & (pl.col("ref_uri") == ref_uri)
+        )
+
+    def _effective_unit(self, b: BindingInfo) -> str | None:
+        """Unit the binding's values are (or will be) expressed in.
+
+        The property's annotation, else the external reference's unit (Case
+        3.2), else None; overlaid with any conversion recorded for this
+        binding by ``convert_to()`` that has not been applied yet.
         """
-        alias_units: dict[str, str | None] = {}
-        for b in self._bindings:
-            if b.alias in alias_units:
-                continue
-            if b.property_unit:
-                alias_units[b.alias] = b.property_unit
-            elif b.ref_unit:
-                # Case 3.2: no property unit, adopt ref_unit
-                alias_units[b.alias] = b.ref_unit
-            else:
-                alias_units[b.alias] = None
-        return alias_units
+        unit = b.property_unit or b.ref_unit
+        key = self._key(b)
+        for k, _, to_unit in self._pending_conversions:
+            if k == key:
+                unit = to_unit
+        return unit
 
-    def _materialize(self) -> None:
-        """Fetch all time-series data and populate _tall. Idempotent."""
-        if self._materialized:
-            return
+    def _empty_tall(self) -> pl.DataFrame:
+        """A zero-row tall frame in the same column order as a fetched one."""
+        schema: dict[str, Any] = {
+            "data_alias": pl.Utf8,
+            "point_uri": pl.Utf8,
+            "ref_uri": pl.Utf8,
+        }
+        for ec in self._entity_columns:
+            schema[ec] = pl.Utf8
+        schema.update({
+            "time": pl.Datetime(time_zone="UTC"),
+            "value_numeric": pl.Float64,
+            "value_text": pl.Utf8,
+        })
+        return pl.DataFrame(schema=schema)
 
-        cast_value = self._query_params.get("cast_value", "float")
+    def _fetch_tall(
+        self,
+        bindings: list[BindingInfo],
+        *,
+        start,
+        end,
+        limit: int | None,
+        order: str,
+    ) -> pl.DataFrame:
+        """Fetch ``bindings``' rows into a tall frame.
 
-        if not self._bindings:
-            self._tall = pl.DataFrame(
-                schema={
-                    "data_alias": pl.Utf8,
-                    "point_uri": pl.Utf8,
-                    "ref_uri": pl.Utf8,
-                    "time": pl.Datetime(time_zone="UTC"),
-                    "value_numeric": pl.Float64,
-                    "value_text": pl.Utf8,
-                }
-            )
-            self._materialized = True
-            return
-
-        start = self._query_params.get("start")
-        end = self._query_params.get("end")
-        limit = self._query_params.get("limit")
-        order = self._query_params.get("order", "asc")
+        One request per binding, bounded by the given window. Values are
+        auto-converted from the external reference's unit to the annotated
+        unit, then the conversions recorded by ``convert_to()`` are applied.
+        The frame has one row per observation and entity context, in the
+        standard tall layout. Does not touch ``self``.
+        """
+        cast_value = self._query_params.get("cast_value")
         value_mode = self._query_params.get("value_mode", "default")
-
-        # Pre-compute effective units per alias for Case 3.2/3.2.1
-        effective_units = self._resolve_effective_units()
 
         # Cache conversion factors to avoid repeated server calls
         _factors_cache: dict[tuple[str, str], dict] = {}
@@ -495,31 +604,30 @@ class DataObject:
         epoch = self._query_params.get("epoch")
         if epoch is None:
             epoch = self._client.engine_snapshot()["epoch"]
+        # One request per stream. A stream matched by several data nodes
+        # (a pump's measurement node and its connection point's, say) has one
+        # binding per node; they share the fetched frame and differ only in
+        # alias, point, unit and entity columns below.
+        fetched: dict[str, pl.DataFrame] = {}
+        for binding in bindings:
+            if binding.ref_uri not in fetched:
+                fetched[binding.ref_uri] = self._client.timeseries_df(
+                    binding.ref_uri,
+                    start=start,
+                    end=end,
+                    limit=limit,
+                    order=order,
+                    value_mode=value_mode,
+                    epoch=epoch,
+                )
+
         frames: list[pl.DataFrame] = []
-        for binding in self._bindings:
-            df = self._client.timeseries_df(
-                binding.ref_uri,
-                start=start,
-                end=end,
-                limit=limit,
-                order=order,
-                value_mode=value_mode,
-                epoch=epoch,
-            )
+        for binding in bindings:
+            df = fetched[binding.ref_uri]
             if df.is_empty():
                 continue
 
             df = df.rename({"ts": "time", "uri": "ref_uri"})
-            if cast_value == "float" and "value" in df.columns:
-                try:
-                    df = df.with_columns(pl.col("value").cast(pl.Float64, strict=True))
-                except Exception:
-                    logger.warning("DataObject: casting value to float failed for ref %s", binding.ref_uri)
-            elif cast_value == "int" and "value" in df.columns:
-                try:
-                    df = df.with_columns(pl.col("value").cast(pl.Int64, strict=True))
-                except Exception:
-                    logger.warning("DataObject: casting value to int failed for ref %s", binding.ref_uri)
             df = df.with_columns(
                 pl.lit(binding.alias).alias("data_alias"),
                 pl.lit(binding.point_uri).alias("point_uri"),
@@ -528,26 +636,34 @@ class DataObject:
             df = df.drop("ref_uri")
             df = df.with_columns(pl.lit(binding.ref_uri).alias("ref_uri"))
 
-            # --- Case 3 auto-conversion ---
-            target_unit = effective_units.get(binding.alias)
+            # --- Case 3 auto-conversion: raw rows are stored in the external
+            # reference's unit; the point's annotation is the unit of record.
+            # Conversions requested with convert_to() are applied afterwards.
+            target_unit = binding.property_unit
             if binding.ref_unit and target_unit and binding.ref_unit != target_unit:
-                # Case 3.1: ext ref unit differs from effective unit → convert
-                # Need to cast value to float first for conversion
+                # The user did not ask for this conversion, so a failure is a
+                # warning they can see; the raw values are returned as stored.
                 try:
-                    df = df.with_columns(pl.col("value").cast(pl.Float64))
                     factors = _get_factors(binding.ref_unit, target_unit)
                     if factors.get("compatible", False):
-                        df = self._apply_conversion(df, factors)
-                    else:
-                        logger.warning(
-                            "DataObject: incompatible units for auto-conversion "
-                            "%s -> %s on ref %s, skipping",
-                            binding.ref_unit, target_unit, binding.ref_uri,
+                        df = self._apply_conversion(
+                            df.with_columns(pl.col("value").cast(pl.Float64)), factors
                         )
-                except Exception:
-                    logger.warning(
-                        "DataObject: auto-conversion failed for ref %s (%s -> %s)",
-                        binding.ref_uri, binding.ref_unit, target_unit,
+                    else:
+                        warnings.warn(
+                            f"point <{binding.point_uri}> is annotated {target_unit} but its "
+                            f"stream is stored in {binding.ref_unit}, which does not convert; "
+                            f"the values are returned in {binding.ref_unit}",
+                            UserWarning,
+                            stacklevel=4,
+                        )
+                except Exception as e:
+                    warnings.warn(
+                        f"could not convert point <{binding.point_uri}> from its stored unit "
+                        f"{binding.ref_unit} to its annotation {target_unit} ({e}); the values "
+                        f"are returned in {binding.ref_unit}",
+                        UserWarning,
+                        stacklevel=4,
                     )
 
             # Resolve entity columns for this data key
@@ -564,54 +680,104 @@ class DataObject:
                     frames.append(df_copy)
 
         if not frames:
-            schema: dict[str, Any] = {
-                "data_alias": pl.Utf8,
-                "point_uri": pl.Utf8,
-                "ref_uri": pl.Utf8,
-                "time": pl.Datetime(time_zone="UTC"),
-                "value_numeric": pl.Float64,
-                "value_text": pl.Utf8,
-            }
-            for ec in self._entity_columns:
-                schema[ec] = pl.Utf8
-            self._tall = pl.DataFrame(schema=schema)
-            self._materialized = True
-            return
+            return self._empty_tall()
 
-        tall = pl.concat([_split_value_column(df) for df in frames], how="vertical")
+        tall = pl.concat([_split_value_column(df, cast_value) for df in frames], how="vertical")
 
-        # Apply pending conversions (from convert_to() on a lazy DataObject)
-        for alias_pat, from_unit, to_unit in self._pending_conversions:
+        # Apply the conversions convert_to() recorded on a lazy object. The
+        # user asked for these, so a failure is an error, not a frame in
+        # the wrong unit.
+        for key, from_unit, to_unit in self._pending_conversions:
+            alias, point_uri, _ref = key
             try:
                 factors = _get_factors(from_unit, to_unit)
-                if not factors.get("compatible", False):
-                    logger.warning(
-                        "DataObject: incompatible units in pending conversion %s -> %s",
-                        from_unit, to_unit,
-                    )
-                    continue
-                if alias_pat == "*":
-                    tall = self._apply_conversion(tall, factors)
-                else:
-                    mask = pl.col("data_alias") == alias_pat
-                    converted = self._apply_conversion(tall.filter(mask), factors)
-                    rest = tall.filter(~mask)
-                    tall = pl.concat([rest, converted], how="vertical")
-            except Exception:
-                logger.warning(
-                    "DataObject: pending conversion failed %s -> %s for alias '%s'",
-                    from_unit, to_unit, alias_pat,
+            except Exception as e:
+                raise ValueError(
+                    f"convert_to: could not resolve {from_unit} -> {to_unit} for point "
+                    f"<{point_uri}> (alias '{alias}'): {e}"
+                ) from e
+            if not factors.get("compatible", False):
+                raise ValueError(
+                    f"convert_to: {from_unit} does not convert to {to_unit} for point "
+                    f"<{point_uri}> (alias '{alias}')"
                 )
+            mask = self._binding_mask(key)
+            converted = self._apply_conversion(tall.filter(mask), factors)
+            tall = pl.concat([tall.filter(~mask), converted], how="vertical")
 
         # Reorder columns for consistency
         base_cols = ["data_alias", "point_uri", "ref_uri"] + self._entity_columns + ["time", "value_numeric", "value_text"]
         existing = [c for c in base_cols if c in tall.columns]
-        self._tall = tall.select(existing)
+        return tall.select(existing)
+
+    def _materialize(self) -> None:
+        """Fetch all time-series data and populate _tall. Idempotent."""
+        if self._materialized:
+            return
+        if not self._bindings:
+            self._tall = self._empty_tall()
+            self._materialized = True
+            return
+
+        self._tall = self._fetch_tall(
+            self._bindings,
+            start=self._query_params.get("start"),
+            end=self._query_params.get("end"),
+            limit=self._query_params.get("limit"),
+            order=self._query_params.get("order", "asc"),
+        )
+        if self._pending_conversions:
+            # Values are now in the requested units; record that on the
+            # bindings so units() and later convert_to() calls start there.
+            targets = {key: to_unit for key, _, to_unit in self._pending_conversions}
+            self._bindings = [
+                replace(b, property_unit=targets[self._key(b)]) if self._key(b) in targets else b
+                for b in self._bindings
+            ]
         self._materialized = True
+
+    def _cast_output(self, df: pl.DataFrame, columns: list[str] | None = None) -> pl.DataFrame:
+        """Apply ``cast_value="int"`` to the numeric columns of a result frame.
+
+        Values are kept as ``Float64`` internally; a result asked for as
+        ``int`` is cast here. The cast truncates toward zero and turns
+        non-finite values into nulls, and a column where that loses
+        information raises a ``UserWarning`` naming the column and one of
+        the affected values.
+        """
+        if self._query_params.get("cast_value") != "int":
+            return df
+        candidates = columns if columns is not None else df.columns
+        for col in candidates:
+            if col not in df.columns or df.schema[col] != pl.Float64:
+                continue
+            s = df[col]
+            lossy = s.filter(s.is_not_null() & (~s.is_finite() | (s != s.round(0))))
+            if lossy.len():
+                warnings.warn(
+                    f"cast_value='int' truncates {lossy.len()} non-integer value(s) in "
+                    f"column {col!r}, such as {lossy[0]!r}; use cast_value='float' to keep them",
+                    UserWarning,
+                    stacklevel=3,
+                )
+            df = df.with_columns(pl.col(col).cast(pl.Int64, strict=False))
+        return df
 
     # ------------------------------------------------------------------
     # Alias-based access (triggers materialization)
     # ------------------------------------------------------------------
+
+    def __contains__(self, alias: object) -> bool:
+        """``alias in data`` — answered from the bindings, without a fetch."""
+        return alias in self.aliases
+
+    def __iter__(self) -> Iterator[str]:
+        """Iterate over the data aliases, like a dict over its keys."""
+        return iter(self.aliases)
+
+    def __len__(self) -> int:
+        """Number of data aliases."""
+        return len(self.aliases)
 
     def __getitem__(self, alias: str) -> pl.DataFrame:
         """Return time-series for a data alias.
@@ -620,8 +786,14 @@ class DataObject:
         (first-wins). If the alias resolves to a single point_uri the result
         is ``[time, value]``; if several point_uris share the alias the
         result is ``[time, value, point_uri]`` so the caller can
-        disambiguate.
+        disambiguate. An alias that exists but has no rows in the window
+        returns an empty ``[time, value]`` frame.
+
+        Raises:
+            KeyError: If ``alias`` is not one of :attr:`aliases`.
         """
+        if alias not in self.aliases:
+            raise KeyError(f"Data alias '{alias}' not found. Available: {self.aliases}")
         self._materialize()
         subset = self._tall.filter(pl.col("data_alias") == alias)
         if subset.is_empty():
@@ -632,6 +804,7 @@ class DataObject:
         # polars picks an arbitrary duplicate and shuffles the surviving rows.
         subset = subset.unique(subset=["point_uri", "time"], keep="first", maintain_order=True)
         subset = _restore_single_value_column(subset)
+        subset = self._cast_output(subset, ["value"])
         n_points = subset["point_uri"].n_unique()
         if n_points <= 1:
             return subset.select("time", "value").sort("time")
@@ -673,13 +846,21 @@ class DataObject:
                 )
             return
 
-        # Lazy path: group bindings by entity context
+        # Lazy path: group bindings by entity context. A binding whose point
+        # hangs off several entities is narrowed to the contexts of the entity
+        # it is grouped under, so the sub-object materializes only that
+        # entity's rows.
         entity_to_bindings: dict[str, list[BindingInfo]] = {}
         for b in self._bindings:
+            by_entity: dict[str, list[dict[str, str]]] = {}
             for ctx in b.entity_contexts:
                 entity_uri = ctx.get(col)
                 if entity_uri is not None:
-                    entity_to_bindings.setdefault(entity_uri, []).append(b)
+                    by_entity.setdefault(entity_uri, []).append(ctx)
+            for entity_uri, contexts in by_entity.items():
+                entity_to_bindings.setdefault(entity_uri, []).append(
+                    replace(b, entity_contexts=contexts)
+                )
 
         for entity_uri in sorted(entity_to_bindings.keys()):
             sub_bindings = entity_to_bindings[entity_uri]
@@ -708,6 +889,7 @@ class DataObject:
         order: str = "asc",
         include_ref: bool = False,
         compact: bool = True,
+        streams: "int | str | Sequence[int | str] | None" = None,
     ) -> pl.DataFrame:
         """Return a flat DataFrame.
 
@@ -736,11 +918,53 @@ class DataObject:
         ``compact=False`` returns the raw layout: narrow is the internal
         tall frame (every ``(data_alias, point_uri, ref_uri, time)`` row
         preserved with entity columns), wide keeps alias/URI column names.
+
+        ``streams`` keeps only the listed streams: numbers from the
+        ``stream`` column of :meth:`stream_info`, ref URIs, or a mix. A
+        point fed by several streams then shows just the chosen ones, so
+        ``streams=[1]`` reads one driver's values for a point that has two.
+        An unknown number or URI raises ``KeyError``.
+
+        With ``cast_value="int"`` on the query the value columns come back as
+        ``Int64``; a column whose values lose their fraction raises a
+        ``UserWarning``.
         """
+        frame = self._build_dataframe(shape, start=start, end=end, limit=limit, order=order,
+                                      include_ref=include_ref, compact=compact, streams=streams)
+        return self._cast_output(frame)
+
+    def _resolve_streams(self, streams) -> set[str] | None:
+        """Turn ``streams`` (numbers from :meth:`stream_info`, ref URIs, or a
+        mix) into the set of ref URIs they name; ``None`` means all."""
+        if streams is None:
+            return None
+        if isinstance(streams, (int, str)):
+            streams = [streams]
+        table = self.stream_info()
+        by_number = dict(zip(table["stream"].to_list(), table["ref_uri"].to_list()))
+        known = set(by_number.values())
+        refs: set[str] = set()
+        for item in streams:
+            if isinstance(item, bool) or not isinstance(item, (int, str)):
+                raise TypeError(f"streams: expected a stream number or ref URI, got {item!r}")
+            if isinstance(item, int):
+                if item not in by_number:
+                    raise KeyError(f"stream {item} not in this object; stream_info() lists 0..{len(by_number) - 1}")
+                refs.add(by_number[item])
+            else:
+                if item not in known:
+                    raise KeyError(f"ref URI {item!r} not in this object; see stream_info()")
+                refs.add(item)
+        return refs
+
+    def _build_dataframe(self, shape, *, start, end, limit, order, include_ref, compact,
+                         streams=None) -> pl.DataFrame:
+        refs = self._resolve_streams(streams)
         self._materialize()
 
         descending = order == "desc"
-        windowed = _apply_window(self._tall, start, end, limit, order)
+        tall = self._tall if refs is None else self._tall.filter(pl.col("ref_uri").is_in(list(refs)))
+        windowed = _apply_window(tall, start, end, limit, order)
 
         if windowed.is_empty():
             return windowed
@@ -785,15 +1009,7 @@ class DataObject:
                 # we shouldn't come here
                 return f"{alias}__{point_uri}"
 
-
-        tall = tall.with_columns(
-            pl.struct(["data_alias", "point_uri"])
-            .map_elements(
-                lambda s: _pivot_key(s["data_alias"], s["point_uri"]),
-                return_dtype=pl.Utf8,
-            )
-            .alias("_pivot_key")
-        )
+        tall = _with_mapped_column(tall, ["data_alias", "point_uri"], _pivot_key, "_pivot_key")
 
         wide = _pivot_split_values(tall, "_pivot_key")
         return wide.sort("time", descending=True) if descending else wide
@@ -813,9 +1029,10 @@ class DataObject:
             except Exception:
                 return uri
 
-        # Combine ref_uris sharing the same (data_alias, point_uri, time).
+        # One row per observation. A point fed by several refs keeps every
+        # ref's row; ``include_ref`` only decides whether the ref is shown.
         tall = tall.clone().unique(
-            subset=["data_alias", "point_uri", "time"], keep="first"
+            subset=["data_alias", "point_uri", "ref_uri", "time"], keep="first"
         )
 
         points_per_alias: dict[str, set[str]] = {}
@@ -834,25 +1051,14 @@ class DataObject:
                 return f"{alias}__{labels.get(point_uri) or _compact(point_uri)}"
             return alias
 
-        tall = tall.with_columns(
-            pl.struct(["data_alias", "point_uri"])
-            .map_elements(
-                lambda s: _label(s["data_alias"], s["point_uri"]),
-                return_dtype=pl.Utf8,
-            )
-            .alias("_label")
-        )
+        tall = _with_mapped_column(tall, ["data_alias", "point_uri"], _label, "_label")
 
         if shape == "narrow":
-            out = tall.with_columns(
-                pl.col("_label").alias("data_alias"),
-                pl.col("point_uri").map_elements(_compact, return_dtype=pl.Utf8).alias("point_id"),
-            )
+            out = _with_mapped_column(tall, ["point_uri"], _compact, "point_id")
+            out = out.with_columns(pl.col("_label").alias("data_alias"))
             cols = ["data_alias", "point_id", "time", "value_numeric", "value_text"]
             if include_ref:
-                out = out.with_columns(
-                    pl.col("ref_uri").map_elements(_compact, return_dtype=pl.Utf8).alias("ref")
-                )
+                out = _with_mapped_column(out, ["ref_uri"], _compact, "ref")
                 cols.insert(2, "ref")
             return out.select(cols).sort("time", descending=descending)
 
@@ -861,53 +1067,25 @@ class DataObject:
         return wide.sort("time", descending=True) if descending else wide
 
     # ------------------------------------------------------------------
-    # Iteration (triggers materialization)
-    # ------------------------------------------------------------------
-
-    def iter(self, alias: str) -> Iterator[tuple[str, pl.DataFrame]]:
-        """Iterate ``(point_uri, DataFrame[time, value])`` pairs for a data alias."""
-        self._materialize()
-        subset = self._tall.filter(pl.col("data_alias") == alias)
-        for point_uri in subset["point_uri"].unique().sort().to_list():
-            point_df = subset.filter(pl.col("point_uri") == point_uri)
-            point_df = _restore_single_value_column(point_df)
-            yield point_uri, point_df.select("time", "value").sort("time")
-
-    # ------------------------------------------------------------------
     # Metadata & introspection (no materialization needed)
     # ------------------------------------------------------------------
 
     def metadata(self, *, include_ref_uris: bool = False) -> pl.DataFrame:
         """Return a DataFrame of unique ``(data_alias, point_label,
-        point_uri, entity__*)`` tuples.
+        point_uri, unit, entity__*)`` tuples.
 
+        Built from the query's bindings, so the answer is the same before
+        and after the values are fetched and lists every matched point,
+        including those with no rows in the requested window.
         ``point_label`` is the point's ``rdfs:label`` (null when it has
-        none). By default the UUID ``ref_uri`` column is hidden — multiple
+        none); ``unit`` is the unit the point's values are expressed in
+        (null when unannotated). By default the UUID ``ref_uri`` column is hidden — multiple
         ref_uris sharing the same point are folded into one row. Pass
         ``include_ref_uris=True`` to keep the per-ref breakdown (useful for
         per-ref filtering and debugging).
         """
-        ref_col = ["ref_uri"] if include_ref_uris else []
-        label_map = {b.point_uri: b.point_label for b in self._bindings if b.point_label}
-
-        if self._materialized and self._tall is not None:
-            meta_cols = ["data_alias", "point_uri"] + ref_col + self._entity_columns
-            existing = [c for c in meta_cols if c in self._tall.columns]
-            out_cols = existing[:1] + ["point_label"] + existing[1:]
-            if self._tall.is_empty():
-                return pl.DataFrame(schema={c: pl.Utf8 for c in out_cols})
-            return (
-                self._tall.select(existing).unique()
-                .with_columns(
-                    pl.col("point_uri")
-                    .map_elements(lambda u: label_map.get(u), return_dtype=pl.Utf8, skip_nulls=False)
-                    .alias("point_label")
-                )
-                .select(out_cols)
-                .sort("data_alias")
-            )
-
-        # Build from bindings without materializing
+        ref_col = ["ref_uri", "source_id", "ref_name"] if include_ref_uris else []
+        cols = ["data_alias", "point_label", "point_uri", "unit"] + ref_col + self._entity_columns
         rows: list[dict[str, str | None]] = []
         for b in self._bindings:
             for ctx in (b.entity_contexts or [{}]):
@@ -915,45 +1093,115 @@ class DataObject:
                     "data_alias": b.alias,
                     "point_label": b.point_label,
                     "point_uri": b.point_uri,
+                    "unit": self._effective_unit(b),
                 }
                 if include_ref_uris:
                     row["ref_uri"] = b.ref_uri
+                    row["source_id"] = b.source_id
+                    row["ref_name"] = b.ref_name
                 for ec in self._entity_columns:
                     row[ec] = ctx.get(ec)
                 rows.append(row)
-        cols = ["data_alias", "point_label", "point_uri"] + ref_col + self._entity_columns
+        schema = {c: pl.Utf8 for c in cols}
         if not rows:
-            return pl.DataFrame(schema={c: pl.Utf8 for c in cols})
-        return pl.DataFrame(rows).unique().sort("data_alias")
+            return pl.DataFrame(schema=schema)
+        return pl.DataFrame(rows, schema=schema).unique().sort(cols)
 
     @property
     def aliases(self) -> list[str]:
-        """List of data aliases present in this DataObject."""
-        if not self._bindings:
-            return []
-        return sorted(set(b.alias for b in self._bindings))
+        """List of data aliases present in this DataObject.
+
+        An empty result has no bindings, so its aliases come from the query
+        graph's data nodes.
+        """
+        if self._bindings:
+            return sorted(set(b.alias for b in self._bindings))
+        return _graph_data_aliases(self._query_graph)
 
     @property
     def entity_aliases(self) -> list[str]:
         """List of entity alias names (without the ``entity__`` prefix)."""
         return [c.removeprefix("entity__") for c in self._entity_columns]
 
-    def ref_info(self, alias: str) -> list[tuple[int, str]]:
-        """Return ``[(index, ref_uri), ...]`` for a given data alias."""
-        refs = sorted(set(b.ref_uri for b in self._bindings if b.alias == alias))
-        return [(i, ref) for i, ref in enumerate(refs)]
+    def stream_info(self, alias: str | None = None) -> pl.DataFrame:
+        """The streams behind the object, one row each.
 
-    def latest(self, alias: str) -> pl.DataFrame:
-        """Return the latest row(s) for a given alias."""
-        self._materialize()
-        subset = self._tall.filter(pl.col("data_alias") == alias)
-        if subset.is_empty():
-            return pl.DataFrame(schema={"time": pl.Datetime(time_zone="UTC"), "value": pl.Float64})
-        subset = _restore_single_value_column(subset)
-        return subset.sort("time", descending=True).head(1).select("time", "value")
+        Columns: ``stream`` (a number to pass as ``streams=`` to
+        :meth:`dataframe` or :meth:`latest`, valid for this object), ``alias``, ``point_uri``, ``ref_uri``, ``source_id``
+        and ``ref_name``, the last two being the datasource and stream name
+        the driver registered. With ``alias`` only that alias's streams are
+        listed, numbered as in the full table.
+        """
+        if alias is not None and alias not in self.aliases:
+            raise KeyError(f"Data alias '{alias}' not found. Available: {self.aliases}")
+        rows = sorted(
+            {(b.alias, b.point_uri, b.ref_uri, b.source_id, b.ref_name) for b in self._bindings}
+        )
+        table = pl.DataFrame(
+            rows, orient="row",
+            schema={"alias": pl.Utf8, "point_uri": pl.Utf8, "ref_uri": pl.Utf8,
+                    "source_id": pl.Utf8, "ref_name": pl.Utf8},
+        ).with_row_index("stream")
+        if alias is not None:
+            table = table.filter(pl.col("alias") == alias)
+        return table
+
+    def latest(self, alias: str | None = None, *,
+               streams: "int | str | Sequence[int | str] | None" = None) -> pl.DataFrame:
+        """Return the newest reading of each point.
+
+        Answers from its own fetch (one row per stream, newest first), so
+        the result does not depend on the ``limit``/``order`` the object was
+        built with, and the full window is never materialized. The object's
+        ``start``/``end`` bounds still apply: the newest reading inside them.
+        A point fed by several refs reports its newest row across them.
+
+        With ``alias`` the frame is ``[time, value]`` for a single point or
+        ``[time, value, point_uri]`` when the alias covers several, as with
+        ``__getitem__``. Without it every binding is reported as
+        ``[data_alias, point_uri, time, value]``. ``streams`` restricts the
+        fetch to the listed streams, as in :meth:`dataframe`.
+        """
+        refs = self._resolve_streams(streams)
+        if alias is not None:
+            if alias not in self.aliases:
+                raise KeyError(f"Data alias '{alias}' not found. Available: {self.aliases}")
+            bindings = [b for b in self._bindings if b.alias == alias]
+        else:
+            bindings = list(self._bindings)
+        if refs is not None:
+            bindings = [b for b in bindings if b.ref_uri in refs]
+
+        if bindings and self._client is not None:
+            tall = self._fetch_tall(
+                bindings,
+                start=self._query_params.get("start"),
+                end=self._query_params.get("end"),
+                limit=1,
+                order="desc",
+            )
+        else:
+            tall = self._empty_tall()
+
+        newest = (
+            tall.sort("time", descending=True)
+            .unique(subset=["data_alias", "point_uri"], keep="first", maintain_order=True)
+        )
+        newest = self._cast_output(_restore_single_value_column(newest), ["value"])
+
+        if alias is None:
+            return newest.select("data_alias", "point_uri", "time", "value").sort("data_alias", "point_uri")
+        if len({b.point_uri for b in bindings}) <= 1:
+            return newest.select("time", "value")
+        return newest.select("time", "value", "point_uri").sort("point_uri")
 
     def is_empty(self) -> bool:
-        """Check if there is any data."""
+        """Whether any rows exist.
+
+        Before the values are fetched this answers from stream statistics,
+        i.e. whether the matched streams hold any rows at all, regardless of
+        the requested window. After a fetch it reports the fetched window.
+        """
         if self._materialized:
             return self._tall.is_empty()
         return all(b.row_count == 0 for b in self._bindings)
@@ -983,14 +1231,21 @@ class DataObject:
     # Unit conversion
     # ------------------------------------------------------------------
 
-    def units(self) -> dict[str, str | None]:
-        """Return ``{alias: unit_uri_or_None}`` for each data alias.
+    def units(self) -> dict[str, list[str | None]]:
+        """Return ``{alias: [unit_uri, ...]}``: the distinct units of each
+        alias's points, in binding order.
 
-        The effective unit considers property annotations and external
-        reference annotations (Case 3.2: ref_unit adopted when property
-        has no unit).
+        An alias whose points all share one unit gives a one-element list.
+        ``None`` stands for a point with no unit annotation. The per-point
+        view is the ``unit`` column of :meth:`metadata`.
         """
-        return self._resolve_effective_units()
+        out: dict[str, list[str | None]] = {}
+        for b in self._bindings:
+            units = out.setdefault(b.alias, [])
+            unit = self._effective_unit(b)
+            if unit not in units:
+                units.append(unit)
+        return out
 
     def convert_to(
         self,
@@ -1001,11 +1256,14 @@ class DataObject:
     ) -> "DataObject":
         """Return a new DataObject with values converted to the target unit.
 
+        Each point converts from its own unit, so an alias whose points are
+        annotated differently still ends up in one unit.
+
         Args:
             to_unit: Target unit identifier (URI, label, symbol, or UCUM code).
-            from_unit: Source unit identifier. If None, the property's
-                ``qudt:hasUnit`` annotation is used (Case 2). If the property
-                has no unit, a ValueError is raised — pass ``from_unit``
+            from_unit: Source unit identifier for every affected point. If
+                None, each point's own unit is used (Case 2). A point with
+                no unit annotation then raises — pass ``from_unit``
                 explicitly (Case 1).
             alias: Apply conversion only to this alias. If None, all aliases
                 are converted.
@@ -1015,14 +1273,17 @@ class DataObject:
             modified.
 
         Raises:
-            ValueError: If ``from_unit`` is None and the alias has no unit
+            KeyError: If ``alias`` is not one of :attr:`aliases`.
+            ValueError: If ``from_unit`` is None and a point has no unit
                 annotation, or if the units are incompatible.
         """
+        if self._query_params.get("cast_value") == "str":
+            raise ValueError("convert_to() needs numeric values; this object was built with cast_value='str'")
         if self._client is None:
             raise ValueError("Cannot convert units without a client connection")
-
-        effective = self._resolve_effective_units()
-        affected_aliases = [alias] if alias else self.aliases
+        if alias is not None and alias not in self.aliases:
+            raise KeyError(f"Data alias '{alias}' not found. Available: {self.aliases}")
+        affected = [b for b in self._bindings if alias is None or b.alias == alias]
 
         # Resolve a convertible pair per (source, target) — the server picks,
         # among the top matches for a free-text side, the candidate that is
@@ -1041,47 +1302,35 @@ class DataObject:
                     ) from e
             return raw_pairs[key]
 
-        # Validate and determine from_unit per alias; store resolved URIs so
-        # the pending/materialize paths only ever see exact units.
-        conversions: list[tuple[str, str, str]] = []  # (alias, from_uri, to_uri)
-        for a in affected_aliases:
-            src = from_unit
+        # One conversion per binding, with resolved URIs so the
+        # pending/materialize paths only ever see exact units.
+        conversions: list[tuple[tuple[str, str, str], str, str]] = []
+        for b in affected:
+            src = from_unit if from_unit is not None else self._effective_unit(b)
             if src is None:
-                src = effective.get(a)
-                if src is None:
-                    raise ValueError(
-                        f"No unit annotation found for alias '{a}'. "
-                        f"Provide from_unit explicitly."
-                    )
+                raise ValueError(
+                    f"No unit annotation found for point <{b.point_uri}> "
+                    f"(alias '{b.alias}'). Provide from_unit explicitly."
+                )
             f = _factors(src, to_unit)
-            conversions.append((a, f["from_uri"], f["to_uri"]))
+            conversions.append((self._key(b), f["from_uri"], f["to_uri"]))
 
         factors_cache: dict[tuple[str, str], dict] = {
             (f["from_uri"], f["to_uri"]): f for f in raw_pairs.values()
         }
 
         if self._materialized and self._tall is not None:
-            # Eager path: clone the tall frame and apply conversions
+            # Eager path: convert the fetched rows of each binding.
             tall = self._tall.clone()
-            for a, fu, tu in conversions:
-                f = factors_cache[(fu, tu)]
-                mask = pl.col("data_alias") == a
-                converted = self._apply_conversion(tall.filter(mask), f)
-                rest = tall.filter(~mask)
-                tall = pl.concat([rest, converted], how="vertical")
-
-            # Update bindings with new unit
-            new_bindings = []
-            for b in self._bindings:
-                matched = any(c[0] == b.alias for c in conversions)
-                if matched:
-                    # Find the to_unit URI from the factors
-                    conv = next(c for c in conversions if c[0] == b.alias)
-                    new_uri = factors_cache[(conv[1], conv[2])]["to_uri"]
-                    new_bindings.append(replace(b, property_unit=new_uri))
-                else:
-                    new_bindings.append(b)
-
+            for key, fu, tu in conversions:
+                mask = self._binding_mask(key)
+                converted = self._apply_conversion(tall.filter(mask), factors_cache[(fu, tu)])
+                tall = pl.concat([tall.filter(~mask), converted], how="vertical")
+            targets = {key: tu for key, _, tu in conversions}
+            new_bindings = [
+                replace(b, property_unit=targets[self._key(b)]) if self._key(b) in targets else b
+                for b in self._bindings
+            ]
             return DataObject(
                 _bindings=new_bindings,
                 _entity_columns=self._entity_columns,
@@ -1092,20 +1341,12 @@ class DataObject:
                 _materialized=True,
             )
 
-        # Lazy path: store pending conversions to apply during _materialize()
-        new_bindings = []
-        for b in self._bindings:
-            matched = any(c[0] == b.alias for c in conversions)
-            if matched:
-                conv = next(c for c in conversions if c[0] == b.alias)
-                new_uri = factors_cache[(conv[1], conv[2])]["to_uri"]
-                new_bindings.append(replace(b, property_unit=new_uri))
-            else:
-                new_bindings.append(b)
-
+        # Lazy path: record the conversions for _materialize(). The bindings
+        # keep their annotated units until the values are actually converted;
+        # _effective_unit() overlays the pending targets meanwhile.
         pending = list(self._pending_conversions) + conversions
         return DataObject(
-            _bindings=new_bindings,
+            _bindings=list(self._bindings),
             _entity_columns=self._entity_columns,
             _query_graph=self._query_graph,
             _client=self._client,
@@ -1122,7 +1363,11 @@ class DataObject:
     def __repr__(self) -> str:
         aliases = self.aliases
         if self._materialized:
-            n_rows = len(self._tall) if self._tall is not None else 0
+            # The tall frame holds one copy of a reading per entity context;
+            # count readings, as the lazy estimate and dataframe() do.
+            n_rows = 0
+            if self._tall is not None and not self._tall.is_empty():
+                n_rows = self._tall.select(["data_alias", "point_uri", "ref_uri", "time"]).n_unique()
             return f"DataObject({n_rows} rows, aliases={aliases}, entities={self.entity_aliases})"
 
         total = self.total_rows

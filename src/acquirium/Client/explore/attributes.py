@@ -140,6 +140,10 @@ ATTR_NS = str(ACQUIRIUM_ATTR_NS)
 
 RAW_SUFFIX = "raw"
 
+# Text resolver threshold for attribute values, classes and via predicates,
+# on reads (where/entity) and writes (insert_metadata) alike.
+RESOLVE_MIN_SCORE = 0.4
+
 
 def raw_predicate(key: str) -> str:
     """Where the free text a built-in value was resolved from is kept:
@@ -180,6 +184,11 @@ def valid_path(path: str) -> bool:
         seg.isdigit() or KEY_PATTERN.match(seg) for seg in path.split(".")
     )
 
+
+def has_index(path: str) -> bool:
+    """A dotted path with a list-index segment (``tags.0``, ``items.1.n``)."""
+    return any(seg.isdigit() for seg in path.split("."))
+
 # Data graphs only: the ``attr:`` namespace never appears in an ontology, and
 # the union with dependencies is orders of magnitude larger to scan.
 # Every attr: predicate in use, with the datatype of each value kind it holds
@@ -196,8 +205,8 @@ DISCOVERY_SPARQL = (
     f' BIND(IRI(CONCAT("{ATTR_NS}", ?key)) AS ?p) BIND("" AS ?dt) }}\n}}'
 )
 
-
-# (server_key, graph_version) -> {name: Attr}
+# (server_key, graph_version) -> {name: Attr}; one entry per server, since
+# every write bumps the version and an older one is never asked for again
 _DISCOVERED_CACHE: Dict[tuple, Dict[str, Attr]] = {}
 
 
@@ -238,12 +247,9 @@ def is_list_attr(attr: Attr) -> bool:
     its predicates does (``tags`` over ``tags.0``, ``tags.1``). ``metadata()``
     returns it as one ``pl.List`` cell per node instead of one row per
     element. A built-in with several values (``medium``) is not a list."""
-    if any(seg.isdigit() for seg in attr.name.split(".")):
+    if has_index(attr.name):
         return False
-    return any(
-        str(p).startswith(ATTR_NS) and any(seg.isdigit() for seg in str(p)[len(ATTR_NS):].split("."))
-        for p in attr.predicates
-    )
+    return any(str(p).startswith(ATTR_NS) and has_index(str(p)[len(ATTR_NS):]) for p in attr.predicates)
 
 
 def user_attributes(predicates: "list[str] | tuple[str, ...]",
@@ -315,6 +321,8 @@ class Registry(Mapping):
                 [str(r[pi]) for r in rows],
                 [r[di] if di is not None and di < len(r) else None for r in rows],
             )
+            for stale in [k for k in _DISCOVERED_CACHE if k[0] == key[0]]:
+                del _DISCOVERED_CACHE[stale]
             _DISCOVERED_CACHE[key] = found
         self._found = found
         return found
@@ -347,7 +355,7 @@ class Registry(Mapping):
         head = prefix + "."
         return sorted(
             (a for a in self.values()
-             if a.name.startswith(head) and not any(seg.isdigit() for seg in a.name.split("."))),
+             if a.name.startswith(head) and not has_index(a.name)),
             key=lambda a: a.name,
         )
 
@@ -374,7 +382,7 @@ class Registry(Mapping):
         """
         out = [a for a in self.values() if role in a.roles]
         if summary:
-            out = [a for a in out if not any(seg.isdigit() for seg in a.name.split("."))]
+            out = [a for a in out if not has_index(a.name)]
         return out
 
 

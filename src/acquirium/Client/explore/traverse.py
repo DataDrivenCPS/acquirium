@@ -172,8 +172,8 @@ def _prune_target_subtree(graph: QueryGraph, edge) -> QueryGraph:
     )
 
 
-def _fetch_source_uris(client, graph: QueryGraph, src_id: int) -> List[str]:
-    res = client.sparql_query(compile_sparql(graph, Registry(client)), include_dependencies=True)
+def _fetch_source_uris(client, graph: QueryGraph, src_id: int, registry: Registry) -> List[str]:
+    res = client.sparql_query(compile_sparql(graph, registry), include_dependencies=True)
     cols = res.get("columns", [])
     col = f"v{src_id}"
     if col not in cols:
@@ -192,7 +192,7 @@ def _fetch_source_uris(client, graph: QueryGraph, src_id: int) -> List[str]:
     return uris
 
 
-def _fetch_target_accept(client, graph: QueryGraph, edge) -> Optional[Set[str]]:
+def _fetch_target_accept(client, graph: QueryGraph, edge, registry: Registry) -> Optional[Set[str]]:
     """URIs satisfying the target node's own constraints, or None if unconstrained."""
     tid = edge.target_id
     node = graph.nodes[tid]
@@ -211,7 +211,7 @@ def _fetch_target_accept(client, graph: QueryGraph, edge) -> Optional[Set[str]]:
         current_pointer=tid,
         data_nodes={tid: info} if info is not None else {},
     )
-    res = client.sparql_query(compile_sparql(sub, Registry(client)), include_dependencies=True)
+    res = client.sparql_query(compile_sparql(sub, registry), include_dependencies=True)
     cols = res.get("columns", [])
     col = f"v{tid}"
     if col not in cols:
@@ -220,24 +220,27 @@ def _fetch_target_accept(client, graph: QueryGraph, edge) -> Optional[Set[str]]:
     return {str(row[idx]) for row in res.get("rows", []) if row[idx] is not None}
 
 
-def resolve_program_edges(graph: QueryGraph, client) -> QueryGraph:
+def resolve_program_edges(graph: QueryGraph, client, registry: Optional[Registry] = None) -> QueryGraph:
     """Resolve every unresolved traversal-program edge into paired VALUES.
 
     ``nearest`` edges keep only the closest match(es) per source; other
     program edges collect all reachable matches (``hops`` bounds the walk,
-    0 = unbounded).
+    0 = unbounded). ``registry`` is the calling query's, so its sub-queries
+    share one graph-version check.
     """
     pending = [e for e in graph.edges
                if getattr(e, "patterns", None) and e.value_pairs is None]
     if not pending:
         return graph
     version = client.graph_version()
+    if registry is None:
+        registry = Registry(client)
     for edge in pending:
         pruned = _prune_target_subtree(graph, edge)
-        sources = _fetch_source_uris(client, pruned, edge.source_id)
+        sources = _fetch_source_uris(client, pruned, edge.source_id, registry)
         pairs: List[Tuple[str, str]] = []
         if sources:
-            accept = _fetch_target_accept(client, graph, edge)
+            accept = _fetch_target_accept(client, graph, edge, registry)
             adjacencies = [materialize_segment(client, alts, version)
                            for alts, _ in edge.patterns]
             stars = [star for _, star in edge.patterns]

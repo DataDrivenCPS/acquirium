@@ -155,11 +155,10 @@ class QueryGraph:
         replaces the entry. ``type`` records a cast for the column
         (``include(type=...)``); re-adding without one keeps the cast."""
         entry = (node_id, attr_name, required)
-        casts = tuple(c for c in self.casts if not (c[0] == node_id and c[1] == attr_name))
+        casts = self.casts
         if type is not None:
-            casts = casts + ((node_id, attr_name, type, strict),)
-        else:
-            casts = self.casts
+            casts = tuple(c for c in casts if not (c[0] == node_id and c[1] == attr_name))
+            casts += ((node_id, attr_name, type, strict),)
         if entry in self.selects and casts == self.casts:
             return self
         if any(n == node_id and a == attr_name for n, a, _ in self.selects):

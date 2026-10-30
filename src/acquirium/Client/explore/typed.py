@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime, timezone
-from typing import Any, Callable, Iterable, List, Optional, Tuple
+from typing import Any, Iterable, List, Optional, Tuple
 
 import polars as pl
 
@@ -62,6 +62,40 @@ def parse_cell(value: Any, datatype: Optional[str]) -> Any:
     return value
 
 
+def result_datatypes(res: dict) -> List[List[Optional[str]]]:
+    """The ``datatypes`` matrix of a row result, or all ``None`` (every cell
+    unknown) from a server or test double that sends none."""
+    return res.get("datatypes") or [[None] * len(res.get("columns", [])) for _ in res.get("rows", [])]
+
+
+# The Python kind each XSD datatype parses to (see parse_cell); anything
+# else (xsd:string, a plain literal, an IRI as CURIE text) is text.
+_DATATYPE_KINDS = {
+    **dict.fromkeys(_INTEGER_TYPES, int), **dict.fromkeys(_FLOAT_TYPES, float),
+    XSD + "boolean": bool, XSD + "date": date, XSD + "dateTime": datetime,
+}
+_KIND_DTYPES = {str: pl.String, int: pl.Int64, float: pl.Float64, bool: pl.Boolean,
+                date: pl.Date, datetime: pl.Datetime("us", "UTC")}
+
+
+def _dtype_for_kinds(kinds: set) -> pl.DataType:
+    """One kind gives its dtype; int and float widen to ``Float64``; any
+    other mixture (or a kind with no dtype) is ``Object``."""
+    if kinds == {int, float}:
+        return pl.Float64
+    if len(kinds) == 1:
+        return _KIND_DTYPES.get(next(iter(kinds)), pl.Object)
+    return pl.Object
+
+
+def _kind(v: Any) -> type:
+    # bool before int and datetime before date: each is a subclass
+    for kind in (bool, int, float, datetime, date, str):
+        if isinstance(v, kind):
+            return kind
+    return object
+
+
 def column_dtype(values: Iterable[Any]) -> pl.DataType:
     """The polars dtype for a column of parsed cells.
 
@@ -69,39 +103,8 @@ def column_dtype(values: Iterable[Any]) -> pl.DataType:
     ``Float64``; no values at all gives ``String``; any other mixture gives
     ``Object``.
     """
-    kinds = set()
-    for v in values:
-        if v is None:
-            continue
-        if isinstance(v, bool):
-            kinds.add(bool)
-        elif isinstance(v, int):
-            kinds.add(int)
-        elif isinstance(v, float):
-            kinds.add(float)
-        elif isinstance(v, datetime):
-            kinds.add(datetime)
-        elif isinstance(v, date):
-            kinds.add(date)
-        elif isinstance(v, str):
-            kinds.add(str)
-        else:
-            kinds.add(object)
-    if not kinds:
-        return pl.String
-    if kinds == {str}:
-        return pl.String
-    if kinds == {int}:
-        return pl.Int64
-    if kinds <= {int, float} and kinds:
-        return pl.Float64
-    if kinds == {bool}:
-        return pl.Boolean
-    if kinds == {date}:
-        return pl.Date
-    if kinds == {datetime}:
-        return pl.Datetime("us", "UTC")
-    return pl.Object
+    kinds = {_kind(v) for v in values if v is not None}
+    return _dtype_for_kinds(kinds) if kinds else pl.String
 
 
 def dtype_for_datatypes(datatypes: Iterable[str]) -> Optional[pl.DataType]:
@@ -109,35 +112,8 @@ def dtype_for_datatypes(datatypes: Iterable[str]) -> Optional[pl.DataType]:
     value is seen: what ``metadata()`` will produce, so ``schema()`` can say
     so in advance and an all-null column is still typed. ``None`` when the
     set is empty (nothing discovered)."""
-    kinds = set()
-    for dt in datatypes:
-        if dt in _INTEGER_TYPES:
-            kinds.add(int)
-        elif dt in _FLOAT_TYPES:
-            kinds.add(float)
-        elif dt == XSD + "boolean":
-            kinds.add(bool)
-        elif dt == XSD + "date":
-            kinds.add(date)
-        elif dt == XSD + "dateTime":
-            kinds.add(datetime)
-        else:
-            kinds.add(str)   # xsd:string, a plain literal, an IRI (CURIE text), an unknown type
-    if not kinds:
-        return None
-    if kinds == {int}:
-        return pl.Int64
-    if kinds <= {int, float}:
-        return pl.Float64
-    if kinds == {bool}:
-        return pl.Boolean
-    if kinds == {date}:
-        return pl.Date
-    if kinds == {datetime}:
-        return pl.Datetime("us", "UTC")
-    if kinds == {str}:
-        return pl.String
-    return pl.Object
+    kinds = {_DATATYPE_KINDS.get(dt, str) for dt in datatypes}
+    return _dtype_for_kinds(kinds) if kinds else None
 
 
 def coerce(values: List[Any], dtype: pl.DataType) -> List[Any]:
@@ -161,13 +137,6 @@ def _text(v: Any) -> str:
     return str(v)
 
 
-def typed_column(values: List[Any], datatypes: List[Optional[str]]) -> Tuple[List[Any], pl.DataType]:
-    """Parse one column's cells and return ``(values, dtype)`` ready for polars."""
-    parsed = [parse_cell(v, d) for v, d in zip(values, datatypes)]
-    dtype = column_dtype(parsed)
-    return coerce(parsed, dtype), dtype
-
-
 # ---- casts asked for with include(type=...) -------------------------------
 
 _TYPE_NAMES = {
@@ -180,8 +149,9 @@ _TYPE_NAMES = {
     "struct": "struct", dict: "struct",
     "object": "object", object: "object", pl.Object: "object",
 }
-_TARGET_DTYPE = {"string": pl.String, "int": pl.Int64, "float": pl.Float64, "bool": pl.Boolean,
-                 "date": pl.Date, "datetime": pl.Datetime("us"), "object": pl.Object}
+# The column dtype of each scalar cast target (struct depends on the column).
+CAST_DTYPES = {"string": pl.String, "int": pl.Int64, "float": pl.Float64, "bool": pl.Boolean,
+               "date": pl.Date, "datetime": pl.Datetime("us", "UTC"), "object": pl.Object}
 
 
 class CastError(ValueError):

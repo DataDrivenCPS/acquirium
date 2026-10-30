@@ -57,14 +57,14 @@ class TestOptionsQueries:
         lookup = client.sparql_query.call_args.args[0]
         assert lookup.startswith("SELECT ?v ?opt")
         assert f"VALUES ?v {{ <{M1}> <{M2}> }}" in lookup
-        assert f"?v (<{QK_PRED}>) ?opt ." in lookup
+        assert f"VALUES ?p {{ <{QK_PRED}> }}" in lookup and "?v ?p ?opt ." in lookup
         assert "GROUP BY" not in lookup and "count" not in lookup.lower()
 
     def test_multi_predicate_attr_unions(self):
         client = make_client([pattern_row(M1)], [])
         base(client).options("medium")
         lookup = client.sparql_query.call_args.args[0]
-        assert f"(<{OF_MEDIUM}>|<{HAS_MEDIUM}>)" in lookup
+        assert f"VALUES ?p {{ <{OF_MEDIUM}> <{HAS_MEDIUM}> }}" in lookup
 
     def test_of_targets_entity_node(self):
         client = make_client([pattern_row(M1)], [])

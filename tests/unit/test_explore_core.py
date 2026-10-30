@@ -10,7 +10,6 @@ import re
 import pytest
 
 from acquirium.Client.explore.core import Query
-from acquirium.Client.query import Q
 
 CLS_A = "urn:test#TypeA"
 CLS_B = "urn:test#TypeB"
@@ -29,10 +28,6 @@ def no_hidden_defaults():
     unhide(*hidden_predicates(), *hidden_prefixes())
     yield
     unhide()
-
-
-def norm(s: str) -> str:
-    return re.sub(r"\s+", " ", s).strip()
 
 
 class TestEntity:
@@ -160,11 +155,6 @@ class TestMeasurement:
         assert g.aliases["ph"] == 0
         assert g.data_nodes[0].filters == {"quantity_kind": qk}
 
-    def test_root_form_parity_with_find_all_data(self):
-        new = q().measurement().to_sparql()
-        old = Q(client=None).find_all_data().to_sparql()
-        assert canon(new) == canon(old)
-
     def test_unknown_frm_still_errors(self):
         with pytest.raises(ValueError):
             q().entity(CLS_A).measurement(frm="nope")
@@ -224,101 +214,6 @@ class TestRefocus:
     def test_unknown_alias(self):
         with pytest.raises(ValueError):
             q().entity(CLS_A, alias="a").refocus("nope")
-
-
-def canon(s: str) -> str:
-    """Normalize whitespace, point-label optionals, and node-id numbering.
-
-    The explore compiler also fetches point ``rdfs:label``s; the frozen
-    legacy builder does not, so ``?lbl<N>`` select vars and their OPTIONAL
-    clauses are stripped before comparing. The legacy builder's id counter
-    skips numbers (its ``_new_id`` + ``bump_id`` both increment), so
-    equivalent graphs get different node ids. Renumber
-    ``?v<N>/?ext<N>/?unit<N>/?extunit<N>`` by order of first appearance so
-    structurally identical queries compare equal.
-    """
-    s = norm(s)
-    # explore's data edge is the entity relation (fixed predicates); the
-    # legacy builder emits an any-predicate block — compare modulo that
-    s = re.sub(
-        r"\{ \{ (\?v\d+) <http://data\.ashrae\.org/standard223#hasProperty> (\?v\d+) \. \} UNION "
-        r"\{ \1 <http://data\.ashrae\.org/standard223#hasConnectionPoint> \?m_e(\d+)_data_a1_0 \. "
-        r"\?m_e\3_data_a1_0 <http://data\.ashrae\.org/standard223#hasProperty> \2 \. \} UNION "
-        r"\{ \1 <http://data\.ashrae\.org/standard223#actuatedByProperty> \2 \. \} \}",
-        lambda m: (f"{{ {m.group(1)} ?p_e{m.group(3)}_1 {m.group(2)} . }} UNION "
-                   f"{{ {m.group(1)} <http://data.ashrae.org/standard223#hasConnectionPoint> ?cp_e{m.group(3)}_k1 . "
-                   f"?cp_e{m.group(3)}_k1 ?p_e{m.group(3)}_1 {m.group(2)} . }}"),
-        s,
-    )
-    s = re.sub(
-        r"OPTIONAL \{ \?\w+ <http://www\.w3\.org/2000/01/rdf-schema#label> \?lbl\d+ \. \} ?",
-        "",
-        s,
-    )
-    s = re.sub(r" \?lbl\d+", "", s)
-    s = norm(s)
-    mapping: dict[str, str] = {}
-
-    def sub(m: re.Match) -> str:
-        nid = m.group(2)
-        if nid not in mapping:
-            mapping[nid] = str(len(mapping))
-        return f"?{m.group(1)}{mapping[nid]}"
-
-    return re.sub(r"\?(v|extunit|ext|unit)(\d+)", sub, s)
-
-
-class TestSparqlParityWithLegacy:
-    """New verb chains must compile to the same SPARQL as the legacy builder
-    (modulo node numbering, see :func:`canon`)."""
-
-    def test_entity_related_chain(self):
-        new = (q().entity(CLS_A, alias="a")
-               .related(CLS_B, alias="b", via=[PRED_P]).to_sparql())
-        old = (Q(client=None).find_entity(_class=CLS_A, alias="a")
-               .find_related(_class=CLS_B, alias="b", predicates=[PRED_P]).to_sparql())
-        assert canon(new) == canon(old)
-
-    def test_direction_chain(self):
-        new = (q().entity(CLS_A, alias="a")
-               .related(CLS_B, alias="b", direction="downstream", max_depth=2).to_sparql())
-        old = (Q(client=None).find_entity(_class=CLS_A, alias="a")
-               .find_related(_class=CLS_B, alias="b", direction="downstream", hops=2).to_sparql())
-        assert canon(new.replace("FILTER(?v1 != ?v0)", "")) == canon(old)
-
-    def test_measurement_chain(self):
-        new = (q().entity(CLS_A, alias="ro").measurement().to_sparql())
-        old = (Q(client=None).find_entity(_class=CLS_A, alias="ro")
-               .find_data().to_sparql())
-        assert canon(new) == canon(old)
-
-    def test_directional_measurement_diverges_from_legacy_on_purpose(self):
-        """Legacy filtered the next entity's inlet/outlet points only; explore
-        also starts at the source's own connection point and takes every
-        connection point of what it reaches, so parity is not expected."""
-        new = (q().entity(CLS_A, alias="ro")
-               .measurement(direction="upstream", max_depth=3).to_sparql())
-        old = (Q(client=None).find_entity(_class=CLS_A, alias="ro")
-               .find_related_data(direction="upstream", hops=3).to_sparql())
-        assert canon(new) != canon(old)
-        assert "InletConnectionPoint" in new
-
-    def test_soft_sensor_shape(self):
-        """entity -> CP class -> measurement, the copy-pasted notebook chain.
-
-        The CP hop uses an explicit predicate: any-traversal deliberately
-        diverged from the legacy compiler (it resolves client-side now).
-        """
-        ro = "urn:nawi-water-ontology#ReverseOsmosisMembrane"
-        cp_cls = "http://data.ashrae.org/standard223#OutletConnectionPoint"
-        cp_pred = "http://data.ashrae.org/standard223#hasConnectionPoint"
-        new = (q().entity(ro, alias="ro")
-               .related(cp_cls, alias="out", via=[cp_pred])
-               .measurement(alias="permeate").to_sparql())
-        old = (Q(client=None).find_entity(_class=ro, alias="ro")
-               .find_related(_class=cp_cls, alias="out", predicates=[cp_pred])
-               .find_data(alias="permeate").to_sparql())
-        assert canon(new) == canon(old)
 
 
 class TestIncludeConnectionPoints:
@@ -455,3 +350,40 @@ class TestDrop:
     def test_empty_query_errors(self):
         with pytest.raises(ValueError, match="no current node"):
             q().drop()
+
+
+class TestMeasurementUri:
+    def test_root_measurement_pinned_to_one_point(self):
+        q = Query(client=None).measurement(alias="m", uri="urn:ex/p1")
+        assert "VALUES ?v0 { <urn:ex/p1> }" in q.to_sparql()
+
+    def test_anchored_measurement_pinned_to_one_point(self):
+        q = (Query(client=None).entity(CLS_A, alias="a")
+             .measurement(alias="m", uri="urn:ex/p1"))
+        sparql = q.to_sparql()
+        assert "VALUES ?v1 { <urn:ex/p1> }" in sparql
+        assert q.query_graph.current_pointer == 1
+
+    def test_find_all_data_is_the_root_measurement(self):
+        from acquirium import Acquirium
+        acq = Acquirium(health_timeout=None)
+        assert isinstance(acq.find_all_data(), Query)
+        assert acq.find_all_data().to_sparql() == acq.query().measurement().to_sparql()
+        assert "VALUES ?v0 { <urn:ex/p1> }" in acq.find_all_data(uri="urn:ex/p1").to_sparql()
+
+
+class TestMetadataCompaction:
+    def test_curies_computed_once_per_distinct_value(self):
+        from unittest.mock import MagicMock
+        client = MagicMock()
+        client.sparql_query.return_value = {
+            "columns": ["v0", "v1"],
+            "rows": [["urn:t#a1", "urn:t#p1"], ["urn:t#a1", "urn:t#p2"],
+                     ["urn:t#a2", "urn:t#p1"], ["urn:t#a2", None]],
+        }
+        client.compact_uri.side_effect = lambda u: "t:" + str(u).rsplit("#", 1)[-1]
+        meta = Query(client=client).entity(CLS_A, alias="a").measurement(alias="m").metadata()
+        assert meta.columns == ["a", "m"]
+        assert sorted(meta["a"].to_list()) == ["t:a1", "t:a1", "t:a2", "t:a2"]
+        assert meta["m"].null_count() == 1
+        assert client.compact_uri.call_count == 4          # a1, a2, p1, p2, not 8 cells

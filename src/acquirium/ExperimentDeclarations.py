@@ -24,7 +24,7 @@ FIELDS = frozenset({"unit", "quantity_kind", "type", "substance", "process", "ro
 def stream_keys(kind: str, metadata: Mapping) -> tuple[str, ...]:
     from acquirium.Client.explore.attributes import REGISTRY, check_key
     from acquirium.Client.explore.relations import RELATIONS
-    from acquirium.Client.metadata import STREAM_FIELDS
+    from acquirium.Client.client import STREAM_FIELDS
     keys = metadata.get("keys", ())
     if not isinstance(keys, (tuple, list)) or any(not isinstance(key, str) for key in keys):
         raise ValueError("keys must be a sequence of index names")

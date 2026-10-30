@@ -1,93 +1,67 @@
+# =============================================================================
+# WARNING: UNTESTED. This script was ported to the explore query interface
+# (acq.query().entity() / related() / measurement() / where()) mechanically
+# when the legacy find_* builder was removed, and has not been run since.
+# Expect it to need fixes before it works end to end.
+# =============================================================================
 """
-NOTE: This example works, but for a better intro example, we recommend checking watertap notebooks.
-These also include detailed instructions to build and start using acquirium at:
-
-- /deployments/WATERTAP/readme.md
-
-Notebook directory:
-
-- /notebooks/watertap/
-
-
 Example: Acquirium + Query API end to end usage
 
 This script shows:
 1) Creating an Acquirium client
-2) Building a query graph with entity nodes
-3) Expanding to data nodes using find_data and find_all_data
-4) Applying generic filters via convenience functions (filter_by_unit, etc.)
-5) Inspecting query graph and compiled SPARQL
-6) Executing metadata query + fetching timeseries dataframe
+2) Building a query with entity nodes
+3) Expanding to measurement points with measurement() and find_all_data()
+4) Filtering measurement points with where()
+5) Inspecting the compiled SPARQL
+6) Executing the metadata query and fetching a timeseries frame
 
-Adjust the ontology URIs and filter values to match your deployment.
+For a fuller introduction see the WaterTAP notebooks under /notebooks/watertap/
+and /deployments/WATERTAP/readme.md. Adjust the ontology URIs and filter
+values to match your deployment.
 """
 
-from datetime import datetime, timedelta
-
 from acquirium import Acquirium
-
-from acquirium.Client.query import Query
 from acquirium.internals.internals_namespaces import S223
 
 
-# Helper: pretty banners
 def banner(msg: str) -> None:
     print("\n" + "=" * 80)
     print(msg)
     print("=" * 80 + "\n")
 
 
-## Initial setup: create Acquirium instance
 banner("1) Create Acquirium session")
-acq = Acquirium(
-        server_url="localhost",
-        server_port=8000,
-        use_ssl=False,
-    )
+acq = Acquirium(server_url="localhost", server_port=8000, use_ssl=False)
 
 banner("2) Start a new query and add an entity node")
-
-#create a query object
-q1 = acq.query() 
-#find an entity node using an ontology class
-q1 : Query  = q1.find_entity(_class=S223.InletConnectionPoint, alias="pump-in")
-q1.metadata_head()
-
-#alternatively, use a natural language string to match ontology classes
-#Acquirium.find_entity is a convenience function for simplifying query object creation
-q2 : Query = acq.find_entity(_class="inlet connection pt", alias="pump-in")
-q2.show_query_graph()
-q2.metadata_head() # should be same as q1
+# an ontology class ...
+q1 = acq.query().entity(S223.InletConnectionPoint, alias="pump-in")
+print(q1.metadata().head())
+# ... or free text, resolved against the ontology by the server
+q2 = acq.query().entity("inlet connection pt", alias="pump-in")
+print(q2.to_sparql())
+print(q2.metadata().head())        # should match q1
 
 banner("3) Add a related entity node")
-# add a related entity node reachable within 1 hop from "pump-in"
-# _from is optional here since we have only one node so far and it is the current pointer
-q1 : Query = q1.find_related(_class="urn:nawi-water-ontology#Pump", alias="pump", _from="pump-in", hops=1)
-q1.show_query_graph()
+# an entity reachable within one step from "pump-in"; frm= is optional while
+# "pump-in" is the current node
+q1 = q1.related("urn:nawi-water-ontology#Pump", alias="pump", frm="pump-in", max_depth=1)
+print(q1.to_sparql())
 
-# alternatively, you can join two query objects
-q3 : Query = acq.find_entity(_class="pump", alias="pump")
-q4 : Query = q2.relate_to(q3, _from="pump-in", hops=1)
-q4.show_query_graph() # should be same as q1
+banner("4) Every measurement point in the plant")
+q5 = acq.find_all_data()           # same as acq.query().measurement()
+print(q5.to_sparql())
+print(q5.metadata().head())
+print(q5.dataframe(limit=5).head())
 
+banner("5) Measurement points of one entity")
+q6 = acq.query().entity("pump", alias="pump").measurement()
+print(q6.to_sparql())
+print(q6.metadata().head())
+print(q6.dataframe(limit=5).head())
 
-banner("4) Find all data nodes")
-q5 :Query = acq.find_all_data()
-q5.show_query_graph()
-q5.metadata_head()
-q5.data_head()
-
-banner("5) Find data nodes of specific entity")
-q6 : Query = q3.find_data()
-q6.show_query_graph()
-q6.metadata_head()
-q6.data_head()
-
-banner("6) Apply filters to data nodes")
-q7 : Query = q5.filter_by_unit(unit = "kilogram per second")
-q7.show_query_graph()
-q7.metadata_head()
-q7.data_head()
-
-
-
+banner("6) Filter measurement points")
+q7 = q5.where(unit="kilogram per second")
+print(q7.to_sparql())
+print(q7.metadata().head())
+print(q7.dataframe(limit=5).head())

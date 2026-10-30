@@ -51,6 +51,20 @@ port with `Output(value_kind="text")` so default reads return it.
 ### cast_value
 
 `cast_value` is the last step, applied client side after the values arrive.
-`"float"` casts the value column to `Float64` and `"int"` casts to `Int64`.
-Anything else, including `None`, leaves the column exactly as the server sent
-it.
+It takes `"float"`, `"int"`, `"str"` or `None`; anything else is a
+`ValueError`. The default is `None`, which leaves the columns exactly as the
+server sent them.
+
+`"float"` parses the values of a text column that read as numbers into
+`value_numeric` and leaves the rest in `value_text`, so a status stream
+carrying `"12.5"` next to `"ON"` keeps both.
+A numeric column is already `Float64` and is left alone.
+
+`"int"` does the same parsing and returns the value columns as `Int64`.
+The cast truncates toward zero, so a column that holds fractional values
+raises a `UserWarning` naming the column and one of the values it changed.
+
+`"str"` sends every value to `value_text` as a string, numbers included.
+Unit conversion needs numbers, so `convert_to()` refuses such an object.
+
+All of these are vectorized polars casts; none of them loops over rows.

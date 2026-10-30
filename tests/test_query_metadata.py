@@ -1,433 +1,164 @@
+"""Pattern matching on the test model through the explore builder.
+
+Row counts are properties of ``tests/test_model.ttl``; each test says which
+shape it exercises.
+"""
 import pytest
 from conftest import ACQUIRIUM_TEST_SERVER_HOST, ACQUIRIUM_TEST_SERVER_PORT
 from acquirium import Acquirium
 from acquirium.internals.internals_namespaces import *
-from acquirium.Client.query import Q
-import shutil
+
 
 @pytest.fixture
 def acquirium_client():
-    """Fixture to create an Acquirium client for testing."""
     acq = Acquirium(
         server_url=ACQUIRIUM_TEST_SERVER_HOST,
         server_port=ACQUIRIUM_TEST_SERVER_PORT,
         use_ssl=False,
     )
-
     acq.insert_graph_file("tests/test_model.ttl", source_id="plant")
     return acq
 
-#### FIND ENTITY TESTS ####
 
-def test_find_entity(acquirium_client:Acquirium):
-    """Test the find_entity method of Acquirium."""
+#### ENTITY ####
+
+def test_entity(acquirium_client: Acquirium):
     acq = acquirium_client
-    entity_A : Q = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
-    
-    assert entity_A is not None
+    entity_A = acq.query().entity(ACQUIRIUM_NS.A, alias="a")
     assert len(entity_A.query_graph.nodes) == 1
     assert len(entity_A.query_graph.edges) == 0
 
     result_A = entity_A.execute()
-
-    assert result_A is not None
     assert set(result_A) == {"columns", "rows", "datatypes"}
-    assert len(result_A['rows']) == 4
+    assert len(result_A["rows"]) == 4
 
-    entity_B : Q = acq.find_entity(_class=ACQUIRIUM_NS.B, alias="b")
-
-    assert entity_B is not None
-    assert len(entity_B.query_graph.nodes) == 1
-    assert len(entity_B.query_graph.edges) == 0
-    
-    result_B = entity_B.execute()
-
-    assert result_B is not None
-    assert set(result_B) == {"columns", "rows", "datatypes"}
-    assert len(result_B['rows']) == 2
-
+    entity_B = acq.query().entity(ACQUIRIUM_NS.B, alias="b")
+    assert len(entity_B.execute()["rows"]) == 2
     result_B_df = entity_B.metadata()
-    assert result_B_df is not None
     assert len(result_B_df) == 2
-    assert 'b' in result_B_df.columns
-    assert len(result_B_df.columns) == 1
+    assert result_B_df.columns == ["b"]
+
+    # a second, unconnected entity is a cross product
+    entity_AC = entity_A.entity(ACQUIRIUM_NS.C, alias="c")
+    assert len(entity_AC.query_graph.nodes) == 2
+    assert len(entity_AC.query_graph.edges) == 0
+    assert len(entity_AC.execute()["rows"]) == 3 * 4
+    result_AC_df = entity_AC.metadata()
+    assert len(result_AC_df) == 3 * 4
+    assert set(result_AC_df.columns) == {"a", "c"}
 
 
-    entity_A = entity_A.find_entity(_class=ACQUIRIUM_NS.C, alias="c")
+#### RELATED ####
 
-    assert entity_A is not None
-    assert len(entity_A.query_graph.nodes) == 2
-    assert len(entity_A.query_graph.edges) == 0
-
-    result_AC = entity_A.execute()
-
-    assert result_AC is not None
-    assert set(result_AC) == {"columns", "rows", "datatypes"}
-    assert len(result_AC['rows']) == 3*4
-
-    result_AC_df = entity_A.metadata()
-
-    assert result_AC_df is not None
-    assert len(result_AC_df) == 3*4
-    assert 'c' in result_AC_df.columns and 'a' in result_AC_df.columns
-    assert len(result_AC_df.columns) == 2
-
-#### FIND RELATED TESTS ####
-
-def test_find_related_1(acquirium_client:Acquirium):
-    """Test the find_related method of Acquirium.
-       This test checks the basic functionality of finding related entities.
-       Given single predicate and single hop.
-    """
+def test_related_single_predicate_single_hop(acquirium_client: Acquirium):
     acq = acquirium_client
-    entity_A : Q = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
+    related = (acq.query().entity(ACQUIRIUM_NS.A, alias="a")
+               .related(ACQUIRIUM_NS.C, via=[ACQUIRIUM_NS.x], alias="c"))
+    assert len(related.query_graph.nodes) == 2
+    assert len(related.query_graph.edges) == 1
 
-    related_entities = entity_A.find_related(
-        _class = ACQUIRIUM_NS.C,
-        predicates=[ACQUIRIUM_NS.x],
-        alias="c"
-    )
-    assert related_entities is not None
-    assert len(related_entities.query_graph.nodes) == 2
-    assert len(related_entities.query_graph.edges) == 1
-
-    result = related_entities.metadata()
-    assert result is not None
+    result = related.metadata()
     assert len(result) == 1
-    assert 'a' in result.columns and 'c' in result.columns
-    assert len(result.columns) == 2
+    assert set(result.columns) == {"a", "c"}
 
-def test_find_related_2(acquirium_client:Acquirium):
-    '''
-    Test the find_related method of Acquirium.
-    This test checks the basic functionality of finding related entities.
-    Given single predicate and multiple hops.
-    '''
+
+def test_related_single_predicate_two_hops(acquirium_client: Acquirium):
     acq = acquirium_client
-    entity_A : Q = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
-    
-    related_entities = entity_A.find_related(
-        _class = ACQUIRIUM_NS.C,
-        predicates=[ACQUIRIUM_NS.x],
-        alias="c",
-        hops = 2,
-        multi_hop_predicates = True
-    )
-    assert related_entities is not None
-    assert len(related_entities.query_graph.nodes) == 2
-    assert len(related_entities.query_graph.edges) == 1
-
-    result = related_entities.metadata()
-    assert result is not None
+    related = (acq.query().entity(ACQUIRIUM_NS.A, alias="a")
+               .related(ACQUIRIUM_NS.C, via=[ACQUIRIUM_NS.x], alias="c", max_depth=2, nearest=False))
+    result = related.metadata()
     assert len(result) == 3
-    assert 'a' in result.columns and 'c' in result.columns
-    assert len(result.columns) == 2
+    assert set(result.columns) == {"a", "c"}
 
-def test_find_related_3(acquirium_client:Acquirium):
-    '''
-    Test the find_related method of Acquirium.
-    This test checks the basic functionality of finding related entities.
-    Given multiple predicate and single hops.
-    '''
+
+def test_related_two_predicates_single_hop(acquirium_client: Acquirium):
     acq = acquirium_client
-    entity_B : Q = acq.find_entity(_class=ACQUIRIUM_NS.B, alias="b")
-    
-    related_entities = entity_B.find_related(
-        _class = ACQUIRIUM_NS.A,
-        predicates=[ACQUIRIUM_NS.z, ACQUIRIUM_NS.w],
-        alias="a"
-    )
-
-    assert related_entities is not None
-    assert len(related_entities.query_graph.nodes) == 2
-    assert len(related_entities.query_graph.edges) == 1
-
-    result = related_entities.metadata()
-    assert result is not None
+    related = (acq.query().entity(ACQUIRIUM_NS.B, alias="b")
+               .related(ACQUIRIUM_NS.A, via=[ACQUIRIUM_NS.z, ACQUIRIUM_NS.w], alias="a"))
+    result = related.metadata()
     assert len(result) == 3
-    assert 'a' in result.columns and 'b' in result.columns
-    assert len(result.columns) == 2
+    assert set(result.columns) == {"a", "b"}
 
-def test_find_related_4(acquirium_client:Acquirium):
-    '''
-    Test the find_related method of Acquirium.
-    This test checks the basic functionality of finding related entities.
-    Given no predicate and single hop.
-    '''
+
+def test_related_any_predicate_single_hop(acquirium_client: Acquirium):
     acq = acquirium_client
-    entity_B : Q = acq.find_entity(_class=ACQUIRIUM_NS.B, alias="b")
-    
-    related_entities = entity_B.find_related(
-        _class = ACQUIRIUM_NS.A,
-        alias="a",
-        hops = 1
-    )
-
-    assert related_entities is not None
-    assert len(related_entities.query_graph.nodes) == 2
-    assert len(related_entities.query_graph.edges) == 1
-
-    result = related_entities.metadata()
-    assert result is not None
+    related = (acq.query().entity(ACQUIRIUM_NS.B, alias="b")
+               .related(ACQUIRIUM_NS.A, alias="a", max_depth=1, nearest=False))
+    result = related.metadata()
     assert len(result) == 3
-    assert 'a' in result.columns and 'b' in result.columns
-    assert len(result.columns) == 2
+    assert set(result.columns) == {"a", "b"}
 
 
-def test_find_related_5(acquirium_client:Acquirium):
-    '''
-    Test the find_related method of Acquirium.
-    This test checks the basic functionality of finding related entities.
-    Given no predicate and multi hop.
-    '''
+def test_related_any_predicate_multi_hop(acquirium_client: Acquirium):
     acq = acquirium_client
-    entity_A : Q = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
+    entity_A = acq.query().entity(ACQUIRIUM_NS.A, alias="a")
 
-    related_entities = entity_A.find_related(
-        _class = ACQUIRIUM_NS.B,
-        alias="b",
-        hops = 2
-    )
-
-    assert related_entities is not None
-    assert len(related_entities.query_graph.nodes) == 2
-    assert len(related_entities.query_graph.edges) == 1
-
-    result = related_entities.metadata()
-    assert result is not None
+    result = entity_A.related(ACQUIRIUM_NS.B, alias="b", max_depth=2, nearest=False).metadata()
     assert len(result) == 4
-    assert 'a' in result.columns and 'b' in result.columns
-    assert len(result.columns) == 2
+    assert set(result.columns) == {"a", "b"}
 
-    related_entities_2 = entity_A.find_related(
-        _class = ACQUIRIUM_NS.C,
-        alias="c",
-        hops = 3
-    )
-    assert related_entities_2 is not None
-    assert len(related_entities_2.query_graph.nodes) == 2
-    assert len(related_entities_2.query_graph.edges) == 1
-
-    result2 = related_entities_2.metadata()
-    assert result2 is not None
+    result2 = entity_A.related(ACQUIRIUM_NS.C, alias="c", max_depth=3, nearest=False).metadata()
     assert len(result2) == 6
-    assert 'a' in result2.columns and 'c' in result2.columns
-    assert len(result2.columns) == 2
+    assert set(result2.columns) == {"a", "c"}
 
-def test_find_related_6(acquirium_client:Acquirium):
-    '''
-    Test the find_related method of Acquirium.
-    This test checks the basic functionality of finding related entities.
-    Multiple calls using current pointer, single hop
-    '''
+
+def test_related_chained_from_pointer(acquirium_client: Acquirium):
     acq = acquirium_client
-    entity_A : Q = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
+    related = (acq.query().entity(ACQUIRIUM_NS.A, alias="a")
+               .related(ACQUIRIUM_NS.B, alias="b", max_depth=1, nearest=False))
+    assert len(related.metadata()) == 3
 
-    related_entities = entity_A.find_related(
-        _class = ACQUIRIUM_NS.B,
-        alias="b",
-        hops = 1
-    )
-
-    assert related_entities is not None
-    assert len(related_entities.query_graph.nodes) == 2
-    assert len(related_entities.query_graph.edges) == 1
-
-    result = related_entities.metadata()
-    assert result is not None
-    assert len(result) == 3
-    assert 'a' in result.columns and 'b' in result.columns
-    assert len(result.columns) == 2
-
-    related_entities_2 = related_entities.find_related(
-        _class = ACQUIRIUM_NS.C,
-        alias="c",
-        hops = 1
-    )
-    assert related_entities_2 is not None
-    assert len(related_entities_2.query_graph.nodes) == 3
-    assert len(related_entities_2.query_graph.edges) == 2
-
-    result2 = related_entities_2.metadata()
-    assert result2 is not None
+    related_2 = related.related(ACQUIRIUM_NS.C, alias="c", max_depth=1, nearest=False)
+    assert len(related_2.query_graph.nodes) == 3
+    assert len(related_2.query_graph.edges) == 2
+    result2 = related_2.metadata()
     assert len(result2) == 4
-    assert 'a' in result2.columns and 'c' in result2.columns and 'b' in result2.columns
-    assert len(result2.columns) == 3
+    assert set(result2.columns) == {"a", "b", "c"}
 
-def test_find_related_7(acquirium_client:Acquirium):
-    '''
-    Test the find_related method of Acquirium.
-    This test checks the basic functionality of finding related entities.
-    Multiple calls using from param, single hop
-    '''
+
+def test_related_from_alias_single_hop(acquirium_client: Acquirium):
     acq = acquirium_client
-    entity_A : Q = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
-
-    related_entities = entity_A.find_related(
-        _class = ACQUIRIUM_NS.B,
-        alias="b",
-        hops = 1
-    )
-
-    assert related_entities is not None
-    assert len(related_entities.query_graph.nodes) == 2
-    assert len(related_entities.query_graph.edges) == 1
-
-    result = related_entities.metadata()
-    assert result is not None
-    assert len(result) == 3
-    assert 'a' in result.columns and 'b' in result.columns
-    assert len(result.columns) == 2
-
-    related_entities_2 = related_entities.find_related(
-        _class = ACQUIRIUM_NS.E,
-        _from = "a",
-        alias="e",
-        hops = 1
-    )
-    assert related_entities_2 is not None
-    assert len(related_entities_2.query_graph.nodes) == 3
-    assert len(related_entities_2.query_graph.edges) == 2
-
-    result2 = related_entities_2.metadata()
-    assert result2 is not None
+    related = (acq.query().entity(ACQUIRIUM_NS.A, alias="a")
+               .related(ACQUIRIUM_NS.B, alias="b", max_depth=1, nearest=False))
+    related_2 = related.related(ACQUIRIUM_NS.E, frm="a", alias="e", max_depth=1, nearest=False)
+    assert len(related_2.query_graph.nodes) == 3
+    assert len(related_2.query_graph.edges) == 2
+    result2 = related_2.metadata()
     assert len(result2) == 2
-    assert 'a' in result2.columns and 'e' in result2.columns and 'b' in result2.columns
-    assert len(result2.columns) == 3
+    assert set(result2.columns) == {"a", "b", "e"}
 
-def test_find_related_8(acquirium_client:Acquirium):
-    '''
-    Test the find_related method of Acquirium.
-    This test checks the basic functionality of finding related entities.
-    Multiple calls using from param, multi hop
-    '''
+
+def test_related_from_alias_multi_hop(acquirium_client: Acquirium):
     acq = acquirium_client
-    entity_A : Q = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
+    related = (acq.query().entity(ACQUIRIUM_NS.A, alias="a")
+               .related(ACQUIRIUM_NS.B, alias="b", max_depth=2, nearest=False))
+    assert len(related.metadata()) == 4
 
-    related_entities = entity_A.find_related(
-        _class = ACQUIRIUM_NS.B,
-        alias="b",
-        hops = 2
-    )
-
-    assert related_entities is not None
-    assert len(related_entities.query_graph.nodes) == 2
-    assert len(related_entities.query_graph.edges) == 1
-
-    result = related_entities.metadata()
-    assert result is not None
-    assert len(result) == 4
-    assert 'a' in result.columns and 'b' in result.columns
-    assert len(result.columns) == 2
-
-    related_entities_2 = related_entities.find_related(
-        _class = ACQUIRIUM_NS.E,
-        _from = "a",
-        alias="e",
-        hops = 3
-    )
-    assert related_entities_2 is not None
-    assert len(related_entities_2.query_graph.nodes) == 3
-    assert len(related_entities_2.query_graph.edges) == 2
-
-    result2 = related_entities_2.metadata()
-    assert result2 is not None
+    related_2 = related.related(ACQUIRIUM_NS.E, frm="a", alias="e", max_depth=3, nearest=False)
+    result2 = related_2.metadata()
     assert len(result2) == 8
-    assert 'a' in result2.columns and 'e' in result2.columns and 'b' in result2.columns
-    assert len(result2.columns) == 3
+    assert set(result2.columns) == {"a", "b", "e"}
 
-def test_find_related_9(acquirium_client:Acquirium):
-    '''
-    Test the find_related method of Acquirium.
-    This test checks the basic functionality of finding related entities.
-    Multiple calls using from param, multi hop
-    also unconnected find_entity after find_related
-    '''
+
+def test_unconnected_entity_after_related(acquirium_client: Acquirium):
     acq = acquirium_client
-    entity_A : Q = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
-
-    related_entities = entity_A.find_related(
-        _class = ACQUIRIUM_NS.B,
-        alias="b",
-        hops = 2
-    )
-
-    assert related_entities is not None
-    assert len(related_entities.query_graph.nodes) == 2
-    assert len(related_entities.query_graph.edges) == 1
-
-    result = related_entities.metadata()
-    assert result is not None
-    assert len(result) == 4
-    assert 'a' in result.columns and 'b' in result.columns
-    assert len(result.columns) == 2
-
-    related_entities_2 = related_entities.find_entity(
-        _class = ACQUIRIUM_NS.C,
-        alias="c"
-        )
-    assert related_entities_2 is not None
-    assert len(related_entities_2.query_graph.nodes) == 3
-    assert len(related_entities_2.query_graph.edges) == 1
-
-    result2 = related_entities_2.metadata()
-    assert result2 is not None
+    related = (acq.query().entity(ACQUIRIUM_NS.A, alias="a")
+               .related(ACQUIRIUM_NS.B, alias="b", max_depth=2, nearest=False))
+    related_2 = related.entity(ACQUIRIUM_NS.C, alias="c")
+    assert len(related_2.query_graph.nodes) == 3
+    assert len(related_2.query_graph.edges) == 1
+    result2 = related_2.metadata()
     assert len(result2) == 12
-    assert 'a' in result2.columns and 'c' in result2.columns and 'b' in result2.columns
-    assert len(result2.columns) == 3
+    assert set(result2.columns) == {"a", "b", "c"}
 
-#### RELATE TO TESTS ####
 
-def test_relate_to_1(acquirium_client:Acquirium):
-    '''
-    Test the relate_to method of Acquirium.
-    This test checks the basic functionality of relating entities.
-    Given single predicate and single hop.
-    '''
+def test_related_from_alias_two_hops_any(acquirium_client: Acquirium):
     acq = acquirium_client
-    entity_A : Q = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
-    entity_C : Q = acq.find_entity(_class=ACQUIRIUM_NS.C, alias="c")
-
-    related_entities = entity_A.relate_to(
-        other = entity_C,
-        hops = 1,
-        predicates = [ACQUIRIUM_NS.x]
-    )
-    assert related_entities is not None
-    assert len(related_entities.query_graph.nodes) == 2
-    assert len(related_entities.query_graph.edges) == 1
-
-    result = related_entities.metadata()
-    assert result is not None
-    assert len(result) == 1
-    assert 'a' in result.columns and 'c' in result.columns
-    assert len(result.columns) == 2
-
-def test_relate_to_2(acquirium_client:Acquirium):
-    '''
-    Test the relate_to method of Acquirium.
-    This test checks the basic functionality of relating entities.
-    Given from parameter and single hop.
-    '''
-    acq = acquirium_client
-    entity_A : Q = acq.find_entity(_class=ACQUIRIUM_NS.A, alias="a")
-    entity_AB = entity_A.find_related(
-        _class = ACQUIRIUM_NS.B,
-        alias="b",
-        hops = 1
-    )
-    entity_C : Q = acq.find_entity(_class=ACQUIRIUM_NS.C, alias="c")
-    related_entities = entity_AB.relate_to(
-        other = entity_C,
-        _from = "a",
-        hops = 2,
-    )
-    assert related_entities is not None
-    assert len(related_entities.query_graph.nodes) == 3
-    assert len(related_entities.query_graph.edges) == 2
-    
-    result = related_entities.metadata()
-    assert result is not None
+    related = (acq.query().entity(ACQUIRIUM_NS.A, alias="a")
+               .related(ACQUIRIUM_NS.B, alias="b", max_depth=1, nearest=False)
+               .related(ACQUIRIUM_NS.C, frm="a", alias="c", max_depth=2, nearest=False))
+    assert len(related.query_graph.nodes) == 3
+    assert len(related.query_graph.edges) == 2
+    result = related.metadata()
     assert len(result) == 5
-    assert 'a' in result.columns and 'c' in result.columns and 'b' in result.columns
-    assert len(result.columns) == 3
+    assert set(result.columns) == {"a", "b", "c"}
