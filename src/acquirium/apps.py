@@ -265,6 +265,38 @@ def output_reference(app: str, group: str, port: str) -> str:
     return str(compute_ref_uri(f"derived:{app}", _json([group, port])))
 
 
+# An app's operators are "<app>:<group digest>", one per selected group.
+def _operator_id(app: str, group: str) -> str:
+    return f"{app}:{_digest(group)}"
+
+
+def app_of(operator_id: str) -> str:
+    """The app an operator ID belongs to."""
+    return operator_id.split(":", 1)[0]
+
+
+def totals_per_app(operators, keys) -> dict[str, dict[str, Any]]:
+    """Per app, its operator count and the sum of each of ``keys`` over
+    ``(operator ID, counters)`` pairs."""
+    apps: dict[str, dict[str, Any]] = {}
+    for operator, counters in operators:
+        totals = apps.setdefault(app_of(operator), {"operators": 0, **dict.fromkeys(keys, 0)})
+        totals["operators"] += 1
+        for key in keys:
+            totals[key] += counters[key]
+    return apps
+
+
+def _plan(operators) -> dict[str, Any]:
+    # A complete-plan identity includes semantic context and all retained apps.
+    return {"id": f"acquirium:{_digest(operators)}", "operators": operators}
+
+
+def _definition(app) -> dict[str, Any]:
+    """An app's validated declaration, from an ``App`` or its dict form."""
+    return app.to_dict() if isinstance(app, App) else App.from_dict(app).to_dict()
+
+
 class Apps:
     def __init__(self, core, graph, directory, *, converter=None):
         self.core, self.graph, self.converter = core, graph, converter
@@ -423,7 +455,7 @@ class Apps:
                 if group in parameters:
                     definition["parameters"] = parameters[group]
                 operator = Operator(
-                    id=f"{name}:{_digest(group)}",
+                    id=_operator_id(name, group),
                     version=_digest(definition),
                     inputs=sorted(inputs, key=lambda item: _json(item.to_dict())),
                     outputs=outputs,
@@ -516,8 +548,7 @@ class Apps:
             else:
                 raise ValueError("derived semantic selections did not stabilize")
             revision = self.graph.graph_status()["source_version"]
-            # A complete-plan identity includes semantic context and all retained apps.
-            plan = {"id": f"acquirium:{_digest(operators)}", "operators": operators}
+            plan = _plan(operators)
             active = self.core.engine.snapshot().plan
             pending = self.state.get("plan")
             activation_id = (
@@ -567,9 +598,7 @@ class Apps:
 
     def deploy(self, app):
         with self.lock:
-            definition = (
-                app.to_dict() if isinstance(app, App) else App.from_dict(app).to_dict()
-            )
+            definition = _definition(app)
             declarations = dict(self.state["apps"])
             declarations[definition["name"]] = definition
             self._install(declarations)
@@ -584,37 +613,25 @@ class Apps:
         current outputs, so their own membership changes are not included.
         """
         with self.lock:
-            definition = (
-                app.to_dict() if isinstance(app, App) else App.from_dict(app).to_dict()
-            )
+            definition = _definition(app)
             name = definition["name"]
             declarations = dict(self.state["apps"])
             declarations[name] = definition
             operators, metadata, report = self._compile(declarations)
-            plan = {"id": f"acquirium:{_digest(operators)}", "operators": operators}
+            plan = _plan(operators)
             preview = self.core.engine.preview(plan)
-            apps = {}
+            apps = totals_per_app(
+                ((item["id"], item) for item in preview["operators"]),
+                ("groups", "input_rows", "cleared_rows"),
+            )
             for item in preview["operators"]:
-                totals = apps.setdefault(
-                    item["id"].split(":", 1)[0],
-                    {
-                        "operators": 0,
-                        "changes": {},
-                        "groups": 0,
-                        "input_rows": 0,
-                        "cleared_rows": 0,
-                        "downstream": False,
-                    },
-                )
-                totals["operators"] += 1
-                totals["changes"][item["change"]] = totals["changes"].get(item["change"], 0) + 1
-                for key in ("groups", "input_rows", "cleared_rows"):
-                    totals[key] += item[key]
-                totals["downstream"] |= item["downstream"]
-            removed = {}
-            for item in preview["removed"]:
-                app_name = item["id"].split(":", 1)[0]
-                removed[app_name] = removed.get(app_name, 0) + item["retracted_rows"]
+                totals = apps[app_of(item["id"])]
+                changes = totals.setdefault("changes", {})
+                changes[item["change"]] = changes.get(item["change"], 0) + 1
+                totals["downstream"] = totals.get("downstream", False) or item["downstream"]
+            removed = totals_per_app(
+                ((item["id"], item) for item in preview["removed"]), ("retracted_rows",)
+            )
             return {
                 "name": name,
                 "dry_run": True,
@@ -626,7 +643,8 @@ class Apps:
                 "warnings": _warnings(report[name]),
                 "apps": apps,
                 "removed": [
-                    {"app": key, "retracted_rows": rows} for key, rows in sorted(removed.items())
+                    {"app": key, "retracted_rows": totals["retracted_rows"]}
+                    for key, totals in sorted(removed.items())
                 ],
                 "metadata_changes": self._metadata_changes(metadata),
             }
@@ -657,7 +675,7 @@ class Apps:
             operators = [
                 item
                 for item in (plan or {}).get("operators", [])
-                if item["id"].startswith(f"{name}:")
+                if app_of(item["id"]) == name
             ]
             report = self.report.get(name, {"matches": {}, "skipped": {}})
             return {
