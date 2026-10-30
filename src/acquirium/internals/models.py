@@ -77,4 +77,8 @@ class StreamInsert(BaseModel):
     request_id: str = Field(min_length=1)
 
 
+# The most rows (or mutations) one write request may carry; Core.ingest
+# refuses more, so clients and drivers split larger writes.
+MAX_REQUEST_ROWS = 10_000
+
 Order = Literal["asc", "desc"]

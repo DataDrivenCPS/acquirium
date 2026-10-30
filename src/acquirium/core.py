@@ -15,6 +15,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 from escapement import Engine, Mutation, Receipt, Snapshot
 
+from acquirium.internals.models import MAX_REQUEST_ROWS
 from acquirium.Storage.values import split_values
 
 SCHEMA = pa.schema(
@@ -87,9 +88,9 @@ class Core:
         """Submit ``ref_uri``, timezone-aware ``ts`` and ``value`` rows, or rows
         with ``operation`` ``"delete"``. Each value is stored as its row's
         ``value_kind`` (numeric when absent; see ``split_values``)."""
-        if frame.height > 10_000:
+        if frame.height > MAX_REQUEST_ROWS:
             raise ValueError(
-                "a request may contain at most 10,000 rows; chunk imports explicitly"
+                f"a request may contain at most {MAX_REQUEST_ROWS:,} rows; chunk imports explicitly"
             )
         dtype = frame.schema["ts"]
         if not isinstance(dtype, pl.Datetime) or dtype.time_zone is None:

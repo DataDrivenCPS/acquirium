@@ -18,7 +18,7 @@ import pytest
 import requests
 
 import acquirium as aq
-from acquirium.Drivers.Driver import MAX_INSERT_ROWS, PollingIngestDriver
+from acquirium.Drivers.Driver import MAX_REQUEST_ROWS, PollingIngestDriver
 
 START = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
@@ -44,7 +44,7 @@ def _frame(rows: int, ref_name: str) -> pl.DataFrame:
 class _BulkDriver(PollingIngestDriver):
     """Returns one frame larger than the server's per-request cap."""
 
-    rows = 2 * MAX_INSERT_ROWS + 5
+    rows = 2 * MAX_REQUEST_ROWS + 5
 
     def setup(self) -> None:
         self.source_id = "bulk"
@@ -76,7 +76,7 @@ def test_client_inserts_round_trip_without_request_ids(tmp_path):
         # The server's reason must reach the caller, not just the status code.
         with pytest.raises(requests.HTTPError, match="at most 10,000 rows"):
             client.insert_timeseries_arrow(
-                "gateway", _frame(MAX_INSERT_ROWS + 1, "pressure").to_arrow()
+                "gateway", _frame(MAX_REQUEST_ROWS + 1, "pressure").to_arrow()
             )
 
         # Drivers split frames over the cap into several requests.
