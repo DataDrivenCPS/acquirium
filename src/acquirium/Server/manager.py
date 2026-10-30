@@ -905,7 +905,7 @@ class Manager:
         converter = self._ensure_qudt_converter()
         src = converter.resolve_unit(from_unit)
         tgt = converter.resolve_unit(to_unit)
-        compatible = converter._check_compatible(src, tgt)
+        compatible = converter.check_compatible(src, tgt)
         return {
             "from_uri": str(src.uri),
             "to_uri": str(tgt.uri),

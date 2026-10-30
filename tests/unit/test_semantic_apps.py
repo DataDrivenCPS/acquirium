@@ -829,3 +829,30 @@ def test_totals_per_app_counts_operators_and_sums_counters_by_app():
         "a": {"operators": 2, "rows": 5, "ms": 0.75},
         "b": {"operators": 1, "rows": 1, "ms": 1.0},
     }
+
+
+def test_conversions_resolve_each_unit_once():
+    from types import SimpleNamespace
+    from acquirium.apps import Apps
+
+    resolved = []
+
+    class Converter:
+        def resolve_unit(self, unit):
+            resolved.append(unit)
+            return SimpleNamespace(multiplier=2.0 if unit == "degF" else 1.0, offset=0.0, kind=unit[:3])
+
+        @staticmethod
+        def check_compatible(source, target):
+            return source.kind == target.kind
+
+    apps = Apps.__new__(Apps)
+    apps.converter = Converter
+    convert = apps._conversions("degC")
+    assert resolved == []  # nothing resolves until an input needs it
+    for _ in range(3):
+        assert convert("degF") == dict(from_multiplier="2.0", from_offset="0.0",
+                                       to_multiplier="1.0", to_offset="0.0")
+    assert sorted(resolved) == ["degC", "degF"]
+    with pytest.raises(ValueError, match="incompatible"):
+        convert("psi")
