@@ -382,11 +382,14 @@ class _StreamStats:
     The root ``DataObject`` owns one and hands the same instance to the
     sub-objects ``by()`` and ``convert_to()`` derive, so whichever of them
     reads a statistic first fetches the whole family's in one batch request
-    and the rest read from that snapshot. ``refresh()`` forgets it.
+    and the rest read from that snapshot. ``exists`` is the cheaper answer
+    ``is_empty()`` needs, which streams have any row, cached the same way.
+    ``refresh()`` forgets both.
     """
     client: AcquiriumClient | None
     ref_uris: list[str]
     info: dict[str, Any] | None = None
+    exists: set[str] | None = None
 
     def get(self) -> dict[str, Any]:
         if self.info is None:
@@ -396,8 +399,21 @@ class _StreamStats:
             )
         return self.info
 
+    def with_rows(self) -> set[str]:
+        """The ref URIs that have any row: from the statistics when they are
+        loaded, else one existence request covering every stream."""
+        if self.info is not None:
+            return {uri for uri, info in self.info.items() if info.row_count > 0}
+        if self.exists is None:
+            self.exists = (
+                self.client.timeseries_exists_batch(list(self.ref_uris))
+                if self.ref_uris and self.client is not None else set()
+            )
+        return self.exists
+
     def refresh(self) -> None:
         self.info = None
+        self.exists = None
 
 
 @dataclass
@@ -406,12 +422,13 @@ class DataObject:
 
     On construction only SPARQL metadata is fetched. The per-stream
     statistics (row count, time range) are fetched in one batch request the
-    first time ``total_rows``, ``time_range``, ``bindings``, or
-    ``is_empty()`` (before materialization) needs them. That request covers
-    every stream of the ``data()`` call, and the sub-objects ``by()`` and
-    ``convert_to()`` return share its result; ``refresh_stats()`` fetches
-    it again. The actual time-series data is materialized on demand when
-    ``__getitem__``, ``dataframe()``, or ``latest()`` are called.
+    first time ``total_rows``, ``time_range``, or ``bindings`` needs them;
+    ``is_empty()`` (before materialization) asks only which streams have a
+    row, a cheaper request. Each request covers every stream of the
+    ``data()`` call, and the sub-objects ``by()`` and ``convert_to()``
+    return share its result; ``refresh_stats()`` forgets both. The actual
+    time-series data is materialized on demand when ``__getitem__``,
+    ``dataframe()``, or ``latest()`` are called.
 
     Lightweight operations such as ``aliases``, ``metadata()``,
     ``stream_info()``, and ``by()`` work without fetching either.
@@ -543,9 +560,7 @@ class DataObject:
         """
         if not self._bindings:
             return []
-        if self._stats is None:
-            self._stats = _StreamStats(self._client, sorted({b.ref_uri for b in self._bindings}))
-        stats = self._stats.get()
+        stats = self._shared_stats().get()
         filled: list[BindingInfo] = []
         for b in self._bindings:
             info = stats.get(b.ref_uri)
@@ -557,6 +572,12 @@ class DataObject:
             ))
         return filled
 
+    def _shared_stats(self) -> _StreamStats:
+        """The statistics cache, made from this object's bindings if it has none."""
+        if self._stats is None:
+            self._stats = _StreamStats(self._client, sorted({b.ref_uri for b in self._bindings}))
+        return self._stats
+
     @property
     def _stats_loaded(self) -> bool:
         """Whether the statistics are in the cache (no fetch)."""
@@ -566,7 +587,7 @@ class DataObject:
         """Forget the cached stream statistics.
 
         The next read of ``total_rows``, ``time_range``, ``bindings`` or
-        ``is_empty()`` fetches them again. The cache is shared with the
+        ``is_empty()`` asks the server again. The cache is shared with the
         sub-objects of the same ``data()`` call, so they see the refresh too.
         """
         if self._stats is not None:
@@ -1272,14 +1293,19 @@ class DataObject:
     def is_empty(self) -> bool:
         """Whether any rows exist.
 
-        Before the values are fetched this answers from stream statistics
-        (fetching them if they have not been yet), i.e. whether the matched
-        streams hold any rows at all, regardless of the requested window.
+        Before the values are fetched this answers whether the matched
+        streams hold any rows at all, regardless of the requested window. It
+        reads the stream statistics if they are loaded; otherwise it asks the
+        server only which streams have a row, one request shared with the
+        sub-objects of the same ``data()`` call, without counting them.
         After a fetch it reports the fetched window.
         """
         if self._materialized:
             return self._tall.is_empty()
-        return all(b.row_count == 0 for b in self._stats_bindings())
+        if not self._bindings:
+            return True
+        with_rows = self._shared_stats().with_rows()
+        return not any(b.ref_uri in with_rows for b in self._bindings)
 
     # ------------------------------------------------------------------
     # Stats (fetched on first use, no materialization needed)

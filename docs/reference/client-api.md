@@ -300,8 +300,8 @@ source-owned documents for the same key.
 `DataObject` is returned by `Query.data()`.
 It is lazy: row counts and time ranges come from stream statistics, fetched in
 one batch request the first time one is read (shared with the sub-objects
-`by()` and `convert_to()` return), and values are fetched on the first call
-that needs them.
+`by()` and `convert_to()` return), `is_empty()` asks only which streams have a
+row, and values are fetched on the first call that needs them.
 See the [data tutorial](../tutorials/data.md).
 
 | method | description |
@@ -314,12 +314,12 @@ See the [data tutorial](../tutorials/data.md).
 | `convert_to(to_unit, *, from_unit=None, alias=None) -> DataObject` | A new object with values converted to `to_unit`, each point from its own unit; `from_unit=` for points with no unit, `alias=` to convert one alias. |
 | `by(entity_alias) -> Iterator[tuple[str, DataObject]]` | A sub-object per entity. |
 | `latest(alias=None, *, streams=None) -> pl.DataFrame` | The newest reading per point, from its own one-row-per-stream fetch within the object's window; all bindings as `[data_alias, point_uri, time, value]` without an alias. `streams=` as in `dataframe()`. |
-| `is_empty() -> bool` | Whether any rows exist; from stream statistics (ignoring the window) until the values are fetched. |
+| `is_empty() -> bool` | Whether any rows exist. Until the values are fetched it asks the server which streams have any row (ignoring the window), without counting them, or reads the statistics if they are loaded. |
 | `stream_info(alias=None) -> pl.DataFrame` | One row per stream: `stream` (its number in this object, for `streams=`), `alias`, `point_uri`, `ref_uri`, `source_id`, `ref_name`. |
 | `aliases`, `entity_aliases` | Properties: the data and entity aliases present. |
 | `total_rows`, `time_range` | Properties: row count and `(earliest, latest)` from stream statistics, without fetching the values. |
 | `bindings` | Property: read-only binding metadata per stream, with its statistics. |
-| `refresh_stats() -> None` | Forget the cached stream statistics so the next read fetches them again; the sub-objects of the same `data()` call see the refresh too. |
+| `refresh_stats() -> None` | Forget the cached stream statistics and which streams have rows, so the next read asks the server again; the sub-objects of the same `data()` call see the refresh too. |
 
 ### Parameters shared by data() and dataframe()
 

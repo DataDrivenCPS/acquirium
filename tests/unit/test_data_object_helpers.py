@@ -341,6 +341,7 @@ class TestLazyStats:
         client.timeseries_info_batch.return_value = {
             self.R1: SimpleNamespace(row_count=3, earliest=self.T0, latest=self.T1),
         }
+        client.timeseries_exists_batch.return_value = {self.R1}
         client.timeseries_df.return_value = pl.DataFrame(
             {"ts": [self.T0], "value": [1.0], "uri": [self.R1]}
         )
@@ -353,6 +354,7 @@ class TestLazyStats:
         data.metadata()
         data.stream_info()
         client.timeseries_info_batch.assert_not_called()
+        client.timeseries_exists_batch.assert_not_called()
 
     def test_reading_values_does_not_fetch_stats(self):
         data, client = self._data()
@@ -360,6 +362,7 @@ class TestLazyStats:
         data.latest()
         assert not data.is_empty()  # materialized: answered from the rows
         client.timeseries_info_batch.assert_not_called()
+        client.timeseries_exists_batch.assert_not_called()
 
     def test_query_dataframe_does_not_fetch_stats(self):
         data, client = self._data()
@@ -370,8 +373,9 @@ class TestLazyStats:
         data, client = self._data()
         assert data.total_rows == 3
         assert data.time_range == (self.T0, self.T1)
-        assert not data.is_empty()
+        assert not data.is_empty()  # read from the loaded statistics
         client.timeseries_info_batch.assert_called_once()
+        client.timeseries_exists_batch.assert_not_called()
         (uris,), _ = client.timeseries_info_batch.call_args
         assert sorted(uris) == [self.R1, self.R2]
 
@@ -381,11 +385,20 @@ class TestLazyStats:
         assert counts == {self.R1: 3, self.R2: 0}  # a stream without stats has no rows
         client.timeseries_info_batch.assert_called_once()
 
-    def test_is_empty_before_a_fetch_reads_stats(self):
+    def test_is_empty_asks_only_which_streams_have_rows(self):
         data, client = self._data()
-        client.timeseries_info_batch.return_value = {}
+        assert not data.is_empty()
+        client.timeseries_exists_batch.return_value = set()
+        assert not data.is_empty()  # cached
+        client.timeseries_exists_batch.assert_called_once()
+        client.timeseries_info_batch.assert_not_called()
+        (uris,), _ = client.timeseries_exists_batch.call_args
+        assert sorted(uris) == [self.R1, self.R2]
+
+    def test_is_empty_when_no_stream_has_rows(self):
+        data, client = self._data()
+        client.timeseries_exists_batch.return_value = set()
         assert data.is_empty()
-        client.timeseries_info_batch.assert_called_once()
 
     def test_lazy_repr_does_not_fetch(self):
         data, client = self._data()
@@ -401,19 +414,31 @@ class TestLazyStats:
         assert sub.total_rows == 3
         client.timeseries_info_batch.assert_called_once()
 
+    def test_by_loop_is_empty_asks_once_for_the_whole_family(self):
+        data, client = self._data(entities=("urn:t#A", "urn:t#B"))
+        assert {uri: sub.is_empty() for uri, sub in data.by("a")} == {
+            "urn:t#A": False, "urn:t#B": True,
+        }
+        assert not data.is_empty()
+        client.timeseries_exists_batch.assert_called_once()
+        client.timeseries_info_batch.assert_not_called()
+        (uris,), _ = client.timeseries_exists_batch.call_args
+        assert sorted(uris) == [self.R1, self.R2]
+
     def test_by_loop_fetches_stats_once_for_the_whole_family(self):
         # One request for every stream of the data() call, whichever
         # sub-object reads first; the siblings and the parent reuse it.
         data, client = self._data(entities=("urn:t#A", "urn:t#B"))
         seen = {}
         for uri, sub in data.by("a"):
-            seen[uri] = (sub.is_empty(), sub.total_rows, sub.time_range)
+            seen[uri] = (sub.total_rows, sub.time_range, sub.is_empty())
         assert seen == {
-            "urn:t#A": (False, 3, (self.T0, self.T1)),
-            "urn:t#B": (True, 0, (None, None)),
+            "urn:t#A": (3, (self.T0, self.T1), False),
+            "urn:t#B": (0, (None, None), True),
         }
         assert data.total_rows == 3
         client.timeseries_info_batch.assert_called_once()
+        client.timeseries_exists_batch.assert_not_called()
         (uris,), _ = client.timeseries_info_batch.call_args
         assert sorted(uris) == [self.R1, self.R2]
 
@@ -425,6 +450,7 @@ class TestLazyStats:
             sub.stream_info()
             repr(sub)
         client.timeseries_info_batch.assert_not_called()
+        client.timeseries_exists_batch.assert_not_called()
 
     def test_convert_to_shares_the_stats(self):
         data, client = self._data()
@@ -452,6 +478,16 @@ class TestLazyStats:
         assert data.total_rows == 6
         assert sub.total_rows == 6
         assert client.timeseries_info_batch.call_count == 2
+
+    def test_refresh_stats_forgets_which_streams_have_rows(self):
+        data, client = self._data()
+        (_, sub), = data.by("a")
+        assert not sub.is_empty()
+        client.timeseries_exists_batch.return_value = set()
+        assert not data.is_empty()  # cached
+        data.refresh_stats()
+        assert sub.is_empty()
+        assert client.timeseries_exists_batch.call_count == 2
 
     def test_object_built_without_a_cache_fetches_its_own(self):
         from acquirium.Client.data_object import DataObject

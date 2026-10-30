@@ -642,6 +642,29 @@ class DuckDBStore:
                 result[uri] = TimeseriesInfo(table=TIMESERIES_TABLE, row_count=0)
         return result
 
+    def timeseries_exists_batch(self, ref_uris: list[str]) -> set[str]:
+        """The ref URIs among ``ref_uris`` that have at least one live row.
+
+        The join of ``timeseries_info_batch`` without its aggregates. DuckDB
+        cannot stop a correlated EXISTS at a stream's first row (it hashes the
+        whole table for the semi join), and one ``LIMIT 1`` probe per stream
+        costs more to plan than it saves once there are many streams.
+        """
+        if not ref_uris:
+            return set()
+        placeholders = ", ".join("?" * len(ref_uris))
+        with self._own_conn() as conn, timed_debug(logger, "timeseries_exists_batch n=%d", len(ref_uris)):
+            rows = conn.execute(
+                f"""
+                SELECT DISTINCT r.ref_uri
+                FROM {TIMESERIES_TABLE} AS t
+                JOIN {REF_IDS_TABLE} AS r USING (ref_id)
+                WHERE r.ref_uri IN ({placeholders}) AND NOT t.deleted
+                """,
+                ref_uris,
+            ).fetchall()
+        return {uri for (uri,) in rows}
+
     # ---- logs ----
 
     def insert_log(self, log: LogEntry) -> None:
