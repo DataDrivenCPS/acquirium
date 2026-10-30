@@ -123,8 +123,8 @@ For other data it stores references:
 
 - Files are copied to artifact storage and identified by SHA-256 digest.
 - Tables are saved the same way, as Parquet files, and read back as Polars.
-- Time-series samples go to Acquirium's time-series storage. The ledger records
-  their stream URI and time range.
+- Time-series samples are written to Escapement as ordinary streams. The ledger
+  records their stream URI and time range.
 - A stream range, `stream.between(start, end)`, records an existing stream's
   URI and interval without copying its samples.
 
