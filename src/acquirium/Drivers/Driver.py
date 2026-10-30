@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import threading
-import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -579,30 +578,14 @@ class IngestDriver(Driver):
             wait = INSERT_WAIT_S if index == len(chunks) - 1 else 0
             with timed_debug(logger, "%s.aq.insert_timeseries_arrow source=%s rows=%d",
                              self.__class__.__name__, source, len(chunk)):
-                result = self._insert_chunk(source, chunk, chunk_request_id, wait)
+                result = self.aq.insert_timeseries_arrow(
+                    source, chunk.to_arrow(), request_id=chunk_request_id, wait=wait,
+                    retry_for=CAPACITY_RETRY_S,
+                )
             if not result.get("ok", True):
                 raise RuntimeError(f"observation insertion reported failure: {result!r}")
             total += int(result.get("rows_inserted", len(chunk)))
         return {"ok": True, "rows_inserted": total}
-
-    def _insert_chunk(self, source: str, chunk: "pl.DataFrame", request_id: str, wait: float) -> Any:
-        """Insert one request, retrying while the server answers 503."""
-        from requests import HTTPError
-
-        deadline = time.monotonic() + CAPACITY_RETRY_S
-        while True:
-            try:
-                return self.aq.insert_timeseries_arrow(
-                    source, chunk.to_arrow(), request_id=request_id, wait=wait
-                )
-            except HTTPError as error:
-                response = error.response
-                if response is None or response.status_code != 503 or time.monotonic() >= deadline:
-                    raise
-                delay = float(response.headers.get("Retry-After", 1))
-                logger.debug("%s: engine unavailable (%s), retrying in %.1f s",
-                             type(self).__name__, response.text[:200], delay)
-                time.sleep(delay)
 
     def normalize_observations(self, observations: "pl.DataFrame | None") -> "pl.DataFrame":
         import polars as pl

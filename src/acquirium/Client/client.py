@@ -26,6 +26,10 @@ import logging
 logger = logging.getLogger(__name__)
 
 DEFAULT_HEALTH_REQUEST_TIMEOUT = 30.0
+# Seconds a write the server refuses with 503 is resent for by default. A 503
+# means a full inbox, or the engine or its database unavailable; nothing
+# committed, so the same request can be sent again.
+CAPACITY_RETRY_S = 60.0
 _CURIE = re.compile(r"[A-Za-z_][\w.-]*:[^\s:]+")
 
 if TYPE_CHECKING:
@@ -142,16 +146,11 @@ class AcquiriumClient:
         return self._experiment_get(f"/experiments/templates/{template_id}/runs", self._experiment_params(filters))
     def get_experiment(self, run_id: str) -> dict:
         return self._experiment_get(f"/experiments/runs/{run_id}")
-    def record_experiment_batch(self, run_id: str, entries: list[dict], *, timeout: float = 60.0) -> list[dict]:
-        """Record a batch, resending it while the server answers 503: the
-        engine refused it before any observation committed."""
-        deadline = time.monotonic() + timeout
-        while True:
-            response = self._http.post(f"{self.base_url}/experiments/runs/{run_id}/record", json=entries)
-            if response.status_code != 503 or time.monotonic() >= deadline:
-                _raise_for_status(response)
-                return response.json()
-            time.sleep(float(response.headers.get("Retry-After", 1)))
+    def record_experiment_batch(self, run_id: str, entries: list[dict], *, timeout: float = CAPACITY_RETRY_S) -> list[dict]:
+        """Record a batch, resending it for up to ``timeout`` seconds while the
+        server answers 503."""
+        return self._post_admitted(f"/experiments/runs/{run_id}/record", retry_for=timeout,
+                                   json=entries).json()
 
     def observe_experiment(self, run_id: str, variable_id: str, **body: Any) -> dict: return self._experiment_post(f"/experiments/runs/{run_id}/variables/{quote(variable_id, safe='')}/observations", body)
     def observe_experiment_batch(self, run_id: str, observations: list[dict]) -> list[dict]:
@@ -946,19 +945,33 @@ class AcquiriumClient:
         _raise_for_status(response)
         return {subject: loads(document) for subject, document in response.json().items()}
 
-    def insert_timeseries(self, *, source_id, ref_name, rows, request_id=None, wait=30, timeout=60):
-        return self.insert_timeseries_batch(source_id, {ref_name: rows}, request_id=request_id,
-                                            wait=wait, timeout=timeout)
+    def _post_admitted(self, path: str, *, retry_for: float, **kwargs: Any) -> requests.Response:
+        """POST ``path``, resending it after ``Retry-After`` while the server
+        answers 503, for up to ``retry_for`` seconds. Raises for any other
+        error, or for the last 503."""
+        deadline = time.monotonic() + retry_for
+        while True:
+            response = self._http.post(f"{self.base_url}{path}", **kwargs)
+            if response.status_code != 503 or time.monotonic() >= deadline:
+                _raise_for_status(response)
+                return response
+            delay = float(response.headers.get("Retry-After", 1))
+            logger.debug("%s refused (%s), resending in %.1f s", path, response.text[:200], delay)
+            time.sleep(delay)
 
-    def insert_timeseries_batch(self, source_id, streams, *, request_id=None, wait=30, timeout=60):
+    def insert_timeseries(self, *, source_id, ref_name, rows, request_id=None, wait=30, timeout=60,
+                          retry_for=CAPACITY_RETRY_S):
+        return self.insert_timeseries_batch(source_id, {ref_name: rows}, request_id=request_id,
+                                            wait=wait, timeout=timeout, retry_for=retry_for)
+
+    def insert_timeseries_batch(self, source_id, streams, *, request_id=None, wait=30, timeout=60,
+                                retry_for=CAPACITY_RETRY_S):
         request_id = request_id or str(uuid.uuid4())
         payload = [StreamInsert(source_id=source_id, ref_name=name, values=rows,
                                request_id=request_id) for name, rows in streams.items()]
-        response = self._http.post(f"{self.base_url}/insert_timeseries",
+        return self._post_admitted("/insert_timeseries", retry_for=retry_for,
                                    json=[item.model_dump(mode="json") for item in payload],
-                                   params={"wait": wait}, timeout=timeout)
-        _raise_for_status(response)
-        return response.json()
+                                   params={"wait": wait}, timeout=timeout).json()
 
     def wait(self, receipt, *, timeout=30):
         """Wait for a database-scoped sequence returned by an accepted request."""
@@ -1001,18 +1014,17 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
-    def delete_timeseries(self, source_id, ref_name, timestamps, *, request_id=None, wait=30, timeout=60):
+    def delete_timeseries(self, source_id, ref_name, timestamps, *, request_id=None, wait=30, timeout=60,
+                          retry_for=CAPACITY_RETRY_S):
         from acquirium.core import time_ns
-        response = self._http.post(f"{self.base_url}/delete_timeseries", json={
+        return self._post_admitted("/delete_timeseries", retry_for=retry_for, json={
             "source_id": source_id, "ref_name": ref_name,
             "timestamps": [time_ns(value) for value in timestamps],
-            "request_id": request_id or str(uuid.uuid4())}, params={"wait": wait}, timeout=timeout)
-        _raise_for_status(response)
-        return response.json()
+            "request_id": request_id or str(uuid.uuid4())}, params={"wait": wait}, timeout=timeout).json()
 
     def insert_timeseries_arrow(
         self, source_id: str, table: "pa.Table", *, request_id: Optional[str] = None,
-        wait=30, timeout=60,
+        wait=30, timeout=60, retry_for=CAPACITY_RETRY_S,
     ) -> dict[str, Any]:
         import io
         import pyarrow as pa
@@ -1020,14 +1032,12 @@ class AcquiriumClient:
         buf = io.BytesIO()
         with ipc.new_stream(buf, table_with_sid.schema) as writer:
             writer.write_table(table_with_sid)
-        buf.seek(0)
         headers = {"Content-Type": "application/vnd.apache.arrow.stream"}
         headers["X-Acquirium-Request-Id"] = request_id or str(uuid.uuid4())
-        response = self._http.post(
-            f"{self.base_url}/insert_timeseries_arrow",
-            data=buf,
+        # Bytes rather than the buffer, so a resend sends the whole body again.
+        return self._post_admitted(
+            "/insert_timeseries_arrow", retry_for=retry_for,
+            data=buf.getvalue(),
             headers=headers,
             params={"wait": wait}, timeout=timeout,
-        )
-        _raise_for_status(response)
-        return response.json()
+        ).json()

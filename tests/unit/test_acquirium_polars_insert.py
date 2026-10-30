@@ -12,13 +12,14 @@ def test_insert_timeseries_arrow_delegates_to_client():
 
     class _FakeClient:
         def insert_timeseries_arrow(
-            self, source_id, table, *, request_id=None, wait=30, timeout=60
+            self, source_id, table, *, request_id=None, wait=30, timeout=60, retry_for=60
         ):
             captured["source_id"] = source_id
             captured["table"] = table
             captured["request_id"] = request_id
             captured["wait"] = wait
             captured["timeout"] = timeout
+            captured["retry_for"] = retry_for
             return {"ok": True, "rows_inserted": len(table)}
 
     aq.client = _FakeClient()
@@ -32,7 +33,7 @@ def test_insert_timeseries_arrow_delegates_to_client():
     )
 
     result = aq.insert_timeseries_arrow(
-        "source/file.csv", table, request_id="flush-1", wait=0, timeout=5
+        "source/file.csv", table, request_id="flush-1", wait=0, timeout=5, retry_for=7
     )
 
     assert result == {"ok": True, "rows_inserted": 2}
@@ -41,3 +42,4 @@ def test_insert_timeseries_arrow_delegates_to_client():
     assert captured["request_id"] == "flush-1"
     assert captured["wait"] == 0
     assert captured["timeout"] == 5
+    assert captured["retry_for"] == 7

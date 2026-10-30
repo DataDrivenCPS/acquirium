@@ -9,6 +9,7 @@ import polars as pl
 import pytest
 
 from acquirium.Drivers.Driver import (
+    CAPACITY_RETRY_S,
     DriverBufferFull,
     EventIngestDriver,
     IngestDriver,
@@ -469,25 +470,17 @@ def test_insert_observations_chunks_to_server_request_limit(tmp_path):
     assert [call.kwargs["wait"] for call in calls] == [0, 0, INSERT_WAIT_S]
 
 
-def test_insert_retries_a_request_refused_at_engine_capacity(tmp_path):
-    from requests import HTTPError
-
+def test_insert_resends_requests_refused_at_capacity_for_the_driver_budget(tmp_path):
     driver = make_driver(CollectDriver, tmp_path)
-    full = MagicMock(status_code=503, headers={"Retry-After": "0"})
-    driver.aq.insert_timeseries_arrow.side_effect = [
-        HTTPError("busy", response=full),
-        {"ok": True, "rows_inserted": 1},
-    ]
     observations = pl.DataFrame({
         "ts": [datetime(2024, 1, 1, tzinfo=timezone.utc)],
         "ref_name": ["temp"],
         "value": [1.0],
     })
 
-    assert driver.insert_observations(observations)["rows_inserted"] == 1
-    first, second = driver.aq.insert_timeseries_arrow.call_args_list
-    # The resend reuses the refused request's identity.
-    assert first.kwargs["request_id"] == second.kwargs["request_id"]
+    driver.insert_observations(observations)
+    # The client resends a 503; a driver gives it longer than interactive calls.
+    assert driver.aq.insert_timeseries_arrow.call_args.kwargs["retry_for"] == CAPACITY_RETRY_S
 
 
 def test_insert_raises_other_http_errors(tmp_path):
