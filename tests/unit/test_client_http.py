@@ -267,13 +267,39 @@ class TestResolveConversion:
 
 
 
+def _response(status, body):
+    reply = requests.Response()
+    reply.status_code, reply._content = status, body
+    reply.headers["Retry-After"] = "0"
+    return reply
+
+
 def test_recording_is_resent_while_the_server_is_at_capacity(offline):
-    def response(status, body):
-        reply = requests.Response()
-        reply.status_code, reply._content = status, body
-        reply.headers["Retry-After"] = "0"
-        return reply
-    with patch.object(offline._http, "post", side_effect=[response(503, b'{"detail": "full"}'),
-                                                          response(200, b'[{"sequence": 1}]')]) as post:
+    with patch.object(offline._http, "post", side_effect=[_response(503, b'{"detail": "full"}'),
+                                                          _response(200, b'[{"sequence": 1}]')]) as post:
         assert offline.record_experiment_batch("run", [{"form": "value"}]) == [{"sequence": 1}]
     assert post.call_count == 2
+
+
+def test_arrow_insert_is_resent_whole_with_its_request_id(offline):
+    import pyarrow as pa
+    table = pa.table({"ts": pa.array([datetime(2026, 1, 1, tzinfo=timezone.utc)], pa.timestamp("us", tz="UTC")),
+                      "ref_name": ["temp"], "value": [1.0]})
+    with patch.object(offline._http, "post", side_effect=[_response(503, b'{"detail": "full"}'),
+                                                          _response(200, b'{"ok": true}')]) as post:
+        assert offline.insert_timeseries_arrow("src", table, request_id="r1") == {"ok": True}
+    first, second = post.call_args_list
+    assert first.kwargs["data"] == second.kwargs["data"] and len(first.kwargs["data"]) > 0
+    assert first.kwargs["headers"]["X-Acquirium-Request-Id"] == "r1"
+    assert second.kwargs["headers"]["X-Acquirium-Request-Id"] == "r1"
+
+
+def test_writes_raise_other_errors_and_a_refusal_past_the_budget(offline):
+    with patch.object(offline._http, "post", return_value=_response(400, b'{"detail": "bad"}')) as post:
+        with pytest.raises(HTTPError, match="bad"):
+            offline.insert_timeseries(source_id="src", ref_name="temp", rows=[])
+    assert post.call_count == 1
+    with patch.object(offline._http, "post", return_value=_response(503, b'{"detail": "full"}')) as post:
+        with pytest.raises(HTTPError, match="full"):
+            offline.delete_timeseries("src", "temp", [1], retry_for=0)
+    assert post.call_count == 1

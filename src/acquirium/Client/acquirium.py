@@ -15,7 +15,7 @@ from acquirium.Client.explore.expr import AttrProxy
 from acquirium.apps import App
 
 
-from acquirium.Client.client import AcquiriumClient, DEFAULT_HEALTH_REQUEST_TIMEOUT
+from acquirium.Client.client import AcquiriumClient, CAPACITY_RETRY_S, DEFAULT_HEALTH_REQUEST_TIMEOUT
 from acquirium.Client.streams import Stream
 from acquirium.Experiments import Point, StudyService
 from acquirium.internals.models import compute_ref_uri
@@ -218,36 +218,42 @@ class Acquirium:
         request_id: str | None = None,
         wait: float = 30,
         timeout: float = 60,
+        retry_for: float = CAPACITY_RETRY_S,
     ) -> dict[str, Any]:
         """Upsert numeric observations; wait=0 returns after durable acceptance.
 
         timeout bounds the HTTP call. A transport failure leaves acceptance
-        unknown; retry the same request ID and payload.
+        unknown; retry the same request ID and payload. A request the server
+        refuses with 503 is resent for up to ``retry_for`` seconds.
         """
         return self.client.insert_timeseries(
             source_id=source_id,
             ref_name=ref_name,
             rows=rows,
             request_id=request_id,
-            wait=wait, timeout=timeout,
+            wait=wait, timeout=timeout, retry_for=retry_for,
         )
 
-    def insert_timeseries_batch(self, source_id, streams, *, request_id=None, wait=30, timeout=60):
+    def insert_timeseries_batch(self, source_id, streams, *, request_id=None, wait=30, timeout=60,
+                                retry_for=CAPACITY_RETRY_S):
         """Submit one atomic bounded request. Chunk larger imports explicitly."""
         return self.client.insert_timeseries_batch(source_id, streams, request_id=request_id,
-                                                  wait=wait, timeout=timeout)
+                                                  wait=wait, timeout=timeout, retry_for=retry_for)
 
     def insert_timeseries_arrow(
         self, source_id: str, table: "pa.Table", *, request_id: str | None = None,
-        wait: float = 30, timeout: float = 60,
+        wait: float = 30, timeout: float = 60, retry_for: float = CAPACITY_RETRY_S,
     ) -> dict[str, Any]:
         """Insert a ``(ts, ref_name, value)`` Arrow table.
 
         Reuse ``request_id`` and the exact normalized payload on retry.
         Deduplication follows Escapement's bounded native retry window.
+        A request the server refuses with 503 is resent for up to
+        ``retry_for`` seconds.
         """
         return self.client.insert_timeseries_arrow(
-            source_id, table, request_id=request_id, wait=wait, timeout=timeout
+            source_id, table, request_id=request_id, wait=wait, timeout=timeout,
+            retry_for=retry_for,
         )
 
     def resolve_point_metadata(
@@ -379,9 +385,10 @@ class Acquirium:
         """Page committed native changes; persist the cursor with sink updates."""
         return self.client.changes(epoch=epoch, ordinal=ordinal, limit=limit, timeout=timeout)
 
-    def delete_timeseries(self, source_id, ref_name, timestamps, *, request_id=None, wait=30, timeout=60):
+    def delete_timeseries(self, source_id, ref_name, timestamps, *, request_id=None, wait=30, timeout=60,
+                          retry_for=CAPACITY_RETRY_S):
         return self.client.delete_timeseries(source_id, ref_name, timestamps, request_id=request_id,
-                                             wait=wait, timeout=timeout)
+                                             wait=wait, timeout=timeout, retry_for=retry_for)
 
     def list_apps(self) -> dict[str, Any]:
         """List every deployment, including apps with no matches or errors."""

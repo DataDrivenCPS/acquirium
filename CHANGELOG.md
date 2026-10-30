@@ -192,6 +192,9 @@ change in any release.
   epoch: the bulk-ingest example drops from 102 epochs to 4 (25.5 requests per
   epoch). Requests refused at engine capacity (HTTP 503) are resent after
   `Retry-After` for up to 5 minutes.
+- `insert_timeseries`, `insert_timeseries_batch`, `insert_timeseries_arrow` and
+  `delete_timeseries` resend a request refused with 503 after `Retry-After`,
+  for up to `retry_for` seconds (default 60), as experiment recordings do.
 - **Drivers run as plain child processes; Ray is no longer a dependency.**
   Each `[[drivers]]` entry runs as `python -m acquirium.Drivers.runner`, which
   imports the driver itself and reports setup success or failure back to the
