@@ -527,8 +527,7 @@ class Manager:
 
         try:
             with timed_debug(logger, "insert_graph format=%s replace=%s", format, replace):
-                owned_metadata = source_id in {METADATA_SOURCE_ID, "experiments"} or source_id.startswith("experiment/")
-                with self.experiments.metadata.edit() if owned_metadata else nullcontext():
+                with self._editing_source(source_id):
                     graph_uri = self.graph_store.source_graph_uri(source_id)
                     self.graph_store.insert_graph(
                         rdf_graph,
@@ -546,6 +545,12 @@ class Manager:
         except Exception as e:
             logging.error("acquirium: failed to insert graph: %s", e)
             raise
+
+    def _editing_source(self, source_id: str):
+        """Hold the experiment metadata edit while writing a source graph it
+        owns; any other source needs nothing."""
+        owned = source_id in {METADATA_SOURCE_ID, "experiments"} or source_id.startswith("experiment/")
+        return self.experiments.metadata.edit() if owned else nullcontext()
 
     # App changes write derived stream metadata to the graph, which the next
     # _current_refs() call picks up.
@@ -692,8 +697,7 @@ class Manager:
         It lets a component remove exactly the triples it registered without
         granting updates to ontology graphs.
         """
-        owned_metadata = source_id in {METADATA_SOURCE_ID, "experiments"} or source_id.startswith("experiment/")
-        with self.experiments.metadata.edit() if owned_metadata else nullcontext():
+        with self._editing_source(source_id):
             graph_uri = self.graph_store.source_graph_uri(source_id)
             result = self.graph_store.sparql_update(update, graph_uri=graph_uri)
         self._sync_stream_refs_from_graph()
