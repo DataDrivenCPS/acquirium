@@ -64,3 +64,17 @@ def test_sync_stream_refs_rejects_noncanonical_reference_uri():
 
     with pytest.raises(ValueError, match="Managed reference URI mismatch"):
         mgr._sync_stream_refs_from_graph()
+
+
+def test_reads_resync_references_after_a_graph_change():
+    point_uri = "urn:test:point"
+    old_ref, new_ref = compute_ref_uri("demo", "old"), compute_ref_uri("demo", "new")
+    mgr = _bare_manager([(point_uri, old_ref, "demo", "old", None)])
+    mgr._refs_revision = -1
+    assert mgr.resolve_storage_keys([point_uri]) == {point_uri: str(old_ref)}
+
+    # The point now names another stream, in a newer graph revision.
+    mgr.graph_store._rows = [(point_uri, new_ref, "demo", "new", None)]
+    assert mgr.resolve_storage_keys([point_uri]) == {point_uri: str(old_ref)}
+    mgr.graph_store.graph_status = lambda: {"source_version": 2}
+    assert mgr.resolve_storage_keys([point_uri]) == {point_uri: str(new_ref)}
