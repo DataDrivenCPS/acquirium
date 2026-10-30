@@ -2,15 +2,28 @@
 title: Apps and native epochs
 ---
 
-Acquirium apps combine semantic selection with an Escapement function. Graph
-changes rebuild explicit input lists; observation changes trigger native
-pointwise/fixed-bucket repair. A new complete plan keeps every retained app and
-identifies immutable function/window/output definitions separately from membership.
+An app pairs semantic selections with an Escapement function. Each selection is
+a graph query that names input streams and groups them; `outputs_of()` selects
+another app's output, so apps chain. A graph change re-runs the selections and
+rebuilds each group's inputs. A new or corrected reading re-evaluates only the
+windows it falls in.
 
-Escapement evaluates dependency-ready operators, publishes source and derived
-changes atomically, and keeps history. A failed function pauses the entire epoch
-queue without partial output publication. Repeated/restarted accepted work is
-safe when functions depend only on declared inputs and frozen context.
+A window is `Pointwise`, `FixedBucket` or `Rolling`. A function is native
+(`Native.mean`, `sum`, `max`, `min`, `count`, `threshold`), which runs in the
+engine with no Python, or a `PythonFunction`, which runs in Escapement's worker
+processes, one window per call or every affected window at once with
+`batch=True`. Units and per-group parameters are frozen into each operator, so
+changing one re-evaluates that group's history.
 
-See [the app API](../reference/apps.md), [first app](../tutorials/first-app.md),
+Every deploy builds one complete plan from all apps, so updating one app keeps
+the rest. A function's code, window and outputs are versioned separately from
+which streams it reads.
+
+Escapement evaluates operators in dependency order, publishes source and derived
+changes together, and keeps history. A failed function publishes nothing from
+its epoch and pauses all processing until `retry_engine()`. Replaying accepted
+work is safe because functions read only their declared inputs and frozen
+context.
+
+See [the app reference](../reference/apps.md), [your first app](../tutorials/first-app.md),
 and [the core architecture](escapement-core.md).

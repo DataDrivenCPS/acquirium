@@ -120,4 +120,4 @@ A value is converted by moving through that base unit:
 converted = (value + from_offset) * from_multiplier / to_multiplier - to_offset
 ```
 
-Only `numeric_value` is converted; text readings pass through unchanged.
+Only `value_numeric` is converted; text readings pass through unchanged.

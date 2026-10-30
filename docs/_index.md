@@ -113,7 +113,7 @@ These contain explanation behind the motivation of key design choices we made wh
 - [The data stream lifecycle](explanation/stream-lifecycle.md) — how streams are identified, stored and found again
 - [Text resolution](explanation/text-resolution.md) — how matching works
 - [Escapement core](explanation/escapement-core.md) — native scheduling, history, snapshots, and recovery
-- [Server internals](explanation/server-internals.md) — storage backends, the graph store, the embedding indexes
+- [Server internals](explanation/server-internals.md) — what one server process runs: the engine, graph store, experiment ledger, indexes and drivers
 - [Graph backend architecture](explanation/graph-backend.md) — graph ownership, inference, query views
 
 <!-- TODO: this page used to end by pointing at `docs/agents/`, the compact
