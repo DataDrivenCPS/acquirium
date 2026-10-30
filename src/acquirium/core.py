@@ -33,14 +33,29 @@ def schema(mode: str) -> pa.Schema:
     return SCHEMA if mode == "numeric" else TEXT_SCHEMA
 
 
-def _selected(rows, mode):
-    """(time, value) of the rows a read in ``mode`` returns: numbers only,
-    text only, or every reading as text ("coalesce")."""
-    if mode == "numeric":
-        return [(r.event_time_ns, r.value) for r in rows if not isinstance(r.value, str)]
-    if mode == "text":
-        return [(r.event_time_ns, r.value) for r in rows if isinstance(r.value, str)]
-    return [(r.event_time_ns, str(r.value)) for r in rows]
+def _selected(rows: pa.RecordBatch, mode: str, stream: str) -> pa.RecordBatch:
+    """The readings a read in ``mode`` returns, from an Escapement batch:
+    numbers only, text only, or every reading as text ("coalesce")."""
+    times, values = rows["event_time_ns"], rows["value"]
+    if mode == "coalesce":
+        # Python's str() keeps numbers as they read elsewhere ("20.0", not "20").
+        values = pa.array(
+            [str(n) if s is None else s for n, s in zip(values.to_pylist(), rows["text"].to_pylist())],
+            type=pa.string(),
+        )
+    else:
+        if mode == "text":
+            values = rows["text"]
+        keep = pc.is_valid(values)
+        times, values = pc.filter(times, keep), pc.filter(values, keep)
+    return pa.RecordBatch.from_arrays(
+        [
+            times.cast(SCHEMA.field("ts").type),
+            values,
+            pa.repeat(pa.scalar(stream, pa.string()), len(times)),
+        ],
+        schema=schema(mode),
+    )
 
 
 def time_ns(value: int | datetime | str | None) -> int | None:
@@ -231,41 +246,29 @@ class Core:
                 )
                 kwargs = dict(start=lo, end=hi, limit=count, descending=order == "desc")
                 rows = (
-                    snapshot.query(stream, **kwargs)
+                    snapshot.query_arrow(stream, **kwargs)
                     if snapshot is not None
-                    else self.engine.query(stream, epoch=epoch, **kwargs)
+                    else self.engine.query_arrow(stream, epoch=epoch, **kwargs)
                 )
-                if not rows:
+                if not rows.num_rows:
                     break
-                if any(row.sample_key != 0 for row in rows):
+                if pc.any(pc.not_equal(rows["sample_key"], 0)).as_py():
                     raise ValueError("Acquirium streams require sample_key=0")
-                selected = _selected(rows, mode)
-                if selected:
+                selected = _selected(rows, mode, stream)
+                if selected.num_rows:
                     yielded = True
-                    yield pa.RecordBatch.from_arrays(
-                        [
-                            pa.array(
-                                [time for time, _ in selected],
-                                type=SCHEMA.field("ts").type,
-                            ),
-                            pa.array(
-                                [value for _, value in selected],
-                                type=schema(mode).field("value").type,
-                            ),
-                            pa.array([stream] * len(selected), type=pa.string()),
-                        ],
-                        schema=schema(mode),
-                    )
+                    yield selected
                 if remaining is not None:
-                    remaining -= len(selected)
-                if len(rows) < count:
+                    remaining -= selected.num_rows
+                if rows.num_rows < count:
                     break
+                last = rows["event_time_ns"][-1].as_py()
                 if order == "desc":
-                    hi = rows[-1].event_time_ns
+                    hi = last
                 else:
-                    if rows[-1].event_time_ns == 2**63 - 1:
+                    if last == 2**63 - 1:
                         break
-                    lo = rows[-1].event_time_ns + 1
+                    lo = last + 1
             if not yielded:
                 # An empty read still carries the mode's schema.
                 yield pa.RecordBatch.from_pylist([], schema=schema(mode))

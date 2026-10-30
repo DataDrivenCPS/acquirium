@@ -174,6 +174,9 @@ change in any release.
   instead of failing on an empty shapes graph.
 
 ### Changed
+- Reads take readings from Escapement as Arrow batches (`query_arrow`) instead
+  of one Python object per reading. Reading 1M numbers over HTTP takes 0.08 s
+  instead of 0.41 s. Requires the Escapement Arrow-query release.
 - `cast_value` is validated (`"float"`, `"int"`, `"str"` or `None`) and
   defaults to `None`; `"float"` parses numeric text into `value_numeric`
   without logging, `"int"` returns `Int64` columns and warns when it
