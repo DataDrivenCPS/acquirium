@@ -6,7 +6,7 @@ import pyarrow.ipc as ipc
 import pytest
 
 from acquirium import Acquirium, App, Selection, Output
-from acquirium.apps import output_reference
+from acquirium.apps import output_reference, totals_per_app
 from acquirium.Server.manager import Manager
 from acquirium.Server.app import app as api
 from acquirium.internals.models import compute_ref_uri
@@ -820,3 +820,12 @@ def test_engine_failures_are_retryable_and_bad_input_is_not(system, monkeypatch)
     monkeypatch.undo()
     body[0]["ref_name"] = "unregistered"
     assert http.post("/insert_timeseries", json=body).status_code == 400
+
+
+def test_totals_per_app_counts_operators_and_sums_counters_by_app():
+    operators = [("a:1", {"rows": 2, "ms": 0.5}), ("b:1", {"rows": 1, "ms": 1.0}),
+                 ("a:2", {"rows": 3, "ms": 0.25})]
+    assert totals_per_app(operators, ("rows", "ms")) == {
+        "a": {"operators": 2, "rows": 5, "ms": 0.75},
+        "b": {"operators": 1, "rows": 1, "ms": 1.0},
+    }
