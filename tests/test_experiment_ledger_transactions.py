@@ -134,10 +134,14 @@ def test_an_interrupted_cleanup_is_finished_later(experiment_ledger, ledger, mon
         ExperimentStore(experiment_ledger, graph_store=ledger.metadata_graph.graph_store)
     assert _count(store, "experiment_streams") == 2
 
-    # So does a ledger opened without Escapement, which cannot clear them.
+    # A ledger without Escapement, which could not clear them, is refused
+    # before it touches them.
     samples, store.samples = store.samples, None
-    ExperimentStore(experiment_ledger, graph_store=ledger.metadata_graph.graph_store)
-    store.samples = samples
+    try:
+        with pytest.raises(ValueError, match="sample store"):
+            ExperimentStore(experiment_ledger, graph_store=ledger.metadata_graph.graph_store)
+    finally:
+        store.samples = samples
     assert _count(store, "experiment_streams") == 2
 
     # A later deletion finishes the earlier one but reports only its own.
