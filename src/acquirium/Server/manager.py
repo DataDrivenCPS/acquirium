@@ -537,36 +537,39 @@ class Manager:
                         graph_uri=graph_uri,
                     )
             logging.info("acquirium: inserted graph into store")
+            # Embedding corpus is the static ontoenv vocabularies, not
+            # inserted data — no per-insert reindex. Syncing here reports a
+            # bad stream registration to the caller that made it.
             with timed_debug(logger, "insert_graph: _sync_stream_refs_from_graph"):
                 self._sync_stream_refs_from_graph()
-            self._refresh_apps()
-            # Embedding corpus is the static ontoenv vocabularies, not
-            # inserted data — no per-insert reindex. Stream-reference sync
-            # below requires a fresh inferred view; concurrent callers share
-            # its single-flight rebuild.
+            self.apps.refresh()
         except Exception as e:
             logging.error("acquirium: failed to insert graph: %s", e)
             raise
 
-    def _refresh_apps(self) -> None:
-        self.apps.refresh()
-        self._sync_stream_refs_from_graph()
-
+    # App changes write derived stream metadata to the graph, which the next
+    # _current_refs() call picks up.
     def recover_apps(self) -> None:
         self.apps.recover()
-        self._sync_stream_refs_from_graph()
 
     def deploy_app(self, app):
-        result = self.apps.deploy(app)
-        self._sync_stream_refs_from_graph()
-        return result
+        return self.apps.deploy(app)
 
     def remove_app(self, name):
-        result = self.apps.remove(name)
-        self._sync_stream_refs_from_graph()
-        return result
+        return self.apps.remove(name)
+
+    def _current_refs(self) -> None:
+        """Resync the reference maps if the graph changed since the last sync.
+
+        No apps lock: a deploy can hold it for seconds, and ingest and reads
+        must not wait on that. The maps are replaced whole, never mutated, so
+        a reader sees either the old or the new registrations.
+        """
+        if self._refs_revision != self.graph_store.graph_status()["source_version"]:
+            self._sync_stream_refs_from_graph()
 
     def resolve_storage_keys(self, uris):
+        self._current_refs()
         result = {}
         for uri in uris:
             refs = self._point_refs.get(uri, {uri})
@@ -659,15 +662,8 @@ class Manager:
 
     def _validate_refs(self, source, references):
         """Each registered reference's value kind; unregistered or foreign
-        references fail.
-
-        No apps lock: a deploy can hold it for seconds, and ingest must not
-        wait on that. The reference maps are replaced whole, never mutated,
-        so a reader sees either the old or the new registrations.
-        """
-        # Refresh from the graph, never from a second SQL registry.
-        if self._refs_revision != self.graph_store.graph_status()["source_version"]:
-            self._sync_stream_refs_from_graph()
+        references fail."""
+        self._current_refs()
         kinds = {}
         for reference in references:
             declaration = self._stream_refs.get(reference)
@@ -701,7 +697,7 @@ class Manager:
             graph_uri = self.graph_store.source_graph_uri(source_id)
             result = self.graph_store.sparql_update(update, graph_uri=graph_uri)
         self._sync_stream_refs_from_graph()
-        self._refresh_apps()
+        self.apps.refresh()
         return result
 
     def validate_graph(self) -> dict[str, str | bool]:
