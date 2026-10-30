@@ -312,9 +312,8 @@ class IngestDriver(Driver):
         self._inflight_rows = 0
         # (request_id, rows) of the most recent flush that failed and was
         # put back unmodified. A retry of exactly that batch keeps the same
-        # request identifier for correlation. The server's revision publisher
-        # currently relies on row upserts, rather than an id receipt ledger,
-        # for retry-safe final values.
+        # request identifier, so Escapement recognizes it as a retry within
+        # its retry window instead of applying it again.
         self._last_failed_batch: tuple[str, list[tuple[str, datetime, str, Any]]] | None = None
         self._declaration_lock = threading.Lock()
         self._declarations: dict[tuple[str, str], dict[str, Any]] = {}
@@ -532,13 +531,11 @@ class IngestDriver(Driver):
     ) -> dict[str, Any]:
         """Normalize and publish buffered observations.
 
-        ``request_id`` is a request-correlation identifier set by
-        :meth:`flush`. A frame spanning multiple ``source_id`` values makes
-        one publication per source, so the identifier is namespaced per
-        source. The current revision publisher does not deduplicate by this
-        identifier; repeated stream/timestamp pairs upsert to the same rows.
+        ``request_id`` is set by :meth:`flush` and identifies the request, so
+        a resent one is deduplicated within Escapement's retry window. A frame
+        spanning multiple ``source_id`` values makes one request per source
+        (and per chunk), so the identifier is namespaced accordingly.
         """
-        import polars as pl
 
         with timed_debug(logger, "%s.normalize_observations", self.__class__.__name__):
             df = self.normalize_observations(observations)
@@ -583,7 +580,9 @@ class IngestDriver(Driver):
             with timed_debug(logger, "%s.aq.insert_timeseries_arrow source=%s rows=%d",
                              self.__class__.__name__, source, len(chunk)):
                 result = self._insert_chunk(source, chunk, chunk_request_id, wait)
-            total += self._coerce_insert_result(result, len(chunk))["rows_inserted"]
+            if not result.get("ok", True):
+                raise RuntimeError(f"observation insertion reported failure: {result!r}")
+            total += int(result.get("rows_inserted", len(chunk)))
         return {"ok": True, "rows_inserted": total}
 
     def _insert_chunk(self, source: str, chunk: "pl.DataFrame", request_id: str, wait: float) -> Any:
@@ -660,17 +659,6 @@ class IngestDriver(Driver):
             timezone=timezone,
             day_first=day_first,
         )
-
-    def _coerce_insert_result(self, result: Any, fallback_rows: int) -> dict[str, Any]:
-        if isinstance(result, dict):
-            coerced = {
-                "ok": bool(result.get("ok", True)),
-                "rows_inserted": int(result.get("rows_inserted", fallback_rows)),
-            }
-            if not coerced["ok"]:
-                raise RuntimeError(f"observation insertion reported failure: {result!r}")
-            return coerced
-        return {"ok": True, "rows_inserted": int(result)}
 
     def _after_setup(self) -> None:
         self.register_declared()

@@ -1,5 +1,5 @@
-from typing import Optional, Iterator, Iterable, Any, Callable, Mapping, TYPE_CHECKING
-from datetime import datetime, timezone
+from typing import Optional, Iterator, Iterable, Any, Mapping, TYPE_CHECKING
+from datetime import datetime
 import json
 import re
 import time
@@ -8,23 +8,20 @@ import requests
 from requests import HTTPError
 from pathlib import Path
 from urllib.parse import quote
-import warnings
 import polars as pl
 import pyarrow.ipc as ipc
 from acquirium.internals.models import (
     Order,
     StreamInsert,
     RegisterDatasourceRequest,
-    compute_ref_uri,
     looks_like_uri,
 )
 from acquirium.internals.internals_namespaces import *
 from acquirium.Client.explore.attributes import ATTR_NS, RESOLVE_MIN_SCORE
 from acquirium.Client.metadata import plan_write, update_text
 from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
-from acquirium.Storage.values import normalize_value_kind
-from rdflib import Graph, URIRef, Literal
-from rdflib.namespace import NamespaceManager, RDF, RDFS
+from rdflib import Graph, URIRef
+from rdflib.namespace import NamespaceManager
 import logging
 logger = logging.getLogger(__name__)
 
@@ -64,7 +61,7 @@ RDF_FORMATS = {
 }
 
 from acquirium.StreamMetadata import (
-    POINT_FIELD_KINDS, POINT_FIELD_PREDICATES, _add_triple, _coerce_resolved, _build_stream_triples,
+    POINT_FIELD_KINDS, POINT_FIELD_PREDICATES, _build_stream_triples,
 )
 
 # Fields a stream registration already takes at top level; a ``metadata``
@@ -707,7 +704,6 @@ class AcquiriumClient:
             raise ValueError(f"conversion_factors failed: {detail}")
         return response.json()
 
-
     def list_apps(self) -> dict:
         """Read summaries of every deployed app from the server."""
         response = self._http.get(f"{self.base_url}/apps", timeout=30)
@@ -736,9 +732,6 @@ class AcquiriumClient:
         response = self._http.delete(f"{self.base_url}/apps/{name}")
         _raise_for_status(response)
         return response.json()
-
-
-
 
     def resolve_storage_keys(self, uris: list[str]) -> dict[str, str]:
         """Map each point URI to its canonical ref URI used by timeseries APIs.
@@ -970,7 +963,6 @@ class AcquiriumClient:
     def wait(self, receipt, *, timeout=30):
         """Wait for a database-scoped sequence returned by an accepted request."""
         import math
-        import time
         if not math.isfinite(timeout) or timeout < 0:
             raise ValueError("timeout must be finite and nonnegative")
         sequence = receipt["sequence"]

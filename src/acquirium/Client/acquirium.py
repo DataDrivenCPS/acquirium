@@ -15,12 +15,6 @@ from acquirium.Client.explore.expr import AttrProxy
 from acquirium.apps import App
 
 
-def _dt_to_iso(v: "str | datetime | None") -> "str | None":
-    if v is None:
-        return None
-    return v.isoformat() if isinstance(v, datetime) else v
-
-
 from acquirium.Client.client import AcquiriumClient, DEFAULT_HEALTH_REQUEST_TIMEOUT
 from acquirium.Client.streams import Stream
 from acquirium.Experiments import Point, StudyService
@@ -256,8 +250,6 @@ class Acquirium:
             source_id, table, request_id=request_id, wait=wait, timeout=timeout
         )
 
-
-
     def resolve_point_metadata(
         self, fields: dict[str, Any], min_score: float = 0.6
     ) -> dict[str, str | None]:
@@ -401,17 +393,6 @@ class Acquirium:
 
     def remove_app(self, name: str) -> dict[str, Any]:
         return self.client.remove_app(name)
-
-
-
-
-
-    # ------------------------------------------------------------------
-    # LOGGING API (plant-level convenience methods)
-    # ------------------------------------------------------------------
-
-
-
 
     # ------------------------------------------------------------------
     # SPARQL / GRAPH UTILITIES

@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import re
 from collections.abc import Callable, Iterable
 from datetime import datetime, timezone

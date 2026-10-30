@@ -601,9 +601,8 @@ class DataObject:
                 _factors_cache[key] = self._client.get_conversion_factors(from_u, to_u)
             return _factors_cache[key]
 
-        epoch = self._query_params.get("epoch")
-        if epoch is None:
-            epoch = self._client.engine_snapshot()["epoch"]
+        # Every stream is read at one epoch, so the frame is one consistent view.
+        epoch = self._client.engine_snapshot()["epoch"]
         # One request per stream. A stream matched by several data nodes
         # (a pump's measurement node and its connection point's, say) has one
         # binding per node; they share the fetched frame and differ only in
