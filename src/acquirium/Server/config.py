@@ -48,6 +48,7 @@ _SERVER_ENV_MAP: dict[str, str] = {
     "python_max_worker_age": "ACQUIRIUM_PYTHON_MAX_WORKER_AGE",
     "epoch_requests": "ACQUIRIUM_EPOCH_REQUESTS",
     "max_pending_requests": "ACQUIRIUM_MAX_PENDING_REQUESTS",
+    "drain_timeout": "ACQUIRIUM_DRAIN_TIMEOUT",
     "graph_path": "ACQUIRIUM_GRAPH_PATH",
     "embedding_model": "ACQUIRIUM_EMBEDDING_MODEL",
     "exact_only": "ACQUIRIUM_EXACT_ONLY",

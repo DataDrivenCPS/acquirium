@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from threading import RLock
+from threading import RLock, Thread
 
 import polars as pl
 import pyarrow as pa
@@ -72,6 +72,15 @@ def time_ns(value: int | datetime | str | None) -> int | None:
         .cast(pa.int64())[0]
         .as_py()
     )
+
+
+def _stop(processor, drain, failure):
+    try:
+        processor.stop(drain=drain)
+    except BaseException as error:
+        failure.append(error)
+    finally:
+        del processor  # The error's traceback must not keep it alive.
 
 
 class Core:
@@ -288,12 +297,30 @@ class Core:
             )
         return result
 
-    def close(self, *, drain=True):
+    def close(self, *, drain=True, timeout: float | None = None) -> bool:
+        """Stop the processor, then close the engine. Return whether it closed.
+
+        Escapement cannot interrupt a running function, so with ``timeout`` the
+        stop runs in a daemon thread and is abandoned when it expires: the
+        engine stays open until the process exits, and accepted work not yet
+        published is processed when the engine next opens.
+        """
         with self._gate:
             if self.processor is None:
-                return
-            try:
-                self.processor.stop(drain=drain)
-            finally:
-                self.processor = None  # Release native shared ownership, too.
-                self.engine.close()
+                return True
+            failure = []
+            # The thread drops its arguments when it finishes, releasing the
+            # processor's native shared ownership before the engine closes.
+            stopping = Thread(
+                target=_stop, args=(self.processor, drain, failure),
+                name="escapement-stop", daemon=True,
+            )
+            self.processor = None
+            stopping.start()
+            stopping.join(timeout)
+            if stopping.is_alive():
+                return False
+            self.engine.close()
+            if failure:
+                raise failure[0]
+            return True

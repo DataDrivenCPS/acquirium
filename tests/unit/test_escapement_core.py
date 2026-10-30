@@ -73,6 +73,62 @@ def test_restart_restores_readings_and_native_retry_identity(tmp_path):
         owner.close()
 
 
+STUCK_CLOSE = """
+import sys, time
+import polars as pl
+from escapement import Input, Operator, Plan, Pointwise, PythonFunction
+from acquirium.core import Core
+
+path, module, flag = sys.argv[1:]
+def frame(time, value):
+    return pl.DataFrame({"ref_uri": ["urn:sensor"],
+        "ts": pl.Series([time], dtype=pl.Int64).cast(pl.Datetime("ns", "UTC")),
+        "value": pl.Series([value], dtype=pl.Object)})
+core = Core(path)
+function = PythonFunction.from_file(module, "calculate")
+plan = Plan("p", [Operator("f", [Input("urn:sensor", "t")], {"out": "urn:out"}, Pointwise(), function)])
+core.wait(core.activate("deploy", plan))
+open(flag, "w").close()
+core.ingest("gateway", "one", frame(1, 10))
+core.ingest("gateway", "two", frame(2, 20))
+started = time.monotonic()
+print(core.close(timeout=0.5), time.monotonic() - started)
+"""
+
+
+def test_close_gives_up_on_a_stuck_function_and_keeps_its_work(tmp_path):
+    import subprocess
+    import sys
+
+    path, module, flag = tmp_path / "core.duckdb", tmp_path / "calculation.py", tmp_path / "stuck"
+    module.write_text(
+        "import pathlib, time\n"
+        "def calculate(frame, context):\n"
+        f"    while pathlib.Path({str(flag)!r}).exists():\n"
+        "        time.sleep(0.05)\n"
+        '    return {"out": frame.select("event_time_ns", "sample_key", "value", "quality")}\n'
+    )
+    # The abandoned engine keeps its lock until its process exits, so the
+    # stuck close runs in a process of its own.
+    try:
+        child = subprocess.run(
+            [sys.executable, "-c", STUCK_CLOSE, str(path), str(module), str(flag)],
+            capture_output=True, text=True, timeout=60,
+        )
+    finally:
+        flag.unlink(missing_ok=True)  # Lets the abandoned worker return and exit.
+    assert child.returncode == 0, child.stderr
+    closed, elapsed = child.stdout.split()
+    assert closed == "False" and float(elapsed) < 5
+    owner = Core(path)
+    try:
+        snapshot = owner.wait(owner.ingest("gateway", "three", frame([3], [30])))
+        assert [snapshot.value("urn:out", time) for time in (1, 2, 3)] == [10, 20, 30]
+        assert owner.close(timeout=10)
+    finally:
+        owner.close()
+
+
 def test_pages_preserve_nanoseconds_and_return_more_than_ten_thousand(core):
     core.wait(core.ingest("gateway", "a", frame(list(range(10_000)), [1] * 10_000)))
     core.wait(core.ingest("gateway", "b", frame(list(range(10_000, 10_007)), [2] * 7)))

@@ -98,6 +98,7 @@ class Manager:
         python_max_worker_age: float = 1800,
         epoch_requests: int = 128,
         max_pending_requests: int = 10_000,
+        drain_timeout: float | None = 10,
         graph_path: str | Path | None = None,
         ontoenv_root: str | Path | None = None,
         ontology_sources: list["OntologySource"] | None = None,
@@ -169,6 +170,7 @@ class Manager:
             raise
 
         self.data_dir = base
+        self.drain_timeout = drain_timeout
 
         # exact_only builds the same indexes over the same concepts but
         # never embeds them: resolution keeps working on exact names, units
@@ -255,6 +257,7 @@ class Manager:
             ),
             epoch_requests=int(os.getenv("ACQUIRIUM_EPOCH_REQUESTS", "128")),
             max_pending_requests=int(os.getenv("ACQUIRIUM_MAX_PENDING_REQUESTS", "10000")),
+            drain_timeout=float(os.getenv("ACQUIRIUM_DRAIN_TIMEOUT", "10")),
             graph_path=os.getenv("ACQUIRIUM_GRAPH_PATH"),
             ontoenv_root=os.getenv("ACQUIRIUM_ONTOENV_ROOT"),
             ontology_sources=list(ont_cfg.sources) or None,
@@ -925,16 +928,21 @@ class Manager:
         """
         logger.debug("Manager.close: shutting down")
         steps = [
-            ("experiment ledger", self.ledger),
-            ("Escapement", self.core),
-            ("graph store", self.graph_store),
+            ("experiment ledger", self.ledger.close),
+            ("Escapement", self._close_engine),
+            ("graph store", self.graph_store.close),
         ]
-        for label, component in steps:
-            close = getattr(component, "close", None)
-            if not callable(close):
-                continue
+        for label, close in steps:
             try:
                 close()
             except Exception:
                 logger.exception("Manager.close: failed to close %s", label)
         logger.debug("Manager.close: done")
+
+    def _close_engine(self) -> None:
+        if not self.core.close(timeout=self.drain_timeout):
+            logger.warning(
+                "Manager.close: Escapement did not drain within %ss; leaving %d "
+                "pending request(s) for the next start",
+                self.drain_timeout, self.core.engine.status()["pending_requests"],
+            )

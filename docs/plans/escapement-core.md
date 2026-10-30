@@ -58,10 +58,12 @@ deletion.
 7. **A domain soft sensor.** `tests/unit/test_ro_permeate_toc_alarm.py` tests a
    rolling sign-test alarm, but `examples/ro_permeate_toc_alarm/` was never
    committed, so the test fails at collection. Commit the example or drop the test.
-8. **Shutdown that cannot drain.** Closing after a failed function is tested:
-   the stop fails, the stores still close, and a restart publishes the pending
-   writes. A slow function delays shutdown until every pending write is
-   processed, with no time limit; a function that never returns would block it.
+8. **Shutdown that cannot drain.** Closing after a failed function, and after a
+   function that does not return within `drain_timeout`, is tested: the stores
+   close or are left to the process's exit, and a restart publishes the pending
+   writes. Escapement cannot cancel a running function, so its worker outlives
+   the server until the call returns, and Escapement leaves that worker's
+   temporary directory behind. A native stop deadline would fix both.
 9. **Streaming.** Broker-specific acknowledgments, and durable buffering for
    drivers other than the standalone source driver.
 10. **Importing pre-Escapement data.** Optional; not a release requirement.
