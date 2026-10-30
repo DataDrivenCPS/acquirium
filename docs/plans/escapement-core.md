@@ -65,8 +65,12 @@ deletion.
    writes. Escapement cannot cancel a running function, so its worker outlives
    the server until the call returns, and Escapement leaves that worker's
    temporary directory behind. A native stop deadline would fix both.
-9. **Streaming.** Broker-specific acknowledgments, and durable buffering for
-   drivers other than the standalone source driver.
+9. **Streaming.** Done for MQTT, without a driver-side buffer: drivers send
+   within 0.1 s and the server's inbox is the durable buffer. The MQTT driver
+   acknowledges each message only after the server accepts it, under a
+   persistent MQTT 5 session, so the broker holds what is not yet accepted.
+   Polling drivers have no source to redeliver; a reading not yet accepted when
+   the process dies is lost.
 10. **Importing pre-Escapement data.** Optional; not a release requirement.
 
 ## Continuous workload slice

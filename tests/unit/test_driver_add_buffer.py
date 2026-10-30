@@ -13,7 +13,6 @@ from acquirium.Drivers.Driver import (
     DriverBufferFull,
     EventIngestDriver,
     IngestDriver,
-    INSERT_WAIT_S,
     MAX_REQUEST_ROWS,
     PollingIngestDriver,
     UndeclaredStreamError,
@@ -173,20 +172,53 @@ def test_collect_style_driver_still_works(tmp_path):
     assert cols["value"] == [21.5]
 
 
-def test_event_driver_tick_flushes_buffered_callbacks(tmp_path):
-    class Events(EventIngestDriver):
-        def setup(self) -> None:
-            self.source_id = "mqtt"
-            self.declare("temp")
+class Events(EventIngestDriver):
+    def setup(self) -> None:
+        self.source_id = "mqtt"
+        self.declare("temp")
 
+
+def eventually(condition, timeout=5.0):
+    import time
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "condition not met in time"
+        time.sleep(0.01)
+
+
+def test_event_driver_sends_a_burst_without_waiting_for_a_tick(tmp_path):
     driver = make_driver(Events, tmp_path)
-    driver.add("temp", 21.5)  # as if from a broker callback
-    driver.aq.insert_timeseries_arrow.assert_not_called()
+    try:
+        for value in (21.5, 22.0, 22.5):  # as if from a broker callback
+            driver.add("temp", value)
+        eventually(lambda: inserted(driver))
+        (source_id, cols), = inserted(driver)
+        assert source_id == "mqtt"
+        assert cols["value"] == [21.5, 22.0, 22.5]
+    finally:
+        driver._shutdown()
 
-    driver.tick()
-    (source_id, cols), = inserted(driver)
-    assert source_id == "mqtt"
-    assert cols["ref_name"] == ["temp"]
+
+def test_acceptance_callbacks_wait_for_their_rows(tmp_path):
+    driver = make_driver(Events, tmp_path)
+    driver._shutdown()  # Stop the background flusher; flush by hand.
+    accepted = []
+    driver.add("temp", 1.0)
+    driver.when_accepted(lambda: accepted.append("first"))
+    driver.add("temp", 2.0)
+    driver.when_accepted(lambda: accepted.append("second"))
+    driver.aq.insert_timeseries_arrow.side_effect = ConnectionError("server down")
+    with pytest.raises(ConnectionError):
+        driver.flush()
+    assert accepted == []
+    driver.aq.insert_timeseries_arrow.side_effect = None
+    driver.flush()
+    assert accepted == ["first", "second"]
+    assert inserted(driver)[-1][1]["value"] == [1.0, 2.0]
+    # A callback with no rows before it runs at the next flush.
+    driver.when_accepted(lambda: accepted.append("empty"))
+    assert driver.flush()["rows_inserted"] == 0
+    assert accepted == ["first", "second", "empty"]
 
 
 def test_driver_implementing_neither_read_nor_collect_is_rejected(tmp_path):
@@ -466,8 +498,8 @@ def test_insert_observations_chunks_to_server_request_limit(tmp_path):
     assert [call.kwargs["request_id"] for call in calls] == [
         "req:0", f"req:{MAX_REQUEST_ROWS}", f"req:{2 * MAX_REQUEST_ROWS}",
     ]
-    # Earlier chunks queue without waiting; only the last waits for publication.
-    assert [call.kwargs["wait"] for call in calls] == [0, 0, INSERT_WAIT_S]
+    # Acceptance is durable: no chunk waits for publication.
+    assert [call.kwargs["wait"] for call in calls] == [0, 0, 0]
 
 
 def test_insert_resends_requests_refused_at_capacity_for_the_driver_budget(tmp_path):

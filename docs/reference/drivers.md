@@ -176,14 +176,17 @@ with its `ref_name` is minted.
 |---|---|
 | `add(ref_name: str, value: Any, ts: datetime \| None = None, *, source_id: str \| None = None) -> None` | buffer one reading; `ts` defaults to now (UTC), naive datetimes are read as UTC. Raises `UndeclaredStreamError` for a pair this driver has not declared. Thread-safe, no network I/O |
 | `flush() -> dict` | insert everything buffered and clear the buffer; the platform calls it at the end of every tick and after `stop()` |
-| `insert_observations(observations: pl.DataFrame \| None) -> dict` | register what is pending and insert a frame directly. Frames over 10,000 rows go up as several requests; all but the last are admitted without waiting, so the engine can apply them in one epoch, and the call returns once the last is published. A request refused at engine capacity (HTTP 503) is resent after `Retry-After` for up to 5 minutes. |
+| `when_accepted(callback) -> None` | call `callback()` once the server has accepted every row added before it, from the flushing thread. Acknowledge a redelivering source (a broker) here, never on receipt |
+| `insert_observations(observations: pl.DataFrame \| None) -> dict` | register what is pending and insert a frame directly. Frames over 10,000 rows go up as several requests. The call returns once the server has accepted them, without waiting for them to publish. A request refused at engine capacity (HTTP 503) is resent after `Retry-After` for up to 5 minutes. |
 | `normalize_observations(observations: pl.DataFrame \| None) -> pl.DataFrame` | the normalization applied before upload |
 | `to_timestamp(date_or_timestamp: pl.Series, time: pl.Series \| None = None, *, date_format=None, timezone="UTC", day_first=False) -> pl.Series` | parse source timestamp columns |
 | `max_buffered_rows = 100000` | class attribute; `add()` raises `DriverBufferFull` once reached |
 
 A successful `add()` means the row was accepted into memory.
-A failed insert puts the rows back and the next tick retries them; the buffer
-is memory only and is lost if the process crashes.
+The server's inbox is the durable buffer: a row is safe once a flush returns,
+and drivers keep nothing on disk. A failed insert puts the rows and their
+`when_accepted` callbacks back and the next flush retries them; until then
+they are lost if the process crashes, unless the source can resend them.
 A failed final flush makes the shutdown unsuccessful and logs the unsent
 count.
 
@@ -208,8 +211,11 @@ A frame naming an undeclared pair raises `UndeclaredStreamError`.
 
 Nothing to implement on the ingest side: subscribe in `setup()`, call `add()`
 from the callback, unsubscribe in `stop()`.
-`tick()` only flushes the buffer, so `interval` is how often pushed readings
-reach the server.
+A background thread sends readings once they stop arriving for `flush_idle`
+seconds (default 0.02), and at most `flush_delay` seconds (default 0.1) after
+the first, so `interval` does not delay them; ticks flush too. After a failed
+flush it retries every `flush_retry` seconds (default 1). All three are class
+attributes.
 
 ## FileIngestDriver
 
@@ -310,12 +316,28 @@ Column names become `ref_name`s unchanged.
 | key | default | meaning |
 |---|---|---|
 | `source_id` | required | datasource of the ingested streams |
-| `mqtt_qos` | `0` | subscription QoS |
+| `mqtt_qos` | `1` | subscription QoS; 0 gives up redelivery |
 | `mqtt_value_kind` | none | value kind applied to streams that do not declare one in the graph |
+| `mqtt_client_id` | derived from `source_id`, broker and port | session identity; must be unique per broker and stable across restarts |
+| `mqtt_receive_maximum` | `1000` | unacknowledged messages the broker may send at once |
+| `mqtt_session_expiry` | `604800` (7 days) | seconds the broker keeps the session while the driver is away |
 
 Subscriptions come from the graph, not the config: reference nodes typed as
 MQTT references carry broker, topic, time key and value key.
 `on_graph_change()` re-runs that query.
+
+The driver connects with MQTT 5 and a persistent session, and acknowledges a
+message only once the server has accepted what it carried. A message that
+could not be decoded is acknowledged and dropped. Anything unacknowledged when
+the driver stops or crashes is redelivered when it reconnects, so a message
+may arrive twice; writing the same reading again changes nothing.
+
+The broker is the buffer while the driver is away or the server is slow, so
+its limits decide what an outage loses. Mosquitto queues at most 1000 messages
+per session (`max_queued_messages`) and drops the rest, and keeps them across
+its own restarts only with `persistence true`. Each round trip to the server
+acknowledges up to `mqtt_receive_maximum` messages: against a local server,
+1000 sustains about 4000 messages a second.
 
 ### WaterTAP
 

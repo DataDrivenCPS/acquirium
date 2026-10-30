@@ -6,10 +6,13 @@ from datetime import datetime, timezone
 from threading import Lock
 from typing import Any
 import ast
+import hashlib
 import json
 import logging
 
 import paho.mqtt.client as mqtt
+from paho.mqtt.packettypes import PacketTypes
+from paho.mqtt.properties import Properties
 
 from acquirium.Drivers.Driver import DriverBufferFull, EventIngestDriver
 from acquirium.Storage.values import normalize_value_kind
@@ -73,7 +76,17 @@ class MQTTIngestDriver(EventIngestDriver):
         if not source_id:
             raise ValueError("MQTT ingestion requires driver.source_id")
         self.source_id = str(source_id)
-        self.qos: int = int(driver_cfg.get("mqtt_qos", 0))
+        # QoS 1 with a persistent session: the broker keeps each message until
+        # it is acknowledged, which happens only once the server accepts it.
+        self.qos: int = int(driver_cfg.get("mqtt_qos", 1))
+        self.client_id: str | None = driver_cfg.get("mqtt_client_id")
+        # Unacknowledged messages the broker may send at once (MQTT 5 Receive
+        # Maximum). Each round trip to the server acknowledges up to this many,
+        # so it bounds throughput; brokers otherwise default to about 20.
+        self.receive_maximum: int = int(driver_cfg.get("mqtt_receive_maximum", 1000))
+        # How long the broker keeps the session, and queues for it, while the
+        # driver is away.
+        self.session_expiry: int = int(driver_cfg.get("mqtt_session_expiry", 7 * 24 * 3600))
         self.default_value_kind: str = normalize_value_kind(driver_cfg.get("mqtt_value_kind"))
         logger.debug(
             "mqtt setup source=%s qos=%d default_kind=%s",
@@ -93,6 +106,12 @@ class MQTTIngestDriver(EventIngestDriver):
         self._sync_subscriptions()
 
     def stop(self) -> None:
+        # Send what has arrived and acknowledge it while still connected;
+        # anything later stays unacknowledged and is redelivered next session.
+        try:
+            self.flush()
+        except Exception:
+            logger.warning("mqtt: flush before disconnect failed", exc_info=True)
         with self._clients_lock:
             clients = list(self._clients.values())
         # Do not hold _clients_lock while waiting for network loops: an active
@@ -123,6 +142,7 @@ class MQTTIngestDriver(EventIngestDriver):
 
         rows = result.get("rows", [])
         logger.debug("mqtt _sync_subscriptions: %d candidate rows from graph", len(rows))
+        specs: list[MQTTStreamSpec] = []
         for row in rows:
             data_uri, ref_uri, ref_name, value_kind, broker, topic, tkey, vkey = row
             topic_s = (topic or "").strip('"')
@@ -165,32 +185,48 @@ class MQTTIngestDriver(EventIngestDriver):
             except Exception:
                 logger.warning("mqtt: failed to register stream %s", ref_uri, exc_info=True)
                 continue
-            self._ensure_subscribed(spec)
+            specs.append(spec)
+        self._subscribe(specs)
 
-    def _ensure_subscribed(self, spec: MQTTStreamSpec) -> None:
-        client_key = self._client_key(spec.broker, spec.port)
-
+    def _subscribe(self, specs: list[MQTTStreamSpec]) -> None:
+        """Register every spec before a new client connects. A persistent
+        session's queued messages arrive on connect, and one for a topic with
+        no spec yet would be acknowledged and dropped."""
+        connecting = []
         with self._clients_lock:
-            client = self._clients.get(client_key)
-            if client is None:
-                client = mqtt.Client(client_id=f"acquirium_{abs(hash(client_key))}")
-                client.enable_logger(logger)
-                client.on_connect = self._on_connect(client_key)
-                client.on_message = self._on_message(client_key)
-                self._clients[client_key] = client
-                self._topic_specs[client_key] = {}
-                client.connect(spec.broker, spec.port, keepalive=60)
-                client.loop_start()
-                logger.info("mqtt client created broker=%s port=%d", spec.broker, spec.port)
-
-            self._topic_specs[client_key].setdefault(spec.topic, []).append(spec)
-            self._spec_keys.add(self._spec_key(spec))
-
+            for spec in specs:
+                client_key = self._client_key(spec.broker, spec.port)
+                if client_key not in self._clients:
+                    client = mqtt.Client(
+                        mqtt.CallbackAPIVersion.VERSION2,
+                        client_id=self._session_id(client_key),
+                        protocol=mqtt.MQTTv5,
+                        manual_ack=True,
+                    )
+                    client.enable_logger(logger)
+                    client.on_connect = self._on_connect(client_key)
+                    client.on_message = self._on_message(client_key)
+                    self._clients[client_key] = client
+                    self._topic_specs[client_key] = {}
+                    connecting.append((client, spec))
+                self._topic_specs[client_key].setdefault(spec.topic, []).append(spec)
+                self._spec_keys.add(self._spec_key(spec))
+            clients = {spec: self._clients[self._client_key(spec.broker, spec.port)] for spec in specs}
+        for client, spec in connecting:
+            # on_connect subscribes to every registered topic.
+            properties = Properties(PacketTypes.CONNECT)
+            properties.ReceiveMaximum = self.receive_maximum
+            properties.SessionExpiryInterval = self.session_expiry
+            client.connect(
+                spec.broker, spec.port, keepalive=60, clean_start=False, properties=properties,
+            )
+            client.loop_start()
+            logger.info("mqtt client created broker=%s port=%d", spec.broker, spec.port)
+        for spec, client in clients.items():
             try:
                 client.subscribe(spec.topic, qos=self.qos)
             except Exception:
                 pass
-
             logger.info(
                 "mqtt subscribed point=%s broker=%s port=%d topic=%s",
                 spec.point_uri, spec.broker, spec.port, spec.topic,
@@ -200,6 +236,14 @@ class MQTTIngestDriver(EventIngestDriver):
 
     def _client_key(self, broker: str, port: int) -> str:
         return f"{broker}|{port}"
+
+    def _session_id(self, client_key: str) -> str:
+        """A broker keeps one session per client ID, so the ID must be the same
+        on every start and differ from other drivers' on the same broker."""
+        if self.client_id:
+            return str(self.client_id)
+        digest = hashlib.sha256(f"{self.source_id}|{client_key}".encode()).hexdigest()
+        return f"acquirium-{digest[:12]}"
 
     def _spec_key(self, spec: MQTTStreamSpec) -> str:
         return "|".join((
@@ -215,9 +259,9 @@ class MQTTIngestDriver(EventIngestDriver):
         ))
 
     def _on_connect(self, client_key: str):
-        def on_connect(client: mqtt.Client, userdata, flags, rc):
-            if rc != 0:
-                logger.error("mqtt connect failed client=%s rc=%s", client_key, rc)
+        def on_connect(client: mqtt.Client, userdata, flags, reason_code, properties):
+            if reason_code.is_failure:
+                logger.error("mqtt connect failed client=%s reason=%s", client_key, reason_code)
                 return
             with self._clients_lock:
                 topics = list(self._topic_specs.get(client_key, {}).keys())
@@ -261,15 +305,13 @@ class MQTTIngestDriver(EventIngestDriver):
                 logger.debug("mqtt message client=%s topic=%s", client_key, topic)
                 with self._clients_lock:
                     specs = list(self._topic_specs.get(client_key, {}).get(topic, []))
-                if not specs:
-                    return
                 for spec in specs:
                     ts, value = self.decode_payload(msg.payload, spec)
-                    # Buffered, not inserted: the tick flushes the batch, so a
-                    # busy topic costs one round-trip per interval rather than
-                    # one per message.
+                    # Buffered, then sent in a burst: a busy topic costs one
+                    # round trip per burst rather than one per message.
                     self.add(spec.ref_name, value, ts)
             except DriverBufferFull as exc:
+                # Not acknowledged, so the broker redelivers it next session.
                 logger.error(
                     "mqtt observation rejected: driver buffer is full "
                     "client=%s topic=%s err=%s",
@@ -277,8 +319,12 @@ class MQTTIngestDriver(EventIngestDriver):
                     topic,
                     exc,
                 )
+                return
             except Exception as exc:
                 logger.warning("mqtt decode failed client=%s topic=%s err=%s", client_key, topic, exc)
+            # Acknowledged, in arrival order, once the server holds what it
+            # carried; a message that carried nothing usable is dropped.
+            self.when_accepted(lambda: client.ack(msg.mid, msg.qos))
         return on_message
 
 

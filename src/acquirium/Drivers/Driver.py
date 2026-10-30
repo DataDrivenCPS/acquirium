@@ -5,12 +5,13 @@ import json
 import logging
 import os
 import threading
+import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from rdflib import URIRef
 
@@ -21,8 +22,6 @@ from acquirium.internals._log import timed_debug
 
 logger = logging.getLogger("acquirium.driver")
 
-# Seconds the last request of an insert waits for publication on the server.
-INSERT_WAIT_S = 30
 # How long a request refused with HTTP 503 (a full inbox, or the engine or its
 # database unavailable) is retried.
 CAPACITY_RETRY_S = 300
@@ -304,6 +303,8 @@ class IngestDriver(Driver):
         # Event drivers add from broker callback threads, so the buffer is
         # guarded even though polling drivers only touch it from the tick.
         self._pending: list[tuple[str, datetime, str, Any]] = []
+        # Callbacks waiting for the rows added before them to be accepted.
+        self._on_accepted: list[Callable[[], None]] = []
         self._pending_lock = threading.Lock()
         self._flush_lock = threading.Lock()
         self._inflight_rows = 0
@@ -478,20 +479,35 @@ class IngestDriver(Driver):
                 )
             self._pending.append((source, ts, str(ref_name), value))
 
+    def when_accepted(self, callback: Callable[[], None]) -> None:
+        """Call ``callback`` once the server has accepted every observation
+        added before it, from the thread that flushed them.
+
+        Acceptance means the rows are durable in the server's inbox, though not
+        yet published. A source that can redeliver, such as a broker, should
+        acknowledge its messages here, never on receipt: a driver that dies
+        holding unaccepted rows then loses nothing the source cannot resend.
+        """
+        with self._pending_lock:
+            self._on_accepted.append(callback)
+
     def flush(self) -> dict[str, Any]:
         """Insert everything buffered by :meth:`add` and clear the buffer.
 
-        Called for you at the end of every tick. On insert failure the rows are
-        put back and the exception propagates; they are not retried until the
-        next tick, so a failing server is polled at the driver's interval rather
-        than on every :meth:`add`.
+        Called for you at the end of every tick. It returns once the server has
+        accepted the rows, without waiting for them to publish. On insert
+        failure the rows are put back and the exception propagates; they are
+        not retried until the next tick, so a failing server is polled at the
+        driver's interval rather than on every :meth:`add`.
         """
         with self._flush_lock:
             with self._pending_lock:
-                if not self._pending:
-                    return {"ok": True, "rows_inserted": 0}
                 rows, self._pending = self._pending, []
+                callbacks, self._on_accepted = self._on_accepted, []
                 self._inflight_rows = len(rows)
+            if not rows:
+                self._accepted(callbacks)
+                return {"ok": True, "rows_inserted": 0}
 
             if self._last_failed_batch is not None and self._last_failed_batch[1] == rows:
                 request_id = self._last_failed_batch[0]
@@ -504,6 +520,7 @@ class IngestDriver(Driver):
             except Exception:
                 with self._pending_lock:
                     self._pending[:0] = rows
+                    self._on_accepted[:0] = callbacks
                     self._inflight_rows = 0
                 self._last_failed_batch = (request_id, rows)
                 raise
@@ -511,7 +528,15 @@ class IngestDriver(Driver):
             self._last_failed_batch = None
             with self._pending_lock:
                 self._inflight_rows = 0
+            self._accepted(callbacks)
             return result
+
+    def _accepted(self, callbacks: list[Callable[[], None]]) -> None:
+        for callback in callbacks:
+            try:
+                callback()
+            except Exception:
+                logger.exception("%s: acceptance callback failed", type(self).__name__)
 
     def _pending_frame(self, rows: list[tuple[str, datetime, str, Any]]) -> "pl.DataFrame":
         import polars as pl
@@ -569,15 +594,14 @@ class IngestDriver(Driver):
                                chunk_request_id or str(uuid.uuid4())))
 
         total = 0
-        for index, (source, chunk, chunk_request_id) in enumerate(chunks):
-            # Only the last request waits for publication. Earlier ones queue
-            # without waiting, so the engine can apply many in one epoch;
-            # epochs publish in order, so the last one covers them all.
-            wait = INSERT_WAIT_S if index == len(chunks) - 1 else 0
+        for source, chunk, chunk_request_id in chunks:
+            # Acceptance is durable, so no request waits for publication: the
+            # engine applies whatever has queued in one epoch, and a full inbox
+            # pushes back with 503.
             with timed_debug(logger, "%s.aq.insert_timeseries_arrow source=%s rows=%d",
                              self.__class__.__name__, source, len(chunk)):
                 result = self.aq.insert_timeseries_arrow(
-                    source, chunk.to_arrow(), request_id=chunk_request_id, wait=wait,
+                    source, chunk.to_arrow(), request_id=chunk_request_id, wait=0,
                     retry_for=CAPACITY_RETRY_S,
                 )
             if not result.get("ok", True):
@@ -814,10 +838,63 @@ class FileIngestDriver(IngestDriver):
 class EventIngestDriver(IngestDriver):
     """Ingest driver whose data arrives asynchronously and is pushed by callbacks.
 
-    Callbacks report values with ``self.add(...)``; the buffer is flushed on
-    each tick, so observations are batched at the driver's configured interval
-    rather than inserted one round-trip at a time.
+    Callbacks report values with ``self.add(...)``. A background thread sends
+    them as soon as they stop arriving (``flush_idle`` seconds without an
+    ``add``) or ``flush_delay`` seconds after the first, whichever is sooner,
+    so the server's inbox, not this process, holds them. Ticks flush too.
     """
+
+    #: Seconds without a new observation after which the buffer is sent.
+    flush_idle: float = 0.02
+    #: Longest an observation waits in memory before it is sent.
+    flush_delay: float = 0.1
+    #: Seconds to wait after a failed flush before trying again.
+    flush_retry: float = 1.0
+
+    def __init__(self, aq: "Acquirium", config: dict) -> None:
+        super().__init__(aq, config)
+        self._added = threading.Event()
+        self._stopping = threading.Event()
+        self._flusher: threading.Thread | None = None
+
+    def add(self, *args: Any, **kwargs: Any) -> None:
+        super().add(*args, **kwargs)
+        self._added.set()
+
+    def when_accepted(self, callback: Callable[[], None]) -> None:
+        super().when_accepted(callback)
+        self._added.set()
 
     def tick(self) -> None:
         self.flush()
+
+    def _after_setup(self) -> None:
+        super()._after_setup()
+        self._flusher = threading.Thread(
+            target=self._flush_promptly, name=f"{type(self).__name__}-flush", daemon=True,
+        )
+        self._flusher.start()
+
+    def _flush_promptly(self) -> None:
+        while not self._stopping.is_set():
+            if not self._added.wait(0.5):
+                continue
+            deadline = time.monotonic() + self.flush_delay
+            # Gather a burst: send once observations stop arriving.
+            while True:
+                self._added.clear()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not self._added.wait(min(self.flush_idle, remaining)):
+                    break
+            try:
+                self.flush()
+            except Exception:
+                logger.warning("%s: flush failed; retrying", type(self).__name__, exc_info=True)
+                self._added.set()
+                self._stopping.wait(self.flush_retry)
+
+    def _shutdown(self) -> None:
+        self._stopping.set()
+        if self._flusher is not None:
+            self._flusher.join()
+        super()._shutdown()
