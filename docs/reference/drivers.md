@@ -319,7 +319,7 @@ Column names become `ref_name`s unchanged.
 | `mqtt_qos` | `1` | subscription QoS; 0 gives up redelivery |
 | `mqtt_value_kind` | none | value kind applied to streams that do not declare one in the graph |
 | `mqtt_client_id` | derived from `source_id`, broker and port | session identity; must be unique per broker and stable across restarts |
-| `mqtt_receive_maximum` | `1000` | unacknowledged messages the broker may send at once |
+| `mqtt_receive_maximum` | `65535`, the protocol's maximum | unacknowledged messages the broker may send at once |
 | `mqtt_session_expiry` | `604800` (7 days) | seconds the broker keeps the session while the driver is away |
 
 Subscriptions come from the graph, not the config: reference nodes typed as
@@ -332,12 +332,55 @@ could not be decoded is acknowledged and dropped. Anything unacknowledged when
 the driver stops or crashes is redelivered when it reconnects, so a message
 may arrive twice; writing the same reading again changes nothing.
 
-The broker is the buffer while the driver is away or the server is slow, so
-its limits decide what an outage loses. Mosquitto queues at most 1000 messages
-per session (`max_queued_messages`) and drops the rest, and keeps them across
-its own restarts only with `persistence true`. Each round trip to the server
-acknowledges up to `mqtt_receive_maximum` messages: against a local server,
-1000 sustains about 4000 messages a second.
+The driver takes messages off the broker as fast as the server accepts them,
+and the server's inbox, not the broker, holds the backlog while publication
+catches up; see [Drivers and the engine](../explanation/drivers.md#drivers-and-the-engine). Up to `mqtt_receive_maximum` messages may be unacknowledged at
+once, and the broker keeps each until it is acknowledged. The client sets
+this window, so it needs no broker change. Against a local server one driver
+keeps up with about 20,000 messages a second; with a window of 1000, the
+batching delay and insert limit it to about 8000.
+
+While the whole window is unacknowledged the broker queues the rest, so a
+window that stays full means the driver is falling behind. On ticks, at most every
+30 seconds, the driver logs a warning starting `mqtt falling behind
+client=<host>|<port>` for each broker whose window was full for at least half
+the time since the last check, and `mqtt caught up` once it no longer is.
+A server that refuses inserts fills the window too, so it shows the same way.
+The driver cannot see messages the broker has already dropped; those appear
+only in the broker's log. The period and share are the class attributes
+`lag_period` and `lag_share`.
+
+#### Broker settings
+
+The driver keeps up without changing the broker. The broker's settings
+decide what is lost while nothing drains it: while the server restarts, which
+stops its drivers, or while the server refuses writes because its inbox is
+full. Mosquitto's defaults then keep 1000 messages per session, in memory
+only. Where you run the broker yourself, check:
+
+| setting | default | set it to |
+|---|---|---|
+| `max_queued_messages` | `1000` | message rate times the longest outage to ride out; later messages are dropped |
+| `max_queued_bytes` | `0` (no limit) | the most memory one session's queue may take |
+| `persistence` | `false` | `true`, unless the SQLite plugin is used, so queues survive a broker restart |
+| `autosave_interval` | `1800` | seconds between saves with `persistence true`; a broker crash loses messages that arrived since the last save |
+
+Both queue limits apply per session, and queuing stops at whichever is reached
+first. `max_inflight_messages` needs no change: an MQTT 5 client sets its own
+window, here `mqtt_receive_maximum`.
+
+The compose files mount `src/acquirium/internals/mosquitto.conf`, which uses
+built-in persistence saved every 60 seconds, a million messages and 256 MiB
+per session. Mosquitto 2.1 also ships a SQLite persistence plugin, used
+instead of `persistence true`. It commits every `plugin_opt_flush_period`
+seconds (default 5) rather than rewriting the whole database:
+
+```
+persistence_location /mosquitto/data
+plugin /usr/lib/mosquitto_persist_sqlite.so
+max_queued_messages 1000000
+max_queued_bytes 268435456
+```
 
 ### WaterTAP
 

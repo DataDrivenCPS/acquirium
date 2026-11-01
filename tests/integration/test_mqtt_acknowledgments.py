@@ -4,6 +4,7 @@ Needs a Mosquitto broker at ``ACQUIRIUM_TEST_MQTT`` (default
 ``localhost:1883``); the server is a fake client that can refuse inserts.
 """
 
+import logging
 import os
 import socket
 import time
@@ -51,9 +52,10 @@ def server(topic: str, source_id: str, *, refuse: bool) -> MagicMock:
     return aq
 
 
-def start(aq, source_id, tmp_path) -> MQTTIngestDriver:
+def start(aq, source_id, tmp_path, **settings) -> MQTTIngestDriver:
     driver = MQTTIngestDriver(
-        aq, {"driver": {"source_id": source_id}, "server": {"data_dir": str(tmp_path)}}
+        aq,
+        {"driver": {"source_id": source_id, **settings}, "server": {"data_dir": str(tmp_path)}},
     )
     driver.setup()
     driver._after_setup()
@@ -75,17 +77,22 @@ def eventually(condition, timeout=10.0):
         time.sleep(0.05)
 
 
+def publisher() -> mqtt.Client:
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"pub-{uuid.uuid4().hex[:8]}")
+    client.connect(HOST, PORT)
+    client.loop_start()
+    return client
+
+
 def test_unaccepted_messages_survive_a_crash_and_accepted_ones_are_not_resent(tmp_path):
     topic, source_id = f"acquirium-test/{uuid.uuid4()}", f"ack-{uuid.uuid4().hex[:8]}"
     refused = server(topic, source_id, refuse=True)
     first = start(refused, source_id, tmp_path)
-    publisher = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"pub-{uuid.uuid4().hex[:8]}")
-    publisher.connect(HOST, PORT)
-    publisher.loop_start()
+    pub = publisher()
     try:
         time.sleep(0.5)  # Let the session subscribe before publishing.
         for value in range(5):
-            publisher.publish(topic, f'{{"Value": {value}}}', qos=1).wait_for_publish()
+            pub.publish(topic, f'{{"Value": {value}}}', qos=1).wait_for_publish()
         eventually(lambda: refused.insert_timeseries_arrow.call_count > 0)
         crash(first)
 
@@ -99,5 +106,27 @@ def test_unaccepted_messages_survive_a_crash_and_accepted_ones_are_not_resent(tm
         assert third.aq.stored == []  # Everything accepted was acknowledged.
         third._shutdown()
     finally:
-        publisher.loop_stop()
-        publisher.disconnect()
+        pub.loop_stop()
+        pub.disconnect()
+
+
+def test_a_full_receive_window_is_reported_as_falling_behind(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(MQTTIngestDriver, "lag_period", 0.5)
+    topic, source_id = f"acquirium-test/{uuid.uuid4()}", f"lag-{uuid.uuid4().hex[:8]}"
+    refused = server(topic, source_id, refuse=True)
+    driver = start(refused, source_id, tmp_path, mqtt_receive_maximum=3)
+    caplog.set_level(logging.WARNING, logger="acquirium.mqtt")
+    pub = publisher()
+    try:
+        time.sleep(0.5)  # Let the session subscribe before publishing.
+        for value in range(6):
+            pub.publish(topic, f'{{"Value": {value}}}', qos=1).wait_for_publish()
+        eventually(lambda: refused.insert_timeseries_arrow.call_count > 0)
+        time.sleep(0.6)
+        with pytest.raises(ConnectionError):
+            driver.tick()
+        assert any("mqtt falling behind" in r.getMessage() for r in caplog.records)
+    finally:
+        crash(driver)
+        pub.loop_stop()
+        pub.disconnect()

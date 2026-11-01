@@ -67,6 +67,9 @@ A warm restart with an intact data directory is much faster.
 same stack without profiles, hardcoded to `acquirium.docker.toml`. Overrides
 come from `.env` (see `.env.example`); they are environment variables, so they
 override the toml keys.
+The broker holds MQTT driver messages until the server accepts them; size its
+queue for the outages you need to ride out, as described under
+[broker settings](../reference/drivers.md#broker-settings).
 `compose.testing.yaml` runs the same services on offset ports (server 8010,
 MQTT 11883) for the integration test suite; the Makefile's `testing-up`, `test`
 and `wait-health` targets wrap it.

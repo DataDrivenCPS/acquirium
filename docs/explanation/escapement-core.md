@@ -33,6 +33,8 @@ A receipt means the write is durable, not yet visible. The server waits up to
 leaves the write pending, not rejected. A full inbox or an unavailable engine
 answers 503 with `Retry-After` before anything commits. The client resends for
 up to `retry_for` seconds (60 by default; drivers allow 5 minutes).
+Drivers insert with `wait=0`, so they move at the pace of acceptance, not of
+publication; see [Drivers and the engine](drivers.md#drivers-and-the-engine).
 
 Each reading is a finite number or text. A stream's `value_kind`, in the graph,
 decides how a written value is stored; see [Values](values.md).
