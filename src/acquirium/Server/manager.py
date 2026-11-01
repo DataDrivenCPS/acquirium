@@ -97,7 +97,7 @@ class Manager:
         python_max_worker_jobs: int = 10_000,
         python_max_worker_age: float = 1800,
         epoch_requests: int = 128,
-        max_pending_requests: int = 10_000,
+        max_pending_requests: int = 100_000,
         drain_timeout: float | None = 10,
         graph_path: str | Path | None = None,
         ontoenv_root: str | Path | None = None,
@@ -256,7 +256,7 @@ class Manager:
                 os.getenv("ACQUIRIUM_PYTHON_MAX_WORKER_AGE", "1800")
             ),
             epoch_requests=int(os.getenv("ACQUIRIUM_EPOCH_REQUESTS", "128")),
-            max_pending_requests=int(os.getenv("ACQUIRIUM_MAX_PENDING_REQUESTS", "10000")),
+            max_pending_requests=int(os.getenv("ACQUIRIUM_MAX_PENDING_REQUESTS", "100000")),
             drain_timeout=float(os.getenv("ACQUIRIUM_DRAIN_TIMEOUT", "10")),
             graph_path=os.getenv("ACQUIRIUM_GRAPH_PATH"),
             ontoenv_root=os.getenv("ACQUIRIUM_ONTOENV_ROOT"),

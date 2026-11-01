@@ -179,8 +179,17 @@ change in any release.
   the same across restarts, subscribes at QoS 1 by default (was 0), and
   acknowledges each message only once the server has accepted it. A crash or
   restart redelivers the rest. New settings: `mqtt_client_id`,
-  `mqtt_receive_maximum` (default 1000) and `mqtt_session_expiry` (default 7
-  days).
+  `mqtt_receive_maximum` (default 65535, the protocol's maximum, so one
+  driver keeps up with about 20,000 messages a second) and
+  `mqtt_session_expiry` (default 7 days).
+- The MQTT driver logs `mqtt falling behind` when a broker's receive window
+  stays full for most of 30 seconds, meaning the broker is queueing its
+  messages, and `mqtt caught up` once it recovers.
+- `max_pending_requests` defaults to 100,000 instead of 10,000, so the inbox
+  absorbs a longer stall in publication before inserts get 503.
+- The bundled Mosquitto config saves its queues every 60 s instead of every
+  30 min, and holds up to a million messages or 256 MiB per session instead of
+  1000 messages. The driver reference lists the broker settings to check.
 - Driver inserts return once the server accepts them, without waiting for
   publication. Event drivers send readings within 0.1 s of arrival instead of
   at the next tick. `IngestDriver.when_accepted(callback)` runs a callback once

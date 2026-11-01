@@ -9,6 +9,7 @@ import ast
 import hashlib
 import json
 import logging
+import time
 
 import paho.mqtt.client as mqtt
 from paho.mqtt.packettypes import PacketTypes
@@ -57,6 +58,47 @@ class MQTTStreamSpec:
     value_kind: str
 
 
+class _Window:
+    """Messages the broker has sent one client that are not yet acknowledged.
+
+    While all ``size`` slots are taken the broker holds back further messages,
+    so a window that stays full means a backlog is building on the broker.
+    """
+
+    def __init__(self, size: int) -> None:
+        self.size = size
+        self._unacked = 0
+        self._lock = Lock()
+        self._full_since: float | None = None
+        self._full_time = 0.0
+        self._sampled = time.monotonic()
+
+    def received(self) -> None:
+        with self._lock:
+            self._unacked += 1
+            if self._unacked >= self.size and self._full_since is None:
+                self._full_since = time.monotonic()
+
+    def acked(self) -> None:
+        with self._lock:
+            self._unacked -= 1
+            if self._full_since is not None and self._unacked < self.size:
+                self._full_time += time.monotonic() - self._full_since
+                self._full_since = None
+
+    def sample(self) -> tuple[float, float]:
+        """Return the seconds since the last sample and the share of them
+        the window spent full."""
+        with self._lock:
+            now = time.monotonic()
+            full = self._full_time
+            if self._full_since is not None:
+                full += now - self._full_since
+                self._full_since = now
+            elapsed, self._sampled, self._full_time = now - self._sampled, now, 0.0
+        return elapsed, (full / elapsed if elapsed > 0 else 0.0)
+
+
 class MQTTIngestDriver(EventIngestDriver):
     """Subscribes to MQTT topics declared in the knowledge graph and ingests
     samples via the standard Acquirium timeseries API.
@@ -70,6 +112,12 @@ class MQTTIngestDriver(EventIngestDriver):
         running server with `acquirium driver start acquirium.toml`.
     """
 
+    #: Least seconds between checks that the driver is keeping up. Checks run
+    #: on ticks, so a longer ``interval`` spaces them further.
+    lag_period: float = 30.0
+    #: Share of a period with a full window that counts as falling behind.
+    lag_share: float = 0.5
+
     def setup(self) -> None:
         driver_cfg = self.config.get("driver", {})
         source_id = driver_cfg.get("source_id")
@@ -81,9 +129,10 @@ class MQTTIngestDriver(EventIngestDriver):
         self.qos: int = int(driver_cfg.get("mqtt_qos", 1))
         self.client_id: str | None = driver_cfg.get("mqtt_client_id")
         # Unacknowledged messages the broker may send at once (MQTT 5 Receive
-        # Maximum). Each round trip to the server acknowledges up to this many,
-        # so it bounds throughput; brokers otherwise default to about 20.
-        self.receive_maximum: int = int(driver_cfg.get("mqtt_receive_maximum", 1000))
+        # Maximum, at most 65535). Each round trip to the server acknowledges
+        # up to this many, so it bounds throughput, and the client sets it, so
+        # it needs no broker change; brokers otherwise default to about 20.
+        self.receive_maximum: int = int(driver_cfg.get("mqtt_receive_maximum", 65535))
         # How long the broker keeps the session, and queues for it, while the
         # driver is away.
         self.session_expiry: int = int(driver_cfg.get("mqtt_session_expiry", 7 * 24 * 3600))
@@ -96,6 +145,9 @@ class MQTTIngestDriver(EventIngestDriver):
         )
 
         self._clients: dict[str, mqtt.Client] = {}
+        self._windows: dict[str, _Window] = {}
+        self._behind: set[str] = set()
+        self._lag_checked = time.monotonic()
         self._topic_specs: dict[str, dict[str, list[MQTTStreamSpec]]] = {}
         self._spec_keys: set[str] = set()
         self._clients_lock = Lock()
@@ -104,6 +156,33 @@ class MQTTIngestDriver(EventIngestDriver):
 
     def on_graph_change(self) -> None:
         self._sync_subscriptions()
+
+    def tick(self) -> None:
+        self._check_lag()
+        super().tick()
+
+    def _check_lag(self) -> None:
+        """Warn about each broker whose window stayed full: the broker is
+        queueing messages for this driver, and drops them past its limit."""
+        if time.monotonic() - self._lag_checked < self.lag_period:
+            return
+        self._lag_checked = time.monotonic()
+        with self._clients_lock:
+            windows = list(self._windows.items())
+        for client_key, window in windows:
+            elapsed, share = window.sample()
+            if share >= self.lag_share:
+                self._behind.add(client_key)
+                logger.warning(
+                    "mqtt falling behind client=%s: all %d receive slots were taken "
+                    "for %.0f%% of the last %.0fs, so the broker is queueing messages "
+                    "and drops those past its queue limit; check that the server "
+                    "accepts inserts, or raise mqtt_receive_maximum",
+                    client_key, window.size, share * 100, elapsed,
+                )
+            elif client_key in self._behind:
+                self._behind.discard(client_key)
+                logger.info("mqtt caught up client=%s", client_key)
 
     def stop(self) -> None:
         # Send what has arrived and acknowledge it while still connected;
@@ -127,6 +206,7 @@ class MQTTIngestDriver(EventIngestDriver):
                 pass
         with self._clients_lock:
             self._clients.clear()
+            self._windows.clear()
             self._topic_specs.clear()
             self._spec_keys.clear()
 
@@ -204,6 +284,7 @@ class MQTTIngestDriver(EventIngestDriver):
                         manual_ack=True,
                     )
                     client.enable_logger(logger)
+                    self._windows[client_key] = _Window(self.receive_maximum)
                     client.on_connect = self._on_connect(client_key)
                     client.on_message = self._on_message(client_key)
                     self._clients[client_key] = client
@@ -299,8 +380,18 @@ class MQTTIngestDriver(EventIngestDriver):
         return ts, raw_val
 
     def _on_message(self, client_key: str):
+        window = self._windows[client_key]
+
+        def acknowledge(client: mqtt.Client, msg: mqtt.MQTTMessage) -> None:
+            client.ack(msg.mid, msg.qos)
+            if msg.qos:
+                window.acked()
+
         def on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage):
             topic = msg.topic
+            if msg.qos:
+                # A QoS 0 message takes no slot.
+                window.received()
             try:
                 logger.debug("mqtt message client=%s topic=%s", client_key, topic)
                 with self._clients_lock:
@@ -324,7 +415,7 @@ class MQTTIngestDriver(EventIngestDriver):
                 logger.warning("mqtt decode failed client=%s topic=%s err=%s", client_key, topic, exc)
             # Acknowledged, in arrival order, once the server holds what it
             # carried; a message that carried nothing usable is dropped.
-            self.when_accepted(lambda: client.ack(msg.mid, msg.qos))
+            self.when_accepted(lambda: acknowledge(client, msg))
         return on_message
 
 

@@ -14,7 +14,7 @@ exact_only = true
 recreate = false
 engine_workers = 2
 epoch_requests = 128
-max_pending_requests = 10000
+max_pending_requests = 100000
 ```
 
 | Setting | Default | Meaning |
@@ -27,7 +27,7 @@ max_pending_requests = 10000
 | `python_max_worker_jobs` | 10000 | Recycle a process after this many jobs |
 | `python_max_worker_age` | 1800 | Recycle expired processes between jobs, in seconds |
 | `epoch_requests` | 128 | Maximum accepted requests processed per epoch |
-| `max_pending_requests` | 10000 | Native admission/backpressure bound |
+| `max_pending_requests` | 100000 | Accepted writes waiting to publish, each kept on disk; past it, inserts get 503. Above 100000, Escapement's retry window must grow too |
 | `drain_timeout` | 10 | Seconds shutdown waits for pending writes to publish; what's left is processed at the next start |
 | `graph_path` | `data_dir/.oxigraph` | Embedded RDF storage |
 | `exact_only` | false | Resolve exact ontology surfaces without downloading an embedding model |

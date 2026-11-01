@@ -69,7 +69,11 @@ deletion.
    within 0.1 s and the server's inbox is the durable buffer. The MQTT driver
    acknowledges each message only after the server accepts it, under a
    persistent MQTT 5 session, so the broker holds what is not yet accepted.
-   Polling drivers have no source to redeliver; a reading not yet accepted when
+   A 65535-message receive window, set by the client, keeps one driver up
+   with about 20,000 messages a second without broker changes. While drivers
+   are down, as during a server restart, the broker's own queue limit still
+   decides what is lost; running drivers apart from the server would close
+   that. Polling drivers have no source to redeliver; a reading not yet accepted when
    the process dies is lost.
 10. **Importing pre-Escapement data.** Optional; not a release requirement.
 
