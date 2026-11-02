@@ -117,8 +117,10 @@ t + lookahead]`, both ends inclusive, so windows overlap. A ten-minute trailing
 mean every minute is `Rolling(lookback_ns=600 * SECOND, step_ns=60 * SECOND)`; a
 correction at noon repairs the windows from 12:00 through 12:10. Grid points with
 no readings in their span produce nothing. Recompute cost grows with
-`lookback / step`, since every repaired window rereads its whole span. Recurrent
-model state and clock-driven missing-data detection need native core extensions.
+`lookback / step`, since every repaired window rereads its whole span. Running
+totals and integrals are native sequential functions; see
+[the apps reference](../reference/apps.md). Recurrent model state in Python and
+clock-driven missing-data detection need native core extensions.
 
 ## Compute every affected window in one call
 
