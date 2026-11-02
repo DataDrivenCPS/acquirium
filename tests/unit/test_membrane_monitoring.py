@@ -1,4 +1,4 @@
-"""Sequential Python apps against an independent whole-history recomputation."""
+"""Sequential and as-of Python apps against an independent whole-history recomputation."""
 
 import math
 
@@ -16,6 +16,7 @@ from examples.membrane_monitoring.declarations import (
     HOUR,
     MINUTE,
     PERMEABILITY,
+    RESIDUAL,
     SKIDS,
     SMOOTHED,
     SMOOTHING,
@@ -78,12 +79,23 @@ def recompute(observations):
             estimate += gain * (y - x * estimate)
             variance = (1 - gain * x) * variance / fit["forgetting"]
             permeability[hour], variances[hour] = estimate, variance
+        # Each time with both flux and TMP reads the latest estimate at or
+        # before it, within two hours.
+        flux, tmp = observations[name(skid, "flux")], observations[name(skid, "tmp")]
+        expected_flux, residual = {}, {}
+        for time in sorted(flux.keys() & tmp.keys()):
+            fitted = [hour for hour in permeability if time - 2 * HOUR <= hour <= time]
+            if fitted:
+                expected_flux[time] = permeability[max(fitted)] * tmp[time]
+                residual[time] = flux[time] - expected_flux[time]
         for app, port, values in (
             (SMOOTHED, "smoothed", smoothed),
             (DRIFT, "cusum", cusum),
             (DRIFT, "alarm", alarm),
             (PERMEABILITY, "permeability", permeability),
             (PERMEABILITY, "variance", variances),
+            (RESIDUAL, "expected", expected_flux),
+            (RESIDUAL, "residual", residual),
         ):
             expected[output_reference(app, skid, port)] = values
     return expected
@@ -129,6 +141,11 @@ def test_sequential_apps_match_a_full_recomputation_after_late_data(client):
     assert initial[output_reference(PERMEABILITY, skid_2, "permeability")][11 * HOUR] == (
         pytest.approx(2.5, abs=0.01)
     )
+    # The estimate lags the fouling, so skid 1 delivers less flux than its
+    # estimate predicts; skid 2 delivers what it predicts.
+    residuals = [initial[output_reference(RESIDUAL, skid, "residual")] for skid in SKIDS]
+    assert all(value < 0 for time, value in residuals[0].items() if time >= 2 * HOUR)
+    assert all(abs(value) < 0.01 for value in residuals[1].values())
     # Skid 1's conductivity excursion from 08:00 raises an alarm; skid 2 has none.
     assert min(initial[output_reference(DRIFT, skid_1, "alarm")]) > 8 * HOUR
     assert not initial[output_reference(DRIFT, skid_2, "alarm")]
@@ -148,6 +165,14 @@ def test_sequential_apps_match_a_full_recomputation_after_late_data(client):
 
     # A late flux reading changes its hour's estimate and every later one.
     submit("late-flux", {"skid-1-flux": [(5 * HOUR + MINUTE, 3.0)]})
-    later = check()[output_reference(PERMEABILITY, skid_1, "permeability")]
+    result = check()
+    later = result[output_reference(PERMEABILITY, skid_1, "permeability")]
     assert later[4 * HOUR] == estimate[4 * HOUR]
     assert all(later[h * HOUR] != estimate[h * HOUR] for h in range(5, 12))
+    # Every reading from 05:00 reads a changed estimate; the late reading has
+    # no TMP at its time, so it has no residual of its own.
+    after = result[output_reference(RESIDUAL, skid_1, "residual")]
+    before = residuals[0]
+    assert all(after[t] == before[t] for t in before if t < 5 * HOUR)
+    assert all(after[t] != before[t] for t in before if t >= 5 * HOUR)
+    assert 5 * HOUR + MINUTE not in after

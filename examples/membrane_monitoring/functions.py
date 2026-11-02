@@ -1,9 +1,10 @@
-"""Sequential calculations; this self-contained file is pinned by its content digest.
+"""Sequential and as-of calculations; this self-contained file is pinned by its content digest.
 
-Each function is declared with ``sequential=True``. Its windows are evaluated
-in event-time order, and ``context["previous"]`` holds the latest earlier
-window that wrote outputs. Those outputs are the function's state: whatever a
-function carries forward, it writes.
+The first three are declared with ``sequential=True``. Their windows are
+evaluated in event-time order, and ``context["previous"]`` holds the latest
+earlier window that wrote outputs. Those outputs are the function's state:
+whatever a function carries forward, it writes. ``residual`` reads the
+permeability estimate as of each reading instead.
 """
 
 import math
@@ -61,3 +62,18 @@ def permeability(frame, context):
     estimate += gain * (y - x * estimate)
     variance = (1 - gain * x) * variance / forgetting
     return {"permeability": emit(context, estimate), "variance": emit(context, variance)}
+
+
+def residual(frame, context):
+    """Expected flux from the latest permeability estimate, read as of each
+    reading, and the measured flux's departure from it. Not sequential."""
+    flux = frame.filter(pl.col("role") == "flux")["value"].drop_nulls()
+    tmp = frame.filter(pl.col("role") == "tmp")["value"].drop_nulls()
+    estimate = frame.filter(pl.col("role") == "permeability")["value"].drop_nulls()
+    if flux.is_empty() or tmp.is_empty() or estimate.is_empty():
+        return {"expected": empty(), "residual": empty()}
+    expected = estimate[-1] * tmp.mean()
+    return {
+        "expected": emit(context, expected),
+        "residual": emit(context, flux.mean() - expected),
+    }

@@ -63,8 +63,10 @@ deletion.
    to apps; `examples/membrane_monitoring` runs a filter, a CUSUM and a
    recursive least-squares fit. A slowly forgetting state repairs to the end
    of its history, since rounding cannot stop it, and each window costs one
-   worker call. Next: a batched form of sequential Python functions, then
-   as-of joins to apply periodically refitted parameters to finer readings.
+   worker call. As-of inputs apply a slower stream, such as a refitted
+   parameter, to each window: its latest reading within a maximum age; the
+   membrane example's flux residual reads the hourly permeability this way.
+   Next: a batched form of sequential Python functions.
 7. **A domain soft sensor.** `tests/unit/test_ro_permeate_toc_alarm.py` tests a
    rolling sign-test alarm, but `examples/ro_permeate_toc_alarm/` was never
    committed, so the test fails at collection. Commit the example or drop the test.

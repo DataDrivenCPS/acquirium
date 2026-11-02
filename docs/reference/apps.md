@@ -194,6 +194,35 @@ worker call. The [membrane-monitoring example](../../examples/membrane_monitorin
 smooths conductivity, detects its drift, and re-estimates membrane
 permeability this way.
 
+A slower stream can be read as of each window instead of within it.
+`aq.Selection(query, role=..., as_of=max_age_ns)`, or
+`aq.Selection.outputs_of(app, port, role=..., as_of=max_age_ns)`, gives the
+function each selected stream's latest reading at or before the window's
+timestamp, no older than `max_age_ns`, at its own `event_time_ns`. This
+applies an hourly or daily fit to every reading:
+
+```python
+aq.App(
+    name="permeate-flux-residual",
+    inputs=[
+        aq.Selection(flux_query, role="flux"),
+        aq.Selection(tmp_query, role="tmp"),
+        aq.Selection.outputs_of(permeability, "permeability", role="permeability",
+                                as_of=2 * HOUR),
+    ],
+    outputs={"expected": aq.Output(), "residual": aq.Output()},
+    function=aq.PythonFunction.from_file(module, "residual"),
+)
+```
+
+An as-of role creates no windows: the windows come from the other inputs, and
+a window with no other rows reads nothing. A correction to the slower stream
+repairs the windows that read it, up to its next reading or its maximum age.
+Past the maximum age a window reads nothing from the role, so a stalled fit
+is not applied indefinitely. Every selection of a role must give the same
+`as_of`, and the age is part of the operator's definition: changing it
+rebuilds the app's history. As-of roles need a Python function.
+
 Use `client.list_apps()`, `client.inspect_app(name)`, or `acquirium app list/inspect`
 to inspect declarations and active operators. `client.remove_app(name)` removes
 operators and retracts their current outputs; historical versions remain in the

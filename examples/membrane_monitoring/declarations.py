@@ -9,6 +9,7 @@ SOURCE = "membrane-skids"
 SMOOTHED = "permeate-conductivity-smoothed"
 DRIFT = "permeate-conductivity-drift"
 PERMEABILITY = "membrane-permeability"
+RESIDUAL = "permeate-flux-residual"
 SKIDS = ("urn:membrane:skid-1", "urn:membrane:skid-2")
 MINUTE = 60_000_000_000
 HOUR = 60 * MINUTE
@@ -74,12 +75,23 @@ def measured(kind, role, parameters=None):
 def declarations(*, module=None):
     module = Path(module) if module is not None else DIRECTORY / "functions.py"
 
-    def function(entrypoint):
-        return aq.PythonFunction.from_file(module, entrypoint, sequential=True)
+    def function(entrypoint, sequential=True):
+        return aq.PythonFunction.from_file(module, entrypoint, sequential=sequential)
 
     def output(unit=None):
         return aq.Output(unit=unit, on_group=True)
 
+    permeability = aq.App(
+        name=PERMEABILITY,
+        inputs=[
+            measured("PermeateFlux", "flux", FIT),
+            measured("TransmembranePressure", "tmp"),
+        ],
+        outputs={"permeability": output(), "variance": output()},
+        function=function("permeability"),
+        # One estimate per hour, from that hour's mean flux and TMP.
+        window=aq.FixedBucket(HOUR),
+    )
     return [
         aq.App(
             name=SMOOTHED,
@@ -93,16 +105,20 @@ def declarations(*, module=None):
             outputs={"cusum": output(CONDUCTIVITY_UNIT), "alarm": output(CONDUCTIVITY_UNIT)},
             function=function("drift"),
         ),
+        permeability,
         aq.App(
-            name=PERMEABILITY,
+            name=RESIDUAL,
             inputs=[
-                measured("PermeateFlux", "flux", FIT),
+                measured("PermeateFlux", "flux"),
                 measured("TransmembranePressure", "tmp"),
+                # Each reading reads the latest hourly estimate at or before
+                # it, and none once the fit is two hours stale.
+                aq.Selection.outputs_of(
+                    permeability, "permeability", role="permeability", as_of=2 * HOUR
+                ),
             ],
-            outputs={"permeability": output(), "variance": output()},
-            function=function("permeability"),
-            # One estimate per hour, from that hour's mean flux and TMP.
-            window=aq.FixedBucket(HOUR),
+            outputs={"expected": output(), "residual": output()},
+            function=function("residual", sequential=False),
         ),
     ]
 

@@ -16,6 +16,7 @@ from .declarations import (
     HOUR,
     MINUTE,
     PERMEABILITY,
+    RESIDUAL,
     SKIDS,
     SMOOTHED,
     SOURCE,
@@ -53,6 +54,7 @@ def show(client, label):
         (SMOOTHED, "smoothed"),
         (DRIFT, "alarm"),
         (PERMEABILITY, "permeability"),
+        (RESIDUAL, "residual"),
     ):
         for skid in SKIDS:
             reference = aq.apps.output_reference(app, skid, port)
@@ -83,7 +85,8 @@ def run(client):
         )
     )
     show(client, "spike-deleted")
-    # A late flux reading changes its hour's permeability and every later one.
+    # A late flux reading changes its hour's permeability and every later one,
+    # and with them every later residual.
     submit("late-flux", {"skid-1-flux": [(5 * HOUR + MINUTE, 3.0)]})
 
 
