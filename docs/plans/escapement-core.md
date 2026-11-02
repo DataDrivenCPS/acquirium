@@ -42,9 +42,9 @@ deletion.
 1. **Operating limits (step 4).** [History](../profiling/2026-11-02-history/README.md)
    is measured to 32M readings: about 0.5 GiB plus 66 bytes per row, and up to
    0.8 GiB more while ingesting, a restart of 0.1 s per million rows, and reads
-   and repairs that do not slow with history. Plans of thousands of operators
-   are slow: every epoch costs operators × streams, so with 10,000 one
-   correction takes 37 s. Backfill and Python worker costs are in the
+   and repairs that do not slow with history. With 10,000 operators a
+   correction publishes in 30 ms and ingest runs at about half the rate of
+   narrow plans. Backfill and Python worker costs are in the
    bulk-ingest example and the
    [execution profile](../profiling/2026-10-18/README.md). Still to measure:
    publication latency under sustained ingest, text, and the PostgreSQL
