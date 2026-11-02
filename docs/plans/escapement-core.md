@@ -67,16 +67,13 @@ deletion.
    inputs apply a slower stream, such as a refitted parameter, to each
    window: its latest reading within a maximum age; the membrane example's
    flux residual reads the hourly permeability this way.
-7. **A domain soft sensor.** `tests/unit/test_ro_permeate_toc_alarm.py` tests a
-   rolling sign-test alarm, but `examples/ro_permeate_toc_alarm/` was never
-   committed, so the test fails at collection. Commit the example or drop the test.
-8. **Shutdown that cannot drain.** Closing after a failed function, and after a
+7. **Shutdown that cannot drain.** Closing after a failed function, and after a
    function that does not return within `drain_timeout`, is tested: the stores
    close or are left to the process's exit, and a restart publishes the pending
    writes. Escapement cannot cancel a running function, so its worker outlives
    the server until the call returns, and Escapement leaves that worker's
    temporary directory behind. A native stop deadline would fix both.
-9. **Streaming.** Done for MQTT, without a driver-side buffer: drivers send
+8. **Streaming.** Done for MQTT, without a driver-side buffer: drivers send
    within 0.1 s and the server's inbox is the durable buffer. The MQTT driver
    acknowledges each message only after the server accepts it, under a
    persistent MQTT 5 session, so the broker holds what is not yet accepted.
@@ -86,7 +83,7 @@ deletion.
    decides what is lost; running drivers apart from the server would close
    that. Polling drivers have no source to redeliver; a reading not yet accepted when
    the process dies is lost.
-10. **Importing pre-Escapement data.** Optional; not a release requirement.
+9. **Importing pre-Escapement data.** Optional; not a release requirement.
 
 ## Continuous workload slice
 
