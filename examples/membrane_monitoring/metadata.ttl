@@ -1,0 +1,14 @@
+@prefix ex: <urn:membrane:> .
+@prefix s223: <http://data.ashrae.org/standard223#> .
+
+ex:skid-1 a ex:MembraneSkid ;
+    s223:hasProperty ex:skid-1-flux, ex:skid-1-tmp, ex:skid-1-conductivity .
+ex:skid-2 a ex:MembraneSkid ;
+    s223:hasProperty ex:skid-2-flux, ex:skid-2-tmp, ex:skid-2-conductivity .
+
+ex:skid-1-flux a ex:PermeateFlux .
+ex:skid-2-flux a ex:PermeateFlux .
+ex:skid-1-tmp a ex:TransmembranePressure .
+ex:skid-2-tmp a ex:TransmembranePressure .
+ex:skid-1-conductivity a ex:PermeateConductivity .
+ex:skid-2-conductivity a ex:PermeateConductivity .

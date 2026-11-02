@@ -30,6 +30,12 @@ change in any release.
   totalizers such as a volume from a flow rate. Each result builds on the one
   before in time order; a late reading or correction repairs every later
   total it changes, and a `reset` period bounds how far.
+- Sequential Python functions:
+  `aq.PythonFunction.from_file(path, entrypoint, sequential=True)` runs once
+  per window in time order with the previous window's outputs as
+  `context["previous"]`, for filters and recursive estimators.
+  `examples/membrane_monitoring` smooths conductivity, detects its drift with
+  a CUSUM, and re-estimates membrane permeability by recursive least squares.
 - `Query.measurement(uri=...)` pins a measurement node to one point.
 - `DataObject` supports `alias in data`, `iter(data)` and `len(data)`;
   `data["typo"]` raises `KeyError`.

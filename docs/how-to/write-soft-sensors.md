@@ -118,9 +118,12 @@ mean every minute is `Rolling(lookback_ns=600 * SECOND, step_ns=60 * SECOND)`; a
 correction at noon repairs the windows from 12:00 through 12:10. Grid points with
 no readings in their span produce nothing. Recompute cost grows with
 `lookback / step`, since every repaired window rereads its whole span. Running
-totals and integrals are native sequential functions; see
-[the apps reference](../reference/apps.md). Recurrent model state in Python and
-clock-driven missing-data detection need native core extensions.
+totals and integrals are native sequential functions, and a Python function
+declared with `sequential=True` receives the previous window's outputs as its
+state, for filters and recursive estimators; see
+[the apps reference](../reference/apps.md) and the
+[membrane-monitoring example](../../examples/membrane_monitoring/README.md).
+Clock-driven missing-data detection needs a native core extension.
 
 ## Compute every affected window in one call
 
