@@ -165,6 +165,35 @@ cannot carry a total, since their windows overlap. Every window a repair
 reaches counts toward the engine's per-operator group limit, so give
 long-running totals a reset.
 
+A Python function is sequential with
+`aq.PythonFunction.from_file(path, entrypoint, sequential=True)`: it runs once
+per window in time order, and `context["previous"]` holds the latest earlier
+window that wrote outputs, with its `window_ns`, input `rows` and `outputs` by
+port. Those outputs are its state, so it writes everything it carries forward,
+such as a model's parameters and their variance. `escapement.previous_value`
+reads one:
+
+```python
+from escapement import emit, empty, previous_value
+
+def drift(frame, context):
+    values = frame["value"].drop_nulls()
+    if values.is_empty():
+        return {"cusum": empty()}
+    excess = values.mean() - context["parameters"]["target"]
+    return {"cusum": emit(context, max(0.0, previous_value(context, "cusum", 0.0) + excess))}
+```
+
+`previous` is absent for the first window. A repair stops at the first window
+whose state and outputs are unchanged, as for native totals: a statistic that
+returns to zero bounds its own repairs, while a filter that forgets slowly,
+such as an exponentially weighted mean, repairs every later window.
+`escapement.same_period(context, width_ns)` lets a function restart each
+period. A sequential function cannot be `batch=True`, so each window costs a
+worker call. The [membrane-monitoring example](../../examples/membrane_monitoring/README.md)
+smooths conductivity, detects its drift, and re-estimates membrane
+permeability this way.
+
 Use `client.list_apps()`, `client.inspect_app(name)`, or `acquirium app list/inspect`
 to inspect declarations and active operators. `client.remove_app(name)` removes
 operators and retracts their current outputs; historical versions remain in the

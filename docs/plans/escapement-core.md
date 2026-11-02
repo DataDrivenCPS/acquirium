@@ -55,14 +55,16 @@ deletion.
 5. **Reproducible Python functions.** Bundle helper modules, dependencies and
    model artifacts with a function's identity, allow per-app environments, and
    measure worker-pool scaling.
-6. **Stateful operators.** Native running totals are done: Escapement's
-   sequential operators evaluate windows in time order and hand each the
-   latest earlier output as its state, so no separate checkpoint is stored.
-   A repair runs forward until results stop changing, and a reset period
-   bounds it. `cumulative_sum` and `integral` are available to apps. Next:
-   sequential Python functions for recursive estimators, with a state the
-   function rounds so repairs can stop, then as-of joins to apply periodically
-   refitted parameters to finer readings.
+6. **Stateful operators.** Escapement's sequential operators evaluate windows
+   in time order and hand each the latest earlier output as its state, so no
+   separate checkpoint is stored. A repair runs forward until results stop
+   changing, and a reset period bounds it. Native `cumulative_sum` and
+   `integral`, and Python functions declared `sequential=True`, are available
+   to apps; `examples/membrane_monitoring` runs a filter, a CUSUM and a
+   recursive least-squares fit. A slowly forgetting state repairs to the end
+   of its history, since rounding cannot stop it, and each window costs one
+   worker call. Next: a batched form of sequential Python functions, then
+   as-of joins to apply periodically refitted parameters to finer readings.
 7. **A domain soft sensor.** `tests/unit/test_ro_permeate_toc_alarm.py` tests a
    rolling sign-test alarm, but `examples/ro_permeate_toc_alarm/` was never
    committed, so the test fails at collection. Commit the example or drop the test.
