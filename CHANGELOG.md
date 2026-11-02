@@ -33,7 +33,9 @@ change in any release.
 - Sequential Python functions:
   `aq.PythonFunction.from_file(path, entrypoint, sequential=True)` runs once
   per window in time order with the previous window's outputs as
-  `context["previous"]`, for filters and recursive estimators.
+  `context["previous"]`, for filters and recursive estimators. Escapement
+  evaluates runs of windows in one worker call, so a 3,000-window rebuild of
+  a simple filter takes about half a second.
   `examples/membrane_monitoring` smooths conductivity, detects its drift with
   a CUSUM, and re-estimates membrane permeability by recursive least squares.
 - As-of inputs: `aq.Selection(..., as_of=max_age_ns)` and

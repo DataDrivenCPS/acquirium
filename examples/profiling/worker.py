@@ -15,11 +15,12 @@ import os
 import sys
 from pathlib import Path
 
-# Escapement 8bd90b0 (python/worker.py, unchanged through 4661cc5). Changing
-# the native worker requires reviewing these boundaries before updating this
-# digest. 8bd90b0 only added text output checks after the function call, which
-# output_ns now includes.
-WORKER_SHA256 = "2205b620a8c6b1315825ff34e9fe00ded4f3539840363fb1332c6089627e8658"
+# Escapement's python/worker.py with sequential runs. Changing the native
+# worker requires reviewing these boundaries before updating this digest. A
+# window job's function call is function_ns and its output checks output_ns;
+# a sequential run calls the function once per window between checks, so
+# the whole run counts as function_ns.
+WORKER_SHA256 = "259b4a02dc5f2b12dde62f3957182771e5803527f0327e822bce6d86c8fffc7f"
 
 
 def timed(nodes, field):
@@ -54,9 +55,17 @@ def instrument(source):
                 raise RuntimeError("native worker group loop changed")
             index = indices[0]
             loop = node.body[index]
+            # The loop branches on a sequential run; the other branch calls
+            # the function once for the job.
+            branches = [
+                i for i, statement in enumerate(loop.body) if isinstance(statement, ast.If)
+            ]
+            if len(branches) != 1:
+                raise RuntimeError("native worker job branch changed")
+            branch = loop.body[branches[0]]
             calls = [
                 i
-                for i, statement in enumerate(loop.body)
+                for i, statement in enumerate(branch.orelse)
                 if isinstance(statement, ast.Assign)
                 and isinstance(statement.value, ast.Call)
                 and isinstance(statement.value.func, ast.Name)
@@ -65,11 +74,16 @@ def instrument(source):
             if len(calls) != 1:
                 raise RuntimeError("native worker function invocation changed")
             call = calls[0]
+            branch.body = timed(branch.body, "function_ns")
+            branch.orelse = (
+                timed(branch.orelse[: call + 1], "function_ns")
+                + timed(branch.orelse[call + 1 :], "output_ns")
+            )
             loop.body = (
-                timed(loop.body[:call], "input_ns")
+                timed(loop.body[: branches[0]], "input_ns")
                 + ast.parse('_acq_metrics["input_rows"] += frame.height').body
-                + timed([loop.body[call]], "function_ns")
-                + timed(loop.body[call + 1 :], "output_ns")
+                + [branch]
+                + timed(loop.body[branches[0] + 1 :], "output_ns")
             )
             node.body = (
                 timed(node.body[:index], "function_setup_ns")
