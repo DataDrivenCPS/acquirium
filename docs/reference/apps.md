@@ -189,8 +189,10 @@ whose state and outputs are unchanged, as for native totals: a statistic that
 returns to zero bounds its own repairs, while a filter that forgets slowly,
 such as an exponentially weighted mean, repairs every later window.
 `escapement.same_period(context, width_ns)` lets a function restart each
-period. A sequential function cannot be `batch=True`, so each window costs a
-worker call. The [membrane-monitoring example](../../examples/membrane_monitoring/README.md)
+period. Escapement sends a sequential function's windows to the worker in
+runs and the worker calls the function once per window, so a window costs
+little more than the function's own work; `batch=True` does not apply. The
+[membrane-monitoring example](../../examples/membrane_monitoring/README.md)
 smooths conductivity, detects its drift, and re-estimates membrane
 permeability this way.
 

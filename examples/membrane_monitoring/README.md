@@ -67,8 +67,9 @@ changing:
   until the next estimate, so every residual from 05:00 changes. The late
   reading has no TMP at its time, so it has no residual of its own.
 
-A sequential Python function runs once per window and cannot be batched, so a
-repair costs about a millisecond per window it reaches. A filter that forgets
+Escapement sends a sequential function's windows to the worker in runs, so a
+repair costs little more than the function's own work per window it reaches,
+a fraction of a millisecond here. A filter that forgets
 slowly repairs to the end of its history: give it a coarser window, as the
 permeability fit's hourly buckets do, or restart it each period with
 `escapement.same_period`. See [the apps reference](../../docs/reference/apps.md)
