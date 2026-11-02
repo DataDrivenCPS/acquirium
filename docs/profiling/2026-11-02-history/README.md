@@ -57,14 +57,31 @@ the same loads held 349, 971, 2,604 and 4,547 MiB.
 
 ## Wide plans
 
-With 10,000 streams and a mean of each, so 10,000 operators, loading 4M
-readings took 193 s, a tenth of the rate above, and correcting one reading
-took 37 s to publish ([wide-results.jsonl](wide-results.jsonl)). Without the
-means, 2M readings into 10,000 streams load in 10 s. The cost is per epoch:
-every operator's task copies the snapshot's map of streams, so an epoch costs
-operators × streams, however little changed. `b539b60` measures the same.
-The log also took 697 MiB on disk for 4M readings, against 73 MiB with 100
-streams.
+With 10,000 streams and a mean of each, so 10,000 operators, `e663c44`
+loaded 4M readings in 193 s, a tenth of the rate above, and took 37 s to
+publish one correction. Every operator's task copied the snapshot's map of
+streams, so an epoch cost operators × streams, however little changed.
+`dbab4f2` makes that map persistent, so a copy costs the same at any
+width, and finishes operators whose inputs did not change without starting a
+task ([wide-results.jsonl](wide-results.jsonl)):
+
+| Streams and means | Readings | Escapement | Load | Readings/s | Peak memory | Correction |
+| ---: | ---: | --- | ---: | ---: | ---: | ---: |
+| 3,000 | 600k | `e663c44` | 11.0 s | 54,600 | 520 MiB | 3,244 ms |
+| 3,000 | 600k | `dbab4f2` | 5.3 s | 112,700 | 421 MiB | 24 ms |
+| 10,000 | 4M | `e663c44` | 193.2 s | 20,700 | 2,178 MiB | 37,219 ms |
+| 10,000 | 4M | `dbab4f2` | 32.1 s | 124,600 | 1,480 MiB | 30 ms |
+
+A correction now publishes in about the time it takes with 100 streams.
+Loading runs at about half the 100-stream rate. Each request of 10,000
+readings touches every stream, so every operator runs in every epoch: an
+epoch of a million readings computed in 1.8 s with 10,000 operators, against
+1.0 s with 100. Submitting requests that name 10,000 streams each also took
+twice as long. Both costs grow with the operators and streams an epoch
+touches. The log took 131 MiB for 4M readings, against 697 MiB before.
+
+The change does not slow the narrow loads above: alternating the two builds,
+4M readings into 100 streams loaded in 17.6–18.2 s with either.
 
 ## The envelope today
 
@@ -82,8 +99,7 @@ about 3.2 billion rows. Without retention, that does not fit in memory on
 one machine. A modest deployment fits: 1,000 points every minute is 526M
 readings a year, about 33 GiB.
 
-Plans of thousands of operators are outside the envelope until an epoch's
-cost no longer grows with the number of streams.
+Plans of 10,000 operators fit, at about half the ingest rate of narrow ones.
 
 ## Not yet measured
 
