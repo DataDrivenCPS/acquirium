@@ -105,8 +105,10 @@ window timestamp, or an empty frame when `value` is None; `empty()` is the empty
 frame. Use finite numeric values and sample key zero. An empty frame retracts any previous result for that
 window. Return the complete window result, including unchanged output rows.
 
-`Pointwise()` sees one exact timestamp. It does not forward-fill or perform an
-as-of join across asynchronous probes. `FixedBucket(width_ns, origin_ns=0)` sees a
+`Pointwise()` sees one exact timestamp. It does not forward-fill across
+asynchronous probes; read a slower stream with `Selection(..., as_of=max_age_ns)`
+to give each window its latest reading
+([as-of inputs](../reference/apps.md)). `FixedBucket(width_ns, origin_ns=0)` sees a
 half-open UTC bucket and emits at its start. Late readings revise that bucket and
 dependent outputs immediately. Decide whether aggregates weight observations or
 streams equally; this example weights observations.

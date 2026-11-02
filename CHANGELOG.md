@@ -36,6 +36,12 @@ change in any release.
   `context["previous"]`, for filters and recursive estimators.
   `examples/membrane_monitoring` smooths conductivity, detects its drift with
   a CUSUM, and re-estimates membrane permeability by recursive least squares.
+- As-of inputs: `aq.Selection(..., as_of=max_age_ns)` and
+  `Selection.outputs_of(..., as_of=max_age_ns)` give each window the latest
+  reading of a slower stream at or before its timestamp, within the maximum
+  age, such as an hourly fit applied to every reading. A correction repairs
+  the windows that read it. The membrane example computes a flux residual
+  this way.
 - `Query.measurement(uri=...)` pins a measurement node to one point.
 - `DataObject` supports `alias in data`, `iter(data)` and `len(data)`;
   `data["typo"]` raises `KeyError`.

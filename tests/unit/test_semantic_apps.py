@@ -701,6 +701,72 @@ def test_python_functions_read_typed_parameters_and_the_window(system, tmp_path)
     manager.remove_app(declaration.name)
 
 
+def test_as_of_selections_read_the_latest_reading_of_a_slower_stream(system, tmp_path):
+    from escapement import PythonFunction
+
+    manager, http, client = system
+    reading = register(system, "as-of-reading")
+    gain = register(system, "as-of-gain")
+    module = tmp_path / "calibrated.py"
+    module.write_text(
+        "import polars as pl\n"
+        "from escapement import emit, empty\n"
+        "def calibrated(frame, context):\n"
+        "    x = frame.filter(pl.col('role') == 'x')['value']\n"
+        "    gain = frame.filter(pl.col('role') == 'gain')['value']\n"
+        "    if x.is_empty() or gain.is_empty():\n"
+        "        return {'mean': empty()}\n"
+        "    return {'mean': emit(context, x[0] * gain[0])}\n"
+    )
+    template = mean("as-of", reading)
+    def selected(stream, role, **options):
+        return Selection(
+            f"SELECT ?stream ?group WHERE {{ BIND(<{stream}> AS ?stream) "
+            "BIND(<urn:tank> AS ?group) }",
+            role=role,
+            **options,
+        )
+
+    def declaration(age):
+        return App(
+            template.name,
+            [selected(reading, "x"), selected(gain, "gain", as_of=age)],
+            template.outputs,
+            PythonFunction.from_file(module, "calibrated"),
+        )
+
+    assert "as_of" not in declaration(None).to_dict()["inputs"][1]
+    with pytest.raises(ValueError, match="positive"):
+        declaration(0).to_dict()
+    with pytest.raises(ValueError, match="different ages"):
+        App(template.name, [selected(gain, "gain", as_of=5), selected(reading, "gain")],
+            template.outputs, PythonFunction.from_file(module, "calibrated")).to_dict()
+
+    state = client.deploy_app(declaration(3000))["app"]
+    assert state["error"] is None, state
+    for source, rows in (("as-of-reading", [(t, 1.0) for t in range(1000, 9000, 1000)]),
+                         ("as-of-gain", [(1000, 2.0), (5000, 3.0)])):
+        manager.core.wait(manager.insert_timeseries(
+            source_id=source, ref_name="temperature", rows=rows, request_id=source))
+    reference = output_reference(template.name, "urn:tank", "mean")
+    def values():
+        snapshot = manager.core.engine.snapshot()
+        return [snapshot.value(reference, t) for t in range(1000, 9000, 1000)]
+    def operator():
+        plan = manager.core.engine.snapshot().plan
+        return next(op for op in plan["operators"] if op["id"].startswith(template.name))
+
+    # Each reading takes the latest gain at most 3000 ns old.
+    assert values() == [2, 2, 2, 2, 3, 3, 3, 3]
+    version = operator()["version"]
+    # A shorter maximum age is a new definition, which rebuilds the history.
+    client.deploy_app(declaration(2000))
+    assert values() == [2, 2, 2, None, 3, 3, 3, None]
+    assert operator()["as_of"] == {"gain": {"max_age_ns": 2000}}
+    assert operator()["version"] != version
+    manager.remove_app(template.name)
+
+
 def test_native_function_arguments_bind_to_each_groups_parameters(system):
     from acquirium import Native, Parameter
 

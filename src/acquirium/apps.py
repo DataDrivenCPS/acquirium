@@ -74,15 +74,20 @@ class Selection:
     # Per-group operator parameters (JSON values), keyed by group. When set,
     # only the listed groups are selected; inspect warns about the groups skipped.
     parameters: Mapping[str, Mapping[str, Any]] | None = None
+    # A maximum age in nanoseconds: read this role as of each window, its
+    # latest reading at or before the window's timestamp and no older, instead
+    # of the readings in the window. Such a role creates no windows.
+    as_of: int | None = None
 
     @classmethod
-    def outputs_of(cls, app, port, *, role, combine=False, parameters=None):
+    def outputs_of(cls, app, port, *, role, combine=False, parameters=None, as_of=None):
         """Select one output port of another app.
 
         By default each upstream group feeds its own operator, under the same
         group. ``combine=True`` feeds every upstream group into one operator.
         ``parameters`` maps groups to values the function reads from
-        ``context["parameters"]``.
+        ``context["parameters"]``. ``as_of`` reads the port as of each window,
+        no older than that many nanoseconds, as for any selection.
         Deployment rejects the selection while ``app`` is not deployed with
         this port.
         """
@@ -102,6 +107,7 @@ class Selection:
             upstream=app.name,
             upstream_port=port,
             parameters=parameters,
+            as_of=as_of,
         )
 
     @classmethod
@@ -131,6 +137,14 @@ class Selection:
             target_unit=target_unit,
             exclude_app=exclude_app,
         )
+
+
+def _selection_dict(selection):
+    # Omitted when unset, so declarations saved before as-of roles keep their form.
+    data = asdict(selection)
+    if data["as_of"] is None:
+        del data["as_of"]
+    return data
 
 
 @dataclass(frozen=True)
@@ -201,7 +215,14 @@ class App:
         for spec in self.outputs.values():
             if spec.value_kind != normalize_value_kind(spec.value_kind):
                 raise ValueError("output value_kind must be 'numeric' or 'text'")
+        ages = {}
         for selection in self.inputs:
+            if selection.as_of is not None and (
+                type(selection.as_of) is not int or selection.as_of <= 0
+            ):
+                raise ValueError("as_of must be a positive number of nanoseconds")
+            if ages.setdefault(selection.role, selection.as_of) != selection.as_of:
+                raise ValueError(f"input {selection.role!r} is read as of different ages")
             for values in (selection.parameters or {}).values():
                 if not isinstance(values, Mapping) or any(
                     not isinstance(key, str) or not key for key in values
@@ -213,7 +234,7 @@ class App:
                     raise ValueError("parameter values must be JSON") from error
         return dict(
             name=self.name,
-            inputs=[asdict(item) for item in self.inputs],
+            inputs=[_selection_dict(item) for item in self.inputs],
             outputs={key: asdict(value) for key, value in self.outputs.items()},
             function=_function_dict(self.function),
             window=self.window.to_dict(),
@@ -368,6 +389,7 @@ class Apps:
         operators, metadata, matches, skipped = [], {}, {}, {}
         for name, declaration in sorted(declarations.items()):
             app = App.from_dict(declaration)
+            as_of = {s.role: s.as_of for s in app.inputs if s.as_of is not None}
             groups, parameters = {}, {}
             matches[name], skipped[name] = {}, {}
             for selection in app.inputs:
@@ -446,6 +468,8 @@ class Apps:
                 )
                 if group in parameters:
                     definition["parameters"] = parameters[group]
+                if as_of:
+                    definition["as_of"] = as_of
                 operator = Operator(
                     id=_operator_id(name, group),
                     version=_digest(definition),
@@ -454,6 +478,7 @@ class Apps:
                     window=app.window,
                     function=function,
                     parameters=parameters.get(group, {}),
+                    as_of=as_of,
                 )
                 operators.append(operator.to_dict())
                 for port, reference in outputs.items():
