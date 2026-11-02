@@ -39,10 +39,16 @@ deletion.
 
 ## Remaining work
 
-1. **Operating limits (step 4).** Only smoke runs (60 and 120 requests) and the
-   [execution profile](../profiling/2026-10-18/README.md) exist. Measure memory
-   against history size, restart and backfill cost, Python worker overhead and
-   queue latency, then document supported workload and admission bounds.
+1. **Operating limits (step 4).** [History](../profiling/2026-11-02-history/README.md)
+   is measured to 32M readings: about 0.5 GiB plus 66 bytes per row, and up to
+   0.8 GiB more while ingesting, a restart of 0.1 s per million rows, and reads
+   and repairs that do not slow with history. Plans of thousands of operators
+   are slow: every epoch costs operators × streams, so with 10,000 one
+   correction takes 37 s. Backfill and Python worker costs are in the
+   bulk-ingest example and the
+   [execution profile](../profiling/2026-10-18/README.md). Still to measure:
+   publication latency under sustained ingest, text, and the PostgreSQL
+   store; then document supported workload and admission bounds.
 2. **Packaging.** Escapement is pinned to a Git revision over SSH and CI needs a
    deploy key. Publish wheels for the supported platforms.
 3. **Retention.** The engine keeps current values in memory and never prunes
@@ -117,8 +123,8 @@ imports dominate these calculations. A fixed native
 [persistent Python worker pool](escapement-python-workers.md) now provides pure
 module reuse and bounded replication, age/job recycling, failure cleanup, and
 diagnostic counters. Full bundle/environment identity and measured adaptive
-scaling remain subsequent work. Stateful operators require a separate native
-checkpoint/replay contract.
+scaling remain subsequent work. Stateful operators need no checkpoint: a
+sequential function's state is its latest earlier output (item 6 above).
 
 Implemented in [the tank-temperature chain](../../examples/soft_sensors/README.md)
 and [authoring guide](../how-to/write-soft-sensors.md). Output declarations now
