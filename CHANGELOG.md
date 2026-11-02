@@ -25,6 +25,11 @@ change in any release.
   `NameError: name 'uuid' is not defined`, which broke every driver insert.
 
 ### Added
+- Running totals: `aq.Native.cumulative_sum(port, reset=None)` and
+  `aq.Native.integral(port, per_ns, reset=None, max_gap_ns=None)`, for
+  totalizers such as a volume from a flow rate. Each result builds on the one
+  before in time order; a late reading or correction repairs every later
+  total it changes, and a `reset` period bounds how far.
 - `Query.measurement(uri=...)` pins a measurement node to one point.
 - `DataObject` supports `alias in data`, `iter(data)` and `len(data)`;
   `data["typo"]` raises `KeyError`.

@@ -744,6 +744,39 @@ def test_native_function_arguments_bind_to_each_groups_parameters(system):
     manager.remove_app(template.name)
 
 
+def test_a_flow_totalizer_repairs_every_later_volume(system):
+    from acquirium import FixedBucket, Native
+
+    manager, http, client = system
+    ref = register(system, "flow-totalizer")
+    template = mean("flow-totalizer", ref)
+    hour = 3_600_000_000_000
+    client.deploy_app(App(
+        template.name,
+        template.inputs,
+        {"volume": Output()},
+        Native.integral("volume", per_ns=hour, reset=FixedBucket(24 * hour)),
+    ))
+
+    def insert(rows, request_id):
+        manager.core.wait(manager.insert_timeseries(
+            source_id="flow-totalizer", ref_name="temperature", rows=rows, request_id=request_id,
+        ))
+
+    def volumes(*hours):
+        snapshot = manager.core.engine.snapshot()
+        return [snapshot.value(reference, int(h * hour)) for h in hours]
+
+    reference = output_reference(template.name, "urn:tank", "volume")
+    # A flow of 10 per hour, read hourly from 22:00 into the next day.
+    insert([(h * hour, 10.0) for h in range(22, 27)], "flow")
+    assert volumes(22, 23, 24, 25, 26) == [0, 10, 10, 20, 30]
+    # A late reading of 30 at 22:30 adds 10 to every volume of that day.
+    insert([(int(22.5 * hour), 30.0)], "late")
+    assert volumes(22, 22.5, 23, 24, 25) == [0, 10, 20, 10, 20]
+    manager.remove_app(template.name)
+
+
 def test_dry_run_reports_the_work_of_a_deploy_without_making_it(system):
     from acquirium import Native
 

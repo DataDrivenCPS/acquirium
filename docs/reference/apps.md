@@ -138,6 +138,33 @@ aq.App(
 Each group's operator gets the function with its value filled in; deployment
 fails when a group lacks the parameter.
 
+Running totals are native too. `aq.Native.cumulative_sum(port, reset=None)`
+adds each window's sum to the total before it, and
+`aq.Native.integral(port, per_ns, reset=None, max_gap_ns=None)` integrates one
+reading per pointwise window over time, so a flow per hour becomes a volume
+with `per_ns` one hour:
+
+```python
+HOUR = 3_600_000_000_000
+aq.App(
+    name="permeate-volume",
+    inputs=[aq.Selection(flow_query)],
+    outputs={"volume": aq.Output(unit="http://qudt.org/vocab/unit/M3")},
+    function=aq.Native.integral("volume", per_ns=HOUR, reset=aq.FixedBucket(24 * HOUR)),
+)
+```
+
+Each result builds on the one before, in time order, so a late reading or a
+correction repairs every later total it changes; the repair stops where the
+totals stop changing. `reset` restarts the total at each bucket boundary,
+which bounds a repair to the rest of its period. An integral counts a step
+across a boundary in the period it ends in, so period totals add up to the
+whole, and a step longer than `max_gap_ns` adds nothing. `integral` needs the
+default `Pointwise()` window and one reading per timestamp. Rolling windows
+cannot carry a total, since their windows overlap. Every window a repair
+reaches counts toward the engine's per-operator group limit, so give
+long-running totals a reset.
+
 Use `client.list_apps()`, `client.inspect_app(name)`, or `acquirium app list/inspect`
 to inspect declarations and active operators. `client.remove_app(name)` removes
 operators and retracts their current outputs; historical versions remain in the
