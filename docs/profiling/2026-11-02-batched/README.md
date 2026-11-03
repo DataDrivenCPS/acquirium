@@ -81,9 +81,30 @@ The next limit is how long epochs hold the store. Keeping accepted requests in
 memory, so that an epoch need not read them back from the inbox and parse
 them, would shorten that.
 
+## Through the server
+
+Acquirium's core used to hold a lock of its own around `ingest`, so server
+requests never shared a commit. It now only orders submissions against
+closing. Client threads posted 1,000-reading Arrow requests to a local
+server with `wait=0`, as fast as it answered, for 8 s, on 10 streams per
+sender; the two versions were alternated.
+
+| Senders | Requests/s with the lock | Requests/s without | Requests/commit without |
+| ---: | ---: | ---: | ---: |
+| 1 | 16.8 | 16.6–16.7 | 1.0 |
+| 2 | 30.9–33.1 | 30.2–31.6 | 1.0 |
+| 4 | 57.2–58.6 | 53.1–55.9 | 1.2–1.3 |
+| 6 | 68.0–68.6 | 63.9–74.1 | 1.5–1.7 |
+| 8 | 65.6–68.5 | 88.3–89.8 | 1.8 |
+
+With 8 senders of 100-reading requests, 89–90 requests a second became
+111–112. A request through the server takes about 60 ms, of which admission
+is about 8, so the server is mostly limited by its own work: shared commits
+help once enough senders queue for them. Four senders were 3–9% slower
+without the lock in all five runs, for a reason not yet found.
+
 ## Not yet measured
 
-- The HTTP server, whose core holds its own lock around `ingest`, so its
-  requests do not yet share commits.
+- Sustained, paced ingest through the HTTP server and drivers.
 - The PostgreSQL store, whose commits cross the network.
 - Reads and corrections while ingest is sustained.

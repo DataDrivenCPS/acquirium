@@ -1,9 +1,11 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+import time
 
 import polars as pl
 import pyarrow as pa
 import pytest
-from escapement import Input, Operator, Plan, Pointwise, RetryConflictError
+from escapement import ClosedError, Input, Operator, Plan, Pointwise, RetryConflictError
 
 from acquirium.core import Core, SCHEMA
 
@@ -71,6 +73,48 @@ def test_restart_restores_readings_and_native_retry_identity(tmp_path):
         assert owner.engine.snapshot().value("urn:sensor", 1001) == 20
     finally:
         owner.close()
+
+
+def test_concurrent_ingests_share_admission_commits(core):
+    def send(sender):
+        return [core.ingest(f"gateway-{sender}", str(i), frame([sender * 1000 + i], [i]))
+                for i in range(20)]
+
+    with ThreadPoolExecutor(8) as pool:
+        receipts = [receipt for sent in pool.map(send, range(8)) for receipt in sent]
+    assert sorted(receipt.sequence for receipt in receipts) == list(range(1, 161))
+    status = core.engine.status()
+    assert status["admitted_requests"] == 160
+    assert status["admission_commits"] < 160
+
+
+def test_close_lets_running_submissions_finish_and_refuses_later_ones(tmp_path):
+    path = tmp_path / "core.duckdb"
+    owner = Core(path)
+    receipts = []
+
+    def send(sender):
+        for i in range(10**6):
+            try:
+                receipts.append(owner.ingest(f"gateway-{sender}", str(i), frame([i], [i])))
+            except ClosedError:
+                return
+
+    with ThreadPoolExecutor(4) as pool:
+        senders = [pool.submit(send, sender) for sender in range(4)]
+        time.sleep(0.3)
+        assert owner.close()
+        for sender in senders:
+            sender.result(timeout=30)
+    with pytest.raises(ClosedError):
+        owner.ingest("gateway", "late", frame([1], [1]))
+    # Every request accepted before close returned was drained by it.
+    reopened = Core(path)
+    try:
+        status = reopened.engine.status()
+        assert receipts and status["accepted"] == status["applied"] == len(receipts)
+    finally:
+        reopened.close()
 
 
 STUCK_CLOSE = """
