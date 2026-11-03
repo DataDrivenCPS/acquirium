@@ -87,21 +87,30 @@ Acquirium's core used to hold a lock of its own around `ingest`, so server
 requests never shared a commit. It now only orders submissions against
 closing. Client threads posted 1,000-reading Arrow requests to a local
 server with `wait=0`, as fast as it answered, for 8 s, on 10 streams per
-sender; the two versions were alternated.
+sender; the two versions were alternated, three runs each, on 2026-11-03.
 
-| Senders | Requests/s with the lock | Requests/s without | Requests/commit without |
-| ---: | ---: | ---: | ---: |
-| 1 | 16.8 | 16.6–16.7 | 1.0 |
-| 2 | 30.9–33.1 | 30.2–31.6 | 1.0 |
-| 4 | 57.2–58.6 | 53.1–55.9 | 1.2–1.3 |
-| 6 | 68.0–68.6 | 63.9–74.1 | 1.5–1.7 |
-| 8 | 65.6–68.5 | 88.3–89.8 | 1.8 |
+| Senders | Requests/s with the lock | Requests/s without | Requests/commit without | p50 with | p50 without |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 55–56 | 46–56 | 1.0 | 17 ms | 17 ms |
+| 2 | 63–66 | 64–69 | 1.1–1.2 | 26 ms | 27 ms |
+| 4 | 60–72 | 92–94 | 1.8–1.9 | 49–53 ms | 38–40 ms |
+| 6 | 70–72 | 99–112 | 2.3–2.5 | 77–79 ms | 47–52 ms |
+| 8 | 60–72 | 120–125 | 2.5–2.6 | 102–109 ms | 56–58 ms |
 
-With 8 senders of 100-reading requests, 89–90 requests a second became
-111–112. A request through the server takes about 60 ms, of which admission
-is about 8, so the server is mostly limited by its own work: shared commits
-help once enough senders queue for them. Four senders were 3–9% slower
-without the lock in all five runs, for a reason not yet found.
+With the lock, requests queued for it: throughput stopped at about 70 a
+second from four senders on, and latency grew by about 13 ms a sender.
+Without it, the senders' requests shared commits, and eight senders reached
+120–125 a second. With 8 senders of 100-reading requests, 90–92 requests a
+second became 171–201.
+
+The first runs of this put every response about 40 ms late. `aq.init`'s
+server bound its listening socket without naming TCP, so asyncio did not
+set `TCP_NODELAY` on its connections, and each response on a kept-alive
+connection waited for the client's delayed ACK. One sender then managed 17
+requests a second, and the fixed wait kept senders whose requests had
+shared a commit in step, so four senders were slower without the lock. The
+server now binds a TCP socket. The public `acquirium server` command was not
+affected.
 
 ## Not yet measured
 

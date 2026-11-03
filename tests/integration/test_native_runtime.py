@@ -70,3 +70,31 @@ def test_local_runtime_native_function_corrections_deletion_and_restart(tmp_path
         assert not (tmp_path / "timeseries.duckdb").exists()
     finally:
         aq.shutdown()
+
+
+def test_local_runtime_answers_kept_alive_requests_promptly(tmp_path):
+    # Without TCP_NODELAY on the server's connections, each response on a
+    # kept-alive connection waits about 40 ms for the client's delayed ACK.
+    import http.client
+    import statistics
+    import time
+    from urllib.parse import urlsplit
+
+    client = aq.init(data_dir=tmp_path, exact_only=True, timeout=60)
+    try:
+        url = urlsplit(client.address)
+        connection = http.client.HTTPConnection(url.hostname, url.port, timeout=10)
+        times = []
+        try:
+            for _ in range(11):
+                started = time.perf_counter()
+                connection.request("GET", "/health")
+                response = connection.getresponse()
+                response.read()
+                assert response.status == 200
+                times.append(time.perf_counter() - started)
+        finally:
+            connection.close()
+        assert statistics.median(times[1:]) < 0.02
+    finally:
+        aq.shutdown()
