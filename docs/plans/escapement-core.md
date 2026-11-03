@@ -54,8 +54,8 @@ deletion.
    eight 1,000-reading requests, 150,000 from four senders of single ones,
    and 250,000 in requests of 10,000. Epochs holding the store are now the
    limit. Acquirium's core no longer serializes `ingest`, so concurrent server
-   requests share commits; the server is mostly limited by its own work,
-   about 60 ms a request.
+   requests share commits: a local server takes about 55 1,000-reading
+   requests a second from one sender and 120 from eight.
    Backfill and
    Python worker costs are in the bulk-ingest example and the
    [execution profile](../profiling/2026-10-18/README.md). Still to measure:

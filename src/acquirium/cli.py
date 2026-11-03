@@ -441,9 +441,15 @@ def _local_runtime_setup(
 
     from filelock import FileLock
 
+    # asyncio sets TCP_NODELAY on accepted connections only when the listener
+    # says it is TCP; a bare socket.socket() does not, and every response on a
+    # kept-alive connection then waits about 40 ms for the client's delayed ACK.
+    family, kind, proto, _, address = socket.getaddrinfo(
+        host, port, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP
+    )[0]
     with FileLock(directory / "server.lock", timeout=0):
-        with socket.socket() as listener:
-            listener.bind((host, port))
+        with socket.socket(family, kind, proto) as listener:
+            listener.bind(address)
             actual_port = listener.getsockname()[1]
             os.environ["ACQUIRIUM_SELF_HOST"] = host
             os.environ["ACQUIRIUM_SELF_PORT"] = str(actual_port)
