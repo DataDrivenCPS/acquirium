@@ -1,0 +1,292 @@
+{
+  "arguments": {
+    "rates": [
+      10000,
+      25000,
+      50000,
+      100000,
+      150000,
+      200000,
+      250000,
+      300000
+    ],
+    "duration": 20.0,
+    "warmup": 2.0,
+    "streams": 100,
+    "interval": 1,
+    "request_readings": 10000,
+    "senders": 1,
+    "history": 0,
+    "derived": true,
+    "keep_going": false,
+    "seed": 7
+  },
+  "environment": {
+    "python": "3.12.11",
+    "platform": "Linux-7.2.6-76070206-generic-x86_64-with-glibc2.39",
+    "cpus": 16,
+    "acquirium": "0.4.0a8",
+    "escapement": {
+      "arch": "x86_64",
+      "debug_assertions": false,
+      "os": "linux",
+      "version": "0.1.0"
+    }
+  },
+  "history": null,
+  "verified": true,
+  "steps": [
+    {
+      "offered_per_second": 10000,
+      "senders": 1,
+      "sent_per_second": 10000.0,
+      "published_per_second": 10000.0,
+      "requests": 20,
+      "readings": 200000,
+      "latency_ms": {
+        "p50": 60.54276,
+        "p95": 105.356126,
+        "p99": 105.356126,
+        "max": 105.356126
+      },
+      "ingest_ms": {
+        "p50": 16.251076,
+        "p99": 18.063873,
+        "max": 18.063873
+      },
+      "sender_ingest_fraction": 0.017404519792765676,
+      "sender_generate_fraction": 0.011438427118163823,
+      "epochs_per_second": 1.0,
+      "requests_per_epoch": 1.0,
+      "epoch_ms": {
+        "prepare_ms": 11.637424333333334,
+        "compute_ms": 21.132443055555555,
+        "publish_ms": 16.989053555555557,
+        "total_ms": 49.75921516666667
+      },
+      "pending_peak": 0,
+      "drain_seconds": 0.0,
+      "sender_lag_seconds": 0.013596786,
+      "blocked_seconds": 0.0,
+      "rss_mib": 186.1796875,
+      "sender_limited": false,
+      "sustained": true
+    },
+    {
+      "offered_per_second": 25000,
+      "senders": 1,
+      "sent_per_second": 25000.0,
+      "published_per_second": 25000.0,
+      "requests": 50,
+      "readings": 500000,
+      "latency_ms": {
+        "p50": 63.757559,
+        "p95": 107.119962,
+        "p99": 175.3409,
+        "max": 175.3409
+      },
+      "ingest_ms": {
+        "p50": 17.328385,
+        "p99": 19.901212,
+        "max": 19.901212
+      },
+      "sender_ingest_fraction": 0.04451438859251165,
+      "sender_generate_fraction": 0.03125371243636915,
+      "epochs_per_second": 2.5,
+      "requests_per_epoch": 1.0,
+      "epoch_ms": {
+        "prepare_ms": 12.653978355555555,
+        "compute_ms": 23.091578444444444,
+        "publish_ms": 19.875405377777778,
+        "total_ms": 55.62125668888889
+      },
+      "pending_peak": 0,
+      "drain_seconds": 0.0,
+      "sender_lag_seconds": 0.000144743,
+      "blocked_seconds": 0.0,
+      "rss_mib": 251.53125,
+      "sender_limited": false,
+      "sustained": true
+    },
+    {
+      "offered_per_second": 50000,
+      "senders": 1,
+      "sent_per_second": 50000.0,
+      "published_per_second": 50000.0,
+      "requests": 100,
+      "readings": 1000000,
+      "latency_ms": {
+        "p50": 60.080693,
+        "p95": 109.021651,
+        "p99": 196.182129,
+        "max": 196.182129
+      },
+      "ingest_ms": {
+        "p50": 15.70972,
+        "p99": 20.982883,
+        "max": 20.982883
+      },
+      "sender_ingest_fraction": 0.07933479117106235,
+      "sender_generate_fraction": 0.05861755197232265,
+      "epochs_per_second": 5.0,
+      "requests_per_epoch": 1.0,
+      "epoch_ms": {
+        "prepare_ms": 10.927895222222222,
+        "compute_ms": 23.104276455555556,
+        "publish_ms": 19.588451077777776,
+        "total_ms": 53.62089498888889
+      },
+      "pending_peak": 0,
+      "drain_seconds": 0.0,
+      "sender_lag_seconds": 0.000190445,
+      "blocked_seconds": 0.0,
+      "rss_mib": 384.72265625,
+      "sender_limited": false,
+      "sustained": true
+    },
+    {
+      "offered_per_second": 100000,
+      "senders": 1,
+      "sent_per_second": 99986.45101933087,
+      "published_per_second": 99986.45101933087,
+      "requests": 200,
+      "readings": 2000000,
+      "latency_ms": {
+        "p50": 63.605279,
+        "p95": 126.576601,
+        "p99": 170.974084,
+        "max": 215.748044
+      },
+      "ingest_ms": {
+        "p50": 16.278759,
+        "p99": 79.794162,
+        "max": 125.696489
+      },
+      "sender_ingest_fraction": 0.1907116436143471,
+      "sender_generate_fraction": 0.11709665789350196,
+      "epochs_per_second": 9.998645101933086,
+      "requests_per_epoch": 1.0,
+      "epoch_ms": {
+        "prepare_ms": 12.19369307222222,
+        "compute_ms": 24.267287494444442,
+        "publish_ms": 20.093140161111112,
+        "total_ms": 56.55442787222223
+      },
+      "pending_peak": 1,
+      "drain_seconds": 0.009620347,
+      "sender_lag_seconds": 0.03843103,
+      "blocked_seconds": 0.0,
+      "rss_mib": 676.828125,
+      "sender_limited": false,
+      "sustained": true
+    },
+    {
+      "offered_per_second": 150000,
+      "senders": 1,
+      "sent_per_second": 149145.78923430227,
+      "published_per_second": 149698.18104628116,
+      "requests": 301,
+      "readings": 3010000,
+      "latency_ms": {
+        "p50": 82.879314,
+        "p95": 196.637691,
+        "p99": 258.760568,
+        "max": 320.000397
+      },
+      "ingest_ms": {
+        "p50": 17.522228,
+        "p99": 139.230446,
+        "max": 144.32424
+      },
+      "sender_ingest_fraction": 0.3996854554828995,
+      "sender_generate_fraction": 0.1764860743608343,
+      "epochs_per_second": 13.588838574680873,
+      "requests_per_epoch": 1.1016260162601625,
+      "epoch_ms": {
+        "prepare_ms": 13.300219723577236,
+        "compute_ms": 28.00889723577236,
+        "publish_ms": 24.14263087804878,
+        "total_ms": 65.45211214634146
+      },
+      "pending_peak": 2,
+      "drain_seconds": 0.0,
+      "sender_lag_seconds": 0.119760496,
+      "blocked_seconds": 0.0,
+      "rss_mib": 1108.3125,
+      "sender_limited": false,
+      "sustained": true
+    },
+    {
+      "offered_per_second": 200000,
+      "senders": 1,
+      "sent_per_second": 198868.88903367933,
+      "published_per_second": 201630.95693692486,
+      "requests": 400,
+      "readings": 4000000,
+      "latency_ms": {
+        "p50": 151.010008,
+        "p95": 263.911444,
+        "p99": 327.748234,
+        "max": 368.43431
+      },
+      "ingest_ms": {
+        "p50": 17.885425,
+        "p99": 124.983531,
+        "max": 155.58216
+      },
+      "sender_ingest_fraction": 0.5156348309737011,
+      "sender_generate_fraction": 0.23258707643335091,
+      "epochs_per_second": 10.606340748462896,
+      "requests_per_epoch": 1.9010416666666667,
+      "epoch_ms": {
+        "prepare_ms": 20.465959614583333,
+        "compute_ms": 40.97801694270833,
+        "publish_ms": 31.905766651041663,
+        "total_ms": 93.35021674479167
+      },
+      "pending_peak": 5,
+      "drain_seconds": 0.0,
+      "sender_lag_seconds": 0.115590076,
+      "blocked_seconds": 0.0,
+      "rss_mib": 1444.4140625,
+      "sender_limited": false,
+      "sustained": true
+    },
+    {
+      "offered_per_second": 250000,
+      "senders": 1,
+      "sent_per_second": 222755.6080285838,
+      "published_per_second": 227210.7201891555,
+      "requests": 500,
+      "readings": 5000000,
+      "latency_ms": {
+        "p50": 215.62048,
+        "p95": 368.915619,
+        "p99": 441.028949,
+        "max": 524.827309
+      },
+      "ingest_ms": {
+        "p50": 24.25142,
+        "p99": 157.354593,
+        "max": 202.10082
+      },
+      "sender_ingest_fraction": 0.7376315093305055,
+      "sender_generate_fraction": 0.2543755754982857,
+      "epochs_per_second": 6.930174472000385,
+      "requests_per_epoch": 3.2785714285714285,
+      "epoch_ms": {
+        "prepare_ms": 35.49643747142857,
+        "compute_ms": 61.510649685714284,
+        "publish_ms": 45.863806271428565,
+        "total_ms": 142.87159156428572
+      },
+      "pending_peak": 8,
+      "drain_seconds": 0.081882796,
+      "sender_lag_seconds": 2.184703513,
+      "blocked_seconds": 0.0,
+      "rss_mib": 1886.66796875,
+      "sender_limited": true,
+      "sustained": false
+    }
+  ]
+}

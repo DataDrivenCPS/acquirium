@@ -44,11 +44,14 @@ deletion.
    0.8 GiB more while ingesting, a restart of 0.1 s per million rows, and reads
    and repairs that do not slow with history. With 10,000 operators a
    correction publishes in 30 ms and ingest runs at about half the rate of
-   narrow plans. Backfill and Python worker costs are in the
-   bulk-ingest example and the
+   narrow plans. [Sustained ingest](../profiling/2026-11-02-sustained/README.md)
+   publishes 200,000 readings a second in requests of 10,000, or 50,000 in
+   requests of 1,000, with a median latency under 0.2 s; admission, about 7 ms
+   per request under the store lock, is the limit, not epochs. Backfill and
+   Python worker costs are in the bulk-ingest example and the
    [execution profile](../profiling/2026-10-18/README.md). Still to measure:
-   publication latency under sustained ingest, text, and the PostgreSQL
-   store; then document supported workload and admission bounds.
+   sustained ingest through the HTTP server, text, and the PostgreSQL store;
+   then document supported workload and admission bounds.
 2. **Packaging.** Escapement is pinned to a Git revision over SSH and CI needs a
    deploy key. Publish wheels for the supported platforms.
 3. **Retention.** The engine keeps current values in memory and never prunes
