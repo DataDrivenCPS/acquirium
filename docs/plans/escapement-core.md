@@ -53,7 +53,9 @@ deletion.
    transaction. It sustains 200,000 a second from one sender in calls of
    eight 1,000-reading requests, 150,000 from four senders of single ones,
    and 250,000 in requests of 10,000. Epochs holding the store are now the
-   limit; Acquirium's core still serializes `ingest` under its own lock.
+   limit. Acquirium's core no longer serializes `ingest`, so concurrent server
+   requests share commits; the server is mostly limited by its own work,
+   about 60 ms a request.
    Backfill and
    Python worker costs are in the bulk-ingest example and the
    [execution profile](../profiling/2026-10-18/README.md). Still to measure:

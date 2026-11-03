@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from threading import RLock, Thread
+from threading import Condition, Thread
 
 import polars as pl
 import pyarrow as pa
 import pyarrow.compute as pc
-from escapement import Engine, Mutation, Receipt, Snapshot
+from escapement import ClosedError, Engine, Mutation, Receipt, Snapshot
 
 from acquirium.internals.models import MAX_REQUEST_ROWS
 from acquirium.Storage.values import split_values
@@ -100,7 +100,11 @@ def _stop(processor, drain, failure):
 
 class Core:
     def __init__(self, path: str | Path, **limits):
-        self._gate = RLock()
+        # Orders submissions against close. Submissions do not exclude each
+        # other: Escapement admits concurrent ones in one transaction.
+        self._state = Condition()
+        self._submitting = 0
+        self._closing = False
         self.engine = Engine(path, **limits)
         try:
             self.processor = self.engine.start()
@@ -148,28 +152,35 @@ class Core:
                 if delete
                 else Mutation.put(stream, timestamp, text if number is None else number)
             )
-        with self._gate:
-            receipt = self.engine.ingest(
-                source, request_id, [normalized[key] for key in sorted(normalized)]
-            )
+        mutations = [normalized[key] for key in sorted(normalized)]
+        return self._submit(lambda: self.engine.ingest(source, request_id, mutations))
+
+    def _submit(self, submit) -> Receipt:
+        """Run ``submit`` and wake the processor. Close waits for submissions
+        already running, so that their requests drain, and refuses new ones."""
+        with self._state:
+            if self._closing:
+                raise ClosedError("engine is closed")
+            self._submitting += 1
+        try:
+            receipt = submit()
             self.processor.wake()
             return receipt
+        finally:
+            with self._state:
+                self._submitting -= 1
+                if not self._submitting:
+                    self._state.notify_all()
 
     def clear(self, source: str, request_id: str, streams) -> Receipt:
         """Delete every reading of ``streams`` in one request."""
         mutations = [Mutation.delete_range(stream) for stream in sorted(set(streams))]
         if not mutations:
             raise ValueError("clear needs at least one stream")
-        with self._gate:
-            receipt = self.engine.ingest(source, request_id, mutations)
-            self.processor.wake()
-            return receipt
+        return self._submit(lambda: self.engine.ingest(source, request_id, mutations))
 
     def activate(self, request_id: str, plan) -> Receipt:
-        with self._gate:
-            receipt = self.engine.activate(request_id, plan)
-            self.processor.wake()
-            return receipt
+        return self._submit(lambda: self.engine.activate(request_id, plan))
 
     def wait(self, receipt: Receipt, timeout: float = 30) -> Snapshot:
         return self.processor.read_after(receipt, timeout=timeout)
@@ -185,11 +196,10 @@ class Core:
                 raise ValueError(f"{name} must be an unsigned 64-bit integer")
         if type(limit) is not int or not 1 <= limit <= 10_000:
             raise ValueError("limit must be between 1 and 10,000")
-        with self._gate:
-            frontier = self.engine.snapshot().epoch
-            if epoch > frontier or (epoch == 0 and ordinal != 0):
-                raise ValueError("cursor must refer to published history")
-            rows = self.engine.changes(epoch=epoch, ordinal=ordinal, limit=limit + 1)
+        frontier = self.engine.snapshot().epoch
+        if epoch > frontier or (epoch == 0 and ordinal != 0):
+            raise ValueError("cursor must refer to published history")
+        rows = self.engine.changes(epoch=epoch, ordinal=ordinal, limit=limit + 1)
         rows = [row for row in rows if row["epoch"] <= frontier]
         more = len(rows) > limit
         complete = rows[limit]["epoch"] - 1 if more else frontier
@@ -306,10 +316,15 @@ class Core:
         Escapement cannot interrupt a running function, so with ``timeout`` the
         stop runs in a daemon thread and is abandoned when it expires: the
         engine stays open until the process exits, and accepted work not yet
-        published is processed when the engine next opens.
+        published is processed when the engine next opens. Submissions already
+        running finish first; later ones raise ``ClosedError``.
         """
-        with self._gate:
+        with self._state:
             if self.processor is None:
+                return True
+            self._closing = True
+            self._state.wait_for(lambda: not self._submitting)
+            if self.processor is None:  # Another close finished meanwhile.
                 return True
             failure = []
             # The thread drops its arguments when it finishes, releasing the
