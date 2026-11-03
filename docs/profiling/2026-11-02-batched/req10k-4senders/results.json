@@ -1,0 +1,341 @@
+{
+  "arguments": {
+    "rates": [
+      10000,
+      25000,
+      50000,
+      100000,
+      150000,
+      200000,
+      250000,
+      300000,
+      400000,
+      500000,
+      600000,
+      800000
+    ],
+    "duration": 20.0,
+    "warmup": 2.0,
+    "streams": 100,
+    "interval": 1,
+    "request_readings": 10000,
+    "batch_requests": 1,
+    "senders": 4,
+    "history": 0,
+    "derived": true,
+    "keep_going": false,
+    "seed": 7
+  },
+  "environment": {
+    "python": "3.12.11",
+    "platform": "Linux-7.2.6-76070206-generic-x86_64-with-glibc2.39",
+    "cpus": 16,
+    "acquirium": "0.4.0a8",
+    "escapement": {
+      "arch": "x86_64",
+      "debug_assertions": false,
+      "os": "linux",
+      "version": "0.1.0"
+    }
+  },
+  "history": null,
+  "verified": true,
+  "steps": [
+    {
+      "offered_per_second": 10000,
+      "senders": 4,
+      "sent_per_second": 10000.0,
+      "published_per_second": 10000.0,
+      "requests": 20,
+      "readings": 200000,
+      "latency_ms": {
+        "p50": 53.417685,
+        "p95": 122.871434,
+        "p99": 122.871434,
+        "max": 122.871434
+      },
+      "ingest_ms": {
+        "p50": 15.781121,
+        "p99": 20.801586,
+        "max": 20.801586
+      },
+      "requests_per_commit": 1.0,
+      "sender_ingest_fraction": 0.0043296986195203845,
+      "sender_generate_fraction": 0.0012333139329890942,
+      "epochs_per_second": 1.0,
+      "requests_per_epoch": 1.0,
+      "epoch_ms": {
+        "prepare_ms": 16.35397366666667,
+        "compute_ms": 15.511237555555555,
+        "publish_ms": 18.20063611111111,
+        "total_ms": 50.06627488888889
+      },
+      "pending_peak": 0,
+      "drain_seconds": 0.0,
+      "sender_lag_seconds": 0.00566901,
+      "blocked_seconds": 0.0,
+      "rss_mib": 191.62109375,
+      "sender_limited": false,
+      "sustained": true
+    },
+    {
+      "offered_per_second": 25000,
+      "senders": 4,
+      "sent_per_second": 25000.0,
+      "published_per_second": 25000.0,
+      "requests": 50,
+      "readings": 500000,
+      "latency_ms": {
+        "p50": 54.309413,
+        "p95": 87.068053,
+        "p99": 177.291061,
+        "max": 177.291061
+      },
+      "ingest_ms": {
+        "p50": 16.503455,
+        "p99": 27.753365,
+        "max": 27.753365
+      },
+      "requests_per_commit": 1.0,
+      "sender_ingest_fraction": 0.010567738164037633,
+      "sender_generate_fraction": 0.0031311043857373123,
+      "epochs_per_second": 2.5,
+      "requests_per_epoch": 1.0,
+      "epoch_ms": {
+        "prepare_ms": 13.529360466666667,
+        "compute_ms": 15.248638266666667,
+        "publish_ms": 19.246175088888887,
+        "total_ms": 48.02446931111111
+      },
+      "pending_peak": 0,
+      "drain_seconds": 0.0,
+      "sender_lag_seconds": 0.000297861,
+      "blocked_seconds": 0.0,
+      "rss_mib": 247.28515625,
+      "sender_limited": false,
+      "sustained": true
+    },
+    {
+      "offered_per_second": 50000,
+      "senders": 4,
+      "sent_per_second": 50000.0,
+      "published_per_second": 50000.0,
+      "requests": 100,
+      "readings": 1000000,
+      "latency_ms": {
+        "p50": 53.232843,
+        "p95": 86.776708,
+        "p99": 156.452386,
+        "max": 156.452386
+      },
+      "ingest_ms": {
+        "p50": 15.889279,
+        "p99": 49.277462,
+        "max": 49.277462
+      },
+      "requests_per_commit": 1.0,
+      "sender_ingest_fraction": 0.0213810255714247,
+      "sender_generate_fraction": 0.0066197183679432515,
+      "epochs_per_second": 5.0,
+      "requests_per_epoch": 1.0,
+      "epoch_ms": {
+        "prepare_ms": 10.911374466666667,
+        "compute_ms": 15.200638033333332,
+        "publish_ms": 19.647722133333335,
+        "total_ms": 45.759994500000005
+      },
+      "pending_peak": 0,
+      "drain_seconds": 0.0,
+      "sender_lag_seconds": 0.000118284,
+      "blocked_seconds": 0.0,
+      "rss_mib": 388.0625,
+      "sender_limited": false,
+      "sustained": true
+    },
+    {
+      "offered_per_second": 100000,
+      "senders": 4,
+      "sent_per_second": 99989.00335939405,
+      "published_per_second": 100544.49782250178,
+      "requests": 200,
+      "readings": 2000000,
+      "latency_ms": {
+        "p50": 54.914627,
+        "p95": 120.244437,
+        "p99": 220.24384,
+        "max": 226.16592
+      },
+      "ingest_ms": {
+        "p50": 15.679003,
+        "p99": 104.131299,
+        "max": 130.251958
+      },
+      "requests_per_commit": 1.0,
+      "sender_ingest_fraction": 0.04902567276114251,
+      "sender_generate_fraction": 0.011831838337139931,
+      "epochs_per_second": 9.998900335939403,
+      "requests_per_epoch": 1.0055555555555555,
+      "epoch_ms": {
+        "prepare_ms": 11.903389722222222,
+        "compute_ms": 15.841152655555556,
+        "publish_ms": 21.239754305555557,
+        "total_ms": 48.98458149444444
+      },
+      "pending_peak": 2,
+      "drain_seconds": 0.0,
+      "sender_lag_seconds": 0.000367132,
+      "blocked_seconds": 0.0,
+      "rss_mib": 736.765625,
+      "sender_limited": false,
+      "sustained": true
+    },
+    {
+      "offered_per_second": 150000,
+      "senders": 4,
+      "sent_per_second": 149140.61526851443,
+      "published_per_second": 149692.98791765707,
+      "requests": 301,
+      "readings": 3010000,
+      "latency_ms": {
+        "p50": 55.648507,
+        "p95": 149.60619,
+        "p99": 182.93431,
+        "max": 201.305321
+      },
+      "ingest_ms": {
+        "p50": 15.397199,
+        "p99": 117.845781,
+        "max": 129.362414
+      },
+      "requests_per_commit": 1.0238095238095237,
+      "sender_ingest_fraction": 0.07982529160647997,
+      "sender_generate_fraction": 0.01815386574778671,
+      "epochs_per_second": 14.527400672451591,
+      "requests_per_epoch": 1.0304182509505704,
+      "epoch_ms": {
+        "prepare_ms": 10.16274052471483,
+        "compute_ms": 16.876327642585554,
+        "publish_ms": 20.971641768060838,
+        "total_ms": 48.01099174904943
+      },
+      "pending_peak": 1,
+      "drain_seconds": 0.0,
+      "sender_lag_seconds": 0.000126882,
+      "blocked_seconds": 0.0,
+      "rss_mib": 1068.26953125,
+      "sender_limited": false,
+      "sustained": true
+    },
+    {
+      "offered_per_second": 200000,
+      "senders": 4,
+      "sent_per_second": 199966.42673676624,
+      "published_per_second": 199966.42673676624,
+      "requests": 400,
+      "readings": 4000000,
+      "latency_ms": {
+        "p50": 97.090068,
+        "p95": 210.040968,
+        "p99": 255.918652,
+        "max": 297.523916
+      },
+      "ingest_ms": {
+        "p50": 20.653658,
+        "p99": 133.567198,
+        "max": 160.065215
+      },
+      "requests_per_commit": 1.0638297872340425,
+      "sender_ingest_fraction": 0.15058042558790635,
+      "sender_generate_fraction": 0.026831814903506026,
+      "epochs_per_second": 15.38630561280118,
+      "requests_per_epoch": 1.2996389891696751,
+      "epoch_ms": {
+        "prepare_ms": 16.07617268231047,
+        "compute_ms": 21.79695484837545,
+        "publish_ms": 25.589578061371842,
+        "total_ms": 63.46308216967509
+      },
+      "pending_peak": 3,
+      "drain_seconds": 0.194637773,
+      "sender_lag_seconds": 0.000286955,
+      "blocked_seconds": 0.0,
+      "rss_mib": 1407.3203125,
+      "sender_limited": false,
+      "sustained": true
+    },
+    {
+      "offered_per_second": 250000,
+      "senders": 4,
+      "sent_per_second": 249932.97876386915,
+      "published_per_second": 254931.6383391465,
+      "requests": 500,
+      "readings": 5000000,
+      "latency_ms": {
+        "p50": 333.877897,
+        "p95": 621.096238,
+        "p99": 774.645683,
+        "max": 814.569963
+      },
+      "ingest_ms": {
+        "p50": 36.821639,
+        "p99": 154.544929,
+        "max": 178.967749
+      },
+      "requests_per_commit": 1.3440860215053763,
+      "sender_ingest_fraction": 0.2937553918483087,
+      "sender_generate_fraction": 0.03910844899899072,
+      "epochs_per_second": 4.665415603592224,
+      "requests_per_epoch": 5.464285714285714,
+      "epoch_ms": {
+        "prepare_ms": 55.30649504761905,
+        "compute_ms": 89.17555058333333,
+        "publish_ms": 67.35323703571429,
+        "total_ms": 211.83595319047618
+      },
+      "pending_peak": 17,
+      "drain_seconds": 0.182428968,
+      "sender_lag_seconds": 0.043990912,
+      "blocked_seconds": 0.0,
+      "rss_mib": 1961.9609375,
+      "sender_limited": false,
+      "sustained": true
+    },
+    {
+      "offered_per_second": 300000,
+      "senders": 4,
+      "sent_per_second": 296671.0608659394,
+      "published_per_second": 276343.599288088,
+      "requests": 601,
+      "readings": 6010000,
+      "latency_ms": {
+        "p50": 1387.014999,
+        "p95": 2060.338951,
+        "p99": 2209.055876,
+        "max": 2290.754406
+      },
+      "ingest_ms": {
+        "p50": 45.406824,
+        "p99": 371.780828,
+        "max": 435.127002
+      },
+      "requests_per_commit": 1.7270114942528736,
+      "sender_ingest_fraction": 0.763097784430312,
+      "sender_generate_fraction": 0.0492235964922381,
+      "epochs_per_second": 1.318538048293064,
+      "requests_per_epoch": 20.958333333333332,
+      "epoch_ms": {
+        "prepare_ms": 195.71756737500002,
+        "compute_ms": 321.816449625,
+        "publish_ms": 207.65124841666668,
+        "total_ms": 725.1861011666666
+      },
+      "pending_peak": 59,
+      "drain_seconds": 1.043912791,
+      "sender_lag_seconds": 0.577524243,
+      "blocked_seconds": 0.0,
+      "rss_mib": 2076.109375,
+      "sender_limited": false,
+      "sustained": false
+    }
+  ]
+}

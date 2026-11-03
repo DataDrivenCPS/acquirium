@@ -47,7 +47,14 @@ deletion.
    narrow plans. [Sustained ingest](../profiling/2026-11-02-sustained/README.md)
    publishes 200,000 readings a second in requests of 10,000, or 50,000 in
    requests of 1,000, with a median latency under 0.2 s; admission, about 7 ms
-   per request under the store lock, is the limit, not epochs. Backfill and
+   per request under the store lock, is the limit, not epochs.
+   [Batched admission](../profiling/2026-11-02-batched/README.md) writes
+   requests that arrive together, or come in one `ingest_many` call, in one
+   transaction. It sustains 200,000 a second from one sender in calls of
+   eight 1,000-reading requests, 150,000 from four senders of single ones,
+   and 250,000 in requests of 10,000. Epochs holding the store are now the
+   limit; Acquirium's core still serializes `ingest` under its own lock.
+   Backfill and
    Python worker costs are in the bulk-ingest example and the
    [execution profile](../profiling/2026-10-18/README.md). Still to measure:
    sustained ingest through the HTTP server, text, and the PostgreSQL store;
