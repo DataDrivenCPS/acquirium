@@ -19,7 +19,7 @@ import time
 from collections import deque
 from pathlib import Path
 
-from escapement import Mutation, build_info
+from escapement import CapacityError, Mutation, build_info
 
 from .run import START, SECOND, derived, engine, plan, rss_mib, source, submit
 
@@ -39,6 +39,30 @@ def verdict(step):
         return ("admission-limited" if step["sender_ingest_fraction"] > 0.5
                 else "sender-limited")
     return "sustained" if step["sustained"] else "falling behind"
+
+
+def submit_many(target, label, requests):
+    """`ingest_many`, resending requests refused for a full inbox; returns
+    the receipts and seconds blocked."""
+    receipts = [None] * len(requests)
+    blocked = 0.0
+    todo = list(range(len(requests)))
+    while True:
+        results = target.ingest_many("limits", [(f"{label}-{i}", requests[i]) for i in todo])
+        refused = []
+        for i, result in zip(todo, results):
+            if isinstance(result, CapacityError):
+                refused.append(i)
+            elif isinstance(result, Exception):
+                raise result
+            else:
+                receipts[i] = result
+        if not refused:
+            return receipts, blocked
+        todo = refused
+        started = time.perf_counter()
+        time.sleep(0.05)
+        blocked += time.perf_counter() - started
 
 
 def percentile(values, fraction):
@@ -149,14 +173,16 @@ class Sender:
         self.number = number
         self.readings = Readings(indices, args.interval * SECOND, args.seed + number)
 
-    def offer(self, target, publications, size, interval_ns, first_ns, ends_ns, measured_ns,
-              label):
+    def offer(self, target, publications, size, group, interval_ns, first_ns, ends_ns,
+              measured_ns, label):
+        """Sends `group` requests of `size` readings every `interval_ns`: with
+        `ingest` alone, or `ingest_many` for more than one."""
         processor = publications.processor
         clock = processor.clock_ns
         self.sent = self.sent_measured = self.generate_ns = self.lag_ns = 0
         self.blocked = 0.0
-        self.ingests = []  # nanoseconds each measured request spent in ingest
-        batch = self.readings.batch(size)
+        self.ingests = []  # nanoseconds each measured call spent in ingest
+        batch = self.readings.batch(size * group)
         count = 0
         try:
             while (due := first_ns + count * interval_ns) < ends_ns:
@@ -166,43 +192,53 @@ class Sender:
                 else:
                     self.lag_ns = max(self.lag_ns, now - due)
                 submitted = clock()
-                receipt, waited = submit(target, f"{label}-{self.number}-{count}", batch)
+                request_id = f"{label}-{self.number}-{count}"
+                if group == 1:
+                    receipt, waited = submit(target, request_id, batch)
+                    receipts = [receipt]
+                else:
+                    receipts, waited = submit_many(
+                        target, request_id,
+                        [batch[i:i + size] for i in range(0, len(batch), size)])
                 accepted = clock()
                 processor.wake()
                 self.blocked += waited
                 measured = due >= measured_ns
-                publications.sent(receipt.sequence, submitted, size, accepted - submitted,
-                                  measured)
-                self.sent += size
+                for receipt in receipts:
+                    publications.sent(receipt.sequence, submitted, size, accepted - submitted,
+                                      measured)
+                self.sent += len(batch)
                 if measured:
-                    self.sent_measured += size
+                    self.sent_measured += len(batch)
                     self.ingests.append(accepted - submitted)
                 count += 1
-                batch = self.readings.batch(size)
+                batch = self.readings.batch(size * group)
                 self.generate_ns += clock() - accepted
         finally:
             self.readings.unsent = batch
-            self.requests = count
+            self.requests = count * group
 
 
 def offer(target, publications, senders, args, rate, number):
     """Offers `rate` readings a second for args.duration seconds, then waits
     for the backlog to drain. Returns the rate's summary."""
-    size = args.request_readings
+    size, group = args.request_readings, args.batch_requests
     processor = publications.processor
     clock = processor.clock_ns
     # Each sender sends every interval_ns, staggered evenly among them.
-    interval_ns = SECOND * size * len(senders) // rate
+    interval_ns = SECOND * size * group * len(senders) // rate
     duration_ns, warmup_ns = int(args.duration * SECOND), int(args.warmup * SECOND)
-    print(f"{rate:,} readings/s for {args.duration:g} s, requests of {size:,} from "
-          f"{len(senders)} sender{'s' if len(senders) > 1 else ''}", flush=True)
+    print(f"{rate:,} readings/s for {args.duration:g} s, requests of {size:,}"
+          + (f" in calls of {group}" if group > 1 else "")
+          + f" from {len(senders)} sender{'s' if len(senders) > 1 else ''}", flush=True)
+    admission = target.status()
     started_ns = clock()
     ends_ns, measured_ns = started_ns + duration_ns, started_ns + warmup_ns
     failures = []
 
     def run(sender):
         try:
-            sender.offer(target, publications, size, interval_ns,
+            sender.offer(target, publications, size, group, interval_ns,
                          started_ns + sender.number * interval_ns // len(senders),
                          ends_ns, measured_ns, number)
         except BaseException as error:
@@ -238,6 +274,9 @@ def offer(target, publications, senders, args, rate, number):
             next_print += SECOND
             pending_peak = max(pending_peak, publications.progress("drain", started_ns))
     drained_ns = max(completed for completed, _ in publications.epochs)
+    status = target.status()
+    commits = status["admission_commits"] - admission["admission_commits"]
+    admitted = status["admitted_requests"] - admission["admitted_requests"]
     drain_seconds = max(0.0, (drained_ns - stopped_ns) / 1e9)
 
     latencies = [latency for published, latency, measured in publications.published
@@ -261,6 +300,8 @@ def offer(target, publications, senders, args, rate, number):
         # Time inside ingest, which waits while an epoch holds the store.
         "ingest_ms": {name: ms(percentile(ingests, fraction)) for name, fraction in
                       (("p50", 0.5), ("p99", 0.99), ("max", 1.0))},
+        # Requests admitted in each transaction, over the whole rate.
+        "requests_per_commit": admitted / commits if commits else 0,
         # Shares of the senders' time spent in ingest and generating requests.
         "sender_ingest_fraction": sum(ingests) / max(1, len(senders) * (sending_ns - warmup_ns)),
         "sender_generate_fraction": (sum(sender.generate_ns for sender in senders)
@@ -327,19 +368,21 @@ def verify(target, senders, args):
 
 
 def summary(arguments, steps):
-    senders = arguments["senders"]
+    senders, group = arguments["senders"], arguments.get("batch_requests", 1)
     lines = [
         f"{arguments['streams']} streams in requests of {arguments['request_readings']:,} "
-        f"readings from {senders} sender{'s' if senders > 1 else ''}, "
+        f"readings"
+        + (f", {group} to a call of `ingest_many`," if group > 1 else "")
+        + f" from {senders} sender{'s' if senders > 1 else ''}, "
         f"{arguments['duration']:g} s per rate after {arguments['history']:,} readings of history"
         + (", a native 15-minute mean of each stream" if arguments["derived"] else "")
         + ". Latency is from submission to publication.",
         "",
         "| Offered/s | Sent/s | Published/s | p50 ms | p95 ms | p99 ms | Max ms | Epochs/s "
-        "| Requests/epoch | Epoch ms | Ingest p50 ms | Ingest p99 ms | Peak pending | Drain s "
-        "| Result |",
+        "| Requests/epoch | Epoch ms | Ingest p50 ms | Ingest p99 ms | Requests/commit "
+        "| Peak pending | Drain s | Result |",
         "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: "
-        "| ---: | ---: | --- |",
+        "| ---: | ---: | ---: | --- |",
     ]
     for step in steps:
         latency = step["latency_ms"]
@@ -349,7 +392,8 @@ def summary(arguments, steps):
             f"| {latency['p95']:.1f} | {latency['p99']:.1f} | {latency['max']:.1f} "
             f"| {step['epochs_per_second']:.1f} | {step['requests_per_epoch']:.1f} "
             f"| {step['epoch_ms']['total_ms']:.1f} | {step['ingest_ms']['p50']:.1f} "
-            f"| {step['ingest_ms']['p99']:.1f} | {step['pending_peak']:,} "
+            f"| {step['ingest_ms']['p99']:.1f} | {step['requests_per_commit']:.1f} "
+            f"| {step['pending_peak']:,} "
             f"| {step['drain_seconds']:.2f} | {verdict(step)} |")
     return "\n".join(lines) + "\n"
 
@@ -366,6 +410,8 @@ def main():
     parser.add_argument("--interval", type=int, default=1, help="Seconds between readings")
     parser.add_argument("--request-readings", type=int, default=1_000,
                         help="Readings per request")
+    parser.add_argument("--batch-requests", type=int, default=1,
+                        help="Requests per call: more than one uses ingest_many")
     parser.add_argument("--senders", type=int, default=1,
                         help="Concurrent senders, each with its share of the streams")
     parser.add_argument("--history", type=int, default=0,
@@ -378,6 +424,8 @@ def main():
     args = parser.parse_args()
     if args.warmup >= args.duration:
         parser.error("--warmup must be shorter than --duration")
+    if args.batch_requests < 1:
+        parser.error("--batch-requests must be positive")
     if not 1 <= args.senders <= args.streams:
         parser.error("--senders must be between 1 and --streams")
 

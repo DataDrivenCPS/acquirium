@@ -79,7 +79,9 @@ adds to these costs; see the
 
 Raising the ceiling means making admission cheaper: writing several requests
 in one transaction, or accepting requests without waiting for an epoch's
-commit.
+commit. [Batched admission](../2026-11-02-batched/README.md) does the first.
+It also found that generating requests was slow for a reason of its own:
+`Mutation.put` raised and discarded an exception for every number.
 
 ## Not yet measured
 

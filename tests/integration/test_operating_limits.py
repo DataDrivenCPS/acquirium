@@ -34,7 +34,8 @@ def test_sustained_ingest_publishes_every_reading_it_offers(tmp_path):
     subprocess.run(
         [sys.executable, "-m", "examples.operating_limits.sustained", "--output", str(output),
          "--rates", "2000", "4000", "--duration", "2", "--warmup", "0.5", "--streams", "10",
-         "--request-readings", "100", "--senders", "2", "--history", "5000", "--derived"],
+         "--request-readings", "100", "--batch-requests", "2", "--senders", "2",
+         "--history", "5000", "--derived"],
         check=True, capture_output=True, text=True,
     )
     results = json.loads((output / "results.json").read_text())
@@ -46,5 +47,7 @@ def test_sustained_ingest_publishes_every_reading_it_offers(tmp_path):
         assert step["sustained"]
         assert step["readings"] == step["requests"] * 100
         assert 0 < step["latency_ms"]["p50"] <= step["latency_ms"]["max"]
+        # Each call's two requests share a transaction.
+        assert step["requests_per_commit"] >= 2
     assert not list(output.glob("*.duckdb*"))
     assert "| 4,000 |" in (output / "summary.md").read_text()
