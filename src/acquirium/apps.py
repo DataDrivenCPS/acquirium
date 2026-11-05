@@ -488,6 +488,9 @@ class Apps:
                     rdf.add((ref, ACQUIRIUM_REF_NAME, Literal(_json([group, port]))))
                     rdf.add((ref, ACQUIRIUM_VALUE_KIND, Literal(spec.value_kind)))
                     rdf.add((point, RDF.type, VIRTUAL_POINT))
+                    rdf.add((point, RDF.type, S223.Property))
+                    if spec.value_kind == "numeric" and spec.unit and spec.quantity_kind:
+                        rdf.add((point, RDF.type, S223.QuantifiableProperty))
                     rdf.add((point, HAS_EXTERNAL_REFERENCE, ref))
                     rdf.add((point, PRODUCED_BY, Literal(name)))
                     rdf.add((point, OUTPUT_PORT, Literal(port)))
