@@ -130,3 +130,31 @@ def test_a_full_receive_window_is_reported_as_falling_behind(tmp_path, monkeypat
         crash(driver)
         pub.loop_stop()
         pub.disconnect()
+
+
+def test_buffer_overflow_recovers_when_the_server_returns_without_reconnecting(tmp_path, monkeypatch):
+    monkeypatch.setattr(MQTTIngestDriver, "max_buffered_rows", 1)
+    topic, source_id = f"acquirium-test/{uuid.uuid4()}", f"overflow-{uuid.uuid4().hex[:8]}"
+    aq = server(topic, source_id, refuse=True)
+    driver = start(aq, source_id, tmp_path, mqtt_receive_maximum=3)
+    pub = publisher()
+    try:
+        time.sleep(0.5)
+        for value in range(6):
+            pub.publish(topic, f'{{"Value": {value}}}', qos=1).wait_for_publish()
+        eventually(lambda: len(driver._messages) >= 2)
+        reconnects = []
+        for client in driver._clients.values():
+            reconnect = MagicMock(wraps=client.reconnect)
+            monkeypatch.setattr(client, "reconnect", reconnect)
+            reconnects.append(reconnect)
+        accepting = server(topic, source_id, refuse=False)
+        aq.insert_timeseries_arrow.side_effect = accepting.insert_timeseries_arrow.side_effect
+        eventually(lambda: sorted(accepting.stored) == list(range(6)))
+        eventually(lambda: all(window._unacked == 0 for window in driver._windows.values()))
+        for reconnect in reconnects:
+            reconnect.assert_not_called()
+    finally:
+        driver._shutdown()
+        pub.loop_stop()
+        pub.disconnect()

@@ -127,16 +127,21 @@ class Core:
             frame = frame.with_columns(pl.lit("upsert").alias("operation"))
         if "value_kind" not in frame.columns:
             frame = frame.with_columns(pl.lit("numeric").alias("value_kind"))
+        # Splitting deletes from values must not change which mutation wins
+        # when the request addresses the same key more than once.
+        frame = frame.select(
+            "ref_uri", "ts", "operation", "value", "value_kind"
+        ).with_row_index("_row")
         deleted = frame["operation"].eq("delete")
         frame = pl.concat([
             frame.filter(deleted).select(
-                "ref_uri", "ts", "operation",
+                "_row", "ref_uri", "ts", "operation",
                 pl.lit(None, pl.Float64).alias("number"), pl.lit(None, pl.String).alias("text"),
             ),
             split_values(frame.filter(~deleted).select(
-                "ref_uri", "ts", "operation", "value", "value_kind"
+                "_row", "ref_uri", "ts", "operation", "value", "value_kind"
             )),
-        ])
+        ]).sort("_row").drop("_row")
         times = (
             pc.cast(frame["ts"].to_arrow(), pa.timestamp("ns", tz="UTC"), safe=True)
             .cast(pa.int64())

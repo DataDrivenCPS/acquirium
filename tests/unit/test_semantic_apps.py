@@ -100,6 +100,66 @@ def test_semantic_query_native_plan_http_ingestion_and_arrow_read(system):
     assert (manager.data_dir / "escapement.duckdb").exists()
 
 
+@pytest.mark.parametrize("delivery", ["sync_metadata_graph", "publish_queued_metadata"])
+def test_experiment_metadata_delivery_refreshes_app_membership(system, delivery):
+    manager, _, _ = system
+    experiments = manager.experiments
+    study = experiments.define(f"app-membership-{delivery}")
+    variable = experiments.declare(study["template_id"], "level", "output", "timeseries", {})
+    run = experiments.start(study["template_id"], {})["run_id"]
+    name = f"experiment-{delivery}"
+    declaration = App(
+        name,
+        [Selection(
+            f'SELECT ?stream WHERE {{ ?stream <urn:acquirium#sourceId> "experiment/{run}" . }}',
+            group=None,
+        )],
+        {"mean": Output()},
+        {"kind": "mean", "port": "mean", "per_stream": False},
+    )
+    manager.deploy_app(declaration)
+    assert manager.apps.inspect(name)["operators"] == []
+    when = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    experiments.record_batch(run, [{
+        "form": "samples", "variable_id": variable["variable_id"], "samples": [(when, 12.0)],
+    }])
+    getattr(experiments, delivery)()
+    from acquirium.core import time_ns
+
+    output = output_reference(name, name, "mean")
+    assert len(manager.apps.inspect(name)["operators"]) == 1
+    assert manager.core.engine.snapshot().value(output, time_ns(when)) == 12.0
+
+    experiments.finish(run, "succeeded")
+    experiments.delete_runs([run])
+    assert manager.apps.inspect(name)["operators"] == []
+    assert manager.core.engine.snapshot().value(output, time_ns(when)) is None
+    manager.remove_app(name)
+
+
+def test_experiment_metadata_retries_app_refresh_after_delivery(system, monkeypatch):
+    manager, _, _ = system
+    experiments = manager.experiments
+    manager.deploy_app(mean("retry-experiment-app", "urn:never-recorded"))
+    experiments.define("retry-app-refresh")
+    install = manager.apps._install
+    with monkeypatch.context() as patch:
+        def fail_install(*args):
+            raise ValueError("temporary app compilation failure")
+
+        patch.setattr(manager.apps, "_install", fail_install)
+        with pytest.raises(ValueError, match="temporary app compilation failure"):
+            experiments.sync_metadata_graph()
+    # Delivery was already acknowledged, but the next sync still retries apps.
+    with manager.ledger._own_conn() as conn:
+        assert conn.execute("SELECT count(*) FROM experiment_metadata_outbox").fetchone()[0] == 0
+    calls = []
+    monkeypatch.setattr(manager.apps, "_install", lambda declarations: (calls.append(True), install(declarations)))
+    experiments.sync_metadata_graph()
+    assert calls == [True]
+    manager.remove_app("retry-experiment-app")
+
+
 def test_two_apps_retain_each_other_and_form_a_chain(system):
     manager, http, client = system
     ref = register(system, "chain")
