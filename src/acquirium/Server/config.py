@@ -25,17 +25,61 @@ toml file. URLs and ``urn:`` IRIs are passed through unchanged.
 
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import logging
 from collections.abc import MutableMapping
 from hashlib import sha256
 import json
 import os
+import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 _logger = logging.getLogger("acquirium.config")
+
+
+def load_app_target(spec: str, *, base_dir: Path | None = None) -> object:
+    """Load an App or factory from a module/file spec without shadowing modules."""
+    if ":" not in spec:
+        raise ValueError("app spec must be module_or_file:target")
+    module_part, target_name = spec.rsplit(":", 1)
+    file_path = Path(module_part)
+    is_file = "/" in module_part or file_path.suffix == ".py" or file_path.exists()
+    if is_file:
+        # Server entries resolve against their config directory; CLI file
+        # specs use the caller's working directory when no base is supplied.
+        if not file_path.is_absolute():
+            file_path = ((base_dir or Path.cwd()) / file_path).resolve()
+        if not file_path.is_file():
+            raise ValueError(f"app file not found: {module_part}")
+        module_name = file_path.stem
+        if not module_name.isidentifier():
+            raise ValueError(f"app file name must be a Python module name: {file_path.name}")
+        # A file stem must identify this file, without shadowing installed
+        # modules or reusing a same-named file from another directory.
+        importlib.invalidate_caches()
+        try:
+            found = importlib.util.find_spec(module_name)
+        except (ImportError, ValueError):
+            found = False
+        origin = getattr(found, "origin", None)
+        if found is not None and (origin is None or Path(origin).resolve() != file_path):
+            raise ValueError(f"app file {file_path} would import as {module_name!r}, which is already "
+                             f"{origin or 'another module'}; rename the file or install it as a package")
+        module_dir = str(file_path.parent)
+        if module_dir not in sys.path:
+            # Appended, so app directories never shadow installed modules.
+            sys.path.append(module_dir)
+        module = importlib.import_module(module_name)
+    else:
+        module = importlib.import_module(module_part)
+    try:
+        return getattr(module, target_name)
+    except AttributeError as error:
+        raise ValueError(f"app target {target_name!r} was not found in {module.__name__!r}") from error
 
 
 _SERVER_ENV_MAP: dict[str, str] = {

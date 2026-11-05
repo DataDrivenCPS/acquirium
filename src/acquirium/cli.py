@@ -36,6 +36,7 @@ import typer
 
 from acquirium.Server.config import (
     DEFAULT_LOCAL_CONFIG,
+    load_app_target,
     load_config,
     load_local_config,
 )
@@ -341,36 +342,6 @@ def app_inspect(
     typer.echo(json.dumps(result["app"], indent=2))
 
 
-def _load_app_target(spec: str) -> tuple[object, str | None]:
-    """Load ``module:Class`` or ``./file.py:Class``, with its directory.
-
-    The directory is returned so the caller can tell the server where the
-    file lives: the server imports by module name, and a path like
-    ``../app.py`` means nothing once only the name is sent.
-    """
-    if ":" not in spec:
-        raise ValueError("app spec must be module_or_file:ClassName")
-    module_part, target_name = spec.rsplit(":", 1)
-    path = Path(module_part)
-    source_dir: str | None = None
-    if "/" in module_part or path.suffix == ".py" or path.exists():
-        path = path.resolve()
-        if not path.is_file():
-            raise ValueError(f"app file not found: {module_part}")
-        if not path.stem.isidentifier():
-            raise ValueError(f"app file name must be a Python module name: {path.name}")
-        source_dir = str(path.parent)
-        if source_dir not in sys.path:
-            sys.path.insert(0, source_dir)
-        module = importlib.import_module(path.stem)
-    else:
-        module = importlib.import_module(module_part)
-    try:
-        return getattr(module, target_name), source_dir
-    except AttributeError:
-        raise ValueError(f"app {target_name!r} was not found in {module.__name__!r}") from None
-
-
 @app_app.command("deploy")
 def app_deploy(
     spec: str,
@@ -382,7 +353,7 @@ def app_deploy(
     cfg = load_config(config).data
     host, port, ssl, _ = _driver_connect_cfg(cfg.get("driver", {}))
     client = Acquirium(server_url=host, server_port=port, use_ssl=ssl)
-    target, _ = _load_app_target(spec)
+    target = load_app_target(spec)
     declaration = target(client, {}) if callable(target) else target
     if not isinstance(declaration, App):
         raise ValueError("app target must be an App declaration or factory")

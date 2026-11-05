@@ -231,3 +231,6 @@ paper/
 experiments/
 
 tests/text_match_results/
+
+# macOS Finder metadata
+.DS_Store
