@@ -331,6 +331,10 @@ message only once the server has accepted what it carried. A message that
 could not be decoded is acknowledged and dropped. Anything unacknowledged when
 the driver stops or crashes is redelivered when it reconnects, so a message
 may arrive twice; writing the same reading again changes nothing.
+If its observation buffer fills, the driver retains the remaining decoded
+readings of QoS messages and retries them as the buffer drains, without
+requiring a reconnect. These messages continue to occupy receive slots.
+QoS 0 readings that do not fit are dropped.
 
 The driver takes messages off the broker as fast as the server accepts them,
 and the server's inbox, not the broker, holds the backlog while publication

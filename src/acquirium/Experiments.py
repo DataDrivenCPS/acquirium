@@ -112,12 +112,16 @@ ARTIFACT_CHUNK_BYTES = 4 << 20
 
 class ExperimentStore:
     """Transactional recordings and durable handoff to graph-owned metadata."""
-    def __init__(self, store: Any, *, graph_store, resolve=None) -> None:
+    def __init__(self, store: Any, *, graph_store, resolve=None,
+                 metadata_lock=None, on_metadata_published=None) -> None:
         if store.samples is None:
             raise ValueError("an experiment ledger needs a sample store for its time-series samples")
         self.store = store
         self._live_resolve = resolve
-        self.metadata = ExperimentMetadata(store, graph_store, self._resolve)
+        self.metadata = ExperimentMetadata(
+            store, graph_store, self._resolve,
+            lock=metadata_lock, on_publish=on_metadata_published,
+        )
         self.metadata_graph = self.metadata.writer
         # Serialize graph delivery with metadata reads and lifecycle writes.
         # The store's separate writer lock remains available during graph I/O.

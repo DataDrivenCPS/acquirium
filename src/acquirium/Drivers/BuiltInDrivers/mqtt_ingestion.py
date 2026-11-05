@@ -1,10 +1,11 @@
 # acquirium/mqtt_ingestion.py
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from threading import Lock
-from typing import Any
+from typing import Any, Callable
 import ast
 import hashlib
 import json
@@ -56,6 +57,13 @@ class MQTTStreamSpec:
     time_key: str
     value_key: str
     value_kind: str
+
+
+@dataclass
+class _PendingMessage:
+    observations: deque[tuple[str, datetime, Any]]
+    acknowledge: Callable[[], None]
+    qos: int
 
 
 class _Window:
@@ -151,6 +159,11 @@ class MQTTIngestDriver(EventIngestDriver):
         self._topic_specs: dict[str, dict[str, list[MQTTStreamSpec]]] = {}
         self._spec_keys: set[str] = set()
         self._clients_lock = Lock()
+        # QoS messages that do not yet fit in the observation buffer still
+        # occupy broker receive slots, which bound this queue. Keep decoded
+        # times and only the unsent rows when one message feeds many streams.
+        self._messages_lock = Lock()
+        self._messages: deque[_PendingMessage] = deque()
 
         self._sync_subscriptions()
 
@@ -160,6 +173,36 @@ class MQTTIngestDriver(EventIngestDriver):
     def tick(self) -> None:
         self._check_lag()
         super().tick()
+
+    def flush(self) -> dict[str, Any]:
+        with self._messages_lock:
+            self._buffer_messages()
+        result = super().flush()
+        with self._messages_lock:
+            if self._messages:
+                self._added.set()
+        return result
+
+    def _buffer_messages(self) -> None:
+        """Fill the observation buffer, leaving overflow for the next flush.
+
+        Called with ``_messages_lock`` held. A partially buffered message is
+        acknowledged only after its final row has been accepted.
+        """
+        while self._messages:
+            pending = self._messages[0]
+            try:
+                while pending.observations:
+                    name, ts, value = pending.observations[0]
+                    self.add(name, value, ts)
+                    pending.observations.popleft()
+            except DriverBufferFull:
+                if pending.qos:
+                    return
+                logger.warning("mqtt: dropping QoS 0 readings because the driver buffer is full")
+            else:
+                self.when_accepted(pending.acknowledge)
+            self._messages.popleft()
 
     def _check_lag(self) -> None:
         """Warn about each broker whose window stayed full: the broker is
@@ -209,6 +252,9 @@ class MQTTIngestDriver(EventIngestDriver):
             self._windows.clear()
             self._topic_specs.clear()
             self._spec_keys.clear()
+        with self._messages_lock:
+            # QoS messages left here remain unacknowledged on the broker.
+            self._messages.clear()
 
     # ---- subscription management ----
 
@@ -392,30 +438,25 @@ class MQTTIngestDriver(EventIngestDriver):
             if msg.qos:
                 # A QoS 0 message takes no slot.
                 window.received()
+            observations = deque()
             try:
                 logger.debug("mqtt message client=%s topic=%s", client_key, topic)
                 with self._clients_lock:
                     specs = list(self._topic_specs.get(client_key, {}).get(topic, []))
                 for spec in specs:
                     ts, value = self.decode_payload(msg.payload, spec)
-                    # Buffered, then sent in a burst: a busy topic costs one
-                    # round trip per burst rather than one per message.
-                    self.add(spec.ref_name, value, ts)
-            except DriverBufferFull as exc:
-                # Not acknowledged, so the broker redelivers it next session.
-                logger.error(
-                    "mqtt observation rejected: driver buffer is full "
-                    "client=%s topic=%s err=%s",
-                    client_key,
-                    topic,
-                    exc,
-                )
-                return
+                    observations.append((spec.ref_name, ts, value))
             except Exception as exc:
                 logger.warning("mqtt decode failed client=%s topic=%s err=%s", client_key, topic, exc)
-            # Acknowledged, in arrival order, once the server holds what it
-            # carried; a message that carried nothing usable is dropped.
-            self.when_accepted(lambda: acknowledge(client, msg))
+            with self._messages_lock:
+                if not msg.qos and self._messages:
+                    logger.warning("mqtt: dropping QoS 0 readings while waiting for buffer space")
+                    return
+                self._messages.append(_PendingMessage(
+                    observations, lambda: acknowledge(client, msg), msg.qos,
+                ))
+                self._buffer_messages()
+            self._added.set()
         return on_message
 
 

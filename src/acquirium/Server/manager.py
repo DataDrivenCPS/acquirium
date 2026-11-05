@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 import os
 import logging
-from threading import Lock
+from threading import Lock, RLock
 import pyoxigraph as ox
 from time import perf_counter
 from rdflib import Graph, URIRef, Literal, RDF, RDFS
@@ -151,7 +151,13 @@ class Manager:
                 python_max_worker_jobs=python_max_worker_jobs,
                 python_max_worker_age=python_max_worker_age,
             )
-            self.apps = Apps(self.core, graph, base, converter=self._ensure_qudt_converter)
+            # App deployment and experiment metadata delivery share one lock:
+            # delivery may reconcile apps, while deployment may edit metadata.
+            semantic_lock = RLock()
+            self.apps = Apps(
+                self.core, graph, base, converter=self._ensure_qudt_converter,
+                lock=semantic_lock,
+            )
             # Experiment records stay in SQL, beside Escapement: the same
             # PostgreSQL database when Escapement uses one, else DuckDB.
             if experiments_path is None:
@@ -160,6 +166,7 @@ class Manager:
             self.ledger = open_ledger(experiments_path, samples=EscapementSamples(self.core), recreate=recreate)
             self.experiments = ExperimentStore(
                 self.ledger, graph_store=graph, resolve=self._resolve_experiment_metadata,
+                metadata_lock=semantic_lock, on_metadata_published=self._refresh_experiment_apps,
             )
         except BaseException:
             if hasattr(self, "ledger"):
@@ -559,6 +566,13 @@ class Manager:
     # _current_refs() call picks up.
     def recover_apps(self) -> None:
         self.apps.recover()
+
+    def _refresh_experiment_apps(self) -> None:
+        with self.apps.lock:
+            # Delivery without deployed apps must not submit an empty plan:
+            # it would consume capacity reserved for experiment samples.
+            if self.apps.state["apps"]:
+                self.apps.refresh()
 
     def deploy_app(self, app):
         return self.apps.deploy(app)

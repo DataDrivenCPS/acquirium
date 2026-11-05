@@ -221,6 +221,26 @@ def test_duplicate_key_last_wins_and_transport_order_does_not_change_retry(core)
     assert core.engine.snapshot().value("urn:sensor", 1001) == 30
 
 
+@pytest.mark.parametrize("operations, values, expected", [
+    (["upsert", "delete"], [10, None], None),
+    (["delete", "upsert"], [None, 20], 20),
+    (["delete", "upsert", "delete"], [None, 20, None], None),
+    (["upsert", "delete", "upsert"], [10, None, 30], 30),
+    # Rows with no reading remain absent from normalization.
+    (["upsert", "upsert"], [10, None], 10),
+    (["delete", "upsert"], [None, None], None),
+])
+def test_mixed_mutations_keep_the_last_surviving_operation(core, operations, values, expected):
+    core.wait(core.ingest("gateway", "seed", frame([1001], [5])))
+    mixed = frame([1001] * len(values), values).with_columns(pl.Series("operation", operations))
+    receipt = core.ingest("gateway", "mixed", mixed)
+    assert core.wait(receipt).value("urn:sensor", 1001) == expected
+    canonical = frame([1001], [expected]).with_columns(
+        pl.lit("delete" if expected is None else "upsert").alias("operation")
+    )
+    assert core.ingest("gateway", "mixed", canonical) == receipt
+
+
 def test_snapshot_is_captured_before_iterator_is_consumed(core):
     core.wait(core.ingest("gateway", "a", frame([1001], [10])))
     pages = core.batches("urn:sensor")

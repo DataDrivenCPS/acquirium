@@ -226,13 +226,15 @@ class ExperimentMetadata:
 
     Mutations are resolved before enqueueing in the caller's SQL transaction.
     SQL writer locks are never held during graph I/O.
+    ``on_publish`` runs under the delivery lock after synchronization; a
+    callback that reconciles apps must share that lock with app deployment.
     """
     _ID_FIELDS = {
         EXPERIMENT.Study: "study_id", EXPERIMENT.Run: "run_id",
         EXPERIMENT.Variable: "variable_id", EXPERIMENT.StreamAnnotation: "annotation_id",
     }
 
-    def __init__(self, store, graph_store, resolve):
+    def __init__(self, store, graph_store, resolve, *, lock=None, on_publish=None):
         import threading
         required = ("metadata_documents", "metadata_triples", "metadata_update", "sparql_update", "clear_graphs", "flush_metadata", "source_graph_uri")
         missing = [name for name in required if not callable(getattr(graph_store, name, None))]
@@ -240,7 +242,10 @@ class ExperimentMetadata:
             raise TypeError(f"experiment metadata backend lacks capabilities: {', '.join(missing)}")
         self.store = store
         self.writer = ExperimentMetadataGraph(graph_store, resolve)
-        self.lock = graph_store.__dict__.setdefault("_experiment_delivery_lock", threading.RLock())
+        self.lock = graph_store.__dict__.setdefault(
+            "_experiment_delivery_lock", lock if lock is not None else threading.RLock()
+        )
+        self._on_publish = on_publish
         self._generation_checked = False
 
     @staticmethod
@@ -316,6 +321,10 @@ class ExperimentMetadata:
         with self.lock:
             self._publish_pending()
             self._upgrade_declarations()
+            # Retry reconciliation even when an earlier delivery was acknowledged
+            # before app compilation failed. No SQL transaction is open here.
+            if self._on_publish is not None:
+                self._on_publish()
             return {"ok": True, "unpublished": []}
 
     @contextmanager
@@ -336,7 +345,7 @@ class ExperimentMetadata:
         try:
             self.sync()
         except Exception:
-            logging.getLogger(__name__).exception("Experiment graph update deferred; durable outbox retained")
+            logging.getLogger(__name__).exception("Experiment metadata synchronization deferred; retry on the next sync")
 
     def _hydrate(self, requests):
         """Load distinct (kind, ID) requests at one strict freshness boundary."""

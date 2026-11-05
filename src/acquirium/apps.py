@@ -320,9 +320,9 @@ def _definition(app) -> dict[str, Any]:
 
 
 class Apps:
-    def __init__(self, core, graph, directory, *, converter=None):
+    def __init__(self, core, graph, directory, *, converter=None, lock=None):
         self.core, self.graph, self.converter = core, graph, converter
-        self.lock = RLock()
+        self.lock = lock if lock is not None else RLock()
         self.path = Path(directory) / "apps.json"
         self._revision = -1
         self.error = None
