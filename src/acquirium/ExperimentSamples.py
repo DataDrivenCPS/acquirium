@@ -36,8 +36,8 @@ class EscapementSamples:
         if frame is None or frame.is_empty():
             return self.core.engine.status()["accepted"]
         frame = frame.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
-        for offset in range(0, frame.height, MAX_REQUEST_ROWS):
-            receipt = self.core.ingest(source, str(uuid.uuid4()), frame.slice(offset, MAX_REQUEST_ROWS))
+        for chunk in frame.iter_slices(MAX_REQUEST_ROWS):
+            receipt = self.core.ingest(source, str(uuid.uuid4()), chunk)
         return receipt.sequence
 
     def wait(self, sequence: int) -> None:

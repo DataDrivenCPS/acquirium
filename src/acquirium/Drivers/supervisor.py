@@ -116,8 +116,12 @@ class DriverSupervisor:
         if record is None:
             raise KeyError(f"No running driver named '{name}'")
 
-        proc: subprocess.Popen = record["proc"]
-        _signal_stop(proc)
+        _signal_stop(record["proc"])
+        return self._wait_for_exit(record, timeout)
+
+    @staticmethod
+    def _wait_for_exit(record: dict[str, Any], timeout: float) -> dict[str, Any]:
+        name, proc = record["name"], record["proc"]
         try:
             code = proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -149,20 +153,10 @@ class DriverSupervisor:
             _signal_stop(record["proc"])
         deadline = time.monotonic() + timeout
         for record in records:
-            proc: subprocess.Popen = record["proc"]
             try:
-                code = proc.wait(timeout=max(0.0, deadline - time.monotonic()))
-            except subprocess.TimeoutExpired:
-                logger.warning(
-                    "Driver '%s' did not exit within %.1fs; killing it", record["name"], timeout,
-                )
-                proc.kill()
-                proc.wait()
-                continue
-            if code != 0:
-                logger.error("Driver '%s' shutdown failed: exit code %d", record["name"], code)
-            else:
-                logger.info("Stopped driver '%s'", record["name"])
+                self._wait_for_exit(record, max(0.0, deadline - time.monotonic()))
+            except RuntimeError as error:
+                logger.error("%s", error)
 
     def _public_info(self, record: dict[str, Any]) -> dict[str, Any]:
         code = record["proc"].poll()

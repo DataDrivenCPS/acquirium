@@ -21,7 +21,6 @@ import pyoxigraph as ox
 from urllib.parse import quote, unquote
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse, Response
-from dateutil import parser as dtparser
 from pydantic import BaseModel, Field
 from datetime import datetime
 
@@ -1089,13 +1088,6 @@ def delete_timeseries(request: DeleteObservations, wait: float = Query(30, ge=0)
     receipt = app.state.manager.delete_timeseries(request.source_id, request.ref_name,
         request.timestamps, request_id=request.request_id)
     return _receipt(receipt, request.source_id, request.request_id, wait)
-
-
-def _parse_dt(s: Optional[str]) -> Optional[datetime]:
-    if s is None:
-        return None
-    # Accept ISO strings like "2025-12-17T10:30:00Z" or "2025-12-17 10:30:00"
-    return dtparser.isoparse(s)
 
 
 #### TIMESERIES API ENDPOINTS ####

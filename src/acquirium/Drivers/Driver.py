@@ -581,32 +581,25 @@ class IngestDriver(Driver):
 
         # The server rejects requests over MAX_REQUEST_ROWS, so a large frame
         # (e.g. a whole file) goes up as several requests.
-        chunks = []
+        total = 0
         for source, payload, source_request_id in batches:
-            for offset in range(0, len(payload), MAX_REQUEST_ROWS):
+            for index, chunk in enumerate(payload.iter_slices(MAX_REQUEST_ROWS)):
                 chunk_request_id = (
-                    f"{source_request_id}:{offset}"
+                    f"{source_request_id}:{index * MAX_REQUEST_ROWS}"
                     if source_request_id and len(payload) > MAX_REQUEST_ROWS
                     else source_request_id
                 )
                 # A stable ID lets a chunk refused for capacity be resent as-is.
-                chunks.append((source, payload.slice(offset, MAX_REQUEST_ROWS),
-                               chunk_request_id or str(uuid.uuid4())))
-
-        total = 0
-        for source, chunk, chunk_request_id in chunks:
-            # Acceptance is durable, so no request waits for publication: the
-            # engine applies whatever has queued in one epoch, and a full inbox
-            # pushes back with 503.
-            with timed_debug(logger, "%s.aq.insert_timeseries_arrow source=%s rows=%d",
-                             self.__class__.__name__, source, len(chunk)):
-                result = self.aq.insert_timeseries_arrow(
-                    source, chunk.to_arrow(), request_id=chunk_request_id, wait=0,
-                    retry_for=CAPACITY_RETRY_S,
-                )
-            if not result.get("ok", True):
-                raise RuntimeError(f"observation insertion reported failure: {result!r}")
-            total += int(result.get("rows_inserted", len(chunk)))
+                # Acceptance is durable; a full inbox pushes back with 503.
+                with timed_debug(logger, "%s.aq.insert_timeseries_arrow source=%s rows=%d",
+                                 self.__class__.__name__, source, len(chunk)):
+                    result = self.aq.insert_timeseries_arrow(
+                        source, chunk.to_arrow(), request_id=chunk_request_id or str(uuid.uuid4()),
+                        wait=0, retry_for=CAPACITY_RETRY_S,
+                    )
+                if not result.get("ok", True):
+                    raise RuntimeError(f"observation insertion reported failure: {result!r}")
+                total += int(result.get("rows_inserted", len(chunk)))
         return {"ok": True, "rows_inserted": total}
 
     def normalize_observations(self, observations: "pl.DataFrame | None") -> "pl.DataFrame":

@@ -697,17 +697,20 @@ class Apps:
             declarations = dict(self.state["apps"])
             del declarations[name]
             self._install(declarations)
-            active = self.core.engine.snapshot().plan
-            desired = self.state["plan"]
             return {
                 "name": name,
-                "status": "removed"
-                if active and active["id"] == desired["id"]
-                else "pending",
-                "active_plan": (active or {}).get("id"),
-                "desired_plan": desired["id"],
-                "error": self.core.processor.status()["error"],
+                **self._deployment_status(self.core.engine.snapshot().plan, "removed"),
             }
+
+    def _deployment_status(self, plan, current_status):
+        active = (plan or {}).get("id")
+        desired = (self.state.get("plan") or {}).get("id")
+        return {
+            "status": current_status if active and active == desired else "pending",
+            "active_plan": active,
+            "desired_plan": desired,
+            "error": self.error or self.core.processor.status()["error"],
+        }
 
     def inspect(self, name):
         with self.lock:
@@ -723,13 +726,8 @@ class Apps:
                 "name": name,
                 "definition": definition,
                 "operators": operators,
-                "status": "active"
-                if plan and plan["id"] == (self.state.get("plan") or {}).get("id")
-                else "pending",
-                "active_plan": (plan or {}).get("id"),
-                "desired_plan": (self.state.get("plan") or {}).get("id"),
+                **self._deployment_status(plan, "active"),
                 "graph_revision": self.state.get("graph_revision"),
-                "error": self.error or self.core.processor.status()["error"],
                 "matches": report["matches"],
                 "warnings": _warnings(report),
             }

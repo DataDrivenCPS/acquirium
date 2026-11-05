@@ -20,6 +20,8 @@ import requests
 import acquirium as aq
 from acquirium.Drivers.Driver import MAX_REQUEST_ROWS, PollingIngestDriver
 
+pytestmark = pytest.mark.usefixtures("separate_server")
+
 START = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
