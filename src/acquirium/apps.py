@@ -617,8 +617,9 @@ class Apps:
                 except (ExecutionError, PendingError):
                     self.error = None
                     return
-            self.state = state
-            self._save(state)
+            else:
+                self.state = state
+                self._save(state)
             self._revision = revision
             self.error = None
         except BaseException:

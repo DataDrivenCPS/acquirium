@@ -442,7 +442,6 @@ class IngestDriver(Driver):
             self._registered_sources.update(sources)
             self._registered.update(specs)
             self._kinded.update(inferred)
-            self._kinded.update(key for key, meta in specs.items() if "value_kind" in meta)
 
     def add(
         self,

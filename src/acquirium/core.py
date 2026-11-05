@@ -230,7 +230,6 @@ class Core:
         order="asc",
         batch_size=10_000,
         epoch=None,
-        snapshot=None,
         mode="numeric",
     ):
         if mode not in {"numeric", "text", "coalesce"}:
@@ -245,9 +244,7 @@ class Core:
         if lo is not None and hi is not None and lo > hi:
             raise ValueError("start must not exceed end")
         # Capture before returning the iterator: all pages belong to one epoch.
-        if snapshot is not None and epoch is not None:
-            raise ValueError("choose snapshot or epoch")
-        snapshot = snapshot or (self.engine.snapshot() if epoch is None else None)
+        snapshot = self.engine.snapshot() if epoch is None else None
         if epoch is not None and not 0 <= epoch <= self.engine.status()["epoch"]:
             raise ValueError("epoch is not published")
 

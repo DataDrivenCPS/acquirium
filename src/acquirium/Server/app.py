@@ -3,8 +3,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import functools
-import importlib
-import importlib.util
 import inspect
 import io
 import json
@@ -24,7 +22,7 @@ from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel, Field
 from datetime import datetime
 
-from acquirium.Server.config import load_active_config
+from acquirium.Server.config import load_active_config, load_app_target
 from acquirium.Server.manager import Manager
 from acquirium.apps import App, totals_per_app
 from escapement import CapacityError, EngineError, ExecutionError, PendingError
@@ -518,48 +516,6 @@ async def _start_config_drivers(supervisor: DriverSupervisor, cfg: dict) -> None
             log.exception("Config driver %s failed to start", spec)
 
 
-def _load_config_app_target(spec: str, *, base_dir: Path) -> object:
-    """Load a transformation class or registrar from a config ``spec``."""
-    if ":" not in spec:
-        raise ValueError("app spec must be module_or_file:target")
-    module_part, target_name = spec.rsplit(":", 1)
-    file_path = Path(module_part)
-    is_file = "/" in module_part or file_path.suffix == ".py" or file_path.exists()
-    if is_file:
-        # Config files may name a project-local module without packaging it.
-        # Resolve relative paths against the config, never the server's cwd.
-        if not file_path.is_absolute():
-            file_path = (base_dir / file_path).resolve()
-        if not file_path.is_file():
-            raise ValueError(f"app file not found: {module_part}")
-        module_name = file_path.stem
-        if not module_name.isidentifier():
-            raise ValueError(f"app file name must be a Python module name: {file_path.name}")
-        # Deployments re-import the class by module name, so the file stem
-        # must name this file and nothing else: not a loaded or installed
-        # module, and not a same-named file in another directory.
-        importlib.invalidate_caches()
-        try:
-            found = importlib.util.find_spec(module_name)
-        except (ImportError, ValueError):
-            found = False
-        origin = getattr(found, "origin", None)
-        if found is not None and (origin is None or Path(origin).resolve() != file_path):
-            raise ValueError(f"app file {file_path} would import as {module_name!r}, which is already "
-                             f"{origin or 'another module'}; rename the file or install it as a package")
-        module_dir = str(file_path.parent)
-        if module_dir not in sys.path:
-            # Appended, so app directories never shadow installed modules.
-            sys.path.append(module_dir)
-        module = importlib.import_module(module_name)
-    else:
-        module = importlib.import_module(module_part)
-    try:
-        return getattr(module, target_name)
-    except AttributeError as error:
-        raise ValueError(f"app target {target_name!r} was not found in {module.__name__!r}") from error
-
-
 def _deploy_config_apps(cfg: dict) -> None:
     """Deploy the apps declared in ``[[apps]]``."""
     entries = cfg.get("apps", [])
@@ -576,7 +532,7 @@ def _deploy_config_apps(cfg: dict) -> None:
             log.warning("[[apps]] entry missing 'spec'; skipping")
             continue
         try:
-            target = _load_config_app_target(spec, base_dir=base_dir)
+            target = load_app_target(spec, base_dir=base_dir)
             parameters = {key: value for key, value in entry.items() if key not in {"spec", "name"}}
             result = target(aq, parameters) if callable(target) else target
             deployments = [result] if isinstance(result, App) else list(result or [])
