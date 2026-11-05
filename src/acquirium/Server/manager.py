@@ -42,7 +42,6 @@ from acquirium.internals._log import timed_debug
 logger = logging.getLogger("acquirium.manager")
 
 DEFAULT_DATA_DIR = Path(".acquirium")
-DEFAULT_DB_NAME = "acquirium"
 RECREATE_WARNING = (
     "SERVER STARTED WITH recreate=True. Existing Acquirium data will be erased now. "
     "Restarting this server with recreate=True will erase data again."
@@ -618,12 +617,6 @@ class Manager:
         keys = self.resolve_storage_keys(uris)
         info = self.core.info(set(keys.values()))
         return {uri: info[key] for uri, key in keys.items()}
-
-    @staticmethod
-    def _sparql_value(value: Any) -> str | None:
-        if value is None:
-            return None
-        return str(value).strip('"')
 
     def register_datasource(self, source_id: str) -> str:
         """Register a named datasource in the knowledge graph.
