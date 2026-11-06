@@ -1,9 +1,30 @@
 ---
-title: Deploy and inspect native apps
+title: Deploy and inspect apps
 ---
 
-Deploy an `acquirium.App` declaration with `client.deploy_app(declaration)`, or use
-a factory accepting `(client, parameters)`:
+Before changing a running app, preview the deployment:
+
+```python
+preview = client.deploy_app(app, dry_run=True)
+```
+
+The preview reports which groups would be rebuilt and how many input rows they
+would read. Check `warnings` for selections that matched no streams. An empty
+selection is allowed, but often means a stream has not been registered or a query
+is too narrow.
+
+## Deploy and read the state
+
+```python
+result = client.deploy_app(app)
+state = client.inspect_app(app.name)["app"]
+```
+
+Inspect `status`, `error`, and `warnings`. The `operators` list shows the groups,
+inputs, and output references. Updating an existing app keeps the other deployed
+apps and recalculates the history affected by the change.
+
+To use a declaration factory from the command line:
 
 ```sh
 acquirium app deploy examples/transformation/temperature_conversion.py:fahrenheit_to_celsius
@@ -11,24 +32,32 @@ acquirium app list --json
 acquirium app inspect fahrenheit-to-celsius --json
 ```
 
-Before deploying a change, `client.deploy_app(declaration, dry_run=True)` (or
-`acquirium app deploy --dry-run ...`) compiles it against the current graph and
-reports what deploying would do, without publishing metadata or activating a
-plan. For each app, `apps` gives its operators by change (`new`, `redefined`
-for a rebuilt history, `rebound` for new inputs under the same definition, or
-`unchanged`), the groups to re-evaluate, the input rows they read, and the
-output rows cleared and recomputed. `downstream` marks apps that read a changed
-result: they may also repair groups that only running the upstream app reveals.
-`removed` lists retracted rows of apps the deploy drops, `within_limits` checks
-the counted work against the engine's limits, and `matches` and `warnings` are
-those a deploy would report. Apps that select an app listed in
-`metadata_changes` are compiled against its current outputs, so membership
-changes it causes downstream appear only after the real deploy.
+A factory accepts `(client, parameters)` and returns an `App`. Add `--dry-run`
+to preview it.
 
-App inspection reports desired and active plan IDs, compiled operators, graph
-generation, and native errors. Check `client.engine_status()` for backlog and
-paused computation. Repair the artifact/environment, then explicitly call
-`client.retry_engine()` (`POST /engine/retry`). Accepted changes remain durable while paused.
+## Recover from a failed calculation
 
-To remove an app, call `client.remove_app(name)`. Native removal retracts current
-outputs and retains historical versions.
+A failed calculation pauses publication for the server. Accepted writes stay
+pending. Inspect the error before retrying:
+
+```python
+status = client.engine_status()
+```
+
+Restore the required calculation file or fix its environment, then resume:
+
+```python
+client.retry_engine()
+client.wait(receipt, timeout=30)
+```
+
+Here `receipt` is the pending write's receipt. Deploying a replacement does not
+skip failed work, so preserve the files and dependencies that work needs.
+
+## Remove an app
+
+Call `client.remove_app(name)` after removing any apps that select its outputs.
+Removal clears its current results; earlier snapshots retain their history.
+
+The [app reference](../reference/apps.md#deployment) describes the preview fields
+and file-versioning rules.

@@ -1,18 +1,25 @@
-"""A native pointwise function selected through Acquirium's semantic query API."""
+"""Convert each selected Fahrenheit reading to Celsius."""
 from pathlib import Path
-import polars as pl
+
 import acquirium as aq
+from escapement import emit, empty
 
 
 def convert(frame, context):
-    return {"celsius": frame.select("event_time_ns", "sample_key",
-        ((pl.col("value") - 32.0) * 5.0 / 9.0).alias("value"), "quality")}
+    if frame.is_empty():
+        return {"celsius": empty()}
+    fahrenheit = frame["value"][0]
+    return {"celsius": emit(context, (fahrenheit - 32) * 5 / 9)}
 
 
 def fahrenheit_to_celsius(client, parameters):
-    query = client.query().measurement(alias="temperature", unit="http://qudt.org/vocab/unit/DEG_F")
-    return aq.App(name="fahrenheit-to-celsius",
+    query = client.query().measurement(
+        alias="temperature", unit="http://qudt.org/vocab/unit/DEG_F"
+    )
+    return aq.App(
+        name="fahrenheit-to-celsius",
         inputs=[aq.Selection.from_query(query, alias="temperature")],
         outputs={"celsius": aq.Output(unit="http://qudt.org/vocab/unit/DEG_C")},
         function=aq.PythonFunction.from_file(Path(__file__), "convert"),
-        window=aq.Pointwise())
+        window=aq.Pointwise(),
+    )

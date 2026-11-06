@@ -1,56 +1,24 @@
-# Semantic soft sensors
-
-Run the complete example from the repository root:
+# Group temperatures by tank
 
 ```sh
 uv run --locked python -m examples.soft_sensors.run
 ```
 
-It starts a local Acquirium server, registers three probes, and deploys:
+Run from the repository root. The script starts a local server and computes a
+ten-second mean for each tank, finds the hottest tank in the plant, and raises
+an alarm above 27 °C. It then adds a late reading, corrects a value, moves a probe
+between tanks, and deletes a reading.
 
-```text
-tank A probes ──> 10-second mean ──┐
-                                 ├──> hottest tank ──> temperature alarm
-tank B probe ───> 10-second mean ──┘
-```
+Read [metadata.ttl](metadata.ttl) for the tank membership and
+[declarations.py](declarations.py) for the selections. Each output is attached to
+its tank or plant, so the next app finds it through the graph. Moving a probe
+recalculates both tanks' history using its current membership.
 
-Acquirium resolves each tank's probes from RDF. `Output(on_group=True)` attaches
-each derived point to its tank or plant with `s223:hasProperty`; downstream
-selections discover those points using their producing app and group membership.
-No derived stream IDs are hardcoded in the declarations.
+The means weight observations equally. The alarm stores the hottest temperature
+while it is above the limit; no row means clear. Each stage reads one published
+snapshot. Pass `--data-dir /path/to/demo-data` to retain the history.
 
-Read these files in order:
-
-- [metadata.ttl](metadata.ttl): tank/plant topology and probe membership.
-- [declarations.py](declarations.py): registration, semantic selections, windows,
-  output metadata, frozen unit context, and the alarm threshold as an operator parameter.
-- [transforms.py](transforms.py): self-contained pure Python/Polars calculations.
-- [run.py](run.py): ordinary client ingestion, metadata edits, and snapshot reads.
-
-The means weight observations equally, rather than weighting probes equally.
-Input units resolve to frozen conversion factors; calculations convert to Celsius.
-The hottest-tank and alarm functions are pointwise at each upstream bucket start.
-The alarm emits the hottest value above 27 °C; no row means clear for that bucket.
-An empty result retracts a previously raised alarm. This is a numeric example,
-not a notification delivery service or a missing-data detector.
-
-The script shows a late reading, a correction clearing an alarm, a probe moving
-between tanks, and an explicit deletion. Each stage reads one committed epoch.
-Metadata edits repair retained history. Buckets are provisional and immediately
-updated; the example does not wait for wall-clock bucket completion.
-
-`--data-dir /path/to/demo-data` retains data for restart. Each run has new request
-IDs, resets the demo layout, and upserts the same demonstration timestamps.
-
-Escapement owns subprocess execution and scheduling. Each affected operator leases
-a warm Python child process for its timestamp/bucket groups. Processes retain a
-digest-identified module across entrypoints and epochs; independent tank operators
-can use separate replicas within the pool bound. Code is pinned
-by digest, and the default interpreter is the server's interpreter. The example
-uses the repository's locked environment and no adjacent helper modules or model
-files. See the [authoring guide](../../docs/how-to/write-soft-sensors.md) for
-deployment and failure recovery contracts.
-
-This adapts Escapement's `examples/live` to a real Acquirium server, canonical
-registered references, and Acquirium's semantic plan controller. It uses the sole
-Escapement store; there is no second app scheduler or timeseries store.
+For a guided introduction, start with [temperature conversion](../transformation/README.md),
+then [the turbidity alarm](../turbidity/README.md). The
+[Python calculation guide](../../docs/how-to/write-soft-sensors.md) explains how
+to write your own function.

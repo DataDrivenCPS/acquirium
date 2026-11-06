@@ -62,6 +62,7 @@ Tutorials walk through the capabilities of Acquirium. We recommend starting here
 - [Your first driver](tutorials/first-driver.md) — authoring a CSV driver step by step without a plant model
 - [A driver against an existing plant model](tutorials/driver-with-a-plant-model.md) — the same driver with a plant model, binding its streams to the model's points
 - [Your first app](tutorials/first-app.md) — derive a new stream from stored data and watch it stay current
+- [Follow a turbidity alarm](tutorials/turbidity.md) — combine apps and follow a late reading through an alarm
 - [Your first experiment](tutorials/first-experiment.py) — optimize a pump schedule with SciPy, record each scenario, and compare runs
 
 The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acquirium/tree/main/notebooks/watertap) are runnable tutorials too: a quick start, the query interface feature by feature, a regulatory-compliance check and a soft sensor.
@@ -71,10 +72,10 @@ The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acq
 
 ## How-to guides
 
-- [Calculate derived streams](how-to/calculate-derived-streams.md) — water-temperature conversion, averages, and alarms
-- [Write soft sensors](how-to/write-soft-sensors.md) — semantic DAGs, Python subprocesses, and immutable calculation releases
+- [Calculate derived streams](how-to/calculate-derived-streams.md) — built-in averages and thresholds
+- [Write a Python calculation](how-to/write-soft-sensors.md) — supply a function and choose its input window
 - [Consume streaming changes](how-to/consume-streaming-changes.md) — resumable signed changes, epoch completion, and a sustained workload
-- [Profile soft-sensor execution](../examples/profiling/README.md) — native epoch and Python stage measurements, with [initial results](profiling/2026-10-18/README.md)
+- [Profile soft-sensor execution](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/profiling) — native epoch and Python stage measurements, with [initial results](profiling/2026-10-18/README.md)
 - [Check, deploy, and repair an app](how-to/check-deploy-apps.md) — dry runs, deployment, removal, and execution controls
 - [Compare runs with formulas](how-to/compare-experiment-runs.md) — one row per run, formulas in Polars or plain Python
 - [Record experiments](how-to/record-experiments.md) — record inputs and results, find runs by metadata, and annotate stream intervals
@@ -108,7 +109,7 @@ These contain explanation behind the motivation of key design choices we made wh
 - [Values](explanation/values.md) — numeric and text storage, `value_mode`, `cast_value`
 - [Units](explanation/units.md) — point units, storage units, compatibility, automatic and requested conversion
 - [Drivers](explanation/drivers.md) — why drivers, and the sMAP inspiration
-- [Apps](explanation/apps.md) — how apps keep derived streams current as readings arrive and are corrected
+- [How derived streams stay current](explanation/apps.md) — what a correction changes and why
 - [Experiments](explanation/experiments.md) — how Studies, runs, stream intervals, and artifacts preserve analysis context
 - [The data stream lifecycle](explanation/stream-lifecycle.md) — how streams are identified, stored and found again
 - [Text resolution](explanation/text-resolution.md) — how matching works

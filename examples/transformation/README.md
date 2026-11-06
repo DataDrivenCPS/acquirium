@@ -1,17 +1,15 @@
-# Semantic selection with a native Python function
-
-Start a server in a fresh directory with `exact_only=true`, then run:
+# Convert a temperature stream
 
 ```sh
-uv run python examples/transformation/publish.py
+uv run --locked python examples/transformation/publish.py
 ```
 
-The script registers a Fahrenheit stream, deploys the declaration returned by
-`fahrenheit_to_celsius`, inserts observations, and queries derived Celsius data.
-`temperature_conversion.py` contains both the semantic declaration factory and
-the pure Escapement function. Source corrections and deletions repair the same
-output timestamps through native epochs. No separate app process or scheduler
-is required.
+Run from the repository root. The script starts a temporary server, converts
+three Fahrenheit readings to Celsius, then corrects the middle reading. It checks
+that the result changes from `[20, 25, 30]` to `[20, 20, 30]` and shuts down.
 
-The function module must be accessible on the server. When configuring an app at
-startup, use `temperature_conversion.py:fahrenheit_to_celsius` as its factory spec.
+Follow [your first app](../../docs/tutorials/first-app.md) for the walkthrough.
+[temperature_conversion.py](temperature_conversion.py) contains the calculation
+and declaration; [publish.py](publish.py) supplies the data.
+
+Pass `--host 127.0.0.1 --port 8000` to use an existing server with fresh demo data.

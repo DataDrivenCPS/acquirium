@@ -1,238 +1,252 @@
 ---
-title: Native app declarations
+title: App interface
 ---
 
-App names use letters, digits, underscores, dots, and hyphens.
+An `aq.App` declares inputs, named output ports, a function, and a window. App
+names use letters, digits, underscores, dots, and hyphens. See
+[your first app](../tutorials/first-app.md) for a complete example.
 
-An app declares semantic input selections and one versioned Escapement function.
-The engine executes that function over pointwise timestamps, fixed UTC buckets, or
-rolling windows.
+## Input selections
 
-```python
-from pathlib import Path
-import acquirium as aq
+`Selection.from_query(query, alias=..., group=None)` turns a query into an app
+input. `alias` identifies the measurement and becomes its input role. Without a
+`group`, each matched stream gets its own calculation. With an entity alias as
+`group`, all streams for that entity feed one calculation.
 
-query = client.query().measurement(alias="temperature", unit="http://qudt.org/vocab/unit/DEG_F")
-app = aq.App(
-    name="fahrenheit-to-celsius",
-    inputs=[aq.Selection.from_query(query, alias="temperature")],
-    outputs={"celsius": aq.Output(unit="http://qudt.org/vocab/unit/DEG_C")},
-    function=aq.PythonFunction.from_file(Path("temperature_conversion.py"), "convert"),
-    window=aq.Pointwise(),
-)
-client.deploy_app(app)
-```
+The selection stores the query, rather than a fixed list of matches. Acquirium
+resolves it again when the graph changes. Scope queries to the intended points
+or sources; `exclude_app` can exclude an app's own outputs from a broad query.
 
-`Selection.from_query` freezes the query as SPARQL, not its current matches.
-Acquirium reruns it when the graph changes. `alias` names a measurement and becomes
-its function role. An optional `group` names an entity alias: all matching streams
-for that entity feed one operator. Without `group`, each input reference has its
-own operator. Multiple selections can give inputs different roles.
+`Selection(query, stream="stream", group="group", role="input")` accepts SPARQL
+returning the named columns. Here `group=None` combines all selected streams into
+one app-wide group. Returned columns are available as strings in each input
+row's JSON `context`.
 
-`Selection(query=..., stream="stream", group="group", role="temperature")` also
-accepts explicit SPARQL returning the named stream/group columns. `group=None`
-combines selected inputs into one app-wide group. `target_unit` freezes conversion
-factors in each input's context; functions apply these factors explicitly.
-`exclude_app` excludes an app's output references from a broad selection, useful
-when an app's outputs share the input quantity kind.
+`target_unit` adds resolved conversion factors to that row context. The function
+must apply the factors; declaring a target unit does not convert the frame.
 
-`Selection.outputs_of(app, port, role=...)` selects one output port of another
-app. Each upstream group feeds its own operator under the same group; pass
-`combine=True` to feed every upstream group into one operator. Deploying the
-selection fails while the upstream app or port is missing, and removing an
-upstream app fails while a deployed app selects it. Every output point carries `acq:producedBy`,
-`acq:outputPort`, and `acq:outputGroup`, so hand-written SPARQL can select a port
-the same way.
+### Outputs of another app
 
-`parameters` gives per-group operator parameters, on any selection:
+`Selection.outputs_of(app, port, role=..., combine=False)` selects an upstream
+output. By default it preserves the upstream groups. `combine=True` feeds every
+upstream group into one calculation. The upstream app and port must exist before
+deployment, and the upstream app cannot be removed while a deployed app selects it.
+
+Output points also carry `acq:producedBy`, `acq:outputPort`, and `acq:outputGroup`
+for selection through SPARQL.
+
+### Group parameters
+
+A selection's `parameters` maps group IDs to JSON values:
 
 ```python
 aq.Selection.outputs_of(fill, "turbidity", role="filled", parameters={
-    "urn:dpr/uf-unit-out": {"threshold": 0.5},
-    "urn:dpr/conn-baf-4-outlet-junction-to-mb1-valve": {"threshold": 5.0},
+    "urn:bulk/loc-2": {"limit": 0.5},
+    "urn:bulk/loc-3": {"limit": 0.3},
 })
 ```
 
-Values are any JSON values. They become the group operator's
-`parameters`, which the function reads typed as `context["parameters"]`, and
-they are part of its definition: a new value is a new operator version and
-repairs that group's history. Two selections giving one group different values
-for a name fail deployment. Only the listed groups are selected; the app reports
-the groups it skipped as warnings.
+Only the listed groups are selected; skipped groups appear in deployment
+warnings. The function reads the values from `context["parameters"]`. A changed
+parameter recalculates that group's history. Two selections giving the same
+group conflicting values for a parameter fail deployment.
 
-`deploy_app(app, dry_run=True)` reports the operators, groups, and input rows a
-deploy would add, rebuild, or re-evaluate, without changing anything; see
+## Outputs
+
+`Output(unit=None, quantity_kind=None, label=None, on_group=False)` describes a
+numeric output. The port name is the key in the app's `outputs` mapping and in
+the function's return value.
+
+`on_group=True` attaches the output point to its group using `s223:hasProperty`.
+The group must be a URI. Queries can then find the derived measurement through
+the entity it describes, alongside its source measurements.
+
+Output references depend on app name, group, and port. Changing the group's
+membership keeps that identity. Derived source IDs are reserved as
+`derived:<app-name>`. Membership applies to the whole stored history; see
+[how derived streams stay current](../explanation/apps.md).
+
+## Windows
+
+All window sizes and integer timestamps use UTC nanoseconds.
+
+`Pointwise()` supplies readings at one timestamp and emits there. It is the
+default. Asynchronous streams are not automatically forward-filled.
+
+`FixedBucket(width_ns, origin_ns=0)` supplies a half-open bucket and emits at its
+start. Results can change before or after the bucket ends; there is no wait for
+wall-clock completion.
+
+`Rolling(lookback_ns, step_ns, lookahead_ns=0, origin_ns=0)` emits at grid points
+`origin + k * step`. At time `t` it reads `[t - lookback, t + lookahead]`, including
+both endpoints. A correction repairs every window that reads the changed time.
+Empty spans produce no results. Overlapping windows reread their shared history.
+
+Apps do not choose arbitrary output timestamps or run on a wall-clock schedule.
+
+## Built-in functions
+
+`aq.Native.mean(port, per_stream=False)`, `sum`, `min`, `max`, and `count` reduce
+all input rows in each window to one numeric result. An empty window produces
+no row. The default mean weights observations equally.
+
+`aq.Native.threshold(port, above)` passes through a window's single input value
+when it is greater than `above`; otherwise it produces no row. It does not emit
+zeros and ones. These functions execute without a Python calculation file.
+
+Use `aq.Parameter("limit")` in place of a function argument to resolve it from
+each group's parameters, for example:
+
+```python
+function=aq.Native.threshold("alarm", above=aq.Parameter("limit"))
+```
+
+Deployment fails when a group lacks the required parameter. For a complete
+average-and-threshold example, see [calculate derived streams](../how-to/calculate-derived-streams.md).
+
+### Totals and integrals
+
+`aq.Native.cumulative_sum(port, reset=None)` adds each window's sum to the
+previous total. `aq.Native.integral(port, per_ns, reset=None, max_gap_ns=None)`
+integrates one reading per pointwise timestamp. For a flow measured per hour,
+use an hour in nanoseconds as `per_ns` to obtain a volume.
+
+`reset=aq.FixedBucket(width_ns)` restarts a total at each bucket boundary.
+Corrections repair later totals until the results stop changing; a reset bounds
+the repair to the rest of its period. Every repaired window counts toward the
+engine's per-operator group limit, so use resets for long-running totals.
+
+An integral assigns a step across a boundary to the period in which it ends.
+A step longer than `max_gap_ns` adds nothing. Integrals require the default
+`Pointwise()` window and one reading per timestamp. Rolling windows cannot carry
+a total because their windows overlap.
+
+## Python functions
+
+`PythonFunction.from_file(path, entrypoint, batch=False, sequential=False)` pins
+a function's file content. The entrypoint has signature `function(frame, context)`.
+The [authoring guide](../how-to/write-soft-sensors.md) walks through one.
+
+The Polars input frame has `role`, `stream`, `event_time_ns`, `sample_key`,
+`value`, `text`, `quality`, and JSON `context` columns. Each reading has either a
+numeric `value` or `text`. Selected graph columns are strings in the row context.
+
+The function's context describes the calculation. `window_ns` is its output
+timestamp; `window_start_ns` and `window_end_ns` bound the window. `parameters`
+holds the group's parameter values, and `operator` holds its declaration,
+including `operator["window"]`.
+
+Context also lists the declared inputs, including those with no readings. Each
+input's `span_start_ns` and `span_end_ns` describe the part of the window it
+covers, as a half-open span.
+
+Return a mapping with every declared port. Each port's frame has these columns
+in order:
+
+| Column | Type |
+| --- | --- |
+| `event_time_ns` | `Int64` |
+| `sample_key` | `Int64` |
+| `value` | `Float64` |
+| `quality` | `UInt32` |
+
+Use finite values and sample key zero. `escapement.emit(context, value, quality=0)`
+builds a row at the window timestamp; a `None` value produces an empty frame.
+`empty()` also builds an empty frame. An empty result removes the previous
+result for that window. Return the complete result, including unchanged rows.
+
+Functions use only their declared inputs and frozen context. Do not query the
+live graph, fetch undeclared history, or depend on wall-clock time. Results must
+be independent of process lifetime and invocation order; mutable globals are
+not persistent calculation state.
+
+### Batch functions
+
+With `batch=True`, one call receives every affected window. The frame gains a
+`window_ns: Int64` column, and `context["windows"]` lists their contexts,
+including empty windows. A reading shared by overlapping windows appears once
+per window.
+
+```python
+import polars as pl
+from escapement import emit_windows
+
+def bucket_mean(frame, context):
+    means = frame.group_by("window_ns").agg(pl.col("value").mean())
+    return {"mean": emit_windows(means)}
+```
+
+`emit_windows` accepts `window_ns`, `value`, and optional `quality` columns.
+Omitting a window removes its old result. A row at an undeclared window timestamp
+fails the computation. Switching batch mode recalculates the app's history. The
+[bulk-ingest example](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/bulk_ingest) compares both modes.
+
+### Sequential functions
+
+With `sequential=True`, the function runs in time order, once per window.
+`context["previous"]` holds the latest earlier window that wrote outputs: its
+`window_ns`, input `rows`, and `outputs` by port. It is absent for the first
+window. Outputs carry the state, so return every value needed by the next window.
+
+`escapement.previous_value(context, port, default)` reads an earlier output.
+`escapement.same_period(context, width_ns)` helps restart state at period
+boundaries. A repair continues until state and outputs stop changing.
+`batch=True` does not apply to sequential functions. The
+[membrane-monitoring example](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/membrane_monitoring)
+uses this interface for drift detection and parameter estimation.
+
+### As-of inputs
+
+`Selection(..., as_of=max_age_ns)` reads each selected stream's latest reading
+at or before the window timestamp, no older than the maximum age. It retains
+that reading's own `event_time_ns`. `outputs_of` accepts the same argument.
+
+An as-of role creates no windows; other inputs determine when to calculate.
+A correction repairs the windows that read the value, up to its next reading or
+maximum age. All selections of one role must use the same age. Changing it
+recalculates history. As-of inputs require a Python function.
+
+## Deployment
+
+`client.deploy_app(app)` creates or updates an app. `list_apps()` lists them;
+`inspect_app(name)` reports its state and compiled operators. Each deployment
+keeps the other apps and validates the full set, rejecting cycles or outputs
+with conflicting owners.
+
+Deployment and inspection report input `matches` and `warnings`. Zero matches
+are valid, for example before a driver registers its streams.
+
+`deploy_app(app, dry_run=True)` previews work without activating the change.
+Its `apps` entry lists operators as `new`, `redefined`, `rebound`, or `unchanged`,
+along with groups to re-evaluate, input rows read, and output rows replaced.
+`downstream` identifies dependent apps; `removed` lists retractions;
+`within_limits` checks the counted work against engine limits. Apps affected by
+`metadata_changes` use current outputs in the preview, so further membership
+changes can become apparent only after the real deployment.
+
+`client.remove_app(name)` removes an app after its dependants are removed. Its
+current outputs are retracted; historical versions remain. Output ownership
+stays reserved. For operating steps and failure recovery, see
 [deploy and inspect apps](../how-to/check-deploy-apps.md).
 
-`deploy_app` and `inspect_app` report `matches`, the number of streams each input
-role selected, and a `warnings` entry for each role that selected none. An empty
-selection is valid, for example before a driver registers its streams.
+### Deployment files
 
-`Output` declares optional unit, quantity kind, and label. Set `on_group=True`
-to attach its point to the semantic group using `s223:hasProperty`; the group must
-be a URI. Downstream selections and the query DSL can then find measurements
-through the entity they describe. These links live in the app-owned graph.
-Output references are
-stable functions of app name, semantic group, and port; changing membership does
-not rename the group's result. Source IDs for derived references are reserved as
-`derived:<app-name>`.
+Paths name files on the server. Keep each released calculation at an immutable
+path: its digest is verified before execution, so an in-place edit causes a
+mismatch. Keep earlier files available for accepted work and recovery.
 
-Group membership has no history: the current graph decides which streams feed
-each group, for all time. When a graph change moves a stream from one group to
-another, the old group's results are rebuilt without any of that stream's
-readings and the new group's are rebuilt with all of them, as if it had always
-belonged there. A stream that stops matching drops out of every past result the
-same way. Recording that a stream moved at a particular time, and keeping
-its earlier readings with its old group, is not supported yet.
+The worker copies the calculation file into a temporary directory. Helpers
+must be in that file or installed packages; adjacent files and paths relative
+to `__file__` are unavailable. Dependencies use the server's installed Python
+environment. Pin that environment and record interpreter and platform versions
+with the release.
 
-A Python function has the native signature:
+The file digest does not cover installed packages or model assets. Version
+those separately and record their identities in the calculation when they affect
+results. Changing a dependency alone does not trigger history recalculation.
+Drain accepted work before changing a shared environment, preserve earlier
+releases for recovery, and deploy a newly versioned calculation.
 
-```python
-def convert(frame, context):
-    import polars as pl
-    return {"celsius": frame.select(
-        "event_time_ns", "sample_key",
-        ((pl.col("value") - 32) * 5 / 9).alias("value"), "quality",
-    )}
-```
-
-Input columns include `role`, `stream`, `event_time_ns`, `sample_key`, `value`,
-`quality`, and JSON `context` (the selection's SPARQL columns, as strings). The
-function's `context` holds `window_ns` (the window timestamp), `parameters`, and
-`operator`, whose `window` gives the window sizes. `escapement.emit`, `empty` and,
-for batch functions, `emit_windows` build output frames. Each returned port frame must have ordered columns
-`event_time_ns: Int64`, `sample_key: Int64`, `value: Float64`, `quality: UInt32`.
-Use sample key zero. Every port must be returned; an empty frame retracts its
-previous group output. Pointwise results use the input timestamp; fixed-bucket
-results use the bucket start; rolling results use their grid point. Choose
-`aq.FixedBucket(width_ns, origin_ns=0)` for buckets, or
-`aq.Rolling(lookback_ns, step_ns, lookahead_ns=0, origin_ns=0)` for overlapping
-windows: the group at grid point `t = origin + k·step` reads the inclusive span
-`[t - lookback, t + lookahead]`, and a late or corrected reading repairs every
-window that reads it. Functions cannot read live graph/network state or undeclared history.
-
-The module digest pins the function bytes. Deployment paths refer to files
-available on the server; initial local development assumes a shared filesystem.
-Keep versions at immutable paths, preserving files needed by accepted work.
-Imported dependencies are not yet a hermetic artifact bundle. See
-[write soft sensors](../how-to/write-soft-sensors.md) for the environment, model
-artifact, subprocess, and deployment contract, and the
-[complete chain](../../examples/soft_sensors/README.md) for a runnable example.
-
-Simple aggregates need no Python. `aq.Native.mean(port, per_stream=False)`,
-`sum`, `max`, `min` and `count` write one value per window to their single port
-from every input row in the window, and nothing for a window with none.
-`aq.Native.threshold(port, above)` passes a window's single value through while
-it is above `above`. They run in the engine process, without a Python worker.
-An argument can come from each group's parameters:
-
-```python
-aq.App(
-    name="high-tank-temperature",
-    inputs=[aq.Selection(query, parameters={"urn:plant": {"limit": 27.0}})],
-    outputs={"alarm": aq.Output()},
-    function=aq.Native.threshold("alarm", above=aq.Parameter("limit")),
-)
-```
-
-Each group's operator gets the function with its value filled in; deployment
-fails when a group lacks the parameter.
-
-Running totals are native too. `aq.Native.cumulative_sum(port, reset=None)`
-adds each window's sum to the total before it, and
-`aq.Native.integral(port, per_ns, reset=None, max_gap_ns=None)` integrates one
-reading per pointwise window over time, so a flow per hour becomes a volume
-with `per_ns` one hour:
-
-```python
-HOUR = 3_600_000_000_000
-aq.App(
-    name="permeate-volume",
-    inputs=[aq.Selection(flow_query)],
-    outputs={"volume": aq.Output(unit="http://qudt.org/vocab/unit/M3")},
-    function=aq.Native.integral("volume", per_ns=HOUR, reset=aq.FixedBucket(24 * HOUR)),
-)
-```
-
-Each result builds on the one before, in time order, so a late reading or a
-correction repairs every later total it changes; the repair stops where the
-totals stop changing. `reset` restarts the total at each bucket boundary,
-which bounds a repair to the rest of its period. An integral counts a step
-across a boundary in the period it ends in, so period totals add up to the
-whole, and a step longer than `max_gap_ns` adds nothing. `integral` needs the
-default `Pointwise()` window and one reading per timestamp. Rolling windows
-cannot carry a total, since their windows overlap. Every window a repair
-reaches counts toward the engine's per-operator group limit, so give
-long-running totals a reset.
-
-A Python function is sequential with
-`aq.PythonFunction.from_file(path, entrypoint, sequential=True)`: it runs once
-per window in time order, and `context["previous"]` holds the latest earlier
-window that wrote outputs, with its `window_ns`, input `rows` and `outputs` by
-port. Those outputs are its state, so it writes everything it carries forward,
-such as a model's parameters and their variance. `escapement.previous_value`
-reads one:
-
-```python
-from escapement import emit, empty, previous_value
-
-def drift(frame, context):
-    values = frame["value"].drop_nulls()
-    if values.is_empty():
-        return {"cusum": empty()}
-    excess = values.mean() - context["parameters"]["target"]
-    return {"cusum": emit(context, max(0.0, previous_value(context, "cusum", 0.0) + excess))}
-```
-
-`previous` is absent for the first window. A repair stops at the first window
-whose state and outputs are unchanged, as for native totals: a statistic that
-returns to zero bounds its own repairs, while a filter that forgets slowly,
-such as an exponentially weighted mean, repairs every later window.
-`escapement.same_period(context, width_ns)` lets a function restart each
-period. Escapement sends a sequential function's windows to the worker in
-runs and the worker calls the function once per window, so a window costs
-little more than the function's own work; `batch=True` does not apply. The
-[membrane-monitoring example](../../examples/membrane_monitoring/README.md)
-smooths conductivity, detects its drift, and re-estimates membrane
-permeability this way.
-
-A slower stream can be read as of each window instead of within it.
-`aq.Selection(query, role=..., as_of=max_age_ns)`, or
-`aq.Selection.outputs_of(app, port, role=..., as_of=max_age_ns)`, gives the
-function each selected stream's latest reading at or before the window's
-timestamp, no older than `max_age_ns`, at its own `event_time_ns`. This
-applies an hourly or daily fit to every reading:
-
-```python
-aq.App(
-    name="permeate-flux-residual",
-    inputs=[
-        aq.Selection(flux_query, role="flux"),
-        aq.Selection(tmp_query, role="tmp"),
-        aq.Selection.outputs_of(permeability, "permeability", role="permeability",
-                                as_of=2 * HOUR),
-    ],
-    outputs={"expected": aq.Output(), "residual": aq.Output()},
-    function=aq.PythonFunction.from_file(module, "residual"),
-)
-```
-
-An as-of role creates no windows: the windows come from the other inputs, and
-a window with no other rows reads nothing. A correction to the slower stream
-repairs the windows that read it, up to its next reading or its maximum age.
-Past the maximum age a window reads nothing from the role, so a stalled fit
-is not applied indefinitely. Every selection of a role must give the same
-`as_of`, and the age is part of the operator's definition: changing it
-rebuilds the app's history. As-of roles need a Python function.
-
-Use `client.list_apps()`, `client.inspect_app(name)`, or `acquirium app list/inspect`
-to inspect declarations and active operators. `client.remove_app(name)` removes
-operators and retracts their current outputs; historical versions remain in the
-core. Output ownership remains reserved by Escapement. Code changes rebuild the
-operator's retained history. Apps have no custom output timestamps and no
-wall-clock scheduling.
-
-A failed function pauses the entire native epoch queue. Inspect
-`client.engine_status()`, repair the artifact/environment, and explicitly call
-`client.retry_engine()` (`POST /engine/retry`). Accepted work remains durable. Replacing a plan does not
-bypass failed work.
+Complete any work spawned by a function before returning. A failed function
+pauses publication for all apps; changing a plan does not skip the failed work.
+Worker-pool settings and limits are in [server configuration](server-config.md).

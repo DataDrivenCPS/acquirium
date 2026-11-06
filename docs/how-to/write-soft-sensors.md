@@ -1,252 +1,78 @@
 ---
-title: Write and deploy soft sensors
+title: Write a Python calculation
 ---
 
-A soft sensor is an Acquirium declaration plus a pure Escapement function.
-Acquirium resolves semantic inputs, groups, units, and output descriptions.
-Escapement supplies the declared input window, executes Python in child processes,
-and publishes source and derived results in one epoch.
+An app can call your Python function for each input window. The function receives
+a Polars dataframe and returns its result. Start with
+[your first app](../tutorials/first-app.md) if you have not deployed one yet.
 
-Run the [tank-temperature chain](../../examples/soft_sensors/README.md):
-
-```sh
-uv sync --locked --extra mqtt
-uv run --locked python -m examples.soft_sensors.run
-```
-
-It computes ten-second means per tank, the hottest tank per plant, and an alarm.
-It demonstrates late readings, corrections, graph edits, deletion, and snapshots.
-
-## Select inputs and describe outputs
-
-`Selection.from_query(query, alias="temperature", group="tank")` compiles the
-query DSL. `alias` becomes the input role and `group` identifies the entity whose
-streams feed one operator. Explicit SPARQL selections work too:
-
-```python
-import acquirium as aq
-
-selection = aq.Selection(
-    query="""
-        PREFIX s223: <http://data.ashrae.org/standard223#>
-        PREFIX ref: <https://brickschema.org/schema/Brick/ref#>
-        PREFIX acq: <urn:acquirium#>
-        SELECT ?stream ?group WHERE {
-            ?group a <urn:soft-sensors:Tank> ; s223:hasProperty ?point .
-            ?point ref:hasExternalReference ?stream .
-            ?stream acq:sourceId "soft-sensor-probes" .
-        }
-    """,
-    role="temperature",
-)
-output = aq.Output(unit="http://qudt.org/vocab/unit/DEG_C", on_group=True)
-```
-
-`on_group=True` adds `group s223:hasProperty output_point` to the app-owned RDF
-graph. The group must be a URI, and queries about that entity then find the
-output next to its raw measurements. Acquirium registers its canonical output
-reference automatically.
-
-Chain apps with `Selection.outputs_of`, which names the upstream app object and
-port instead of matching strings in SPARQL:
-
-```python
-smoothed = aq.App(
-    name="tank-temperature-smoothed",
-    inputs=[aq.Selection.outputs_of(mean_app, "mean", role="mean")],
-    ...
-)
-```
-
-Each upstream group keeps its own operator; `combine=True` merges them into one
-(for a plant-wide total, say). Deploy fails while the upstream app is missing.
-Check `warnings` in the deploy result for input roles that matched no streams.
-
-Membership changes keep output identities stable. Scope raw-input selections to
-their intended sources or exclude the app's own outputs to avoid cycles.
-
-Input rows carry their resolved role, reference, and frozen semantic context:
-every column the selection's SPARQL returns, as strings. Use `target_unit` to
-freeze conversion factors, then apply them explicitly in the function, as the
-example does. `Selection(parameters={group: {name: value}})` gives each group's
-operator typed values, which the function reads as `context["parameters"]`.
-New parameters or membership activate a new complete plan and repair retained
-history; a stream that moves groups takes its whole history with it (see
-[group membership](../reference/apps.md)). Functions do not query the live graph, obtain
-undeclared history, or use wall-clock time.
-
-## Return the complete result for one window
-
-Write a self-contained module with a function of this form:
+Suppose you want the spread between a minute's highest and lowest turbidity
+readings. Save this in `calculations.py`:
 
 ```python
 from escapement import emit
 
-def bucket_mean(frame, context):
-    return {"mean": emit(context, frame["value"].mean())}
+def spread(frame, context):
+    values = frame["value"].drop_nulls()
+    value = None if values.is_empty() else values.max() - values.min()
+    return {"spread": emit(context, value)}
 ```
 
-Inputs have `role`, `stream`, `event_time_ns`, `sample_key`, `value`, `text`,
-`quality`, and JSON `context` columns. Each row sets exactly one of `value` (a
-number) and `text`. `context["window_ns"]` is the event timestamp, bucket start,
-or rolling grid point in UTC nanoseconds. `context["window_start_ns"]` and
-`context["window_end_ns"]` give the window's extent. `context["parameters"]`
-holds the operator's parameters, and `context["operator"]` its declaration,
-including `context["operator"]["window"]`. Context also lists the declared
-inputs, including inputs with no readings in this window. Each input carries
-`span_start_ns` and `span_end_ns`: the part of the window it covers. An input
-whose span starts or ends inside the window covers only part of it. All extents
-are half-open.
+`emit` stamps the result at the window's timestamp. A `None` value produces no
+row and clears any earlier result for that window. Always return every declared
+output port, including when it has no value.
 
-Return every declared port with the output columns of `escapement.SCHEMA`:
-`event_time_ns: Int64`, `sample_key: Int64`, `value: Float64`, `quality: UInt32`,
-in that order. `emit(context, value, quality=0)` builds the one-row result at the
-window timestamp, or an empty frame when `value` is None; `empty()` is the empty
-frame. Use finite numeric values and sample key zero. An empty frame retracts any previous result for that
-window. Return the complete window result, including unchanged output rows.
-
-`Pointwise()` sees one exact timestamp. It does not forward-fill across
-asynchronous probes; read a slower stream with `Selection(..., as_of=max_age_ns)`
-to give each window its latest reading
-([as-of inputs](../reference/apps.md)). `FixedBucket(width_ns, origin_ns=0)` sees a
-half-open UTC bucket and emits at its start. Late readings revise that bucket and
-dependent outputs immediately. Decide whether aggregates weight observations or
-streams equally; this example weights observations.
-
-`Rolling(lookback_ns, step_ns, lookahead_ns=0, origin_ns=0)` emits on the grid
-`origin + k·step`; the group at `t` sees every reading in `[t - lookback,
-t + lookahead]`, both ends inclusive, so windows overlap. A ten-minute trailing
-mean every minute is `Rolling(lookback_ns=600 * SECOND, step_ns=60 * SECOND)`; a
-correction at noon repairs the windows from 12:00 through 12:10. Grid points with
-no readings in their span produce nothing. Recompute cost grows with
-`lookback / step`, since every repaired window rereads its whole span. Running
-totals and integrals are native sequential functions, and a Python function
-declared with `sequential=True` receives the previous window's outputs as its
-state, for filters and recursive estimators; see
-[the apps reference](../reference/apps.md) and the
-[membrane-monitoring example](../../examples/membrane_monitoring/README.md).
-Clock-driven missing-data detection needs a native core extension.
-
-## Compute every affected window in one call
-
-By default the function runs once per affected window. An app with thousands of
-windows to repair, as after a bulk backfill, spends most of its time on those
-calls. Declare the function with `batch=True` to receive every affected window
-at once:
-
-```python
-import polars as pl
-from escapement import emit_windows
-
-def bucket_mean(frame, context):
-    means = frame.group_by("window_ns").agg(pl.col("value").mean())
-    return {"mean": emit_windows(means)}
-
-function = aq.PythonFunction.from_file(path, "bucket_mean", batch=True)
-```
-
-The frame gains an Int64 `window_ns` column naming each row's window; a row read by
-overlapping rolling windows appears once per window. `context["windows"]` lists
-every affected window's context, including windows with no rows.
-`emit_windows(frame)` turns `window_ns`, `value` and optional `quality` columns
-into the output frame. Return rows for all windows at their window timestamps; a window left out is retracted, and a
-row at any other timestamp fails the epoch. Switching a function to or from
-batch mode is a new definition and rebuilds its history. The
-[bulk-ingest example](../../examples/bulk_ingest/README.md) runs the same six apps
-both ways.
-
-## Deploy reproducible calculation versions
+Select a registered point and connect the function to a one-minute window:
 
 ```python
 from pathlib import Path
 import acquirium as aq
 
-app = aq.App(
-    name="tank-mean",
-    inputs=[selection],
-    outputs={"mean": output},
-    function=aq.PythonFunction.from_file(Path("/srv/sensors/v1/calculate.py"), "bucket_mean"),
-    window=aq.FixedBucket(10_000_000_000),
+query = client.query().measurement(
+    alias="turbidity", uri="urn:bulk/loc-2-turbidity"
 )
-state = client.deploy_app(app)["app"]
-if state["status"] != "active" or state["error"]:
-    raise RuntimeError(state)
+app = aq.App(
+    name="turbidity-spread",
+    inputs=[aq.Selection.from_query(query, alias="turbidity")],
+    outputs={"spread": aq.Output(unit="http://qudt.org/vocab/unit/NTU")},
+    function=aq.PythonFunction.from_file(Path("calculations.py"), "spread"),
+    window=aq.FixedBucket(60_000_000_000),
+)
+client.deploy_app(app)
 ```
 
-Paths refer to the server's filesystem. The supported contract today is a
-self-contained calculation file plus the server's installed Python environment:
+Use your own point URI, or the Filter 3 point from the
+[turbidity demo](../tutorials/turbidity.md). The calculation file must be available
+on the server, with its dependencies installed in the server's Python environment.
+Keep helpers in the same file: neighbouring files are not copied to the worker.
 
-1. Install the locked server environment with `uv sync --locked`. Pin additional
-   calculation packages in that environment's manifest and lockfile. Keep the
-   lockfile, interpreter/platform information, and function digest with the
-   release. The default worker interpreter is the server's interpreter.
-2. Copy calculations to a new immutable version directory on the server.
-   `PythonFunction.from_file` records the digest; the executor verifies it before
-   invocation. Editing that file in place causes a digest mismatch.
-3. Keep helpers in the pinned file, or install them as versioned, locked packages.
-   Workers copy calculations into a temporary directory; adjacent modules and
-   paths relative to `__file__` are unavailable.
-4. Freeze small model coefficients in the calculation or selected input context.
-   Larger assets must come from an immutable installed package in the locked
-   environment. Model files, imported helpers, and dependencies are **not** covered
-   by the calculation file's digest.
-5. Record dependency/model identities in the pinned calculation (for example as
-   release digest constants) when those assets affect results. Changing only an
-   installed package does not change the function digest or trigger a rebuild.
-   Drain accepted work before changing the shared environment, deploy new
-   calculations at new paths, and check active/pending state. Keep previous code
-   and environment releases available for recovery. New versions repair history;
-   deployment is not a hot module reload.
+## Choose what the function sees
 
-This is a release discipline, not a hermetic bundle or per-app environment API.
-Separate environments and content-addressed code/model bundles belong in
-Escapement when required. Immutable models and transparent caches can stay loaded
-in a worker. Results must remain independent of invocation order, replica choice,
-and process lifetime. Stateful algorithms require a future explicit checkpoint
-and replay contract; arbitrary mutable Python globals do not supply one.
-Complete any work spawned by an invocation before returning; only immutable
-models and transparent caches persist between calls.
-
-## Execution, failure, and publication
-
-The native executor leases a persistent Python process for each affected
-operator's groups. It imports a digest-identified module once and reuses it across
-entrypoints and epochs. Independent operators can use separate replicas, up to
-the native concurrency and resident-process bounds. Each process serves one job
-at a time; its job's groups run serially. Rows travel over Arrow files and finite
-context over JSON. Escapement owns execution and scheduling.
-
-By default, Acquirium allows two concurrent operators and two resident Python
-processes. Configure `python_pool_size`, `python_max_worker_jobs`, and
-`python_max_worker_age` in [server configuration](../reference/server-config.md).
-Workers grow on demand and recycle between jobs. Native timeouts/output bounds
-still apply. The current pool does not scale adaptively or split one operator's
-groups among replicas. Inspect `client.engine_status()["python_workers"]` for
-launch/reuse, recycling/failure, and resident/idle/active counters.
-`client.engine_status()["apps"]` totals each app's work since the server started:
-groups evaluated, input rows handed to its function, changed output rows, and
-compute milliseconds. A rolling app's input rows per changed row shows how much
-history each repair rereads. The [bulk-ingest example](../../examples/bulk_ingest/README.md)
-measures a chain under a CSV backfill.
-
-A worker failure publishes none of its epoch, including source changes, and
-pauses the queue. Failed epochs discard cached processes, so retry starts fresh.
-The mutation remains accepted. Inspect the failure, restore the
-pinned artifact or repair the installed dependency, then resume:
+`Pointwise()` supplies the readings at one timestamp. `FixedBucket(width_ns)`
+supplies one bucket, such as the minute above. For a trailing ten-minute spread
+every minute, change the window to:
 
 ```python
-status = client.engine_status()
-client.retry_engine()
-published = client.wait(receipt, timeout=30)
+window=aq.Rolling(lookback_ns=600_000_000_000, step_ns=60_000_000_000)
 ```
 
-Retry resumes the same accepted prefix. Redeliveries reuse their original
-source/request ID and payload. A new replacement plan cannot bypass failed work.
-Capture one published epoch for related range reads and pass `epoch=`; DataObject
-also pins its multi-stream fetch. Restart reconciles declarations and resumes
-accepted work.
+The function stays the same. A correction now revises every window that reads
+that timestamp. A longer lookback means more history to read for each result.
 
-Send emails or webhooks from a consumer of committed changes, outside the
-calculation. Historical repair may retract or replace an alarm and function
-evaluation can run again. Such consumers need a durable cursor and delivery
-policy; the numeric example makes no external notification calls.
+Keep the calculation dependent on the supplied frame and context. Read parameters
+from `context["parameters"]`; avoid reading live files, calling services, or using
+the current time, since the function may run again to repair old results.
+
+## Update the calculation
+
+`PythonFunction.from_file` records the file's content digest. Put a changed
+calculation at a new path, construct the app with that path, and deploy it again.
+The new function recalculates the app's stored history.
+
+Keep old files available while accepted work may still need them. The digest
+covers the calculation file; packages and model assets need their own versioning.
+See the [deployment contract](../reference/apps.md#deployment-files) for that case.
+
+Use [deploy and inspect apps](check-deploy-apps.md) to preview a change or recover
+from a failed function. The [function reference](../reference/apps.md#python-functions)
+has the frame schema and optional batch and sequential modes.

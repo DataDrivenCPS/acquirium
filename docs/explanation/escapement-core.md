@@ -79,11 +79,11 @@ and data change.
 exclusive cursor, the published epoch it was cut at, and the last complete
 epoch. A consumer commits its sink updates together with its cursor, buffering
 any epoch split across pages. The
-[streaming workload](../../examples/streaming/README.md) shows durable delivery,
+[streaming workload](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/streaming) shows durable delivery,
 asynchronous publication, complete-epoch consumption and restart.
 
 ## Limits
 
 Escapement keeps current values in memory and never prunes history; there is no
-retention policy yet. Retention, larger histories and stateful operators belong
-in Escapement, not in a second Acquirium store or scheduler.
+retention policy yet. Retention and support for larger histories belong in
+Escapement.

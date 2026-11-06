@@ -11,13 +11,16 @@ chapters:
   - file: tutorials/first-driver.md
   - file: tutorials/driver-with-a-plant-model.md
   - file: tutorials/first-app.md
+  - file: tutorials/turbidity.md
 - file: how-to/_index.md
   sections:
   - file: how-to/load-a-plant-model.md
   - file: how-to/explore-a-model.md
   - file: how-to/debug-an-empty-query.md
   - file: how-to/calculate-derived-streams.md
+  - file: how-to/write-soft-sensors.md
   - file: how-to/check-deploy-apps.md
+  - file: how-to/consume-streaming-changes.md
   - file: how-to/write-data.md
   - file: how-to/attach-metadata.md
   - file: how-to/record-a-whole-model.md
@@ -46,6 +49,6 @@ chapters:
   - file: explanation/stream-lifecycle.md
   - file: explanation/experiments.md
   - file: explanation/text-resolution.md
-  - file: explanation/materialization-internals.md
+  - file: explanation/escapement-core.md
   - file: explanation/server-internals.md
   - file: explanation/graph-backend.md
