@@ -238,6 +238,111 @@ ValueError: convert_to: no convertible unit pair for
 '.../KiloGM-PER-SEC' -> 'celsius'
 ```
 
+## Resampling and aligning
+
+Streams rarely share timestamps. `resample()` and `align()` put the values of
+a data object on a time grid; both are lazy and return a new data object.
+
+`resample(every, agg)` reduces each stream to one value per `every`-wide
+bucket. A bucket starts at `origin + k * every` (the UNIX epoch by default),
+so two streams bucketed the same way share their bucket times. `agg` is one
+of `mean`, `min`, `max`, `sum`, `count`, `first`, `last` or `median`.
+
+```python
+d = (acq.query().entity(uri="wbs:RO", alias="ro")
+     .measurement(alias="flow", quantity_kind="mass flow rate")
+     .measurement(frm="ro", alias="pressure", quantity_kind="pressure").data())
+
+hourly = d.resample("1h", agg="mean")
+hourly
+```
+```text
+DataObject(lazy, 2 streams, aliases=['flow', 'pressure'], entities=['ro'], resampled every=1h agg=mean)
+```
+
+Nothing has been fetched yet. On the first call that needs values the server
+buckets and reduces the rows in the database (`time_bucket` plus the
+aggregate, on both backends), and only the buckets come back.
+
+```python
+hourly.dataframe()
+```
+```text
+┌─────────────────────────┬───────────┬──────────┐
+│ time                    ┆ flow      ┆ pressure │
+╞═════════════════════════╪═══════════╪══════════╡
+│ 2026-08-05 16:00:00 UTC ┆ 10.671334 ┆ null     │
+│ 2026-08-05 17:00:00 UTC ┆ 10.670891 ┆ 55.02    │
+│ 2026-08-05 18:00:00 UTC ┆ 10.669907 ┆ 55.07    │
+└─────────────────────────┴───────────┴──────────┘
+```
+
+Only numeric values are bucketed, and a bucket with no reading is left out,
+so a stream sparser than `every` keeps its gaps (the `null` above). The
+`start`/`end` given to `data()` bound the readings, so a bucket straddling a
+bound is reduced from the readings inside it; `limit` keeps that many
+buckets per stream. On a data object that already holds its rows, the same
+reduction runs in polars with the same result.
+
+`every` is a `timedelta`, a number of seconds, or a string such as `"500ms"`,
+`"10s"`, `"5m"`, `"1h"`, `"1d"` or `"1w"`. Months and years are not accepted,
+since their length varies.
+
+A bucket is named by its start, as in SQL and pandas: `[t, t + every)` is
+labelled `t`. Pass `label="center"` to name `[t - every/2, t + every/2)` by
+`t` instead, so that each value estimates the signal at its own time. Pass
+`origin=` to anchor the grid somewhere other than the epoch.
+
+`align(every, agg, fill)` does the same reduction and then gives every stream
+every bucket from the earliest to the latest bucket of the object. `fill`
+says what an empty bucket gets: `None` (default) leaves it null, `"ffill"`
+carries the stream's previous value forward, `"interpolate"` interpolates
+linearly in time between the stream's neighbouring values, and a number fills
+with that constant. The grid and the fill are computed on the reduced rows,
+which are few.
+
+```python
+grid = d.align("10s", fill="interpolate")
+grid.dataframe()
+```
+```text
+┌─────────────────────────┬───────────┬──────────┐
+│ time                    ┆ flow      ┆ pressure │
+╞═════════════════════════╪═══════════╪══════════╡
+│ 2026-08-05 16:28:30 UTC ┆ 10.671334 ┆ 55.01    │
+│ 2026-08-05 16:28:40 UTC ┆ 10.671290 ┆ 55.015   │
+│ 2026-08-05 16:28:50 UTC ┆ 10.671102 ┆ 55.02    │
+└─────────────────────────┴───────────┴──────────┘
+```
+
+`grid["flow"]` and `grid["pressure"]` now have the same `time` column, so the
+frames can be subtracted or correlated directly. Note that interpolation does
+not extrapolate: buckets before a stream's first value or after its last stay
+null.
+
+Without `every`, `align()` infers the step from the stream statistics: the
+average spacing of the stream with the closest readings, rounded to the
+nearest conventional step (1, 2, 5, 10, 15, 30 seconds, minutes, hours, days
+or a week). This costs one statistics request and fetches no rows.
+
+```python
+d.align().resampling
+```
+```text
+Resampling(every=datetime.timedelta(seconds=10), agg='mean', origin=..., label='left', align=True, fill=None)
+```
+
+Be aware that:
+
+- `convert_to()` composes with both in either order; the conversion applies
+  to the reduced values. `count` has no unit and is never converted. `sum`
+  converts exactly only for scale conversions (no offset).
+- A resampled object cannot be resampled again. Call `resample()` or
+  `align()` on the object `data()` returned, a second pass would reduce the
+  reduced values.
+- `latest()` on a resampled object returns the newest bucket.
+- `by()` sub-objects keep the bucketing of their parent.
+
 ## Taking the result apart
 
 **TODO:** This is quite ugly, think of a better way:

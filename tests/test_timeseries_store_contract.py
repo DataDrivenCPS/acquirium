@@ -284,3 +284,67 @@ def test_replacement_normalizes_timestamps_and_preserves_fallback(contract_store
     before = _snapshot(store)[0]
     assert store.replace_rows(ref + ':unwritten', []) == 0
     assert _snapshot(store)[0] == before + 1
+
+
+def _buckets(store: TimeseriesStore, ref_uri: str, **kwargs):
+    return [
+        (ts, value)
+        for batch in store.timeseries_resampled(ref_uri, **kwargs)
+        for ts, value in zip(batch.column("ts").to_pylist(), batch.column("value").to_pylist())
+    ]
+
+
+def test_timeseries_resampled_contract(contract_store, contract_uri_prefix):
+    store = contract_store
+    ref_uri = f"{contract_uri_prefix}:resampled"
+    store.ensure_stream_ref(None, contract_uri_prefix, "resampled", ref_uri=ref_uri, value_kind="numeric")
+    t0 = _utc(2026, 1, 1)
+    sec = lambda s: t0 + timedelta(seconds=s)
+    store.upsert_rows(
+        ref_uri,
+        [(sec(3), 1.0), (sec(7), 2.0), (sec(12), 4.0), (sec(31), 8.0), (sec(15), "ON")],
+        value_kind="numeric",
+    )
+    every = timedelta(seconds=10)
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+    batches = list(store.timeseries_resampled(ref_uri, every=every, agg="mean", origin=epoch))
+    assert batches[0].schema.names == ["ts", "value", "uri"]
+    assert str(batches[0].schema.field("ts").type) == "timestamp[us, tz=UTC]"
+    assert batches[0].column("uri").to_pylist() == [ref_uri] * batches[0].num_rows
+
+    # buckets start at origin + k * every and are labelled by their start;
+    # the text reading at 15 s never counts and the empty 20 s bucket is left out
+    expected = {
+        "mean": [1.5, 4.0, 8.0], "min": [1.0, 4.0, 8.0], "max": [2.0, 4.0, 8.0], "sum": [3.0, 4.0, 8.0],
+        "count": [2, 1, 1], "first": [1.0, 4.0, 8.0], "last": [2.0, 4.0, 8.0], "median": [1.5, 4.0, 8.0],
+    }
+    for agg, values in expected.items():
+        got = _buckets(store, ref_uri, every=every, agg=agg, origin=epoch)
+        assert [ts for ts, _ in got] == [sec(0), sec(10), sec(30)], agg
+        assert [v for _, v in got] == values, agg
+    count_batch = next(iter(store.timeseries_resampled(ref_uri, every=every, agg="count", origin=epoch)))
+    assert str(count_batch.schema.field("value").type) == "int64"
+    assert _buckets(store, ref_uri, every=every, agg="avg", origin=epoch) == _buckets(
+        store, ref_uri, every=every, agg="mean", origin=epoch
+    )
+
+    # order and limit apply to the buckets, the window to the readings
+    assert _buckets(store, ref_uri, every=every, agg="mean", origin=epoch, order="desc", limit=1) == [(sec(30), 8.0)]
+    assert _buckets(store, ref_uri, every=every, agg="mean", origin=epoch, start=sec(5), end=sec(20)) == [
+        (sec(0), 2.0), (sec(10), 4.0),
+    ]
+    # the origin shifts the grid
+    assert [ts for ts, _ in _buckets(store, ref_uri, every=every, agg="mean", origin=epoch + timedelta(seconds=5))] == [
+        sec(-5), sec(5), sec(25),
+    ]
+    # a width that does not divide the day is anchored at the epoch, not at
+    # the backend's own default origin
+    seven = timedelta(seconds=7)
+    assert _buckets(store, ref_uri, every=seven, agg="count", origin=epoch)[0][0] == epoch + ((sec(3) - epoch) // seven) * seven
+
+    assert list(store.timeseries_resampled(f"{contract_uri_prefix}:missing", every=every, agg="mean", origin=epoch)) == []
+    with pytest.raises(ValueError):
+        list(store.timeseries_resampled(ref_uri, every=every, agg="mode", origin=epoch))
+    with pytest.raises(ValueError):
+        list(store.timeseries_resampled(ref_uri, every=timedelta(0), agg="mean", origin=epoch))

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterator, Sequence, TYPE_CHECKING
 import polars as pl
 import warnings
 
 from acquirium.Client.streams import Stream
+from acquirium.internals.resampling import (
+    AGGREGATES, EPOCH, as_utc, describe_every, nice_every, normalize_agg, normalize_label,
+    parse_every,
+)
 
 if TYPE_CHECKING:
     from acquirium.Client.explore.core import Query
@@ -302,7 +306,9 @@ def _with_mapped_column(tall: pl.DataFrame, keys: list[str], fn, name: str) -> p
 
 def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
     parts: list[pl.DataFrame] = []
-    numeric_rows = tall.filter(pl.col("value_numeric").is_not_null())
+    # A row with no text value is a numeric row; one with no value at all (an
+    # empty bucket of an aligned object) keeps its time as a null cell.
+    numeric_rows = tall.filter(pl.col("value_text").is_null())
     if not numeric_rows.is_empty():
         parts.append(
             numeric_rows.pivot(
@@ -334,6 +340,115 @@ def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
     # deterministic column order: time first, then case-insensitive alphabetical
     value_cols = sorted((c for c in wide.columns if c != "time"), key=str.casefold)
     return wide.select(["time", *value_cols]).sort("time")
+
+
+
+@dataclass(frozen=True)
+class Resampling:
+    """How a ``DataObject``'s values are bucketed; see :meth:`DataObject.resample`.
+
+    A bucket starts at ``origin + k * every`` and is reduced with ``agg``.
+    ``label="left"`` names the bucket ``[t, t + every)`` by ``t``;
+    ``"center"`` names ``[t - every/2, t + every/2)`` by ``t``. With
+    ``align`` every stream is given every bucket of the shared grid and its
+    gaps are filled per ``fill``.
+    """
+    every: timedelta
+    agg: str
+    origin: datetime
+    label: str = "left"
+    align: bool = False
+    fill: "str | float | None" = None
+
+    @property
+    def grid_origin(self) -> datetime:
+        """The left edge of the bucket labelled ``origin``: what the store
+        buckets against. A centred bucket starts half a step early."""
+        return self.origin - self.every / 2 if self.label == "center" else self.origin
+
+    @property
+    def label_shift(self) -> timedelta:
+        """What to add to a store bucket's start to get its label."""
+        return self.every / 2 if self.label == "center" else timedelta(0)
+
+    def describe(self) -> str:
+        text = f"{'aligned' if self.align else 'resampled'} every={describe_every(self.every)} agg={self.agg}"
+        if self.align:
+            text += f" fill={self.fill!r}"
+        return text
+
+
+_MICROSECOND = timedelta(microseconds=1)
+
+
+def _resample_agg_expr(agg: str) -> pl.Expr:
+    """The polars reduction of a bucket's ``value_numeric`` rows, matching the
+    store's SQL for the same name (rows must be in time order for
+    ``first``/``last``)."""
+    col = pl.col("value_numeric")
+    if agg == "mean":
+        return col.mean()
+    if agg == "min":
+        return col.min()
+    if agg == "max":
+        return col.max()
+    if agg == "sum":
+        return col.sum()
+    if agg == "count":
+        return col.count().cast(pl.Float64)
+    if agg == "first":
+        return col.first()
+    if agg == "last":
+        return col.last()
+    if agg == "median":
+        return col.median()
+    raise ValueError(f"agg: unknown aggregate {agg!r}; choose from {list(AGGREGATES)}")
+
+
+def _resample_tall(tall: pl.DataFrame, spec: Resampling, key_cols: list[str]) -> pl.DataFrame:
+    """Bucket an already-fetched tall frame as the store would: one row per
+    ``key_cols`` group and bucket, reduced with ``spec.agg`` over the numeric
+    rows, empty buckets left out, ``value_text`` null."""
+    if tall.is_empty():
+        return tall
+    every_us = spec.every // _MICROSECOND
+    shift_us = spec.label_shift // _MICROSECOND
+    since = (pl.col("time") - pl.lit(spec.grid_origin)).dt.total_microseconds()
+    bucket = pl.lit(spec.grid_origin) + pl.duration(microseconds=(since // every_us) * every_us + shift_us)
+    return (
+        tall.filter(pl.col("value_numeric").is_not_null())
+        .sort("time", maintain_order=True)
+        .with_columns(bucket.alias("time"))
+        .group_by([*key_cols, "time"], maintain_order=True)
+        .agg(_resample_agg_expr(spec.agg).alias("value_numeric"))
+        .with_columns(pl.lit(None, dtype=pl.Utf8).alias("value_text"))
+        .select(tall.columns)
+    )
+
+
+def _align_tall(tall: pl.DataFrame, spec: Resampling, key_cols: list[str]) -> pl.DataFrame:
+    """Give every ``key_cols`` group of a bucketed frame every bucket from
+    the earliest to the latest in the frame, then fill the empty ones per
+    ``spec.fill``. The group order of ``tall`` is kept, so first-wins
+    choices downstream are unchanged."""
+    if tall.is_empty():
+        return tall
+    every_us = spec.every // _MICROSECOND
+    t_min, t_max = tall["time"].min(), tall["time"].max()
+    n = (t_max - t_min) // spec.every + 1
+    grid = pl.DataFrame({"time": [t_min + i * spec.every for i in range(n)]},
+                        schema={"time": tall.schema["time"]})
+    keys = tall.select(key_cols).unique(maintain_order=True)
+    full = keys.join(grid, how="cross")
+    out = full.join(tall, on=[*key_cols, "time"], how="left")
+    value = pl.col("value_numeric")
+    if spec.fill == "ffill":
+        value = value.forward_fill().over(key_cols)
+    elif spec.fill == "interpolate":
+        value = value.interpolate_by("time").over(key_cols)
+    elif spec.fill is not None:
+        value = value.fill_null(float(spec.fill))
+    return out.with_columns(value).select(tall.columns)
 
 
 @dataclass(frozen=True)
@@ -458,6 +573,11 @@ class DataObject:
     _pending_conversions: list[tuple[tuple[str, str, str], str, str]] = field(
         default_factory=list, repr=False
     )
+
+    # Set by resample() / align(): how the values are bucketed. A lazy
+    # object fetches the buckets from the server; a fetched one computed
+    # them from its rows.
+    _resampling: Resampling | None = field(default=None, repr=False)
 
     # ------------------------------------------------------------------
     # Construction
@@ -642,12 +762,18 @@ class DataObject:
         3.2), else None; overlaid with any conversion recorded for this
         binding by ``convert_to()`` that has not been applied yet.
         """
+        if self._resampling is not None and self._resampling.agg == "count":
+            return None
         unit = b.property_unit or b.ref_unit
         key = self._key(b)
         for k, _, to_unit in self._pending_conversions:
             if k == key:
                 unit = to_unit
         return unit
+
+    def _key_columns(self) -> list[str]:
+        """The columns that identify one binding's rows in the tall frame."""
+        return ["data_alias", "point_uri", "ref_uri", *self._entity_columns]
 
     def _empty_tall(self) -> pl.DataFrame:
         """A zero-row tall frame in the same column order as a fetched one."""
@@ -699,8 +825,11 @@ class DataObject:
         # binding per node; they share the fetched frame and differ only in
         # alias, point, unit and entity columns below.
         fetched: dict[str, pl.DataFrame] = {}
+        spec = self._resampling
         for binding in bindings:
-            if binding.ref_uri not in fetched:
+            if binding.ref_uri in fetched:
+                continue
+            if spec is None:
                 fetched[binding.ref_uri] = self._client.timeseries_df(
                     binding.ref_uri,
                     start=start,
@@ -709,6 +838,27 @@ class DataObject:
                     order=order,
                     value_mode=value_mode,
                 )
+                continue
+            # The store buckets and reduces; only the label shift of a
+            # centred bucket is applied here.
+            df = self._client.timeseries_resampled_df(
+                binding.ref_uri,
+                every=spec.every,
+                agg=spec.agg,
+                origin=spec.grid_origin,
+                start=start,
+                end=end,
+                limit=limit,
+                order=order,
+            )
+            if spec.label_shift and not df.is_empty():
+                df = df.with_columns(
+                    (pl.col("ts") + pl.duration(microseconds=spec.label_shift // _MICROSECOND)).alias("ts")
+                )
+            fetched[binding.ref_uri] = df
+
+        # A count has no unit, so no conversion applies to it.
+        convertible = spec is None or spec.agg != "count"
 
         frames: list[pl.DataFrame] = []
         for binding in bindings:
@@ -729,7 +879,7 @@ class DataObject:
             # reference's unit; the point's annotation is the unit of record.
             # Conversions requested with convert_to() are applied afterwards.
             target_unit = binding.property_unit
-            if binding.ref_unit and target_unit and binding.ref_unit != target_unit:
+            if convertible and binding.ref_unit and target_unit and binding.ref_unit != target_unit:
                 # The user did not ask for this conversion, so a failure is a
                 # warning they can see; the raw values are returned as stored.
                 try:
@@ -776,7 +926,7 @@ class DataObject:
         # Apply the conversions convert_to() recorded on a lazy object. The
         # user asked for these, so a failure is an error, not a frame in
         # the wrong unit.
-        for key, from_unit, to_unit in self._pending_conversions:
+        for key, from_unit, to_unit in (self._pending_conversions if convertible else []):
             alias, point_uri, _ref = key
             try:
                 factors = _get_factors(from_unit, to_unit)
@@ -815,6 +965,8 @@ class DataObject:
             limit=self._query_params.get("limit"),
             order=self._query_params.get("order", "asc"),
         )
+        if self._resampling is not None and self._resampling.align:
+            self._tall = _align_tall(self._tall, self._resampling, self._key_columns())
         if self._pending_conversions:
             # Values are now in the requested units; record that on the
             # bindings so units() and later convert_to() calls start there.
@@ -933,6 +1085,7 @@ class DataObject:
                     _tall=sub_tall,
                     _materialized=True,
                     _stats=self._stats,
+                    _resampling=self._resampling,
                 )
             return
 
@@ -964,6 +1117,7 @@ class DataObject:
                 _materialized=False,
                 _pending_conversions=list(self._pending_conversions),
                 _stats=self._stats,
+                _resampling=self._resampling,
             )
 
     # ------------------------------------------------------------------
@@ -1442,6 +1596,7 @@ class DataObject:
                 _tall=tall,
                 _materialized=True,
                 _stats=self._stats,
+                _resampling=self._resampling,
             )
 
         # Lazy path: record the conversions for _materialize(). The bindings
@@ -1458,6 +1613,205 @@ class DataObject:
             _materialized=False,
             _pending_conversions=pending,
             _stats=self._stats,
+            _resampling=self._resampling,
+        )
+
+    # ------------------------------------------------------------------
+    # Resampling
+    # ------------------------------------------------------------------
+
+    @property
+    def resampling(self) -> Resampling | None:
+        """How the values are bucketed, or ``None`` for the raw readings."""
+        return self._resampling
+
+    def resample(
+        self,
+        every: "str | timedelta | int | float",
+        agg: str = "mean",
+        *,
+        origin: "datetime | str | None" = None,
+        label: str = "left",
+    ) -> "DataObject":
+        """Return a new DataObject whose values are one reading per
+        ``every``-wide bucket, reduced with ``agg``.
+
+        Every stream is bucketed on its own. On a lazy object nothing is
+        fetched: the server buckets and reduces the rows when the values
+        are first needed (``time_bucket`` plus an aggregate in the store),
+        and only the buckets travel. On an object that already holds its
+        rows the same reduction runs in polars.
+
+        A bucket starts at ``origin + k * every``, so streams bucketed with
+        the same ``every`` and ``origin`` share their bucket times. Only
+        numeric values count; a bucket with none is left out, so a stream
+        sparser than ``every`` keeps its gaps (see :meth:`align` for a
+        filled grid). The object's ``start``/``end`` bound the readings, so
+        a bucket straddling a bound is reduced from the readings inside
+        it; ``limit`` keeps that many buckets per stream, in ``order``.
+
+        Args:
+            every: Bucket width: a ``timedelta``, seconds, or a string like
+                ``"500ms"``, ``"10s"``, ``"5m"``, ``"1h"``, ``"1d"``, ``"1w"``.
+            agg: ``"mean"``, ``"min"``, ``"max"``, ``"sum"``, ``"count"``,
+                ``"first"``, ``"last"`` or ``"median"``. Unit conversions
+                apply to the reduced values; ``"count"`` has no unit and
+                is never converted, and ``"sum"`` converts exactly only
+                for scale conversions (no offset).
+            origin: Grid anchor, a datetime or ISO string; the UNIX epoch
+                by default.
+            label: ``"left"`` (default) names the bucket ``[t, t + every)``
+                by ``t``; ``"center"`` names ``[t - every/2, t + every/2)``
+                by ``t``, so each value estimates the signal at its time.
+
+        Raises:
+            ValueError: for an unknown ``agg`` or ``label``, a duration
+                that does not parse, an object built with
+                ``cast_value="str"``, or an object that is already
+                resampled (bucket the original object instead, a second
+                pass would reduce the reduced values).
+
+        Example::
+
+            d = q.data(cast_value="float")
+            hourly = d.resample("1h", agg="mean")   # lazy
+            hourly.dataframe()                     # buckets fetched here
+        """
+        spec = Resampling(
+            every=parse_every(every),
+            agg=normalize_agg(agg),
+            origin=self._grid_origin(origin),
+            label=normalize_label(label),
+        )
+        return self._resampled(spec)
+
+    def align(
+        self,
+        every: "str | timedelta | int | float | None" = None,
+        *,
+        agg: str = "mean",
+        fill: "str | float | None" = None,
+        origin: "datetime | str | None" = None,
+        label: str = "left",
+    ) -> "DataObject":
+        """Return a new DataObject whose streams share one time grid.
+
+        :meth:`resample` with ``every``/``agg``/``origin``/``label``, then
+        every stream is given every bucket from the earliest to the latest
+        bucket of the object, and the buckets a stream has no reading in
+        are filled per ``fill``. The reduction happens in the store; the
+        grid and the fill are computed on the reduced rows.
+
+        Args:
+            every: As in :meth:`resample`. ``None`` (default) infers it from
+                the streams: the average spacing of the stream with the
+                closest readings (its time span over its row count, from
+                the stream statistics, so one request and no rows), rounded
+                to the nearest conventional step (1, 2, 5, 10, 15, 30
+                seconds, minutes, hours, days or a week). On an object that
+                holds its rows the spacing is measured on them.
+            agg: As in :meth:`resample`.
+            fill: What an empty bucket gets: ``None`` (default) leaves it
+                null, ``"ffill"`` carries the stream's previous value
+                forward, ``"interpolate"`` interpolates linearly in time
+                between the stream's neighbouring values (buckets before
+                its first or after its last value stay null), and a number
+                fills with that constant.
+            origin, label: As in :meth:`resample`.
+
+        Raises:
+            ValueError: as :meth:`resample`, for an unknown ``fill``, or
+                when ``every`` is ``None`` and no stream has two readings.
+
+        Example::
+
+            d = q.data(cast_value="float")
+            grid = d.align("10s", fill="interpolate")   # lazy
+            grid["a"], grid["b"]                        # same time axis
+            grid.dataframe()                            # wide, no gaps
+        """
+        if isinstance(fill, bool) or not (fill is None or fill in ("ffill", "interpolate")
+                                          or isinstance(fill, (int, float))):
+            raise ValueError(f"fill: expected None, 'ffill', 'interpolate' or a number, got {fill!r}")
+        spec = Resampling(
+            every=parse_every(every) if every is not None else self._infer_every(),
+            agg=normalize_agg(agg),
+            origin=self._grid_origin(origin),
+            label=normalize_label(label),
+            align=True,
+            fill=fill,
+        )
+        return self._resampled(spec)
+
+    @staticmethod
+    def _grid_origin(origin: "datetime | str | None") -> datetime:
+        if origin is None:
+            return EPOCH
+        return as_utc(_as_utc_datetime(origin))
+
+    def _infer_every(self) -> timedelta:
+        """The grid step :meth:`align` uses without ``every``: the finest
+        average sample spacing among the streams, made conventional."""
+        gaps: list[timedelta] = []
+        if self._materialized:
+            if self._tall is not None and not self._tall.is_empty():
+                spans = self._tall.group_by("ref_uri").agg(
+                    pl.col("time").min().alias("lo"),
+                    pl.col("time").max().alias("hi"),
+                    pl.col("time").n_unique().alias("n"),
+                )
+                for lo, hi, n in spans.select("lo", "hi", "n").iter_rows():
+                    if n >= 2:
+                        gaps.append((hi - lo) / (n - 1))
+        else:
+            seen: set[str] = set()
+            for b in self._stats_bindings():
+                if b.ref_uri in seen:
+                    continue
+                seen.add(b.ref_uri)
+                if b.row_count >= 2 and b.earliest is not None and b.latest is not None:
+                    gaps.append((b.latest - b.earliest) / (b.row_count - 1))
+        gaps = [g for g in gaps if g > timedelta(0)]
+        if not gaps:
+            raise ValueError("align: pass every=; no stream has two readings to infer a spacing from")
+        return nice_every(min(gaps))
+
+    def _resampled(self, spec: Resampling) -> "DataObject":
+        if self._resampling is not None:
+            raise ValueError(
+                f"this object is already {self._resampling.describe()}; "
+                "resample or align the object returned by data() instead"
+            )
+        if self._query_params.get("cast_value") == "str":
+            raise ValueError("resample() and align() need numeric values; this object was built with cast_value='str'")
+
+        if self._materialized and self._tall is not None:
+            tall = _resample_tall(self._tall, spec, self._key_columns())
+            if spec.align:
+                tall = _align_tall(tall, spec, self._key_columns())
+            return DataObject(
+                _bindings=list(self._bindings),
+                _entity_columns=self._entity_columns,
+                _query_graph=self._query_graph,
+                _client=self._client,
+                _query_params=self._query_params,
+                _tall=tall,
+                _materialized=True,
+                _stats=self._stats,
+                _resampling=spec,
+            )
+
+        return DataObject(
+            _bindings=list(self._bindings),
+            _entity_columns=self._entity_columns,
+            _query_graph=self._query_graph,
+            _client=self._client,
+            _query_params=self._query_params,
+            _tall=None,
+            _materialized=False,
+            _pending_conversions=list(self._pending_conversions),
+            _stats=self._stats,
+            _resampling=spec,
         )
 
     # ------------------------------------------------------------------
@@ -1466,22 +1820,23 @@ class DataObject:
 
     def __repr__(self) -> str:
         aliases = self.aliases
+        tail = f", {self._resampling.describe()}" if self._resampling is not None else ""
         if self._materialized:
             # The tall frame holds one copy of a reading per entity context;
             # count readings, as the lazy estimate and dataframe() do.
             n_rows = 0
             if self._tall is not None and not self._tall.is_empty():
                 n_rows = self._tall.select(["data_alias", "point_uri", "ref_uri", "time"]).n_unique()
-            return f"DataObject({n_rows} rows, aliases={aliases}, entities={self.entity_aliases})"
+            return f"DataObject({n_rows} rows, aliases={aliases}, entities={self.entity_aliases}{tail})"
 
         if not self._stats_loaded:
             # The repr never fetches: say how many streams, not how many rows.
             n_streams = len({b.ref_uri for b in self._bindings})
             return (f"DataObject(lazy, {n_streams} streams, aliases={aliases}, "
-                    f"entities={self.entity_aliases})")
+                    f"entities={self.entity_aliases}{tail})")
         total = self.total_rows
         earliest, latest = self.time_range
         time_str = ""
         if earliest and latest:
             time_str = f", range={earliest.isoformat()} to {latest.isoformat()}"
-        return f"DataObject(lazy, ~{total} rows{time_str}, aliases={aliases}, entities={self.entity_aliases})"
+        return f"DataObject(lazy, ~{total} rows{time_str}, aliases={aliases}, entities={self.entity_aliases}{tail})"

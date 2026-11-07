@@ -1,8 +1,9 @@
 """Unit tests for DataObject's pure frame-shaping helpers."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import polars as pl
+import pytest
 
 from acquirium.Client.data_object import _pivot_split_values
 
@@ -502,3 +503,297 @@ class TestLazyStats:
         client.timeseries_info_batch.assert_called_once()
         (uris,), _ = client.timeseries_info_batch.call_args
         assert uris == [self.R1]
+
+
+class TestResample:
+    """resample() records a bucketing on a lazy object and lets the server
+    reduce the rows; on a fetched object it reduces the rows it holds."""
+
+    R1 = "urn:t#ref1"
+    R2 = "urn:t#ref2"
+    T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    def _data(self, *, cast_value="float", units=("urn:unit#m", "urn:unit#m")):
+        from unittest.mock import MagicMock
+        from acquirium.Client.explore.core import Query
+
+        client = MagicMock()
+        client.sparql_query.return_value = {
+            "columns": ["v0", "v1", "ext1", "unit1"],
+            "rows": [["urn:t#A", "urn:t#p1", self.R1, units[0]],
+                     ["urn:t#A", "urn:t#p2", self.R2, units[1]]],
+        }
+        client.compact_uri.side_effect = lambda u: str(u).rsplit("#", 1)[-1]
+
+        def resampled(uri, **kw):
+            # the server's answer: buckets 0 s and 10 s for ref1, 10 s only for ref2
+            ts = [self.T0, self.T0 + timedelta(seconds=10)] if uri == self.R1 else [self.T0 + timedelta(seconds=10)]
+            return pl.DataFrame({"ts": ts, "value": [1.0] * len(ts), "uri": [uri] * len(ts)})
+
+        client.timeseries_resampled_df.side_effect = resampled
+
+        def raw(uri, **kw):
+            # the raw readings: ref1 at 0, 4, 8, 12 s; ref2 has none
+            if uri != self.R1:
+                return pl.DataFrame()
+            return pl.DataFrame(
+                {"ts": [self.T0 + timedelta(seconds=s) for s in (0, 4, 8, 12)], "value": [1.0, 2.0, 3.0, 4.0], "uri": [uri] * 4}
+            )
+
+        client.timeseries_df.side_effect = raw
+        data = Query(client=client).entity("urn:t#A", alias="a").measurement(alias="m").data(cast_value=cast_value)
+        return data, client
+
+    def test_lazy_until_the_values_are_needed(self):
+        from datetime import timedelta
+        from acquirium.internals.resampling import EPOCH
+
+        data, client = self._data()
+        r = data.resample("10s", agg="max")
+        assert r.resampling.every == timedelta(seconds=10)
+        assert r.resampling.agg == "max"
+        assert "resampled every=10s agg=max" in repr(r)
+        client.timeseries_resampled_df.assert_not_called()
+        client.timeseries_df.assert_not_called()
+        assert data.resampling is None  # the original is untouched
+
+        wide = r.dataframe(compact=False)
+        assert wide.columns == ["time", "m__p1", "m__p2"]
+        assert wide.height == 2
+        client.timeseries_df.assert_not_called()
+        assert client.timeseries_resampled_df.call_count == 2
+        _, kw = client.timeseries_resampled_df.call_args
+        assert kw["every"] == timedelta(seconds=10)
+        assert kw["agg"] == "max"
+        assert kw["origin"] == EPOCH
+        assert kw["limit"] is None and kw["order"] == "asc"
+
+    def test_center_label_shifts_the_grid_and_the_labels(self):
+        from acquirium.internals.resampling import EPOCH
+
+        data, client = self._data()
+        r = data.resample("10s", label="center")
+        times = r["m"].filter(pl.col("point_uri") == "urn:t#p1")["time"].to_list()
+        _, kw = client.timeseries_resampled_df.call_args
+        assert kw["origin"] == EPOCH - timedelta(seconds=5)
+        assert times == [self.T0 + timedelta(seconds=5), self.T0 + timedelta(seconds=15)]
+
+    def test_origin_is_passed_through(self):
+        data, client = self._data()
+        origin = datetime(2026, 1, 1, 0, 0, 3, tzinfo=timezone.utc)
+        data.resample("10s", origin=origin).dataframe()
+        _, kw = client.timeseries_resampled_df.call_args
+        assert kw["origin"] == origin
+        data.resample("10s", origin="2026-01-01T00:00:03").dataframe()
+        _, kw = client.timeseries_resampled_df.call_args
+        assert kw["origin"] == origin
+
+    def test_window_and_limit_of_the_data_call_are_forwarded(self):
+        from unittest.mock import MagicMock
+        from acquirium.Client.explore.core import Query
+
+        data, client = self._data()
+        q = Query(client=client).entity("urn:t#A", alias="a").measurement(alias="m")
+        q.data(start=self.T0, end="2026-01-02", limit=3, order="desc").resample("1h").dataframe()
+        _, kw = client.timeseries_resampled_df.call_args
+        assert (kw["start"], kw["end"], kw["limit"], kw["order"]) == (self.T0, "2026-01-02", 3, "desc")
+
+    def test_latest_asks_for_the_newest_bucket(self):
+        data, client = self._data()
+        data.resample("10s").latest()
+        _, kw = client.timeseries_resampled_df.call_args
+        assert (kw["limit"], kw["order"]) == (1, "desc")
+
+    def test_conversion_applies_to_the_reduced_values(self):
+        data, client = self._data()
+        client.resolve_conversion.return_value = {"factors": {
+            "from_uri": "urn:unit#m", "to_uri": "urn:unit#cm", "compatible": True,
+            "from_multiplier": 1.0, "from_offset": 0.0, "to_multiplier": 0.01, "to_offset": 0.0,
+        }}
+        client.get_conversion_factors.return_value = client.resolve_conversion.return_value["factors"]
+        r = data.convert_to("cm").resample("10s")
+        assert r["m"]["value"].to_list() == [100.0, 100.0, 100.0]
+        assert r.units() == {"m": ["urn:unit#cm"]}
+
+    def test_count_has_no_unit_and_is_not_converted(self):
+        data, client = self._data()
+        client.resolve_conversion.return_value = {"factors": {
+            "from_uri": "urn:unit#m", "to_uri": "urn:unit#cm", "compatible": True,
+            "from_multiplier": 1.0, "from_offset": 0.0, "to_multiplier": 0.01, "to_offset": 0.0,
+        }}
+        client.get_conversion_factors.return_value = client.resolve_conversion.return_value["factors"]
+        r = data.convert_to("cm").resample("10s", agg="count")
+        assert r.units() == {"m": [None]}
+        assert r.metadata()["unit"].to_list() == [None, None]
+        assert r["m"]["value"].to_list() == [1.0, 1.0, 1.0]
+        client.get_conversion_factors.assert_not_called()
+
+    def test_errors(self):
+        data, _ = self._data()
+        with pytest.raises(ValueError, match="agg"):
+            data.resample("10s", agg="mode")
+        with pytest.raises(ValueError, match="label"):
+            data.resample("10s", label="right")
+        with pytest.raises(ValueError, match="every"):
+            data.resample("1mo")
+        with pytest.raises(ValueError, match="already resampled"):
+            data.resample("10s").resample("1m")
+        with pytest.raises(ValueError, match="already resampled"):
+            data.resample("10s").align("1m")
+        text, _ = self._data(cast_value="str")
+        with pytest.raises(ValueError, match="cast_value='str'"):
+            text.resample("10s")
+
+    def test_by_sub_objects_carry_the_bucketing(self):
+        data, client = self._data()
+        r = data.resample("10s", agg="min")
+        (_, sub), = r.by("a")
+        assert sub.resampling == r.resampling
+        sub.dataframe()
+        _, kw = client.timeseries_resampled_df.call_args
+        assert kw["agg"] == "min"
+
+    def test_fetched_rows_are_reduced_in_polars(self):
+        data, client = self._data()
+        data["m"]  # fetch the raw readings
+        client.timeseries_resampled_df.assert_not_called()
+        r = data.resample("10s", agg="mean")
+        client.timeseries_resampled_df.assert_not_called()
+        assert r.resampling.agg == "mean"
+        assert "resampled every=10s agg=mean" in repr(r)
+        df = r["m"]
+        # ref1: 1,2,3 at 0,4,8 s -> bucket 0 s; 4 at 12 s -> bucket 10 s
+        assert df["time"].to_list() == [self.T0, self.T0 + timedelta(seconds=10)]
+        assert df["value"].to_list() == [2.0, 4.0]
+        assert data["m"]["value"].to_list() == [1.0, 2.0, 3.0, 4.0]  # the original keeps its rows
+
+    @pytest.mark.parametrize("agg, expected", [
+        ("mean", [2.0, 4.0]), ("min", [1.0, 4.0]), ("max", [3.0, 4.0]), ("sum", [6.0, 4.0]),
+        ("count", [3.0, 1.0]), ("first", [1.0, 4.0]), ("last", [3.0, 4.0]), ("median", [2.0, 4.0]),
+    ])
+    def test_every_aggregate_on_fetched_rows(self, agg, expected):
+        data, _ = self._data()
+        data["m"]
+        assert data.resample("10s", agg=agg)["m"]["value"].to_list() == expected
+
+    def test_center_label_on_fetched_rows(self):
+        data, _ = self._data()
+        data["m"]
+        df = data.resample("10s", label="center")["m"]
+        # windows [-5, 5) -> 1, 2 ; [5, 15) -> 3, 4
+        assert df["time"].to_list() == [self.T0, self.T0 + timedelta(seconds=10)]
+        assert df["value"].to_list() == [1.5, 3.5]
+
+    def test_resampled_empty_object_stays_empty(self):
+        from unittest.mock import MagicMock
+        from acquirium.Client.data_object import DataObject
+        from acquirium.Client.query_graph import QueryGraph
+
+        empty = DataObject._empty(QueryGraph(), client=MagicMock())
+        assert empty.resample("10s").is_empty()
+        assert empty.align("10s", fill=0).is_empty()
+
+
+class TestAlign:
+    """align() puts every stream on the shared bucket grid and fills the gaps."""
+
+    T0 = TestResample.T0
+
+    def _fetched(self, ref1_rows, ref2_rows):
+        from acquirium.Client.data_object import BindingInfo, DataObject
+        from acquirium.Client.query_graph import QueryGraph
+        from unittest.mock import MagicMock
+
+        rows = [("m", "urn:t#p1", TestResample.R1, t, v) for t, v in ref1_rows] + \
+               [("m", "urn:t#p2", TestResample.R2, t, v) for t, v in ref2_rows]
+        tall = pl.DataFrame({
+            "data_alias": [r[0] for r in rows],
+            "point_uri": [r[1] for r in rows],
+            "ref_uri": [r[2] for r in rows],
+            "time": [self.T0 + timedelta(seconds=r[3]) for r in rows],
+            "value_numeric": [float(r[4]) for r in rows],
+            "value_text": [None] * len(rows),
+        }).with_columns(pl.col("time").cast(pl.Datetime("us", "UTC")))
+        client = MagicMock()
+        client.compact_uri.side_effect = lambda u: str(u).rsplit("#", 1)[-1]
+        bindings = [
+            BindingInfo(nid=1, point_uri="urn:t#p1", ref_uri=TestResample.R1, alias="m", entity_contexts=[{}]),
+            BindingInfo(nid=1, point_uri="urn:t#p2", ref_uri=TestResample.R2, alias="m", entity_contexts=[{}]),
+        ]
+        return DataObject(_bindings=bindings, _entity_columns=[], _query_graph=QueryGraph(),
+                          _client=client, _tall=tall, _materialized=True)
+
+    def _wide(self, data, **kw):
+        return data.align(**kw).dataframe(compact=False)
+
+    def test_every_stream_gets_every_bucket(self):
+        d = self._fetched([(0, 1), (10, 2), (20, 3)], [(21, 30)])
+        wide = self._wide(d, every="10s")
+        assert wide["time"].to_list() == [self.T0 + timedelta(seconds=s) for s in (0, 10, 20)]
+        assert wide["m__p1"].to_list() == [1.0, 2.0, 3.0]
+        assert wide["m__p2"].to_list() == [None, None, 30.0]
+        assert d.align("10s")["m"].filter(pl.col("point_uri") == "urn:t#p2").height == 3
+
+    def test_grid_spans_the_whole_object(self):
+        # p2 ends before p1 begins; both get the full grid
+        d = self._fetched([(40, 1), (50, 2)], [(0, 30)])
+        assert self._wide(d, every="10s").height == 6
+
+    def test_fills(self):
+        d = self._fetched([(0, 1), (30, 4)], [(10, 20), (20, 40), (40, 10)])
+        assert self._wide(d, every="10s")["m__p1"].to_list() == [1.0, None, None, 4.0, None]
+        assert self._wide(d, every="10s", fill="ffill")["m__p1"].to_list() == [1.0, 1.0, 1.0, 4.0, 4.0]
+        assert self._wide(d, every="10s", fill="interpolate")["m__p1"].to_list() == [1.0, 2.0, 3.0, 4.0, None]
+        assert self._wide(d, every="10s", fill="interpolate")["m__p2"].to_list() == [None, 20.0, 40.0, 25.0, 10.0]
+        assert self._wide(d, every="10s", fill=0)["m__p1"].to_list() == [1.0, 0.0, 0.0, 4.0, 0.0]
+        assert self._wide(d, every="10s", fill=-1.5)["m__p2"].to_list() == [-1.5, 20.0, 40.0, -1.5, 10.0]
+
+    def test_reduction_before_the_fill(self):
+        d = self._fetched([(0, 1), (2, 3), (20, 5)], [])
+        assert self._wide(d, every="10s", agg="max", fill="interpolate")["m__p1"].to_list() == [3.0, 4.0, 5.0]
+
+    def test_bad_fill(self):
+        d = self._fetched([(0, 1)], [])
+        for bad in ("bfill", True, "0"):
+            with pytest.raises(ValueError, match="fill"):
+                d.align("10s", fill=bad)
+
+    def test_every_inferred_from_fetched_rows(self):
+        d = self._fetched([(0, 1), (9, 2), (18, 3), (27, 4)], [(0, 1), (60, 2)])
+        a = d.align()
+        assert a.resampling.every == timedelta(seconds=10)  # 27 s over 3 gaps = 9 s -> 10 s
+        assert a.resampling.align is True
+
+    def test_every_inferred_from_stream_statistics_on_a_lazy_object(self):
+        from types import SimpleNamespace
+        data, client = TestResample()._data()
+        client.timeseries_info_batch.return_value = {
+            TestResample.R1: SimpleNamespace(row_count=61, earliest=self.T0, latest=self.T0 + timedelta(minutes=1)),
+            TestResample.R2: SimpleNamespace(row_count=3, earliest=self.T0, latest=self.T0 + timedelta(minutes=1)),
+        }
+        a = data.align(fill="ffill")
+        assert a.resampling.every == timedelta(seconds=1)
+        client.timeseries_resampled_df.assert_not_called()  # inference needs no rows
+        client.timeseries_info_batch.assert_called_once()
+
+    def test_every_cannot_be_inferred_without_two_readings(self):
+        d = self._fetched([(0, 1)], [(5, 2)])
+        with pytest.raises(ValueError, match="pass every="):
+            d.align()
+
+    def test_lazy_align_fills_after_the_fetch(self):
+        data, client = TestResample()._data()
+        a = data.align("10s", fill="ffill")
+        client.timeseries_resampled_df.assert_not_called()
+        wide = a.dataframe(compact=False)
+        # the server returns buckets 0 s, 10 s for ref1 and 10 s for ref2
+        assert wide["m__p2"].to_list() == [None, 1.0]
+        assert wide.height == 2
+        assert "aligned every=10s agg=mean fill='ffill'" in repr(a)
+
+    def test_window_filters_the_grid(self):
+        d = self._fetched([(0, 1), (30, 4)], [])
+        wide = d.align("10s", fill="interpolate").dataframe(
+            compact=False, start=self.T0 + timedelta(seconds=10), end=self.T0 + timedelta(seconds=20)
+        )
+        assert wide["m__p1"].to_list() == [2.0, 3.0]

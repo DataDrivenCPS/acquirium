@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Iterator
 from contextlib import contextmanager
 import hashlib
@@ -24,6 +24,7 @@ from acquirium.Storage.values import (
     typed_value_series,
 )
 from acquirium.internals._log import timed_debug
+from acquirium.internals.resampling import normalize_agg
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,22 @@ BINDING_PROGRESS_TABLE = "binding_progress"
 # view is unaffected. Databases whose ``timeseries`` table is still keyed by
 # ``ref_uri`` are not migrated in place: ``ensure_table`` refuses them, and
 # they should be recreated.
+
+
+# SQL for each resampling aggregate over a bucket's numeric values.
+# ``first``/``last`` are TimescaleDB's; ``median`` is Postgres' continuous
+# percentile, which interpolates between the two middle values like DuckDB's
+# ``median`` does.
+_RESAMPLE_AGG_SQL = {
+    "mean": "avg(numeric_value)",
+    "min": "min(numeric_value)",
+    "max": "max(numeric_value)",
+    "sum": "sum(numeric_value)",
+    "count": "count(numeric_value)",
+    "first": "public.first(numeric_value, ts)",
+    "last": "public.last(numeric_value, ts)",
+    "median": "percentile_cont(0.5) WITHIN GROUP (ORDER BY numeric_value)",
+}
 
 
 class TimescaleStore(TimeseriesStore):
@@ -631,6 +648,85 @@ class TimescaleStore(TimeseriesStore):
                 )
                 yield batch
 
+
+    def timeseries_resampled(
+        self,
+        ref_uri: str,
+        *,
+        every: timedelta,
+        agg: str,
+        origin: datetime,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int | None = None,
+        order: Order = "asc",
+        batch_size: int = 50_000,
+    ) -> Iterator[pa.RecordBatch]:
+        """Yield one row per ``every``-wide bucket of a stream's numeric values,
+        reduced with ``agg``, as RecordBatches of ``[ts, value, uri]``.
+
+        Same contract as :meth:`DuckDBStore.timeseries_resampled`: buckets
+        start at ``origin + k * every`` and are labelled by their start, only
+        numeric rows count, empty buckets are left out, ``start``/``end``
+        bound the rows and ``limit`` the buckets. Computed by TimescaleDB's
+        ``time_bucket`` with ``first``/``last`` for those aggregates.
+        """
+        agg = normalize_agg(agg)
+        if every <= timedelta(0):
+            raise ValueError(f"every must be a positive duration, got {every!r}")
+
+        with self.conn.cursor() as cur:
+            ref_id = self._ref_id(cur, ref_uri)
+        if ref_id is None:
+            logger.debug("timeseries_resampled ref_uri=%s has no ref_id; yielding nothing", ref_uri)
+            return
+
+        clauses = ["ref_id = %s", "NOT deleted", "numeric_value IS NOT NULL"]
+        params: list[Any] = [every, self._to_utc(origin), ref_id]
+        if start:
+            clauses.append("ts >= %s")
+            params.append(self._to_utc(start))
+        if end:
+            clauses.append("ts <= %s")
+            params.append(self._to_utc(end))
+        where = " AND ".join(clauses)
+        order_sql = "ASC" if order == "asc" else "DESC"
+        limit_sql = " LIMIT %s" if limit else ""
+        if limit:
+            params.append(limit)
+
+        query = f"""
+            SELECT
+                public.time_bucket(%s::interval, ts, %s::timestamptz) AS bucket,
+                {_RESAMPLE_AGG_SQL[agg]} AS value
+            FROM {TIMESERIES_TABLE}
+            WHERE {where}
+            GROUP BY bucket
+            ORDER BY bucket {order_sql}{limit_sql}
+        """
+        value_type = pa.int64() if agg == "count" else pa.float64()
+        logger.debug(
+            "timeseries_resampled ref_uri=%s every=%s agg=%s start=%s end=%s limit=%s",
+            ref_uri, every, agg, start, end, limit,
+        )
+        with self.conn.cursor() as cur:
+            with timed_debug(logger, "timeseries_resampled cur.execute ref_uri=%s", ref_uri):
+                cur.execute(query, params)
+            total = 0
+            while True:
+                rows = cur.fetchmany(batch_size)
+                if not rows:
+                    logger.debug("timeseries_resampled ref_uri=%s yielded buckets=%d", ref_uri, total)
+                    break
+                total += len(rows)
+                yield pa.record_batch(
+                    [
+                        pa.array([r[0] for r in rows], type=pa.timestamp("us", tz="UTC")),
+                        pa.array([r[1] for r in rows], type=value_type),
+                        pa.array([ref_uri] * len(rows), type=pa.string()),
+                    ],
+                    names=["ts", "value", "uri"],
+                )
 
     def timeseries_info(self, ref_uri: str) -> TimeseriesInfo:
         with timed_debug(logger, "timeseries_info ref_uri=%s", ref_uri), self.conn.cursor() as cur:

@@ -278,3 +278,44 @@ class TestInsertLog:
         logs = {entry.message: entry for entry in client.query_logs(point_uri=point)}
         assert logs.keys() == {"test log", "minimal log"}
         assert (logs["test log"].period.start, logs["test log"].period.end) == (start, end)
+
+
+class TestTimeseriesResampled:
+    def test_server_buckets_a_stream(self, ac, ns):
+        from datetime import timedelta
+
+        source = f"resampled-{uuid4().hex[:8]}"
+        ac.register_datasource(source)
+        ac.register_streams([{"source_id": source, "ref_name": "flow", "point_uri": f"{ns}flow",
+                              "value_kind": "numeric"}])
+        t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        ac.insert_timeseries_batch(source, {
+            "flow": [(t0 + timedelta(seconds=s), float(v)) for s, v in ((3, 1), (7, 2), (12, 4), (31, 8))],
+        })
+        ref = ac.stream(source, "flow").ref_uri
+
+        df = ac.client.timeseries_resampled_df(ref, every="10s", agg="mean")
+        assert df.columns == ["ts", "value", "uri"]
+        assert df["ts"].to_list() == [t0 + timedelta(seconds=s) for s in (0, 10, 30)]
+        assert df["value"].to_list() == [1.5, 4.0, 8.0]
+        assert df["uri"].to_list() == [ref] * 3
+
+        # the point URI resolves to the stream, as on /timeseries
+        by_point = ac.client.timeseries_resampled_df(f"{ns}flow", every=timedelta(seconds=10), agg="count",
+                                                     order="desc", limit=1)
+        assert by_point["value"].to_list() == [1]
+
+        shifted = ac.client.timeseries_resampled_df(ref, every="10s", origin=t0 + timedelta(seconds=5),
+                                                    start=t0 + timedelta(seconds=5))
+        assert shifted["ts"].to_list() == [t0 + timedelta(seconds=5), t0 + timedelta(seconds=25)]
+
+    def test_bad_arguments_are_rejected(self, ac, ns):
+        with pytest.raises(ValueError):
+            ac.client.timeseries_resampled_df(f"{ns}nothing", every="10s", agg="mode")
+        with pytest.raises(ValueError):
+            ac.client.timeseries_resampled_df(f"{ns}nothing", every="1mo")
+        with pytest.raises(HTTPError):
+            ac.client.timeseries_resampled_df(f"{ns}nothing", every="10s", order="sideways")
+
+    def test_unknown_stream_is_empty(self, ac, ns):
+        assert ac.client.timeseries_resampled_df(f"{ns}nothing", every="10s").is_empty()

@@ -42,6 +42,7 @@ from acquirium.internals.models import (
     AppRegistration,
 )
 from acquirium.internals.internals_namespaces import PLANT_URI
+from acquirium.internals.resampling import EPOCH, normalize_agg, parse_every
 
 import pyarrow.ipc as ipc
 import pyarrow as pa
@@ -1143,43 +1144,84 @@ def get_timeseries(
             batch_size=request.app.state.read_batch_size,
             value_mode=value_mode,
         )
-
-        accept = request.headers.get("accept", "")
-
-        def arrow_stream() -> Iterator[bytes]:
-            buf = io.BytesIO()
-            writer: ipc.RecordBatchStreamWriter | None = None
-            try:
-                for batch in batches:
-                    if writer is None:
-                        writer = ipc.new_stream(buf, batch.schema)
-                    writer.write_batch(batch)
-                    data = buf.getvalue()
-                    if data:
-                        yield data
-                        buf.seek(0)
-                        buf.truncate(0)
-                if writer is None:
-                    empty_schema = pa.schema([
-                        ("ts", pa.timestamp("us", tz="UTC")),
-                        ("value", pa.float64()),
-                        ("uri", pa.string()),
-                    ])
-                    writer = ipc.new_stream(buf, empty_schema)
-            finally:
-                if writer is not None:
-                    writer.close()
-            data = buf.getvalue()
-            if data:
-                yield data
-
-        return StreamingResponse(
-            arrow_stream(),
-            media_type="application/vnd.apache.arrow.stream",
-        )
+        return _arrow_stream_response(batches)
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/timeseries_resampled")
+def get_timeseries_resampled(
+    request: Request,
+    uri: str,
+    every: str,
+    agg: str = "mean",
+    origin: Optional[str] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    limit: Optional[int] = None,
+    order: str = "asc",
+    ):
+    """One row per ``every``-wide bucket of a stream's numeric values, reduced
+    with ``agg`` by the store (``time_bucket`` plus an aggregate). ``every``
+    is a duration such as ``10s``, ``5m`` or ``1h``; ``origin`` anchors the
+    grid (default: the UNIX epoch). Same Arrow stream as ``/timeseries``.
+    """
+    try:
+        if order not in ("asc", "desc"):
+            raise ValueError("order must be 'asc' or 'desc'")
+        batches: Iterator[pa.RecordBatch] = app.state.manager.timeseries_resampled_batch(
+            uri=uri,
+            every=parse_every(every),
+            agg=normalize_agg(agg),
+            origin=_parse_dt(origin) if origin is not None else EPOCH,
+            start=_parse_dt(start),
+            end=_parse_dt(end),
+            limit=limit,
+            order=order,        # type: ignore[arg-type]
+            batch_size=request.app.state.read_batch_size,
+        )
+        return _arrow_stream_response(batches)
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+def _arrow_stream_response(batches: Iterator[pa.RecordBatch]) -> StreamingResponse:
+    """Stream ``batches`` as one Arrow IPC stream; an empty result still
+    carries the ``[ts, value, uri]`` schema."""
+
+    def arrow_stream() -> Iterator[bytes]:
+        buf = io.BytesIO()
+        writer: ipc.RecordBatchStreamWriter | None = None
+        try:
+            for batch in batches:
+                if writer is None:
+                    writer = ipc.new_stream(buf, batch.schema)
+                writer.write_batch(batch)
+                data = buf.getvalue()
+                if data:
+                    yield data
+                    buf.seek(0)
+                    buf.truncate(0)
+            if writer is None:
+                empty_schema = pa.schema([
+                    ("ts", pa.timestamp("us", tz="UTC")),
+                    ("value", pa.float64()),
+                    ("uri", pa.string()),
+                ])
+                writer = ipc.new_stream(buf, empty_schema)
+        finally:
+            if writer is not None:
+                writer.close()
+        data = buf.getvalue()
+        if data:
+            yield data
+
+    return StreamingResponse(
+        arrow_stream(),
+        media_type="application/vnd.apache.arrow.stream",
+    )
 
 
 @app.post("/timeseries_info")

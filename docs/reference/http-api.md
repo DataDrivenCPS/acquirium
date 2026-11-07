@@ -271,6 +271,29 @@ The Arrow schema is `(ts: timestamp[us, UTC], value: float64 or utf8, uri: utf8)
 See the [values guide](../explanation/values.md#numbers-and-text) for a full description of the
 `value_mode` options.
 
+### `GET /timeseries_resampled`
+
+Read one stream reduced to buckets. The store computes the buckets
+(`time_bucket` plus an aggregate, on DuckDB and TimescaleDB alike), so only one
+row per bucket is returned. Same Arrow IPC stream and schema as `/timeseries`,
+with `value` always `float64` (`int64` for `count`).
+
+| Parameter | Default | Description |
+| --- | --- | --- |
+| `uri` | required | Ref URI or point URI of the stream |
+| `every` | required | Bucket width: `500ms`, `10s`, `5m`, `1h`, `1d`, `1w` (one number, one fixed-length unit) |
+| `agg` | `mean` | `mean`, `min`, `max`, `sum`, `count`, `first`, `last` or `median` |
+| `origin` | UNIX epoch | ISO 8601 timestamp the grid is anchored at: buckets start at `origin + k * every` |
+| `start` | — | ISO 8601 lower bound on the readings (inclusive) |
+| `end` | — | ISO 8601 upper bound on the readings (inclusive) |
+| `limit` | — | Maximum number of buckets to return |
+| `order` | `asc` | Bucket order: `asc` or `desc` |
+
+A bucket `[t, t + every)` is labelled `t`. Only readings with a numeric value
+count, and a bucket with none is not returned. `start` and `end` bound the
+readings, not the buckets, so a bucket straddling a bound is reduced from the
+readings inside it. A bad `every`, `agg` or `order` is a 400.
+
 ### `POST /timeseries_info`
 
 Return metadata for a list of stream URIs in one request. This is what makes a `DataObject` able to report its row count and time range without fetching any values.
