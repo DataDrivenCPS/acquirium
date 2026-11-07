@@ -6,6 +6,8 @@ from typing import Any, Iterator, Sequence, TYPE_CHECKING
 import polars as pl
 import warnings
 
+from acquirium.Client.streams import Stream
+
 if TYPE_CHECKING:
     from acquirium.Client.explore.core import Query
     from acquirium.Client.query_graph import QueryGraph
@@ -336,7 +338,12 @@ def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
 
 @dataclass(frozen=True)
 class BindingInfo:
-    """Lightweight metadata for a single (nid, point_uri, ref_uri) data binding."""
+    """Lightweight metadata for a single (nid, point_uri, ref_uri) data binding.
+
+    ``row_count`` / ``earliest`` / ``latest`` are stream statistics. A
+    ``DataObject`` fills them on the first read of a statistic, not when it
+    is built, so read them through ``DataObject.bindings``.
+    """
     nid: int
     point_uri: str
     ref_uri: str
@@ -369,17 +376,62 @@ def _graph_entity_columns(qg: QueryGraph | None) -> list[str]:
 
 
 @dataclass
+class _StreamStats:
+    """Statistics for every stream of one ``data()`` call, fetched once.
+
+    The root ``DataObject`` owns one and hands the same instance to the
+    sub-objects ``by()`` and ``convert_to()`` derive, so whichever of them
+    reads a statistic first fetches the whole family's in one batch request
+    and the rest read from that snapshot. ``exists`` is the cheaper answer
+    ``is_empty()`` needs, which streams have any row, cached the same way.
+    ``refresh()`` forgets both.
+    """
+    client: AcquiriumClient | None
+    ref_uris: list[str]
+    info: dict[str, Any] | None = None
+    exists: set[str] | None = None
+
+    def get(self) -> dict[str, Any]:
+        if self.info is None:
+            self.info = (
+                self.client.timeseries_info_batch(list(self.ref_uris))
+                if self.ref_uris and self.client is not None else {}
+            )
+        return self.info
+
+    def with_rows(self) -> set[str]:
+        """The ref URIs that have any row: from the statistics when they are
+        loaded, else one existence request covering every stream."""
+        if self.info is not None:
+            return {uri for uri, info in self.info.items() if info.row_count > 0}
+        if self.exists is None:
+            self.exists = (
+                self.client.timeseries_exists_batch(list(self.ref_uris))
+                if self.ref_uris and self.client is not None else set()
+            )
+        return self.exists
+
+    def refresh(self) -> None:
+        self.info = None
+        self.exists = None
+
+
+@dataclass
 class DataObject:
     """Lazy, alias-driven structured access to sensor data.
 
-    On construction only SPARQL metadata and per-series stats (row count,
-    time range) are fetched.  The actual time-series data is materialized
-    on demand when ``__getitem__``, ``dataframe()``, or ``latest()`` are
-    called.
+    On construction only SPARQL metadata is fetched. The per-stream
+    statistics (row count, time range) are fetched in one batch request the
+    first time ``total_rows``, ``time_range``, or ``bindings`` needs them;
+    ``is_empty()`` (before materialization) asks only which streams have a
+    row, a cheaper request. Each request covers every stream of the
+    ``data()`` call, and the sub-objects ``by()`` and ``convert_to()``
+    return share its result; ``refresh_stats()`` forgets both. The actual
+    time-series data is materialized on demand when ``__getitem__``,
+    ``dataframe()``, or ``latest()`` are called.
 
     Lightweight operations such as ``aliases``, ``metadata()``,
-    ``is_empty()``, ``total_rows``, ``time_range``, and ``by()`` all work
-    without triggering materialization.
+    ``stream_info()``, and ``by()`` work without fetching either.
     """
 
     _bindings: list[BindingInfo]
@@ -394,6 +446,11 @@ class DataObject:
     _tall: pl.DataFrame | None = field(default=None, repr=False)
     _materialized: bool = field(default=False, repr=False)
     _metadata_df: pl.DataFrame | None = field(default=None, repr=False)
+
+    # Stream statistics, shared by reference with the sub-objects by() and
+    # convert_to() derive; _stats_bindings() fills them in on first use. An
+    # object built without one makes its own from its bindings.
+    _stats: _StreamStats | None = field(default=None, repr=False)
 
     # Conversions recorded by convert_to() on a lazy object, applied when the
     # values are fetched: ((alias, point_uri, ref_uri), from_uri, to_uri),
@@ -455,10 +512,6 @@ class DataObject:
                 all_entity_cols.update(ctx.keys())
         entity_columns = sorted(all_entity_cols)
 
-        # Fetch stats for all ref_uris in one batch request
-        ref_uris = list({ref_uri for _, _, ref_uri in point_ref_uris})
-        stats = query.client.timeseries_info_batch(ref_uris)
-
         # Build BindingInfo for each binding
         bindings: list[BindingInfo] = []
         for nid, point_uri, ref_uri in point_ref_uris:
@@ -466,16 +519,12 @@ class DataObject:
             key = (nid, point_uri, ref_uri)
             contexts = entity_context.get(key, [{}])
             unique_contexts = _deduplicate_contexts(contexts)
-            info = stats.get(ref_uri)
             bindings.append(BindingInfo(
                 nid=nid,
                 point_uri=point_uri,
                 ref_uri=ref_uri,
                 alias=alias,
                 entity_contexts=unique_contexts,
-                row_count=info.row_count if info else 0,
-                earliest=info.earliest if info else None,
-                latest=info.latest if info else None,
                 property_unit=prop_units.get(key),
                 ref_unit=ext_ref_units.get(key),
                 point_label=point_labels.get(key),
@@ -498,7 +547,51 @@ class DataObject:
             },
             _tall=None,
             _materialized=False,
+            _stats=_StreamStats(query.client, sorted({b.ref_uri for b in bindings})),
         )
+
+    def _stats_bindings(self) -> list[BindingInfo]:
+        """The bindings with row_count / earliest / latest filled in.
+
+        Reads the shared statistics cache, fetching it on first use: one
+        batch request covering every stream of the ``data()`` call, which
+        counts each stream's samples on the server. Only the statistic
+        readers call this.
+        """
+        if not self._bindings:
+            return []
+        stats = self._shared_stats().get()
+        filled: list[BindingInfo] = []
+        for b in self._bindings:
+            info = stats.get(b.ref_uri)
+            filled.append(replace(
+                b,
+                row_count=info.row_count if info else 0,
+                earliest=info.earliest if info else None,
+                latest=info.latest if info else None,
+            ))
+        return filled
+
+    def _shared_stats(self) -> _StreamStats:
+        """The statistics cache, made from this object's bindings if it has none."""
+        if self._stats is None:
+            self._stats = _StreamStats(self._client, sorted({b.ref_uri for b in self._bindings}))
+        return self._stats
+
+    @property
+    def _stats_loaded(self) -> bool:
+        """Whether the statistics are in the cache (no fetch)."""
+        return self._stats is not None and self._stats.info is not None
+
+    def refresh_stats(self) -> None:
+        """Forget the cached stream statistics.
+
+        The next read of ``total_rows``, ``time_range``, ``bindings`` or
+        ``is_empty()`` asks the server again. The cache is shared with the
+        sub-objects of the same ``data()`` call, so they see the refresh too.
+        """
+        if self._stats is not None:
+            self._stats.refresh()
 
     # ------------------------------------------------------------------
     # Materialization
@@ -839,6 +932,7 @@ class DataObject:
                     _query_params=self._query_params,
                     _tall=sub_tall,
                     _materialized=True,
+                    _stats=self._stats,
                 )
             return
 
@@ -869,6 +963,7 @@ class DataObject:
                 _tall=None,
                 _materialized=False,
                 _pending_conversions=list(self._pending_conversions),
+                _stats=self._stats,
             )
 
     # ------------------------------------------------------------------
@@ -885,7 +980,7 @@ class DataObject:
         order: str = "asc",
         include_ref: bool = False,
         compact: bool = True,
-        streams: "int | str | Sequence[int | str] | None" = None,
+        streams: "int | str | Stream | Sequence[int | str | Stream] | None" = None,
     ) -> pl.DataFrame:
         """Return a flat DataFrame.
 
@@ -916,8 +1011,9 @@ class DataObject:
         preserved with entity columns), wide keeps alias/URI column names.
 
         ``streams`` keeps only the listed streams: numbers from the
-        ``stream`` column of :meth:`stream_info`, ref URIs, or a mix. A
-        point fed by several streams then shows just the chosen ones, so
+        ``stream`` column of :meth:`stream_info`, ref URIs,
+        :class:`~acquirium.Client.streams.Stream` handles from
+        ``ac.stream(source_id, ref_name)``, or a mix. A point fed by several streams then shows just the chosen ones, so
         ``streams=[1]`` reads one driver's values for a point that has two.
         An unknown number or URI raises ``KeyError``.
 
@@ -930,19 +1026,22 @@ class DataObject:
         return self._cast_output(frame)
 
     def _resolve_streams(self, streams) -> set[str] | None:
-        """Turn ``streams`` (numbers from :meth:`stream_info`, ref URIs, or a
-        mix) into the set of ref URIs they name; ``None`` means all."""
+        """Turn ``streams`` (numbers from :meth:`stream_info`, ref URIs,
+        ``Stream`` handles, or a mix) into the set of ref URIs they name;
+        ``None`` means all."""
         if streams is None:
             return None
-        if isinstance(streams, (int, str)):
+        if isinstance(streams, (int, str, Stream)):
             streams = [streams]
         table = self.stream_info()
         by_number = dict(zip(table["stream"].to_list(), table["ref_uri"].to_list()))
         known = set(by_number.values())
         refs: set[str] = set()
         for item in streams:
+            if isinstance(item, Stream):
+                item = item.ref_uri
             if isinstance(item, bool) or not isinstance(item, (int, str)):
-                raise TypeError(f"streams: expected a stream number or ref URI, got {item!r}")
+                raise TypeError(f"streams: expected a stream number, ref URI or Stream, got {item!r}")
             if isinstance(item, int):
                 if item not in by_number:
                     raise KeyError(f"stream {item} not in this object; stream_info() lists 0..{len(by_number) - 1}")
@@ -1143,7 +1242,7 @@ class DataObject:
         return table
 
     def latest(self, alias: str | None = None, *,
-               streams: "int | str | Sequence[int | str] | None" = None) -> pl.DataFrame:
+               streams: "int | str | Stream | Sequence[int | str | Stream] | None" = None) -> pl.DataFrame:
         """Return the newest reading of each point.
 
         Answers from its own fetch (one row per stream, newest first), so
@@ -1194,34 +1293,41 @@ class DataObject:
     def is_empty(self) -> bool:
         """Whether any rows exist.
 
-        Before the values are fetched this answers from stream statistics,
-        i.e. whether the matched streams hold any rows at all, regardless of
-        the requested window. After a fetch it reports the fetched window.
+        Before the values are fetched this answers whether the matched
+        streams hold any rows at all, regardless of the requested window. It
+        reads the stream statistics if they are loaded; otherwise it asks the
+        server only which streams have a row, one request shared with the
+        sub-objects of the same ``data()`` call, without counting them.
+        After a fetch it reports the fetched window.
         """
         if self._materialized:
             return self._tall.is_empty()
-        return all(b.row_count == 0 for b in self._bindings)
+        if not self._bindings:
+            return True
+        with_rows = self._shared_stats().with_rows()
+        return not any(b.ref_uri in with_rows for b in self._bindings)
 
     # ------------------------------------------------------------------
-    # Stats (no materialization needed)
+    # Stats (fetched on first use, no materialization needed)
     # ------------------------------------------------------------------
 
     @property
     def total_rows(self) -> int:
         """Total row count across all bindings (from stats, no materialization)."""
-        return sum(b.row_count for b in self._bindings)
+        return sum(b.row_count for b in self._stats_bindings())
 
     @property
     def time_range(self) -> tuple[datetime | None, datetime | None]:
-        """Overall (earliest, latest) across all bindings."""
-        earliests = [b.earliest for b in self._bindings if b.earliest is not None]
-        latests = [b.latest for b in self._bindings if b.latest is not None]
+        """Overall (earliest, latest) across all bindings (from stats)."""
+        bindings = self._stats_bindings()
+        earliests = [b.earliest for b in bindings if b.earliest is not None]
+        latests = [b.latest for b in bindings if b.latest is not None]
         return (min(earliests) if earliests else None, max(latests) if latests else None)
 
     @property
     def bindings(self) -> list[BindingInfo]:
-        """Read-only access to binding metadata."""
-        return list(self._bindings)
+        """Read-only access to binding metadata, stream statistics included."""
+        return self._stats_bindings()
 
     # ------------------------------------------------------------------
     # Unit conversion
@@ -1335,6 +1441,7 @@ class DataObject:
                 _query_params=self._query_params,
                 _tall=tall,
                 _materialized=True,
+                _stats=self._stats,
             )
 
         # Lazy path: record the conversions for _materialize(). The bindings
@@ -1350,6 +1457,7 @@ class DataObject:
             _tall=None,
             _materialized=False,
             _pending_conversions=pending,
+            _stats=self._stats,
         )
 
     # ------------------------------------------------------------------
@@ -1366,6 +1474,11 @@ class DataObject:
                 n_rows = self._tall.select(["data_alias", "point_uri", "ref_uri", "time"]).n_unique()
             return f"DataObject({n_rows} rows, aliases={aliases}, entities={self.entity_aliases})"
 
+        if not self._stats_loaded:
+            # The repr never fetches: say how many streams, not how many rows.
+            n_streams = len({b.ref_uri for b in self._bindings})
+            return (f"DataObject(lazy, {n_streams} streams, aliases={aliases}, "
+                    f"entities={self.entity_aliases})")
         total = self.total_rows
         earliest, latest = self.time_range
         time_str = ""

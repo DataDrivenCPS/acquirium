@@ -9,6 +9,9 @@ class DataNodeInfo:
     # FILTER(EXISTS {...}) on the node; entity nodes keep theirs under
     # constraints["exprs"].
     exprs: tuple = ()
+    # Stream reference URIs the node is restricted to (``measurement(ref=)``),
+    # compiled to VALUES on ?ext<N>. None: any reference; (): none at all.
+    refs: Optional[tuple] = None
 
 
 

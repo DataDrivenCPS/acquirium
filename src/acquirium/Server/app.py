@@ -1191,6 +1191,14 @@ def timeseries_info(req: TimeseriesInfoRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.post("/timeseries_exists")
+def timeseries_exists(req: TimeseriesInfoRequest) -> dict[str, Any]:
+    try:
+        return {"uris": app.state.manager.timeseries_exists_batch(req.uris)}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.get("/sparql_json")
 def sparql_json(query: str, include_dependencies: bool = True, wait_for_fresh: bool = False):
     try:

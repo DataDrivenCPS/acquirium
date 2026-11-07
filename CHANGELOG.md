@@ -22,6 +22,9 @@ change in any release.
 
 ### Added
 - `Query.measurement(uri=...)` pins a measurement node to one point.
+- `Query.measurement(ref=...)` keeps only the given streams: a reference
+  URI, a `Stream` from `ac.stream(source_id, ref_name)`, or a list of
+  either (an empty list matches nothing).
 - `Query.insert_log()` and `Query.read_logs()` write and read logbook notes
   on the entities a query matches, as the legacy builder did.
 - `DataObject` supports `alias in data`, `iter(data)` and `len(data)`;
@@ -29,7 +32,8 @@ change in any release.
 - `DataObject.stream_info()` lists the streams behind an object with the
   `source_id` and `ref_name` their driver registered, and
   `dataframe(streams=...)` / `latest(streams=...)` read only the listed
-  streams, by number from that table or by ref URI. `ref_info()` is removed.
+  streams, by number from that table, by ref URI, or by the `Stream` handle
+  `ac.stream(source_id, ref_name)` returns. `ref_info()` is removed.
 - `object` experiment variables save any Python object through a codec class
   and rebuild it with `observation.load()`. A codec has a `media_type`,
   `dumps(value) -> bytes`, and `loads(data)`; the declaration stores its
@@ -126,6 +130,20 @@ change in any release.
   instead of failing on an empty shapes graph.
 
 ### Changed
+- `Query.data()` no longer fetches stream statistics. The `DataObject`
+  fetches them in one batch request the first time `total_rows`,
+  `time_range` or `bindings` needs them, so `dataframe()`, `latest()` and
+  `Query.dataframe()` skip the server-side count of every matched stream.
+  That one request covers every stream of the `data()` call and is shared
+  with the sub-objects `by()` and `convert_to()` return, so a `by()` loop
+  that checks each entity makes one request, not one per entity, and all of
+  them read the same snapshot. `refresh_stats()` fetches it again. The repr
+  of a lazy object shows its stream count until the statistics are loaded.
+- `DataObject.is_empty()`, before the values are fetched, asks the server
+  only which streams have a row (`POST /timeseries_exists`, shared the same
+  way) instead of counting them, unless the statistics are already loaded.
+  On TimescaleDB this stops at each stream's first row: for 100 streams
+  holding 30M rows it takes about 5 ms instead of 2 s.
 - `cast_value` is validated (`"float"`, `"int"`, `"str"` or `None`) and
   defaults to `None`; `"float"` parses numeric text into `value_numeric`
   without logging, `"int"` returns `Int64` columns and warns when it

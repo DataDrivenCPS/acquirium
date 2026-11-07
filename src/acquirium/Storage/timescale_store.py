@@ -670,6 +670,27 @@ class TimescaleStore(TimeseriesStore):
                 result[uri] = TimeseriesInfo(table=TIMESERIES_TABLE, row_count=0)
         return result
 
+    def timeseries_exists_batch(self, ref_uris: list[str]) -> set[str]:
+        """The ref URIs among ``ref_uris`` that have at least one live row.
+
+        EXISTS stops at each stream's first entry in the (ref_id, ts) index,
+        so the cost does not grow with the stream's length as COUNT(*) does.
+        """
+        if not ref_uris:
+            return set()
+        with timed_debug(logger, "timeseries_exists_batch n=%d", len(ref_uris)), self.conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT r.ref_uri
+                FROM {REF_IDS_TABLE} AS r
+                WHERE r.ref_uri = ANY(%s)
+                  AND EXISTS (SELECT 1 FROM {TIMESERIES_TABLE} AS t
+                              WHERE t.ref_id = r.ref_id AND NOT t.deleted)
+                """,
+                (ref_uris,),
+            )
+            return {uri for (uri,) in cur.fetchall()}
+
     # -------------------- logging API --------------------
 
     def insert_log(self, log: LogEntry) -> None:
