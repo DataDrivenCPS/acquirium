@@ -10,6 +10,8 @@ change in any release.
 
 ## [Unreleased]
 
+## [0.4.0a9] - 2026-11-09
+
 ### Removed
 - The legacy query builder (`acquirium.Q`, `acq.find_entity()` and the
   `find_related` / `find_data` / `filter_by_*` family). `acq.find_all_data()`
@@ -740,7 +742,8 @@ change in any release.
 - Text matcher backed by FastEmbed with QUDT and graph indexes.
 - Grafana dashboard helpers.
 
-[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a8...HEAD
+[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a9...HEAD
+[0.4.0a9]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a8...v0.4.0a9
 [0.4.0a8]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a7...v0.4.0a8
 [0.4.0a7]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a6...v0.4.0a7
 [0.4.0a6]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a5...v0.4.0a6
