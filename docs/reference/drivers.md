@@ -63,10 +63,9 @@ from acquirium import (Driver, IngestDriver, PollingIngestDriver, EventIngestDri
 from acquirium.DriverState import DriverState
 ```
 
-<!-- TODO: `from acquirium import DriverState` silently resolves to the
-     acquirium.DriverState *module*, not the class, because the module shadows
-     the name. Export the class from `acquirium/__init__.py` (or rename the
-     module) and simplify this import. -->
+Note that `DriverState` is imported from its own module.
+`from acquirium import DriverState` returns the `acquirium.DriverState` module,
+not the class.
 
 The other built-ins are imported by their module path, as in the `spec`
 values below.
