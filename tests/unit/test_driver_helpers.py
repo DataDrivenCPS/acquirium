@@ -33,6 +33,15 @@ def test_source_id_attribute_exists_only_when_driver_sets_default():
         driver.source_id
 
 
+def test_configured_source_is_available_before_setup_and_can_be_overridden():
+    driver = DummyDriver(aq=object(), config={"driver": {"source_id": "configured"}})
+    assert driver.source_id == "configured"
+    assert driver.reference_uri("signal") == compute_ref_uri("configured", "signal")
+
+    driver.setup()
+    assert driver.source_id == "demo-source"
+
+
 def test_graph_helpers_always_use_the_driver_source_id():
     aq = MagicMock()
     driver = DummyDriver(aq=aq, config={})

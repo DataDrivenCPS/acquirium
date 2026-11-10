@@ -13,6 +13,9 @@ change in any release.
 ### Fixed
 - `AcquiriumClient` inserts without a `request_id` failed with
   `NameError: name 'uuid' is not defined`, which broke every driver insert.
+- A driver's `source_id` from its `[[drivers]]` config is set before `setup()`
+  runs, as the error for a missing `source_id` said. Drivers had to read it
+  from `self.config` themselves. A value assigned in `setup()` still wins.
 
 ### Added
 - Running totals: `aq.Native.cumulative_sum(port, reset=None)` and
@@ -82,6 +85,9 @@ change in any release.
   read it. Requires the Escapement rolling-window release.
 
 ### Changed
+- `examples/transformation` is a sine-wave polling driver and a Python
+  threshold app, deployed from Python or from `[[apps]]` in the config. The
+  first-app tutorial builds it step by step.
 - The MQTT driver no longer loses messages it had received but not stored. It
   connects with MQTT 5 and a persistent session under a client ID that stays
   the same across restarts, subscribes at QoS 1 by default (was 0), and

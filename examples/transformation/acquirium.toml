@@ -1,6 +1,9 @@
 [server]
-# Keep this example's disposable local state out of the repository root.
+host = "127.0.0.1"
 data_dir = ".data"
+exact_only = true
 
-[[apps]]
-spec = "./temperature_conversion.py:FahrenheitToCelsius"
+[[drivers]]
+spec = "publish.py:SineWaveDriver"
+source_id = "sine-wave"
+interval = 1.0

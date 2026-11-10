@@ -2,141 +2,235 @@
 title: Your first app
 ---
 
-A probe reports water temperature in Fahrenheit. We want a Celsius stream that
-stays current, including when somebody corrects an old reading. An app connects
-the input stream to that calculation.
+A driver produces readings; an app derives another stream from them. We will
+generate a sine wave, write a Python function that keeps values above 0.5, and
+deploy it through the client API.
 
-## Run the example
+## Start the input stream
 
 From the repository root, with the [development environment](getting-started.md)
 installed:
 
 ```sh
-uv run --locked python examples/transformation/publish.py
+uv run --locked acquirium server --config examples/transformation/acquirium.toml
 ```
 
-The script starts a temporary server, converts three readings, corrects one,
-and shuts down. It checks these results:
+This starts the sine-wave driver. Leave the server running while you work in a
+second terminal or notebook. Stop it with Ctrl-C when you finish.
 
-```text
-68, 77, 86 °F become [20.0, 25.0, 30.0] °C
-Correct 77 °F to 68 °F: [20.0, 20.0, 30.0] °C
+The [driver](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/transformation/publish.py) uses the same mechanisms
+as [your first driver](first-driver.md):
+
+```python
+import math
+from acquirium import PollingIngestDriver
+
+class SineWaveDriver(PollingIngestDriver):
+    def setup(self):
+        self.phase = 0.0
+        self.declare(
+            "signal", point_uri="urn:example:sine-wave", value_kind="numeric"
+        )
+
+    def read(self):
+        self.add("signal", math.sin(self.phase))
+        self.phase += math.pi / 4
 ```
 
-Let's walk through the calls that produce them. The complete code is in
-[publish.py](../../examples/transformation/publish.py) and
-[temperature_conversion.py](../../examples/transformation/temperature_conversion.py).
+The config supplies `source_id="sine-wave"` and a one-second interval. The
+server calls `read()` on that schedule; the polling base handles timestamps,
+buffering, and insertion. The wave completes a cycle every eight readings.
 
-## Register the input
+## Read what the driver produces
 
-For the walkthrough, start a local client and describe the probe:
+Connect to the server from Python:
 
 ```python
 import acquirium as aq
 
-client = aq.init(data_dir="/tmp/acquirium-first-app", exact_only=True)
-client.register_streams([{
-    "source_id": "temperature-example",
-    "ref_name": "fahrenheit",
-    "point_uri": "urn:example:temperature:fahrenheit",
-    "unit": "http://qudt.org/vocab/unit/DEG_F",
-    "value_kind": "numeric",
-}])
+client = aq.Acquirium(server_url="127.0.0.1", server_port=8000)
+readings = client.query().measurement(uri="urn:example:sine-wave").dataframe(shape="narrow")
+readings.select("time", "value_numeric").tail(4)
 ```
 
-The source and reference name identify the stream when writing readings. The
-point URI and unit let us find it through a query. We do not need a plant model
-for this example.
+Here are the first few readings from a run, showing just time and value. Your
+timestamps will differ:
+
+```text
+shape: (4, 2)
+┌────────────────────────────────┬───────────────┐
+│ time                           ┆ value_numeric │
+│ ---                            ┆ ---           │
+│ datetime[ns, UTC]              ┆ f64           │
+╞════════════════════════════════╪═══════════════╡
+│ 2026-11-08 17:46:10.768455 UTC ┆ 0.0           │
+│ 2026-11-08 17:46:11.875366 UTC ┆ 0.707107      │
+│ 2026-11-08 17:46:12.897379 UTC ┆ 1.0           │
+│ 2026-11-08 17:46:13.913289 UTC ┆ 0.707107      │
+└────────────────────────────────┴───────────────┘
+```
+
+The `value_numeric` column follows the wave: approximately 0, 0.707, 1, 0.707,
+0, −0.707, −1, −0.707, then repeats. Rerun the query to fetch newer readings.
+We will keep the three readings above 0.5 in each cycle, with their original
+values and timestamps.
+
+## What the function receives
+
+Acquirium calls your function with two arguments: `frame` and `context`.
+
+`frame` is a Polars dataframe of input readings. We will process one reading at
+a time, so this example receives **one row with eight columns**. Here is that
+row laid out vertically; long metadata strings are shortened:
+
+| Column | Value in this row |
+| --- | --- |
+| `role` | `"wave"` |
+| `stream` | `"urn:acquirium#7cf58971-2f06-503c-83b5-6da39e9177b9"` |
+| `event_time_ns` | `1794159971875366000` |
+| `sample_key` | `0` |
+| `value` | `0.7071067811865475` |
+| `text` | `null` |
+| `quality` | `0` |
+| `context` | `'{"ext0":"urn:acquirium#…","extname0":"signal",…}'` |
+
+The number we want is in `value`. `frame["value"][0]` reads that number from the
+first row. The other columns identify the reading and describe its source.
+
+The separate `context` argument is a dictionary describing the calculation.
+Its `window_ns` field tells us which timestamp the result belongs to:
+
+```python
+# The relevant part of context:
+{"window_ns": 1794159971875366000}
+```
+
+Here it is the same timestamp as the input reading. The driver supplied the
+reading's time; the calculation keeps it.
+
+## What the function returns
+
+The function returns a dictionary of output dataframes. Our app has one output,
+called `"high"`.
+
+If the reading is above 0.5, we want a one-row dataframe containing that value.
+`emit(context, value)` creates this dataframe: it takes the timestamp from
+`context` and puts the number in the `value` column. For the reading above:
+
+```text
+shape: (1, 5)
+┌─────────────────────┬────────────┬──────────┬──────┬─────────┐
+│ event_time_ns       ┆ sample_key ┆ value    ┆ text ┆ quality │
+│ ---                 ┆ ---        ┆ ---      ┆ ---  ┆ ---     │
+│ i64                 ┆ i64        ┆ f64      ┆ str  ┆ u32     │
+╞═════════════════════╪════════════╪══════════╪══════╪═════════╡
+│ 1794159971875366000 ┆ 0          ┆ 0.707107 ┆ null ┆ 0       │
+└─────────────────────┴────────────┴──────────┴──────┴─────────┘
+```
+
+`empty()` creates a dataframe with the same columns and no rows. We use that
+when the reading is below the limit, or when an input has been deleted.
+Returning it clears any earlier result at that timestamp.
 
 ## Write the calculation
 
-The calculation in `temperature_conversion.py` is:
+With those input and output shapes in mind, the function is:
 
 ```python
 from escapement import emit, empty
 
-def convert(frame, context):
+def threshold(frame, context):
     if frame.is_empty():
-        return {"celsius": empty()}
-    fahrenheit = frame["value"][0]
-    return {"celsius": emit(context, (fahrenheit - 32) * 5 / 9)}
+        return {"high": empty()}
+
+    value = frame["value"][0]
+    if value > 0.5:
+        result = emit(context, value)
+    else:
+        result = empty()
+
+    return {"high": result}
 ```
 
-The frame contains the input readings for one calculation. Here we use one
-reading at a time. `emit` creates an output at the same timestamp, and
-`"celsius"` names the output port. If the input is deleted, `empty()` removes
-the corresponding output.
+Save it in `examples/transformation/sine_threshold.py`. The last line returns
+our result dataframe under the output name `"high"`.
 
-## Connect it to the input
+## Connect the function to the stream
 
-Back in the calling script, select Fahrenheit streams and give their readings
-to `convert`:
+Back in your Python session, select the input and describe the app:
 
 ```python
 from pathlib import Path
-import acquirium as aq
 
-query = client.query().measurement(
-    alias="temperature", unit="http://qudt.org/vocab/unit/DEG_F"
-)
+query = client.query().measurement(alias="wave", uri="urn:example:sine-wave")
 app = aq.App(
-    name="fahrenheit-to-celsius",
-    inputs=[aq.Selection.from_query(query, alias="temperature")],
-    outputs={"celsius": aq.Output(unit="http://qudt.org/vocab/unit/DEG_C")},
+    name="high-wave",
+    inputs=[aq.Selection.from_query(query, alias="wave")],
+    outputs={"high": aq.Output()},
     function=aq.PythonFunction.from_file(
-        Path("examples/transformation/temperature_conversion.py"), "convert"
+        Path("examples/transformation/sine_threshold.py"), "threshold"
     ),
     window=aq.Pointwise(),
 )
+```
+
+The selection supplies the stream's readings. `Pointwise()` asks for a separate
+calculation at each timestamp. The output declaration's `"high"` must match the
+port returned by the function.
+
+`PythonFunction.from_file` names the calculation file and entrypoint. The file
+must be available on the server; this local example shares its filesystem with
+your Python session.
+
+## Deploy and read the result
+
+```python
 client.deploy_app(app)
+high = client.query().measurement(app="high-wave").dataframe(shape="narrow")
+high.select("time", "value_numeric").tail(3)
 ```
 
-`Pointwise` runs the calculation separately for each timestamp in each selected
-stream. The output's unit describes the result; the arithmetic in `convert`
-performs the conversion. Deploying the app also calculates results for any
-readings already stored.
+For the readings above, the result is:
 
-The function file must be available on the server. In this local example the
-script and server share a filesystem.
-
-## Insert and read
-
-Write a reading, then wait for its result to be published:
-
-```python
-from datetime import datetime, timezone
-
-when = datetime(2026, 1, 1, tzinfo=timezone.utc)
-response = client.insert_timeseries("temperature-example", "fahrenheit", [(when, 68)])
-client.wait(response["receipts"][0])
+```text
+shape: (3, 2)
+┌────────────────────────────────┬───────────────┐
+│ time                           ┆ value_numeric │
+│ ---                            ┆ ---           │
+│ datetime[ns, UTC]              ┆ f64           │
+╞════════════════════════════════╪═══════════════╡
+│ 2026-11-08 17:46:11.875366 UTC ┆ 0.707107      │
+│ 2026-11-08 17:46:12.897379 UTC ┆ 1.0           │
+│ 2026-11-08 17:46:13.913289 UTC ┆ 0.707107      │
+└────────────────────────────────┴───────────────┘
 ```
 
-The receipt identifies the write. Waiting ensures that both the input and its
-derived result are ready to read.
+Deployment calculates results for readings already stored, then keeps them
+current as the driver adds more. The derived stream contains values above 0.5,
+with no rows for the lower parts of the wave. Read it through the same query
+interface as the source stream.
 
-Find the output by the app that produced it:
+To change the calculation, save the revised function at a new path and deploy
+an app pointing to it. Acquirium recalculates its stored history. The
+[Python calculation guide](../how-to/write-soft-sensors.md) covers updating code
+and choosing larger windows.
 
-```python
-result = client.query().measurement(app="fahrenheit-to-celsius")
-result.dataframe(shape="narrow")
+## Load the declaration at startup
+
+You can also keep the declaration in a file. The companion
+[threshold_app.py](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/transformation/threshold_app.py) packages the
+same declaration as `high_wave(client, parameters)`, a factory that returns an
+`App`.
+
+Add it to `examples/transformation/acquirium.toml`:
+
+```toml
+[[apps]]
+spec = "threshold_app.py:high_wave"
 ```
 
-The `value_numeric` column contains 20.0. Derived streams use the same query
-interface as source streams.
-
-## Correct a reading
-
-Write a different value at the same source timestamp:
-
-```python
-response = client.insert_timeseries("temperature-example", "fahrenheit", [(when, 86)])
-client.wait(response["receipts"][0])
-result.dataframe(shape="narrow")
-```
-
-The Celsius value is now 30.0. We changed the source reading; the app updated
-the derived reading without another deploy or a separate backfill. Call
-`aq.shutdown()` when you finish the walkthrough.
+Restart Acquirium. The server calls the factory and deploys the returned app
+alongside the driver.
 
 Next, [follow a turbidity alarm](turbidity.md) to combine several apps, work with
-windows, and see how a correction changes a downstream alarm.
+windows, and see how late readings change a downstream alarm.

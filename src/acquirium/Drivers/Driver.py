@@ -107,7 +107,8 @@ class Driver(ABC):
         self.config = config
         # Persistent state storage
         self.state = self._init_state(config)
-        self._source_id: str | None = None
+        source = config.get("driver", {}).get("source_id")
+        self._source_id: str | None = str(source) if source is not None else None
 
     @property
     def source_id(self) -> str:
