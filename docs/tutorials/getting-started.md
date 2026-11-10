@@ -2,16 +2,13 @@
 title: Getting started
 ---
 
-This tutorial installs Acquirium from PyPI, generates a config file, starts a
-server and runs one query.
-The starter config collects CPU, memory, disk and network readings of your
-machine, so there is data to query without a plant model.
+This tutorial installs Acquirium from PyPI, generates a config file, starts a server and runs one query.
+The starter config collects CPU, memory, disk and network readings of your machine, so there is data to query without a plant model.
 
 ## 1. Install
 
 Acquirium requires Python 3.11 or newer.
-Create a directory for the project and install the package with either pip or
-uv.
+Create a directory for the project and install the package with either pip or uv.
 
 With pip and a virtual environment:
 
@@ -60,8 +57,7 @@ acquirium server
 
 Default `--config`, is `acquirium.toml` at the working directory.
 It keeps running until you stop it with Ctrl+C.
-This is useful when drivers should keep collecting data, or when several
-scripts and notebooks use the same server.
+This is useful when drivers should keep collecting data, or when several scripts and notebooks use the same server.
 
 Connect to it from a second terminal or a notebook:
 
@@ -71,8 +67,7 @@ from acquirium import Acquirium
 acq = Acquirium(server_url="127.0.0.1", server_port=8000)
 ```
 
-See [run the server](../how-to/run-the-server.md) for the command's flags and
-the startup order.
+See [run the server](../how-to/run-the-server.md) for the command's flags and the startup order.
 
 ### Option B: start it from Python
 
@@ -84,10 +79,8 @@ acq = aq.init()      # reads ./acquirium.toml and starts a local server
 aq.shutdown()
 ```
 
-`aq.init()` starts the server in the background and returns the same client
-as option A.
-The server stops at `aq.shutdown()` or when the script exits. The data stays
-in `data_dir`.
+`aq.init()` starts the server in the background and returns the same client as option A.
+The server stops at `aq.shutdown()` or when the script exits. The data stays in `data_dir`.
 This is useful for a single script or notebook.
 
 See [start Acquirium from a script](../how-to/local-runtime.md) for the
@@ -118,9 +111,8 @@ shape: (2, 4)
 └────────────────────────────────┴──────────────┴──────────────────────┴──────────────┘
 ```
 
-The query selects every `Computer` in the graph, then the measurements of it
-whose quantity kind is a dimensionless ratio, which are the three percentages.
-`dataframe()` fetches their readings as a polars frame.
+The query selects every `Computer` in the graph, then the measurements of it whose quantity kind is a dimensionless ratio, which are the three percentages.
+`dataframe()` fetches their readings as a polars frame. 
 The [querying tutorial](querying.md) covers the query interface.
 
 ## The config file
@@ -139,17 +131,12 @@ Relative paths resolve against the directory of the config file.
 | `[driver] interval` | `10.0` | Seconds between two polls of a driver. This is the default for every `[[drivers]]` entry. |
 | `[[drivers]] spec` | system metrics driver | The driver class to start with the server, as `module:Class` or `path/to/file.py:Class`. Each `[[drivers]]` entry starts one driver and can override the `[driver]` defaults. |
 
-The [server configuration reference](../reference/server-config.md) lists
-every `[server]` key, and the
-[driver reference](../reference/drivers.md#configuration) lists the driver
-keys and the built-in drivers.
+The [server configuration reference](../reference/server-config.md) lists every `[server]` key, and the [driver reference](../reference/drivers.md#configuration) lists the driver keys and the built-in drivers.
 
 ## Next steps
 
-- [Load a plant model](../how-to/load-a-plant-model.md) to describe your own
-  equipment and points.
+- [Load a plant model](../how-to/load-a-plant-model.md) to describe your own equipment and points.
 - [Write a first driver](first-driver.md) to ingest your own data.
-- [Querying](querying.md) and [working with data](data.md) for the query
-  interface. Their examples use the WaterTAP seawater-ro model; the
+- [Querying](querying.md) and [working with data](data.md) for the query interface. Their examples use the WaterTAP seawater-ro model; the
   [WaterTAP deployment guide](https://github.com/DataDrivenCPS/acquirium/blob/main/deployments/WATERTAP/readme.md)
   shows how to run it.
