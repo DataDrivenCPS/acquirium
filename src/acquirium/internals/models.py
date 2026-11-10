@@ -58,12 +58,6 @@ class Point(BaseModel):
     stream: TimeseriesInfo | None = None
 
 
-class PointCreateRequest(BaseModel):
-    uri: str
-    types: list[str] = Field(default_factory=list)
-    unit: str | None = None
-
-
 class RegisterDatasourceRequest(BaseModel):
     """Request to register a named datasource."""
     source_id: str

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import re
@@ -559,13 +558,6 @@ class OxigraphGraphStore:
         merged += self._ensure_dependency_cache_current()
         return merged
 
-    def _dependency_query_graph(self) -> Graph:
-        """The query-dataset graph containing only import dependencies."""
-        return self.query_dataset.graph(self.dependency_query_graph_uri)
-
-    def _inferred_data_graph(self) -> Graph:
-        return self.query_dataset.graph(self.inferred_data_graph_uri)
-
     def _query_cache_is_current(self) -> bool:
         return (
             self._query_cache_source_version == self._source_version
@@ -768,20 +760,6 @@ class OxigraphGraphStore:
                 "is_current": self._query_cache_is_current(),
                 "rebuild_in_progress": self._query_rebuild_in_progress,
             }
-
-    def published_query_digest(self) -> str:
-        """Return a stable digest of the complete published inferred graph.
-
-        This deliberately waits for the query-cache publication boundary, so
-        runtime SQL never records a revision for a partial graph rebuild.
-        """
-        result = self.sparql_query(
-            "SELECT ?s ?p ?o WHERE { ?s ?p ?o } ORDER BY ?s ?p ?o",
-            include_dependencies=False,
-            wait_for_fresh=True,
-        )
-        payload = json.dumps(result["rows"], ensure_ascii=False, separators=(",", ":"), default=str)
-        return hashlib.sha256(payload.encode()).hexdigest()
 
     def refresh_union(self, snapshot_path: str | Path | None = None) -> dict[str, int]:
         """Refresh inferred query views from all data graphs and shape graphs."""
@@ -1034,12 +1012,6 @@ class OxigraphGraphStore:
         with self._lock:
             graph = self._source_graph_with_dependencies() if include_dependencies else self._source_data_graph()
             return graph.serialize(format=fmt)
-
-    def export_dependency_graph(self, *, format: str = "trig") -> str:
-        """Serialize only the imported triples (closure minus instance data)."""
-        fmt = (format or "trig").lower()
-        with self._lock:
-            return self._ensure_dependency_cache_current().serialize(format=fmt)
 
     def insert_graph(self, content: str | bytes | Graph, *, format: str = "turtle", replace: bool = False, graph_uri: URIRef | None = None) -> dict[str, int | bool]:
         """Parse incoming graph data and merge (or replace) into one data graph.

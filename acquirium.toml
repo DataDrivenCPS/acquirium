@@ -1,4 +1,4 @@
-# acquirium.toml — example configuration using the DuckDB timeseries backend
+# acquirium.toml — example server configuration
 #
 # Usage:
 #   acquirium server --config acquirium.toml
@@ -9,12 +9,12 @@ host = "0.0.0.0"
 port = 8000
 exact_only = true
 
-# Data directory: the Oxigraph graph store, embedding cache, and local DuckDB
-# file live under this path by default. Escapement data remains in PostgreSQL.
+# Data directory: the Escapement engine's DuckDB file, the experiment ledger,
+# the Oxigraph graph store and the embedding cache live under this path.
 data_dir = ".acquirium"
 
-# Escapement is the required engine; it owns the embedded DuckDB store.
-# Use a fresh data directory when switching from the former storage schema.
+# Escapement's DuckDB file. Use a fresh data directory when switching from the
+# former storage schema.
 # engine_path = ".acquirium/escapement.duckdb"
 
 # RDF graph store path (Oxigraph).  Defaults to {data_dir}/.oxigraph.

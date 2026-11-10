@@ -1,5 +1,5 @@
 from rdflib.namespace import Namespace, NamespaceManager
-from rdflib import Graph, URIRef, RDF, RDFS
+from rdflib import Graph, URIRef, RDF
 
 ### ACQUIRIUM INTERNAL NAMESPACES
 ACQUIRIUM_NS = Namespace("urn:acquirium#")
@@ -30,44 +30,10 @@ ACQUIRIUM_DB_URI = ACQUIRIUM_NS.Escapement
 DATABASE = ACQUIRIUM_NS.Database
 
 
-LAST_REPORTED = ACQUIRIUM_NS.lastReported
-IS_CALCULATED_FROM = ACQUIRIUM_NS.isCalculatedFrom
-
-# App metadata
-APP = ACQUIRIUM_NS.App
-APP_QUERY = ACQUIRIUM_NS.querySpec
-APP_PARAMS = ACQUIRIUM_NS.paramSpec
-HAS_IMAGE = ACQUIRIUM_NS.hasImage
-HAS_ENTRYPOINT = ACQUIRIUM_NS.hasEntrypoint
-HAS_COMMAND = ACQUIRIUM_NS.hasCommand
-HAS_APP_CLASS = ACQUIRIUM_NS.hasAppClass
-STORAGE_BACKEND = ACQUIRIUM_NS.storageBackend
-TIMESERIES_STREAM = ACQUIRIUM_NS.TimeseriesStream
-EVENT_STREAM = ACQUIRIUM_NS.EventStream
-THRESHOLD = ACQUIRIUM_NS.Threshold
-ALARM = ACQUIRIUM_NS.Alarm
-REPORT = ACQUIRIUM_NS.Report
-
-# Soft sensor SHACL-ish vocabulary
-SOFT_SENSOR = ACQUIRIUM_NS.SoftSensor
-STREAM = ACQUIRIUM_NS.Stream
-DATA_SOURCE = ACQUIRIUM_NS.DataSource
-
-DEPENDS_ON = ACQUIRIUM_NS.dependsOn
-PRODUCES = ACQUIRIUM_NS.produces
-HAS_MODULE = ACQUIRIUM_NS.hasModule
-HAS_VERSION = ACQUIRIUM_NS.hasVersion
-LAST_RUN = ACQUIRIUM_NS.lastRun
-LAST_INPUT_CHANGE = ACQUIRIUM_NS.lastInputChange
-
-
 # External-reference vocabulary follows ontologies/ref-schema.ttl
 # (https://brickschema.org/schema/Brick/ref#). Predicates that the schema
 # does not define live under ACQUIRIUM_NS and are Acquirium-specific.
 HAS_EXTERNAL_REFERENCE = BRICK_REF.hasExternalReference
-EXTERNAL_REFERENCE = BRICK_REF.ExternalReference
-TIMESERIES_REFERENCE = BRICK_REF.TimeseriesReference
-HAS_TIMESERIES_ID = BRICK_REF.hasTimeseriesId
 STORED_AT = BRICK_REF.storedAt
 
 
@@ -104,26 +70,16 @@ OUTPUT_GROUP = ACQUIRIUM_NS.outputGroup
 # MQTT Reference predicates. timeKey/valueKey are Acquirium-specific (they
 # describe how to decode a JSON payload) and live under ACQUIRIUM_NS.
 MQTT_REFERENCE = BRICK_REF.MQTTReference
-HAS_MQTT_REFERENCE = BRICK_REF.hasMQTTReference
 MQTT_BROKER = BRICK_REF.MQTTBroker  # accepts "host", "host:port", or "mqtt(s)://..."
 MQTT_TOPIC = BRICK_REF.MQTTTopic
-MQTT_PORT = ACQUIRIUM_NS.mqttPort
 TIME_KEY = ACQUIRIUM_NS.timeKey
 VALUE_KEY = ACQUIRIUM_NS.valueKey
 HAS_PYOMO_VAR = ACQUIRIUM_NS.hasPyomoVar
 
-# Direct timeseries references are created by drivers. External databases
-# should be ingested through a driver rather than queried from graph metadata.
-HAS_TIMESERIES_REFERENCE = BRICK_REF.hasTimeseriesReference
-
 OWL_CLASS = URIRef("http://www.w3.org/2002/07/owl#Class")
 OWL_OBJ_PROP = URIRef("http://www.w3.org/2002/07/owl#ObjectProperty")
 OWL_DATA_PROP = URIRef("http://www.w3.org/2002/07/owl#DatatypeProperty")
-OWL_ANN_PROP = URIRef("http://www.w3.org/2002/07/owl#AnnotationProperty")
 RDF_PROP = RDF.Property
-
-CLASS_TYPES = {RDFS.Class, OWL_CLASS}
-PROP_TYPES = {RDF_PROP, OWL_OBJ_PROP, OWL_DATA_PROP, OWL_ANN_PROP}
 
 CONNECTION_POINT = S223.hasConnectionPoint
 

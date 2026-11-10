@@ -1,7 +1,7 @@
 """Integration tests for FastAPI endpoints — talks to the running server.
 
 Requires: All services running via `make testing-up`.
-Server at localhost:8000, TimescaleDB at localhost:5432, Mosquitto at localhost:1883 by default.
+Server at localhost:8000 and Mosquitto at localhost:1883 by default.
 """
 
 import os
