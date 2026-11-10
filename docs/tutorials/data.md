@@ -193,8 +193,6 @@ d.units()
 ```
 `convert_to()` returns a new data object by converting the values into a target unit.
 
-**TODO**: this method and its params should be renamed (something like: `.convert()`)
-
 ```python
 kg_per_min = d.convert_to("kg/min")
 kg_per_min.units()
@@ -220,7 +218,7 @@ d2.convert_to("g/s", alias="flow")     # area stays in m²
 - A point with no unit in the graph will fail:
 
 ```text
-ValueError: No unit annotation found for alias 'p'. Provide from_unit explicitly.
+ValueError: No unit annotation found for point <...> (alias 'p'). Provide from_unit explicitly.
 ```
 
 Pass `from_unit=` when you know what the numbers are:
