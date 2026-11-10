@@ -9,7 +9,12 @@ import re
 
 import pytest
 
+from rdflib import URIRef
+from rdflib.plugins.sparql import prepareQuery
+
 from acquirium.Client.explore.core import Query
+from acquirium.Client.streams import Stream
+from acquirium.internals.models import compute_ref_uri
 
 CLS_A = "urn:test#TypeA"
 CLS_B = "urn:test#TypeB"
@@ -370,6 +375,55 @@ class TestMeasurementUri:
         assert isinstance(acq.find_all_data(), Query)
         assert acq.find_all_data().to_sparql() == acq.query().measurement().to_sparql()
         assert "VALUES ?v0 { <urn:ex/p1> }" in acq.find_all_data(uri="urn:ex/p1").to_sparql()
+
+
+class TestMeasurementRef:
+    R1 = str(compute_ref_uri("hist", "FT_feed"))
+    R2 = str(compute_ref_uri("hist", "FT_perm"))
+
+    def test_root_measurement_pinned_to_one_stream(self):
+        sparql = q().measurement(alias="m", ref=self.R1).to_sparql()
+        assert f"VALUES ?ext0 {{ <{self.R1}> }}" in sparql
+        prepareQuery(sparql)
+
+    def test_stream_handles_and_uris_are_deduplicated(self):
+        refs = [Stream(self.R1), self.R1, URIRef(self.R2)]
+        sparql = q().measurement(alias="m", ref=refs).to_sparql()
+        assert f"VALUES ?ext0 {{ <{self.R1}> <{self.R2}> }}" in sparql
+
+    def test_every_data_node_of_a_frm_list_is_pinned(self):
+        b = (q().entity(CLS_A, alias="a").entity(CLS_A, alias="b")
+             .measurement(frm=["a", "b"], ref=self.R1))
+        sparql = b.to_sparql()
+        for nid in b.query_graph.data_nodes:
+            assert f"VALUES ?ext{nid} {{ <{self.R1}> }}" in sparql
+        prepareQuery(sparql)
+
+    def test_directional_measurement_keeps_the_refs(self):
+        b = q().entity(CLS_A, alias="a").measurement(direction="downstream", ref=self.R1)
+        (info,) = b.query_graph.data_nodes.values()
+        assert info.refs == (self.R1,)
+
+    def test_refs_survive_later_attribute_filters(self):
+        b = q().measurement(alias="m", ref=self.R1).where(type="urn:test#Sensor")
+        assert b.query_graph.data_nodes[0].refs == (self.R1,)
+
+    def test_empty_list_matches_nothing(self):
+        sparql = q().measurement(alias="m", ref=[]).to_sparql()
+        assert "VALUES ?ext0 {  }" in sparql
+        prepareQuery(sparql)
+
+    def test_no_ref_no_values(self):
+        assert "VALUES ?ext" not in q().measurement(alias="m").to_sparql()
+
+    @pytest.mark.parametrize("bad", ["FT_feed", "hist:FT_feed", "urn:x> } ?s ?p ?o {", 3])
+    def test_non_uris_and_sparql_breaking_text_rejected(self, bad):
+        with pytest.raises(ValueError, match="ref must be stream reference URIs"):
+            q().measurement(alias="m", ref=bad)
+
+    def test_to_dict_carries_the_refs(self):
+        (node,) = q().measurement(alias="m", ref=self.R1).to_dict()["data_nodes"]
+        assert node["refs"] == [self.R1]
 
 
 class TestMetadataCompaction:

@@ -618,6 +618,11 @@ class Manager:
         info = self.core.info(set(keys.values()))
         return {uri: info[key] for uri, key in keys.items()}
 
+    def timeseries_exists_batch(self, uris: list[str]) -> list[str]:
+        """The stream or point URIs among ``uris`` that have any row."""
+        info = self.timeseries_info_batch(uris) if uris else {}
+        return sorted(uri for uri, stats in info.items() if stats["row_count"])
+
     def register_datasource(self, source_id: str) -> str:
         """Register a named datasource in the knowledge graph.
 

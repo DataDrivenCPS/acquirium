@@ -10,16 +10,6 @@ change in any release.
 
 ## [Unreleased]
 
-### Removed
-- The legacy query builder (`acquirium.Q`, `acq.find_entity()` and the
-  `find_related` / `find_data` / `filter_by_*` family). `acq.find_all_data()`
-  stays and now builds an explore `Query`; see "Coming from the old
-  interface" in the client API reference for the verb-by-verb mapping.
-- The Grafana dashboard helpers (`generate_grafana_dashboard()`,
-  `add_gauge_panel()`, `add_time_series_panel()`) and the `grafanalib`
-  dependency. The Grafana service in `compose.yaml` is unchanged.
-- The ignored `lexicon_path` argument of `Acquirium()`.
-
 ### Fixed
 - `AcquiriumClient` inserts without a `request_id` failed with
   `NameError: name 'uuid' is not defined`, which broke every driver insert.
@@ -44,13 +34,6 @@ change in any release.
   age, such as an hourly fit applied to every reading. A correction repairs
   the windows that read it. The membrane example computes a flux residual
   this way.
-- `Query.measurement(uri=...)` pins a measurement node to one point.
-- `DataObject` supports `alias in data`, `iter(data)` and `len(data)`;
-  `data["typo"]` raises `KeyError`.
-- `DataObject.stream_info()` lists the streams behind an object with the
-  `source_id` and `ref_name` their driver registered, and
-  `dataframe(streams=...)` / `latest(streams=...)` read only the listed
-  streams, by number from that table or by ref URI. `ref_info()` is removed.
 - Text values are back on the Escapement core. Each reading is a number or
   text, stored as its stream's `value_kind`: a fault code such as `"Bad"` on a
   numeric stream is kept as text. `value_mode` takes `numeric`, `text` and
@@ -97,6 +80,110 @@ change in any release.
   windows: overlapping windows on a fixed grid, where each output at `t` reads
   `[t - lookback, t + lookahead]` and a correction repairs every window that
   read it. Requires the Escapement rolling-window release.
+
+### Changed
+- The MQTT driver no longer loses messages it had received but not stored. It
+  connects with MQTT 5 and a persistent session under a client ID that stays
+  the same across restarts, subscribes at QoS 1 by default (was 0), and
+  acknowledges each message only once the server has accepted it. A crash or
+  restart redelivers the rest. New settings: `mqtt_client_id`,
+  `mqtt_receive_maximum` (default 65535, the protocol's maximum, so one
+  driver keeps up with about 20,000 messages a second) and
+  `mqtt_session_expiry` (default 7 days).
+- The MQTT driver logs `mqtt falling behind` when a broker's receive window
+  stays full for most of 30 seconds, meaning the broker is queueing its
+  messages, and `mqtt caught up` once it recovers.
+- `max_pending_requests` defaults to 100,000 instead of 10,000, so the inbox
+  absorbs a longer stall in publication before inserts get 503.
+- The bundled Mosquitto config saves its queues every 60 s instead of every
+  30 min, and holds up to a million messages or 256 MiB per session instead of
+  1000 messages. The driver reference lists the broker settings to check.
+- Driver inserts return once the server accepts them, without waiting for
+  publication. Event drivers send readings within 0.1 s of arrival instead of
+  at the next tick. `IngestDriver.when_accepted(callback)` runs a callback once
+  everything added before it is accepted.
+- Reads take readings from Escapement as Arrow batches (`query_arrow`) instead
+  of one Python object per reading. Reading 1M numbers over HTTP takes 0.08 s
+  instead of 0.41 s. Requires the Escapement Arrow-query release.
+- **Breaking:** soft-sensor functions read the window timestamp as
+  `context["window_ns"]` (was `context["group"]`), and batch frames name the
+  column `window_ns` (was `group`). `escapement.emit`, `empty` and
+  `emit_windows` build output frames, and `context["operator"]["window"]` gives
+  the window sizes. Requires the Escapement function-contract release.
+- Drivers send the requests of a large insert without waiting for each to
+  publish; only the last waits. Escapement can then apply many requests in one
+  epoch: the bulk-ingest example drops from 102 epochs to 4 (25.5 requests per
+  epoch). Requests refused at engine capacity (HTTP 503) are resent after
+  `Retry-After` for up to 5 minutes.
+- `insert_timeseries`, `insert_timeseries_batch`, `insert_timeseries_arrow` and
+  `delete_timeseries` resend a request refused with 503 after `Retry-After`,
+  for up to `retry_for` seconds (default 60), as experiment recordings do.
+- **Drivers run as plain child processes; Ray is no longer a dependency.**
+  Each `[[drivers]]` entry runs as `python -m acquirium.Drivers.runner`, which
+  imports the driver itself and reports setup success or failure back to the
+  server. A driver stops when its server stops, including when the server is
+  killed. `/drivers/list` now includes each driver's `pid`. The `[ray]`
+  config section is gone.
+- `IngestDriver.insert_observations` splits frames into requests of at most
+  `MAX_INSERT_ROWS` (10,000) rows, the server's per-request cap, so file
+  drivers can ingest large files.
+- Client HTTP errors include the server's error message for every endpoint
+  (previously some, including `insert_timeseries_arrow`, reported only the
+  status code).
+- `_import_driver_class` returns only the class.
+- Experiments keep their records (Studies, variables, runs, observations,
+  artifact bytes, and the graph-metadata outbox) in a SQL ledger, DuckDB or
+  PostgreSQL, set with `[server] experiments_path`; it defaults to the engine's
+  PostgreSQL database, or `data_dir/experiments.duckdb`. Samples a run records
+  are Escapement streams, published before the observations that point at
+  them; deleting runs clears their samples after the deletion commits.
+  Experiment data recorded with development builds of main, which kept
+  samples in SQL, is not migrated.
+- Time-series observations record the Escapement epoch they were recorded
+  at, as `observation.epoch`; it includes everything written to Escapement
+  before the recording. `observation.dataframe(epoch=observation.epoch)`
+  reads the samples as recorded, after later corrections.
+- Recording samples does not wait for Escapement to publish them: the
+  observation commits with the receipt, and reading observations waits for
+  it instead. Runs record without waiting on each other.
+- `GET /timeseries` accepts `after=<sequence>` to wait for a receipt; a
+  stream handle returned by `add()` uses it to read its own samples.
+- A recording refused because Escapement's inbox is full returns 503 before
+  anything commits, and the client resends it.
+- Deleting runs reports only their own samples and clears them with one
+  Escapement range delete per stream; `usage()` counts samples without
+  reading them. A failed clear at
+  server start is logged and retried later instead of stopping the server.
+- `Stream.dataframe(end=...)` and stream intervals include samples at `end`
+  again; reads are half-open underneath, so the client reads up to just after
+  it.
+
+## [0.4.0a9] - 2026-11-09
+
+### Removed
+- The legacy query builder (`acquirium.Q`, `acq.find_entity()` and the
+  `find_related` / `find_data` / `filter_by_*` family). `acq.find_all_data()`
+  stays and now builds an explore `Query`; see "Coming from the old
+  interface" in the client API reference for the verb-by-verb mapping.
+- The Grafana dashboard helpers (`generate_grafana_dashboard()`,
+  `add_gauge_panel()`, `add_time_series_panel()`) and the `grafanalib`
+  dependency. The Grafana service in `compose.yaml` is unchanged.
+- The ignored `lexicon_path` argument of `Acquirium()`.
+
+### Added
+- `Query.measurement(uri=...)` pins a measurement node to one point.
+- `Query.measurement(ref=...)` keeps only the given streams: a reference
+  URI, a `Stream` from `ac.stream(source_id, ref_name)`, or a list of
+  either (an empty list matches nothing).
+- `Query.insert_log()` and `Query.read_logs()` write and read logbook notes
+  on the entities a query matches, as the legacy builder did.
+- `DataObject` supports `alias in data`, `iter(data)` and `len(data)`;
+  `data["typo"]` raises `KeyError`.
+- `DataObject.stream_info()` lists the streams behind an object with the
+  `source_id` and `ref_name` their driver registered, and
+  `dataframe(streams=...)` / `latest(streams=...)` read only the listed
+  streams, by number from that table, by ref URI, or by the `Stream` handle
+  `ac.stream(source_id, ref_name)` returns. `ref_info()` is removed.
 - `object` experiment variables save any Python object through a codec class
   and rebuild it with `observation.load()`. A codec has a `media_type`,
   `dumps(value) -> bytes`, and `loads(data)`; the declaration stores its
@@ -193,29 +280,20 @@ change in any release.
   instead of failing on an empty shapes graph.
 
 ### Changed
-- The MQTT driver no longer loses messages it had received but not stored. It
-  connects with MQTT 5 and a persistent session under a client ID that stays
-  the same across restarts, subscribes at QoS 1 by default (was 0), and
-  acknowledges each message only once the server has accepted it. A crash or
-  restart redelivers the rest. New settings: `mqtt_client_id`,
-  `mqtt_receive_maximum` (default 65535, the protocol's maximum, so one
-  driver keeps up with about 20,000 messages a second) and
-  `mqtt_session_expiry` (default 7 days).
-- The MQTT driver logs `mqtt falling behind` when a broker's receive window
-  stays full for most of 30 seconds, meaning the broker is queueing its
-  messages, and `mqtt caught up` once it recovers.
-- `max_pending_requests` defaults to 100,000 instead of 10,000, so the inbox
-  absorbs a longer stall in publication before inserts get 503.
-- The bundled Mosquitto config saves its queues every 60 s instead of every
-  30 min, and holds up to a million messages or 256 MiB per session instead of
-  1000 messages. The driver reference lists the broker settings to check.
-- Driver inserts return once the server accepts them, without waiting for
-  publication. Event drivers send readings within 0.1 s of arrival instead of
-  at the next tick. `IngestDriver.when_accepted(callback)` runs a callback once
-  everything added before it is accepted.
-- Reads take readings from Escapement as Arrow batches (`query_arrow`) instead
-  of one Python object per reading. Reading 1M numbers over HTTP takes 0.08 s
-  instead of 0.41 s. Requires the Escapement Arrow-query release.
+- `Query.data()` no longer fetches stream statistics. The `DataObject`
+  fetches them in one batch request the first time `total_rows`,
+  `time_range` or `bindings` needs them, so `dataframe()`, `latest()` and
+  `Query.dataframe()` skip the server-side count of every matched stream.
+  That one request covers every stream of the `data()` call and is shared
+  with the sub-objects `by()` and `convert_to()` return, so a `by()` loop
+  that checks each entity makes one request, not one per entity, and all of
+  them read the same snapshot. `refresh_stats()` fetches it again. The repr
+  of a lazy object shows its stream count until the statistics are loaded.
+- `DataObject.is_empty()`, before the values are fetched, asks the server
+  only which streams have a row (`POST /timeseries_exists`, shared the same
+  way) instead of counting them, unless the statistics are already loaded.
+  On TimescaleDB this stops at each stream's first row: for 100 streams
+  holding 30M rows it takes about 5 ms instead of 2 s.
 - `cast_value` is validated (`"float"`, `"int"`, `"str"` or `None`) and
   defaults to `None`; `"float"` parses numeric text into `value_numeric`
   without logging, `"int"` returns `Int64` columns and warns when it
@@ -228,58 +306,9 @@ change in any release.
 - A unit conversion that cannot be done is no longer only logged: the
   automatic one raises a `UserWarning` and returns the values as stored, and a
   `convert_to()` that fails at fetch time raises `ValueError`.
-- **Breaking:** soft-sensor functions read the window timestamp as
-  `context["window_ns"]` (was `context["group"]`), and batch frames name the
-  column `window_ns` (was `group`). `escapement.emit`, `empty` and
-  `emit_windows` build output frames, and `context["operator"]["window"]` gives
-  the window sizes. Requires the Escapement function-contract release.
-- Drivers send the requests of a large insert without waiting for each to
-  publish; only the last waits. Escapement can then apply many requests in one
-  epoch: the bulk-ingest example drops from 102 epochs to 4 (25.5 requests per
-  epoch). Requests refused at engine capacity (HTTP 503) are resent after
-  `Retry-After` for up to 5 minutes.
-- `insert_timeseries`, `insert_timeseries_batch`, `insert_timeseries_arrow` and
-  `delete_timeseries` resend a request refused with 503 after `Retry-After`,
-  for up to `retry_for` seconds (default 60), as experiment recordings do.
-- **Drivers run as plain child processes; Ray is no longer a dependency.**
-  Each `[[drivers]]` entry runs as `python -m acquirium.Drivers.runner`, which
-  imports the driver itself and reports setup success or failure back to the
-  server. A driver stops when its server stops, including when the server is
-  killed. `/drivers/list` now includes each driver's `pid`. The `[ray]`
-  config section is gone.
-- `IngestDriver.insert_observations` splits frames into requests of at most
-  `MAX_INSERT_ROWS` (10,000) rows, the server's per-request cap, so file
-  drivers can ingest large files.
-- Client HTTP errors include the server's error message for every endpoint
-  (previously some, including `insert_timeseries_arrow`, reported only the
-  status code).
-- `_import_driver_class` returns only the class.
-- Experiments keep their records (Studies, variables, runs, observations,
-  artifact bytes, and the graph-metadata outbox) in a SQL ledger, DuckDB or
-  PostgreSQL, set with `[server] experiments_path`; it defaults to the engine's
-  PostgreSQL database, or `data_dir/experiments.duckdb`. Samples a run records
-  are Escapement streams, published before the observations that point at
-  them; deleting runs clears their samples after the deletion commits.
-  Experiment data recorded with development builds of main, which kept
-  samples in SQL, is not migrated.
-- Time-series observations record the Escapement epoch they were recorded
-  at, as `observation.epoch`; it includes everything written to Escapement
-  before the recording. `observation.dataframe(epoch=observation.epoch)`
-  reads the samples as recorded, after later corrections.
-- Recording samples does not wait for Escapement to publish them: the
-  observation commits with the receipt, and reading observations waits for
-  it instead. Runs record without waiting on each other.
-- `GET /timeseries` accepts `after=<sequence>` to wait for a receipt; a
-  stream handle returned by `add()` uses it to read its own samples.
-- A recording refused because Escapement's inbox is full returns 503 before
-  anything commits, and the client resends it.
-- Deleting runs reports only their own samples and clears them with one
-  Escapement range delete per stream; `usage()` counts samples without
-  reading them. A failed clear at
-  server start is logged and retried later instead of stopping the server.
-- `Stream.dataframe(end=...)` and stream intervals include samples at `end`
-  again; reads are half-open underneath, so the client reads up to just after
-  it.
+- DuckDB and TimescaleDB databases from earlier releases upgrade in place the
+  first time the server opens them. A large DuckDB database briefly needs room
+  for a second copy of its samples table.
 - A SPARQL update no longer forces the ontology closure to be recomputed
   unless it changed the graph's `owl:imports` or `owl:Ontology` triples.
 - The query compiler renders `int`, `float`, `bool`, `date` and `datetime`
@@ -861,7 +890,8 @@ change in any release.
 - Text matcher backed by FastEmbed with QUDT and graph indexes.
 - Grafana dashboard helpers.
 
-[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a8...HEAD
+[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a9...HEAD
+[0.4.0a9]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a8...v0.4.0a9
 [0.4.0a8]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a7...v0.4.0a8
 [0.4.0a7]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a6...v0.4.0a7
 [0.4.0a6]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a5...v0.4.0a6
