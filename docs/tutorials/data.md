@@ -236,8 +236,6 @@ ValueError: convert_to: no convertible unit pair for
 
 ## Taking the result apart
 
-**TODO:** This is quite ugly, think of a better way:
-
 A query that matched several points and several entities comes back as one
 object. These four methods split it up.
 
@@ -287,21 +285,26 @@ urn:swro/P2 (5892, 2)
 
 This is useful for per-equipment work, like fitting a model per pump.
 
-`latest(alias)` returns the newest reading.
-
-**TODO:** I think latest also can be improved or removed
+`latest(alias)` returns the newest reading of each point of the alias.
+As with `d["alias"]`, a `point_uri` column is added when the alias covers more
+than one point.
 
 ```python
 d.latest("m")
 ```
 ```text
-shape: (1, 2)
-┌────────────────────────────────┬───────────────┐
-│ time                           ┆ value         │
-╞════════════════════════════════╪═══════════════╡
-│ 2026-08-08 06:43:10.129750 UTC ┆ 111093.849382 │
-└────────────────────────────────┴───────────────┘
+shape: (2, 3)
+┌────────────────────────────────┬───────────────┬──────────────────────────────┐
+│ time                           ┆ value         ┆ point_uri                    │
+╞════════════════════════════════╪═══════════════╪══════════════════════════════╡
+│ 2026-08-08 06:43:10.129750 UTC ┆ 1.0610e6      ┆ urn:swro/P1-mechanical-power │
+│ 2026-08-08 06:43:10.129750 UTC ┆ 111093.849382 ┆ urn:swro/P2-mechanical-power │
+└────────────────────────────────┴───────────────┴──────────────────────────────┘
 ```
 
-Note that `latest()` fetches the whole window and takes the last row.
-For a cheap latest value, query with `limit=1, order="desc"` instead.
+Without an alias, `latest()` reports every point of the object as
+`[data_alias, point_uri, time, value]`.
+
+Note that `latest()` does not fetch the whole window.
+It runs its own fetch of one row per stream, so it is cheap, and it returns
+the newest reading within the `start` and `end` the object was created with.
