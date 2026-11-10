@@ -168,7 +168,6 @@ shape: (2, 5)
 │ 2026-08-08 05:52:16.983763 UTC ┆ 7e6                       ┆ 101325.0                   ┆ 6.8105e6                             ┆ 304.016483 │
 └────────────────────────────────┴───────────────────────────┴────────────────────────────┴──────────────────────────────────────┴────────────┘
 ```
-**TODO:** Find a better way to create the schema from aliases
 
 Both `dataframe()` methods shorten the identifiers by default
 (`compact=True`): URIs are CURIEs and the narrow shape identifies a point by a
