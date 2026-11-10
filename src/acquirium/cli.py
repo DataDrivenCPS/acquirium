@@ -19,6 +19,7 @@ Subcommands:
   acquirium app check MODULE:CLASS Dry-run an app locally or on a server.
   acquirium app list               List deployed apps and binding status.
   acquirium app inspect NAME       Inspect schemas, settings, streams, and progress.
+  acquirium config init [PATH]     Write a starter acquirium.toml.
 """
 
 import importlib
@@ -696,6 +697,33 @@ def server_cmd(
         reload=reload,
         workers=effective_workers,
     )
+
+
+# ---------------------------------------------------------------------------
+# Config files
+# ---------------------------------------------------------------------------
+
+config_app = typer.Typer(help="Create Acquirium config files.", add_completion=False)
+app.add_typer(config_app, name="config")
+
+
+@config_app.command("init")
+def config_init(
+    path: Annotated[Path, typer.Argument(help="File to write, or a directory to put acquirium.toml in")] = Path("acquirium.toml"),
+    force: Annotated[bool, typer.Option("--force", "-f", help="Overwrite the file if it exists")] = False,
+) -> None:
+    """Write a starter acquirium.toml: a local server and one example driver."""
+    from acquirium._templates import starter_config
+
+    target = path / "acquirium.toml" if path.is_dir() else path
+    if target.exists() and not force:
+        typer.echo(f"{target} already exists. Pass --force to overwrite it.", err=True)
+        raise typer.Exit(1)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(starter_config(), encoding="utf-8")
+
+    typer.echo(f"Wrote {target}")
+    typer.echo(f"Start the server with: acquirium server --config {target}")
 
 
 # ---------------------------------------------------------------------------
