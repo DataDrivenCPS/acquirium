@@ -95,7 +95,7 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 | `inspect_app(name: str) -> dict` | Return the declaration, operators, desired/active plan IDs, graph revision, and error. |
 | `remove_app(name: str) -> dict` | Remove operators and their semantic output metadata; retract current values while retaining history. |
 
-See the [app reference](apps.md) and [soft-sensor guide](../how-to/write-soft-sensors.md)
+See the [app reference](apps.md) and [calculation guide](../how-to/write-soft-sensors.md)
 for declarations and the Python function contract.
 
 ### Experiments

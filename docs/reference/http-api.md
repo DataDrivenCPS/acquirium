@@ -51,9 +51,18 @@ inspect the receipt and engine status before retrying with the same identity.
 Admission capacity rejection returns HTTP 503 with `Retry-After: 1`.
 
 The change-feed endpoint accepts `epoch=0`, `ordinal=0`, and `limit=1000`
-(maximum 10,000). It returns `changes`, `cursor`, `published_epoch`,
-`complete_through`, and `has_more`. Pages can split epochs and correction pairs;
-see [consume streaming changes](../how-to/consume-streaming-changes.md) before
+(maximum 10,000), and returns:
+
+| Field | Meaning |
+| --- | --- |
+| `changes` | signed rows, in epoch and ordinal order |
+| `cursor` | the `epoch` and `ordinal` of the last row returned, exclusive; an empty page returns the cursor it was given |
+| `published_epoch` | the publication frontier when the page was cut |
+| `complete_through` | every change up to this epoch has now been returned |
+| `has_more` | more rows remain at or below `published_epoch` |
+
+Pages can split epochs and correction pairs; see
+[consume streaming changes](../how-to/consume-streaming-changes.md) before
 checkpointing or publishing a consumer view. Status `process.peak_rss_bytes`
 reports the server's process high-water RSS where supported, otherwise null;
 Python worker processes are excluded. Status `python_workers` exposes native

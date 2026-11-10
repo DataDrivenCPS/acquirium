@@ -1,78 +1,329 @@
 ---
-title: Write a Python calculation
+title: Calculate a derived stream
 ---
 
-An app can call your Python function for each input window. The function receives
-a Polars dataframe and returns its result. Start with
-[your first app](../tutorials/first-app.md) if you have not deployed one yet.
+An app keeps one stream computed from others: an average, an alarm, an estimate
+of something no sensor measures. This guide starts with the calculations
+Acquirium has built in, then moves to functions of your own, and covers the
+choices you make along the way: the window, state carried between results,
+speed, and settings that differ between groups.
 
-Suppose you want the spread between a minute's highest and lowest turbidity
-readings. Save this in `calculations.py`:
-
-```python
-from escapement import emit
-
-def spread(frame, context):
-    values = frame["value"].drop_nulls()
-    value = None if values.is_empty() else values.max() - values.min()
-    return {"spread": emit(context, value)}
-```
-
-`emit` stamps the result at the window's timestamp. A `None` value produces no
-row and clears any earlier result for that window. Always return every declared
-output port, including when it has no value.
-
-Select a registered point and connect the function to a one-minute window:
+It uses the sine-wave server from [your first app](../tutorials/first-app.md).
+Start it if it is not running, and connect:
 
 ```python
 from pathlib import Path
 import acquirium as aq
 
-query = client.query().measurement(
-    alias="turbidity", uri="urn:bulk/loc-2-turbidity"
-)
-app = aq.App(
-    name="turbidity-spread",
-    inputs=[aq.Selection.from_query(query, alias="turbidity")],
-    outputs={"spread": aq.Output(unit="http://qudt.org/vocab/unit/NTU")},
-    function=aq.PythonFunction.from_file(Path("calculations.py"), "spread"),
-    window=aq.FixedBucket(60_000_000_000),
-)
-client.deploy_app(app)
+SECOND = 1_000_000_000
+
+client = aq.Acquirium(server_url="127.0.0.1", server_port=8000)
+wave = client.query().measurement(alias="wave", uri="urn:example:sine-wave")
 ```
 
-Use your own point URI, or the Filter 3 point from the
-[turbidity demo](../tutorials/turbidity.md). The calculation file must be available
-on the server, with its dependencies installed in the server's Python environment.
-Keep helpers in the same file: neighbouring files are not copied to the worker.
+## Average with a built-in calculation
 
-## Choose what the function sees
-
-`Pointwise()` supplies the readings at one timestamp. `FixedBucket(width_ns)`
-supplies one bucket, such as the minute above. For a trailing ten-minute spread
-every minute, change the window to:
+Averages, sums, minimums, maximums, counts and thresholds need no Python. The
+engine computes them itself, which is faster and leaves no calculation file to
+keep track of:
 
 ```python
-window=aq.Rolling(lookback_ns=600_000_000_000, step_ns=60_000_000_000)
+mean = aq.App(
+    name="wave-mean",
+    inputs=[aq.Selection.from_query(wave, alias="wave")],
+    outputs={"mean": aq.Output()},
+    function=aq.Native.mean("mean"),
+    window=aq.FixedBucket(4 * SECOND),
+)
+client.deploy_app(mean)
+client.query().measurement(alias="mean", app="wave-mean").dataframe().head(6)
+```
+```text
+shape: (6, 2)
+┌─────────────────────────┬───────────┐
+│ time                    ┆ mean      │
+│ ---                     ┆ ---       │
+│ datetime[ns, UTC]       ┆ f64       │
+╞═════════════════════════╪═══════════╡
+│ 2026-11-10 17:10:08 UTC ┆ 0.0       │
+│ 2026-11-10 17:10:12 UTC ┆ 0.603553  │
+│ 2026-11-10 17:10:16 UTC ┆ -0.603553 │
+│ 2026-11-10 17:10:20 UTC ┆ 0.603553  │
+│ 2026-11-10 17:10:24 UTC ┆ -0.603553 │
+│ 2026-11-10 17:10:28 UTC ┆ 0.603553  │
+└─────────────────────────┴───────────┘
 ```
 
-The function stays the same. A correction now revises every window that reads
-that timestamp. A longer lookback means more history to read for each result.
+Four seconds is half a cycle of the wave, so the averages alternate between the
+top half and the bottom half. Each result is stamped at the start of its bucket.
+It appears as soon as the bucket has a reading, and updates as more arrive,
+without waiting for the bucket to end. The first bucket here caught only the
+wave's first reading, which was zero.
 
-Keep the calculation dependent on the supplied frame and context. Read parameters
-from `context["parameters"]`; avoid reading live files, calling services, or using
-the current time, since the function may run again to repair old results.
+Each stream the query matches gets its own mean. In a plant, the same app over a
+query for every turbidity sensor would give one averaged stream per sensor.
 
-## Update the calculation
+## Feed one app into another
 
-`PythonFunction.from_file` records the file's content digest. Put a changed
-calculation at a new path, construct the app with that path, and deploy it again.
-The new function recalculates the app's stored history.
+A second app can read the first one's output:
 
-Keep old files available while accepted work may still need them. The digest
-covers the calculation file; packages and model assets need their own versioning.
-See the [deployment contract](../reference/apps.md#deployment-files) for that case.
+```python
+high = aq.App(
+    name="high-mean",
+    inputs=[aq.Selection.outputs_of(mean, "mean", role="mean")],
+    outputs={"alarm": aq.Output()},
+    function=aq.Native.threshold("alarm", above=0.5),
+)
+client.deploy_app(high)
+client.query().measurement(alias="alarm", app="high-mean").dataframe().head(3)
+```
+```text
+shape: (3, 2)
+┌─────────────────────────┬──────────┐
+│ time                    ┆ alarm    │
+│ ---                     ┆ ---      │
+│ datetime[ns, UTC]       ┆ f64      │
+╞═════════════════════════╪══════════╡
+│ 2026-11-10 17:10:12 UTC ┆ 0.603553 │
+│ 2026-11-10 17:10:20 UTC ┆ 0.603553 │
+│ 2026-11-10 17:10:28 UTC ┆ 0.603553 │
+└─────────────────────────┴──────────┘
+```
 
-Use [deploy and inspect apps](check-deploy-apps.md) to preview a change or recover
-from a failed function. The [function reference](../reference/apps.md#python-functions)
-has the frame schema and optional batch and sequential modes.
+The threshold passes an average through when it is above 0.5, and writes
+nothing otherwise, so only the top halves of the wave remain. When an average
+changes, because a late reading arrived in its bucket, the threshold follows.
+
+`aq.Native.cumulative_sum` and `aq.Native.integral` keep running totals, such
+as the volume pumped from a flow rate. The
+[app reference](../reference/apps.md#built-in-functions) lists every built-in
+function.
+
+## Write your own function
+
+When no built-in fits, an app can call a Python function. We will compute the
+wave's *spread*: the gap between its highest and lowest reading over a stretch
+of time. Save this as `spread.py` in the directory you are working in:
+
+```python
+from acquirium.functions import emit
+
+
+def spread(frame, context):
+    values = frame["value"].drop_nulls()
+    if values.is_empty():
+        value = None
+    else:
+        value = values.max() - values.min()
+    return {"spread": emit(context, value)}
+```
+
+As in [your first app](../tutorials/first-app.md#what-the-function-sees), the
+function receives readings in `frame` and returns one result for each output.
+`emit()` stamps the value at the timestamp in `context`. Given `None`, it writes
+nothing, and clears anything written at that timestamp before.
+
+Because it is an ordinary function, you can try it before deploying anything:
+
+```python
+import polars as pl
+from spread import spread
+
+spread(pl.DataFrame({"value": [0.0, 1.0, -1.0]}), {"window_ns": 0})["spread"]["value"]
+```
+```text
+shape: (1,)
+Series: 'value' [f64]
+[
+	2.0
+]
+```
+
+The server copies the file and runs it on its own. Anything the function uses
+must be in this file or in a package installed on the server; a helper module
+next to it is not available.
+
+Deploy it over ten-second buckets:
+
+```python
+app = aq.App(
+    name="wave-spread",
+    inputs=[aq.Selection.from_query(wave, alias="wave")],
+    outputs={"spread": aq.Output()},
+    function=aq.PythonFunction.from_file(Path("spread.py"), "spread"),
+    window=aq.FixedBucket(10 * SECOND),
+)
+client.deploy_app(app)
+
+spreads = client.query().measurement(alias="spread", app="wave-spread")
+spreads.dataframe()
+```
+```text
+shape: (5, 2)
+┌─────────────────────────┬────────┐
+│ time                    ┆ spread │
+│ ---                     ┆ ---    │
+│ datetime[ns, UTC]       ┆ f64    │
+╞═════════════════════════╪════════╡
+│ 2026-11-10 17:10:10 UTC ┆ 2.0    │
+│ 2026-11-10 17:10:20 UTC ┆ 2.0    │
+│ 2026-11-10 17:10:30 UTC ┆ 2.0    │
+│ 2026-11-10 17:10:40 UTC ┆ 2.0    │
+│ 2026-11-10 17:10:50 UTC ┆ 0.0    │
+└─────────────────────────┴────────┘
+```
+
+The window cuts the wave into ten-second buckets and calls the function once
+for each. A bucket holds a whole cycle, from −1 up to 1 and back, so its spread
+is 2. The last bucket has only just started: it holds one reading so far, so its
+spread is 0, and it will grow as the bucket fills.
+
+## Change the window
+
+The window decides which readings each call sees. Replace the fixed bucket with
+a rolling window that looks back four seconds, every two seconds:
+
+```python
+app = aq.App(
+    name="wave-spread",
+    inputs=[aq.Selection.from_query(wave, alias="wave")],
+    outputs={"spread": aq.Output()},
+    function=aq.PythonFunction.from_file(Path("spread.py"), "spread"),
+    window=aq.Rolling(lookback_ns=4 * SECOND, step_ns=2 * SECOND),
+)
+client.deploy_app(app)
+spreads.dataframe().tail(4)
+```
+```text
+shape: (4, 2)
+┌─────────────────────────┬──────────┐
+│ time                    ┆ spread   │
+│ ---                     ┆ ---      │
+│ datetime[ns, UTC]       ┆ f64      │
+╞═════════════════════════╪══════════╡
+│ 2026-11-10 17:10:46 UTC ┆ 1.707107 │
+│ 2026-11-10 17:10:48 UTC ┆ 1.0      │
+│ 2026-11-10 17:10:50 UTC ┆ 1.707107 │
+│ 2026-11-10 17:10:52 UTC ┆ 1.0      │
+└─────────────────────────┴──────────┘
+```
+
+Four seconds is half a cycle, so the spread now rises and falls with the wave.
+The function is the same; only the window changed, and Acquirium recomputed the
+stored history to match.
+
+There are three windows to choose from. `Pointwise()` calls the function once
+for each timestamp, which suits conversions and checks on single readings.
+`FixedBucket` gives regular summaries, a value per minute or per hour.
+`Rolling` gives a trailing view at every step; add `lookahead_ns` when a result
+needs readings from both sides, as gap filling does. A wider window costs more:
+each result reads more history, and a late or corrected reading revisits every
+window that covers it.
+
+## Carry state from one reading to the next
+
+Some calculations need their own previous result, such as a filter or a running
+estimate. Save this smoothing filter as `smooth.py`:
+
+```python
+from acquirium.functions import emit, previous_value
+
+
+def smooth(frame, context):
+    reading = frame["value"][0]
+    earlier = previous_value(context, "smooth", reading)
+    return {"smooth": emit(context, 0.8 * earlier + 0.2 * reading)}
+```
+
+and deploy it with `sequential=True`:
+
+```python
+smoother = aq.App(
+    name="wave-smooth",
+    inputs=[aq.Selection.from_query(wave, alias="wave")],
+    outputs={"smooth": aq.Output()},
+    function=aq.PythonFunction.from_file(Path("smooth.py"), "smooth", sequential=True),
+    window=aq.Pointwise(),
+)
+client.deploy_app(smoother)
+```
+
+Put the two side by side:
+
+```python
+smooth = client.query().measurement(alias="smooth", app="wave-smooth")
+wave.dataframe().join(smooth.dataframe(), on="time").head(7)
+```
+```text
+shape: (7, 3)
+┌────────────────────────────────┬────────────┬───────────┐
+│ time                           ┆ wave       ┆ smooth    │
+│ ---                            ┆ ---        ┆ ---       │
+│ datetime[ns, UTC]              ┆ f64        ┆ f64       │
+╞════════════════════════════════╪════════════╪═══════════╡
+│ 2026-11-10 17:10:10.909771 UTC ┆ 0.0        ┆ 0.0       │
+│ 2026-11-10 17:10:12.082770 UTC ┆ 0.707107   ┆ 0.141421  │
+│ 2026-11-10 17:10:13.114759 UTC ┆ 1.0        ┆ 0.313137  │
+│ 2026-11-10 17:10:14.139910 UTC ┆ 0.707107   ┆ 0.391931  │
+│ 2026-11-10 17:10:15.161927 UTC ┆ 1.2246e-16 ┆ 0.313545  │
+│ 2026-11-10 17:10:16.190043 UTC ┆ -0.707107  ┆ 0.109414  │
+│ 2026-11-10 17:10:17.242986 UTC ┆ -1.0       ┆ -0.112468 │
+└────────────────────────────────┴────────────┴───────────┘
+```
+
+The smoothed wave follows the original, lagging behind it and never reaching
+its peaks, because each result is four parts the previous result to one part
+the new reading.
+
+`sequential=True` runs the windows in time order and hands each call the
+previous window's results. `previous_value` reads one of them, or returns the
+default for the very first reading. The outputs are the only state that
+carries over. A global variable would not work: when an old reading is
+corrected, Acquirium reruns from that point forward, and a variable would hold
+whatever the last call happened to leave in it.
+
+## Make it faster
+
+By default the function is called once per window. That is fine for a live
+stream, but a backfill or a correction can touch thousands of windows at once,
+and then the cost of each call dominates. With `batch=True`, one call receives
+every affected window together, with a `window_ns` column saying which window
+each reading belongs to:
+
+```python
+import polars as pl
+from acquirium.functions import emit_windows
+
+
+def spread(frame, context):
+    spreads = frame.group_by("window_ns").agg(
+        (pl.col("value").max() - pl.col("value").min()).alias("value")
+    )
+    return {"spread": emit_windows(spreads)}
+```
+
+Save it at a new path and pass
+`aq.PythonFunction.from_file(Path("spread_batch.py"), "spread", batch=True)`.
+The results are the same. The
+[bulk-ingest example](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/bulk_ingest)
+runs a chain of apps both ways on a month of plant data: 7.6 seconds in batch
+against 47 seconds one window at a time.
+
+## Give each group its own settings
+
+When one app serves several groups, such as one per filter, each group can have
+its own settings without a copy of the calculation. The selection's
+`parameters` gives each group its values. A built-in calculation refers to one
+with `aq.Parameter`, as in `aq.Native.threshold("alarm", above=aq.Parameter("limit"))`,
+and a Python function reads it from `context["parameters"]`. The
+[turbidity tutorial](../tutorials/turbidity.md#wait-for-a-sustained-excursion)
+uses this to give each filter its own alarm duration, and changing one
+filter's value recomputes only that filter's history.
+
+## Next
+
+To see what a change will recompute before you make it, to update a
+function's code, or to recover from a function that fails, see
+[deploy, change and repair apps](check-deploy-apps.md). The
+[app reference](../reference/apps.md#python-functions) describes every column
+of the frame and every field of the context.

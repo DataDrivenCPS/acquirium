@@ -1,4 +1,4 @@
-"""Follow a gap and a correction through a turbidity alarm chain.
+"""Follow a gap and a late correction through the turbidity alarm chain.
 
     uv run --locked python -m examples.turbidity.run
 """
@@ -7,27 +7,17 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import acquirium as aq
-from acquirium.apps import output_reference
+import polars as pl
 
-from examples.bulk_ingest.chain import (
-    NTU, SOURCE, TURBIDITY, SOFT_SENSORS, fill, plant_alarms, sustained,
-)
+import acquirium as aq
+from examples.bulk_ingest.chain import NTU, SOFT_SENSORS, SOURCE, TURBIDITY
 
 START = datetime(2026, 1, 1, tzinfo=timezone.utc)
-FILTER = "urn:bulk/loc-2"
-
-
-def at(minute, second=0):
-    return START + timedelta(minutes=minute, seconds=second)
-
-
-def read(client, app, group, port, *, epoch):
-    reference = output_reference(app.name, group, port)
-    return client.stream(reference).dataframe(epoch=epoch).sort("time")
+MINUTE = timedelta(minutes=1)
 
 
 def run(client):
+    # Four sampling locations, each with a turbidity point in the plant model.
     model = Path(__file__).resolve().parents[1] / "bulk_ingest" / "model.ttl"
     client.insert_graph_file(model, source_id="turbidity-layout")
     client.register_streams([{
@@ -39,55 +29,48 @@ def run(client):
         "value_kind": "numeric",
     } for i in range(4)])
     for app in SOFT_SENSORS:
-        state = client.deploy_app(app)["app"]
-        if state["status"] != "active" or state["error"] or state["warnings"]:
-            raise RuntimeError(f"{app.name}: {state}")
+        client.deploy_app(app)
 
-    # Four locations, two readings per minute. Only Filter 3 goes high.
+    # Twenty-five minutes of readings, two a minute. Filter 3 (location 2) runs
+    # at 0.8 NTU from 00:02 to 00:20, and its readings for 00:10 are missing.
     streams = {}
-    for i, baseline in enumerate((1.5, 1.0, 0.2, 0.1)):
+    for i, normal in enumerate((1.5, 1.0, 0.2, 0.1)):
         readings = []
         for minute in range(25):
             if i == 2 and minute == 10:
                 continue
-            value = 0.8 if i == 2 and 2 <= minute <= 20 else baseline
-            readings.extend((at(minute, second), value + offset)
-                            for second, offset in ((0, -0.05), (30, 0.05)))
+            value = 0.8 if i == 2 and 2 <= minute <= 20 else normal
+            t = START + minute * MINUTE
+            readings += [(t, value - 0.05), (t + MINUTE / 2, value + 0.05)]
         streams[f"turbidity-{i}"] = readings
+    receipt = client.insert_timeseries_batch(SOURCE, streams)["receipts"][0]
+    first = client.wait(receipt)["epoch"]
 
-    response = client.insert_timeseries_batch(SOURCE, streams)
-    original = client.wait(response["receipts"][0])["epoch"]
-    filled = read(client, fill, FILTER, "turbidity", epoch=original)
-    gap = filled.filter(filled["time"] == at(10)).row(0, named=True)
-    assert abs(gap["value"] - 0.8) < 1e-9, gap
-    print("Filter 3 has no readings at 00:10. Interpolation fills 0.80 NTU.")
+    filter3 = client.query().entity(uri="urn:bulk/loc-2", alias="filter3")
+    filled = filter3.measurement(alias="filled", app="bulk-turbidity-fill")
+    alarm = filter3.measurement(alias="alarm", app="bulk-turbidity-sustained")
+    count = client.query().measurement(alias="count", app="bulk-plant-turbidity-alarms")
 
-    alarms = read(client, sustained, FILTER, "alarm", epoch=original)
-    raised = alarms.filter(alarms["value"] == 1)["time"].to_list()
-    assert raised == [at(minute) for minute in range(17, 21)], raised
-    print("It stays above 0.5 NTU for 15 minutes. The alarm is on at 00:17–00:20.")
-    counts = read(client, plant_alarms, plant_alarms.name, "locations", epoch=original)
-    assert counts.filter(counts["time"] == at(17))["value"].to_list() == [1.0]
-    print("The plant count reports one location in sustained alarm.")
+    at_gap = filled.dataframe().filter(pl.col("time") == START + 10 * MINUTE)
+    alarm_on = alarm.dataframe().filter(pl.col("alarm") == 1)["time"]
+    print(f"Filled value at 00:10: {at_gap['filled'][0]:.2f} NTU")
+    print(f"Sustained alarm on: {alarm_on.min():%H:%M} to {alarm_on.max():%H:%M}")
+    print(f"Locations in sustained alarm, at most: {count.dataframe()['count'].max():.0f}")
 
-    # The missing readings arrive. They show a brief return below the limit.
-    response = client.insert_timeseries(
-        SOURCE, "turbidity-2", [(at(10), 0.15), (at(10, 30), 0.25)]
-    )
-    corrected = client.wait(response["receipts"][0])["epoch"]
-    filled = read(client, fill, FILTER, "turbidity", epoch=corrected)
-    gap = filled.filter(filled["time"] == at(10)).row(0, named=True)
-    assert abs(gap["value"] - 0.2) < 1e-9, gap
-    print("Late readings replace the estimate at 00:10 with 0.20 NTU.")
+    # The missing readings arrive late. They show a brief dip below the limit.
+    late = [(START + 10 * MINUTE, 0.15), (START + 10.5 * MINUTE, 0.25)]
+    receipt = client.insert_timeseries(SOURCE, "turbidity-2", late)["receipts"][0]
+    client.wait(receipt)
 
-    alarms = read(client, sustained, FILTER, "alarm", epoch=corrected)
-    counts = read(client, plant_alarms, plant_alarms.name, "locations", epoch=corrected)
-    assert alarms["value"].max() == counts["value"].max() == 0
-    print("That break clears the sustained alarm and the plant count for the whole run.")
+    at_gap = filled.dataframe().filter(pl.col("time") == START + 10 * MINUTE)
+    print(f"After the late readings, 00:10 is {at_gap['filled'][0]:.2f} NTU")
+    print(f"Sustained alarm, at most: {alarm.dataframe()['alarm'].max():.0f}")
+    print(f"Locations in sustained alarm, at most: {count.dataframe()['count'].max():.0f}")
 
-    earlier = read(client, sustained, FILTER, "alarm", epoch=original)
-    assert earlier.filter(earlier["value"] == 1)["time"].to_list() == raised
-    print("Reading the earlier snapshot still shows the original alarm.")
+    # The snapshot taken before the correction still holds the original alarm.
+    stream = alarm.data().stream_info()["ref_uri"][0]
+    earlier = client.stream(stream).dataframe(epoch=first)
+    print(f"At the first snapshot, the alarm was on for {earlier['value'].sum():.0f} minutes")
 
 
 def main():

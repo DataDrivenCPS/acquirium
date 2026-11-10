@@ -102,7 +102,7 @@ function=aq.Native.threshold("alarm", above=aq.Parameter("limit"))
 ```
 
 Deployment fails when a group lacks the required parameter. For a complete
-average-and-threshold example, see [calculate derived streams](../how-to/calculate-derived-streams.md).
+average-and-threshold example, see [calculate a derived stream](../how-to/write-soft-sensors.md).
 
 ### Totals and integrals
 
@@ -125,7 +125,7 @@ a total because their windows overlap.
 
 `PythonFunction.from_file(path, entrypoint, batch=False, sequential=False)` pins
 a function's file content. The entrypoint has signature `function(frame, context)`.
-The [authoring guide](../how-to/write-soft-sensors.md) walks through one.
+The [calculation guide](../how-to/write-soft-sensors.md#write-your-own-function) walks through one.
 
 The Polars input frame has `role`, `stream`, `event_time_ns`, `sample_key`,
 `value`, `text`, `quality`, and JSON `context` columns. Each reading has either a
@@ -153,7 +153,7 @@ in order:
 
 Numeric results set `value` and leave `text` null; numeric functions may also
 omit the `text` column. Use finite numbers and sample key zero.
-`escapement.emit(context, value, quality=0)`
+`acquirium.functions.emit(context, value, quality=0)`
 builds a row at the window timestamp; a `None` value produces an empty frame.
 `empty()` also builds an empty frame. An empty result removes the previous
 result for that window. Return the complete result, including unchanged rows.
@@ -172,7 +172,7 @@ per window.
 
 ```python
 import polars as pl
-from escapement import emit_windows
+from acquirium.functions import emit_windows
 
 def bucket_mean(frame, context):
     means = frame.group_by("window_ns").agg(pl.col("value").mean())
@@ -191,8 +191,8 @@ With `sequential=True`, the function runs in time order, once per window.
 `window_ns`, input `rows`, and `outputs` by port. It is absent for the first
 window. Outputs carry the state, so return every value needed by the next window.
 
-`escapement.previous_value(context, port, default)` reads an earlier output.
-`escapement.same_period(context, width_ns)` helps restart state at period
+`acquirium.functions.previous_value(context, port, default)` reads an earlier output.
+`acquirium.functions.same_period(context, width_ns)` helps restart state at period
 boundaries. A repair continues until state and outputs stop changing.
 `batch=True` does not apply to sequential functions. The
 [membrane-monitoring example](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/membrane_monitoring)
@@ -251,5 +251,8 @@ Drain accepted work before changing a shared environment, preserve earlier
 releases for recovery, and deploy a newly versioned calculation.
 
 Complete any work spawned by a function before returning. A failed function
-pauses publication for all apps; changing a plan does not skip the failed work.
+pauses publication for all apps. `retry_engine()` reprocesses the waiting
+requests in order, at most `epoch_requests` per epoch; deployments within one
+epoch resolve to the last, so a corrected deployment replaces the failed one
+only if it falls in the same epoch.
 Worker-pool settings and limits are in [server configuration](server-config.md).

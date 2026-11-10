@@ -1,6 +1,6 @@
 """Calculate the complete threshold result for one input timestamp."""
 
-from escapement import emit, empty
+from acquirium.functions import emit, empty
 
 
 def threshold(frame, context):

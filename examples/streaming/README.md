@@ -36,6 +36,11 @@ It consumes both source and derived changes, including signed retractions.
 Acquirium's only engine/store remains Escapement; the JSON consumer view is a
 client-owned demonstration sink, not another server backend.
 
+For a short consumer to start from, see
+[alarm_webhook.py](alarm_webhook.py), which posts to a webhook when an alarm is
+raised or cleared; the [streaming guide](../../docs/how-to/consume-streaming-changes.md)
+walks through it.
+
 Read these files:
 
 - [producer.py](producer.py): a real `acquirium.Driver` subclass, source request

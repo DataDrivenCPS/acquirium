@@ -8,7 +8,8 @@ Functions return rows for all windows; a window left out is retracted.
 import json
 
 import polars as pl
-from escapement import emit_windows, empty
+
+from acquirium.functions import emit_windows, empty
 
 MINUTE_NS = 60 * 1_000_000_000
 THRESHOLDS_NTU = {

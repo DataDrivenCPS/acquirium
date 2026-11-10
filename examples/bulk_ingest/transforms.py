@@ -7,7 +7,8 @@ returns one output row stamped at ``context["window_ns"]``, or an empty frame.
 import json
 
 import polars as pl
-from escapement import emit, empty
+
+from acquirium.functions import emit, empty
 
 MINUTE_NS = 60 * 1_000_000_000
 

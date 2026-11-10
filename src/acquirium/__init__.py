@@ -1,3 +1,5 @@
+# TODO: import lazily (module __getattr__) so calculation workers importing
+# acquirium.functions skip the client stack (~0.25 s per cold worker).
 from acquirium.Client.acquirium import Acquirium
 from acquirium.runtime import init, shutdown
 from acquirium.apps import App, Selection, Output, Parameter

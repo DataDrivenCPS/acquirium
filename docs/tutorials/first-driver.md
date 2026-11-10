@@ -2,29 +2,20 @@
 title: Your first driver
 ---
 
-A driver is a Python class that collects data from somewhere (a file drop, an
-MQTT feed, a simulation, an instrument) and pushes it into the server on a
-schedule, for continuous data ingest.
+Plant data lives in many places: CSV exports from a SCADA system, an MQTT
+broker, a lab spreadsheet, a simulation. A **driver** is the piece of Python
+that reads one of those sources and sends its readings to Acquirium. You
+describe the source, which streams it produces, and how to read it. The server
+does the rest: it schedules the driver, registers its streams, batches the
+inserts, and stops the driver when the server shuts down.
 
-You write three things: the source identity, the streams the source produces,
-and the code that reads it.
-The platform owns the rest: scheduling, registration, batching, insertion and
-shutdown.
-
-In this tutorial we author a driver for the most common source, a CSV export,
-by extending the built-in `CSVIngestDriver`.
-By the end you have a driver that watches a folder, ingests every new row of
-every new file, and gives every column its unit and quantity kind.
-
-This tutorial focuses on setting up a driver for ingesting timeseries data, and 
-minimally classifying that data so that it can be used.
-Attaching this data to a model of the plant is in the
-[next tutorial](driver-with-a-plant-model.md).
+In this tutorial we write a driver for the most common source of all, a folder
+of CSV files. The [next tutorial](driver-with-a-plant-model.md) attaches the
+same data to a plant model.
 
 ## The source
 
-An RO skid exports one file per day into a folder.
-Each file looks like this:
+An RO skid exports one file a day into a folder. Each file looks like this:
 
 ```text
 Date,Time,Feed Flow,Permeate Flow,Feed Pressure,Permeate TDS
@@ -33,18 +24,15 @@ Date,Time,Feed Flow,Permeate Flow,Feed Pressure,Permeate TDS
 8/1/2026,12:30:00 AM,NaN,54.9,802,211
 ```
 
-- the layout is **wide**: one column per stream, one row per timestamp;
-- the timestamp is split over two columns, `Date` and `Time`, in US format;
-- missing values are written as `NaN`.
+Three details matter. The file is *wide*, with one column per signal and one
+row per timestamp. The timestamp is split across a `Date` and a `Time` column,
+in US order. And a missing value is written as `NaN`.
 
-The column names become the `ref_name` of each stream, unchanged, so
-`Feed Flow` is a stream called `Feed Flow`.
+## Ingest it without writing code
 
-## Step 1: run it without code
-
-`CSVIngestDriver` already knows how to walk a folder, read new rows, parse
-timestamps and insert.
-Describe the file in `acquirium.toml` and it runs as is:
+Acquirium ships a `CSVIngestDriver` that already knows how to watch a folder,
+read new rows and parse timestamps. Describe the file in `acquirium.toml` and
+it runs as it is:
 
 ```toml
 [[drivers]]
@@ -60,57 +48,26 @@ null_values = ["NaN"]
 interval    = 60.0
 ```
 
-Start the server with this config, or push the entry to a running one:
-
-```bash
-acquirium server --config acquirium.toml
-acquirium driver start acquirium.toml      # or, on a running server
-acquirium driver list
-```
-
-Every column is now a stream, `measurement()` on an empty query finds them,
-and each one has a *placeholder point*: a node minted for the stream, labelled
-with its column name (`Feed Flow` and so on).
+Start the server with `acquirium server --config acquirium.toml`. Every minute
+the driver looks for new rows, and every column becomes a stream named after
+it: `Feed Flow` is a stream called `Feed Flow`. With no plant model to attach
+to, each stream gets a *placeholder point*, a node created for it and labelled
+with the column name. You can already find them all:
 
 ```python
 acq.query().measurement(alias="m").metadata()
 ```
 
-The rows are safely stored and reachable. Next, we need to define the 
-minimal necessary information for interpretting the data in each column. 
-For example, to interpet `Feed Flow`, we need to know that it's in gallons per minute 
-and describes a flow rate.
-That is what the subclass adds.
+The rows are stored, but the server knows nothing about what they mean. To use
+`Feed Flow`, you need to know that it is a volume flow rate in gallons per
+minute. Saying so takes a few lines of code.
 
-## Step 2: subclass 
+## Say what each column measures
 
-Create `ro_skid_driver.py` next to the config:
-
-```python
-from acquirium import CSVIngestDriver
-
-class ROSkidDriver(CSVIngestDriver):
-    pass
-```
-
-and point the config at it instead:
-
-```toml
-spec = "ro_skid_driver.py:ROSkidDriver"
-```
-
-This driver behaves exactly like step 1.
-`CSVIngestDriver` gives you `read()`, which reads the file from the saved
-cursor, applies the config, reshapes the frame into observations and declares
-each column.
-Do not override `read()` or `tick()` for a CSV source; the two hooks below are
-the places to change behaviour.
-
-## Step 3: say what each column measures
-
-`declare_stream(ref_name)` is called once per distinct column in every batch.
-The default declares the bare identity; override it to say what the column
-means:
+Create `ro_skid_driver.py` next to the config, subclass the built-in driver,
+and point `spec` at your class: `spec = "ro_skid_driver.py:ROSkidDriver"`. The
+driver calls `declare_stream()` once for each column it finds. Override it to
+describe the column:
 
 ```python
 from acquirium import CSVIngestDriver
@@ -123,112 +80,62 @@ COLUMNS = {
 }
 
 class ROSkidDriver(CSVIngestDriver):
-    def declare_stream(self, ref_name: str) -> None:
-        described = COLUMNS.get(ref_name)
-        if described is None:
-            self.declare(ref_name)               # a column we do not know: keep it as is
+    def declare_stream(self, ref_name):
+        if ref_name not in COLUMNS:
+            self.declare(ref_name)          # a column we don't recognise: keep it as it is
             return
-        label, unit, quantity_kind = described
-        self.declare(
-            ref_name,
-            value_kind="numeric",
-            label=label,
-            unit=unit,
-            quantity_kind=quantity_kind,
-        )
-```
-
-`unit` and `quantity_kind` take free text; they are resolved to QUDT together,
-so the quantity kind disambiguates the unit (`"psi"` alone is ambiguous across
-several pressure-like quantities).
-These land on the column's placeholder point, so the streams become queryable
-by what they measure rather than only by name:
-
-```python
-acq.query().measurement(quantity_kind="pressure").metadata()
-acq.query().measurement(unit="gal/min").metadata()
-```
-
-`label` replaces the default `Feed Flow` and is what result columns
-display in place of the URI to improve readability.
-
-Note that the driver does not pick point URIs here.
-URIs may be minted later, attached to a plant model.
-
-## Step 4: fix the frame before it is parsed
-
-`prepare_frame(df, path)` runs on the raw frame after the CSV is read and
-before timestamps are parsed.
-It is the place for source quirks that the config keys cannot express.
-Say the skid started adding a `Comment` column with free text in mid-2026:
-
-```python
-    def prepare_frame(self, df, path):
-        return df.drop("Comment") if "Comment" in df.columns else df
-```
-
-(`skip_cols = ["Comment"]` in the config does the same for a fixed name;
-use the hook when the fix needs logic.)
-
-## The whole driver
-
-Two hooks, no `setup()`, no RDF:
-
-```python
-from acquirium import CSVIngestDriver
-
-COLUMNS = {
-    "Feed Flow":     ("Feed flow",     "gal/min", "volume flow rate"),
-    "Permeate Flow": ("Permeate flow", "gal/min", "volume flow rate"),
-    "Feed Pressure": ("Feed pressure", "psi",     "pressure"),
-    "Permeate TDS":  ("Permeate TDS",  "mg/L",    "mass concentration"),
-}
-
-class ROSkidDriver(CSVIngestDriver):
-    def prepare_frame(self, df, path):
-        return df.drop("Comment") if "Comment" in df.columns else df
-
-    def declare_stream(self, ref_name: str) -> None:
-        described = COLUMNS.get(ref_name)
-        if described is None:
-            self.declare(ref_name)
-            return
-        label, unit, quantity_kind = described
+        label, unit, quantity_kind = COLUMNS[ref_name]
         self.declare(ref_name, value_kind="numeric", label=label,
                      unit=unit, quantity_kind=quantity_kind)
 ```
 
-Drop a file into `data/ro-skid/`, wait one interval, and check that the rows
-arrived and carry their meaning:
+The unit and quantity kind are plain text. The server resolves them together,
+which matters more than it looks: `"psi"` alone could belong to several kinds
+of pressure-like quantity, and the quantity kind settles which one is meant.
+The label is what result frames show in place of a URI.
+
+Now the streams can be found by what they measure, not just by name:
 
 ```python
-acq.query().measurement(alias="m", quantity_kind="pressure").dataframe().tail(3)
+acq.query().measurement(alias="p", quantity_kind="pressure").dataframe().tail(3)
 ```
 
-`acquirium driver list` shows the driver as `running`; if it is not there, or
-shows `failed:`, the error is in the `acquirium.driver.ROSkidDriver` log.
+## Handle the source's quirks
 
-## What happened underneath
+Real exports drift. Suppose the skid started adding a free-text `Comment`
+column halfway through the year. The driver calls `prepare_frame()` on each
+file after reading it and before parsing timestamps, so that is the place to
+deal with it. Add this method to the class:
 
-On every tick the driver lists the folder, and for each file reads from the
-row offset it saved last time (the *cursor*), so a file that grows is read
-incrementally and a file already fully read costs nothing.
-The cursor is saved only after the rows were registered and inserted, so a
-failed insert is retried on the next tick with the same rows.
-An unreadable file is logged and skipped without stalling the others.
+```python
+    def prepare_frame(self, df, path):
+        return df.drop("Comment") if "Comment" in df.columns else df
+```
 
-## What you have, and what you do not
+For a column you always want to skip, `skip_cols = ["Comment"]` in the config
+does the same. Use the hook when the fix needs logic.
 
-Every column is stored, described by unit and quantity kind, and findable with
-`measurement()` and the attribute filters.
+That is the whole driver: two hooks, and no other code. `acquirium driver list`
+shows it as `running`. If it shows `failed:`, the error is in the
+`acquirium.driver.ROSkidDriver` log.
 
-These points cannot do are not yet connected to a system topology. Nothing in the graph says
-`Feed Pressure` is measured at the RO inlet, so no query that starts from
-equipment reaches it: `entity("pump").measurement()` will not find these
-streams, and neither will `direction="upstream"`. 
+## What the driver does for you
 
-[The next tutorial](driver-with-a-plant-model.md) connects this driver to 
-enable these functionlaities.
+On every pass the driver lists the folder and reads each file from where it
+left off, so a file that grows is read a few rows at a time and a file already
+read costs nothing. It saves its position only after the rows are stored. If an
+insert fails, the next pass sends the same rows again. A file it cannot read is
+logged and skipped, without holding up the others.
 
-Every option of the built-in drivers, the other base classes and the full
-driver contract are in the [driver reference](../reference/drivers.md).
+## What is still missing
+
+Every column is stored, described by its unit and quantity kind, and findable
+by what it measures. What the data lacks is a place in the plant. Nothing says
+that `Feed Pressure` is measured at the RO inlet, so a query that starts from
+equipment, such as `entity("pump").measurement()`, will never reach it, and
+neither will a walk upstream from the RO. The
+[next tutorial](driver-with-a-plant-model.md) connects the driver to a plant
+model.
+
+The [driver reference](../reference/drivers.md) lists every option of the
+built-in drivers and the other base classes you can extend.

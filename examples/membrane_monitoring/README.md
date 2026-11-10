@@ -72,5 +72,5 @@ repair costs little more than the function's own work per window it reaches,
 a fraction of a millisecond here. A filter that forgets
 slowly repairs to the end of its history: give it a coarser window, as the
 permeability fit's hourly buckets do, or restart it each period with
-`escapement.same_period`. See [the apps reference](../../docs/reference/apps.md)
+`acquirium.functions.same_period`. See [the apps reference](../../docs/reference/apps.md)
 for the declaration and the context it receives.

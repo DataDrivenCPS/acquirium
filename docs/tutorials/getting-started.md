@@ -2,53 +2,71 @@
 title: Getting started
 ---
 
-For a script or notebook, you can let Acquirium start a local server:
+Acquirium runs as a server. Drivers feed it readings from the plant, and your
+scripts and notebooks ask it questions through a Python client. Install the
+package first:
+
+```bash
+pip install acquirium          # extras add drivers: acquirium[mqtt], [xlsx], [watertap]
+```
+
+There are two ways to get a server running. Which one you want depends on how
+long it needs to live.
+
+## A server for one script
+
+When you are exploring in a notebook, let the client start a server for you:
 
 ```python
 import acquirium as aq
 
-acq = aq.init()  # loads ./acquirium.toml if present
-# Load a model and use acq through the usual client interface.
+acq = aq.init()
+acq.query().measurement().metadata()   # every stream the server knows about
 aq.shutdown()
 ```
 
-Pass `aq.init("my-custom-config.toml")` to select another config file.
-Install the package with `pip install acquirium` first. See
-[starting from a script](../how-to/local-runtime.md) for sharing and lifetime
-rules. To run a server independently of a script, use the CLI:
+`aq.init()` reads `acquirium.toml` from the current directory if there is one,
+starts a server in the background, and returns a client connected to it.
+`aq.init("plant.toml")` uses a different config file. When the script ends, so
+does the server. [Starting from a script](../how-to/local-runtime.md) explains
+how several scripts can share one server.
+
+## A server that keeps running
+
+Drivers that poll a SCADA export overnight, or a plant model that several
+people query, need a server that outlives any one script. Start it from the
+command line:
 
 ```bash
-pip install acquirium          # extras: acquirium[mqtt], [xlsx], [watertap]
-
 acquirium server --config acquirium.toml
 ```
 
-Zero-config `aq.init()` uses exact-only text resolution and starts without
-downloading an embedding model. A standalone server, or `aq.init()` with
-`exact_only=False`, builds the semantic text-resolution indexes on its first
-start; later starts reuse the cache under `data_dir/embedding_cache`.
-See [text-resolution settings](../reference/server-config.md#text-resolution)
-for choosing exact or semantic matching.
-The server answers on `http://127.0.0.1:8000` (`GET /health`) once the core
-is up.
+and connect to it from Python:
 
 ```python
 from acquirium import Acquirium
 
 acq = Acquirium(server_url="127.0.0.1", server_port=8000)
-acq.query().entity("pump").metadata()
 ```
 
-A fresh server starts with no model loaded.
+The two servers differ in one respect. When you ask for `"pump"`, the server
+has to work out which concept in the plant vocabulary you mean. A server
+started by `aq.init()` matches names exactly, so it starts at once. A
+standalone server also matches by meaning, which needs an embedding model: the
+first start downloads it and builds an index, and later starts reuse the
+cache. [Text resolution](../reference/server-config.md#text-resolution) covers
+the setting.
 
-Start with [your first app](first-app.md) to generate a signal with a driver
-and apply a threshold. It needs no plant model. Then
-[follow a turbidity alarm](turbidity.md) through a chain of calculations.
+## Where to go next
 
-The query and data tutorials use the WaterTAP seawater-RO model, which produces
-simulated plant data.
+A new server is empty. It has no plant model and no streams, so the tutorials
+fill it in one of two ways.
 
-To run WaterTAP, follow the [WaterTAP deployment guide](https://github.com/DataDrivenCPS/acquirium/blob/main/deployments/WATERTAP/readme.md):
+The [querying](querying.md) and [data](data.md) tutorials use a simulated
+seawater reverse-osmosis plant from WaterTAP, which comes with a plant model
+and a steady supply of readings. Start it by following the
+[WaterTAP deployment guide](https://github.com/DataDrivenCPS/acquirium/blob/main/deployments/WATERTAP/readme.md).
 
-clone the repo, install the `watertap` extra, and start the server against
-`deployments/WATERTAP/models/seawater-ro/acquirium.toml`.
+To begin with your own data instead, start with
+[your first driver](first-driver.md), which reads a folder of CSV files and
+needs no plant model at all.

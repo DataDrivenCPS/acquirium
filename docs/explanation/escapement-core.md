@@ -59,8 +59,10 @@ atomically. The engine records the accepted and active plans, and a restart
 reconciles the two. A plan ID names its content; each activation has its own
 retry identity, so returning to an earlier plan activates it again.
 
-A function that fails publishes nothing from its epoch and pauses the processor,
-for every app. Fix the cause, then call `retry_engine()`.
+A function that fails publishes nothing from its epoch and pauses the
+processor for every app; [how derived streams stay current](apps.md#readers-see-a-consistent-snapshot)
+explains why, and [deploy and inspect apps](../how-to/check-deploy-apps.md#recover-from-a-failed-calculation)
+how to resume.
 
 Shutdown waits up to `drain_timeout` seconds for pending writes to publish.
 Escapement cannot interrupt a running function, so one still running at the
@@ -74,12 +76,10 @@ and data change.
 
 ## Change feed
 
-`GET /engine/changes` pages Escapement's signed change history with an
-exclusive cursor, the published epoch it was cut at, and the last complete
-epoch. A consumer commits its sink updates together with its cursor, buffering
-any epoch split across pages. The
-[streaming workload](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/streaming) shows durable delivery,
-asynchronous publication, complete-epoch consumption and restart.
+`GET /engine/changes` pages Escapement's signed change history, so a consumer
+can follow every committed source and derived change and resume after a
+restart. [Consume streaming changes](../how-to/consume-streaming-changes.md)
+describes how to use it.
 
 ## Limits
 

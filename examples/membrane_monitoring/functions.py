@@ -10,7 +10,8 @@ permeability estimate as of each reading instead.
 import math
 
 import polars as pl
-from escapement import emit, empty, previous_value
+
+from acquirium.functions import emit, empty, previous_value
 
 
 def smoothed(frame, context):

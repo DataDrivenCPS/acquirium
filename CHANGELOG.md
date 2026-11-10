@@ -18,6 +18,11 @@ change in any release.
   from `self.config` themselves. A value assigned in `setup()` still wins.
 
 ### Added
+- `acquirium.functions` provides the calculation helpers (`emit`, `empty`,
+  `emit_windows`, `previous_value` and the rest), so calculation files no
+  longer import `escapement` directly.
+- `examples/streaming/alarm_webhook.py`, a short change-feed consumer that posts
+  to a webhook when an alarm is raised or cleared.
 - Running totals: `aq.Native.cumulative_sum(port, reset=None)` and
   `aq.Native.integral(port, per_ns, reset=None, max_gap_ns=None)`, for
   totalizers such as a volume from a flow rate. Each result builds on the one

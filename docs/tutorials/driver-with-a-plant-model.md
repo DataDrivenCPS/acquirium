@@ -2,48 +2,20 @@
 title: A driver against an existing plant model
 ---
 
-[Your first driver](first-driver.md) ingested a CSV export with no plant model
-at all. Every column got a placeholder point, described by its unit and
-quantity kind.
+[Your first driver](first-driver.md) ingested the RO skid's CSV files with no
+plant model, so each column landed on a placeholder point of its own. Now
+suppose the plant already has a model that describes the skid: its inlets and
+outlets, and the sensors on them. Connecting the driver to that model is a
+small change in code, and it changes what you can ask of the data.
 
-This tutorial continues from the same driver and matches the data points to a model of the RO skid 
-[loaded in based on this guide](../how-to/load-a-plant-model.md).
+This tutorial uses the seawater-RO model, loaded as
+[loading a plant model](../how-to/load-a-plant-model.md) describes.
 
-What changes is one argument. `declare()` gains a `point_uri` naming a point
-already in the graph, and attaching the data stream to that point. 
+## Find the points the model already has
 
-## The situation
-
-The same file lands in the folder every day:
-
-```text
-Date,Time,Feed Flow,Permeate Flow,Feed Pressure,Permeate TDS
-8/1/2026,12:00:00 AM,120.5,55.2,801,210
-8/1/2026,12:15:00 AM,120.1,55.0,803,208
-8/1/2026,12:30:00 AM,NaN,54.9,802,211
-```
-
-And the plant model already says what the skid is. These are the seawater-ro
-model's own triples:
-
-```turtle
-wbs:RO  a nawi:ReverseOsmosisMembrane ;
-    rdfs:label "Reverse Osmosis Stage" ;
-    s223:cnx wbs:RO-in, wbs:RO-out, wbs:RO-out-retentate .
-
-wbs:RO-in-flow-mass-water  a s223:QuantifiableObservableProperty ;
-    s223:ofMedium        nawi:Water-Seawater ;
-    qudt:hasQuantityKind qudtqk:MassFlowRate ;
-    qudt:hasUnit         unit:KiloGM-PER-SEC .
-
-wbs:RO-in-pressure  a s223:QuantifiableObservableProperty ;
-    qudt:hasQuantityKind qudtqk:Pressure .
-```
-
-## Step 1: find the points
-
-Before writing any code, ask the server which points exist and what they
-already say. This is the step that replaces choosing URIs:
+The model's points carry URIs, and the driver will refer to them. Before writing
+any code, ask the server which points the RO has and what it already says about
+them:
 
 ```python
 (acq.query().entity(uri="wbs:RO", alias="ro")
@@ -70,17 +42,15 @@ shape: (11, 4)
 └────────┴─────────────────────────────────┴─────────────────────┴─────────────────────┘
 ```
 
-Every URI in the `m` column is a binding target. Copy them exactly; a typo
-mints a new URI rather than attaching the point to your model.
+Three of the skid's columns have a match: feed flow, permeate flow and feed
+pressure. The fourth, `Permeate TDS`, does not, because the model has no TDS
+concentration point on the RO. That is normal. Models are rarely complete, and
+the driver has to cope.
 
-Note also what is *not* there: the model has no TDS concentration point on the
-RO, so the `Permeate TDS` column has nothing to bind to. That is the normal
-state of affairs, and step 2 handles it.
+## Declare against those points
 
-## Step 2: declare against those points
-
-The driver is the same class as before, with one difference in
-`declare_stream()`: `point_uri` names a point in your model.
+The driver is the same class as before. `declare()` now gets a `point_uri`
+naming a point in the model. The `wbs:` prefix stands for `urn:swro/`:
 
 ```python
 from acquirium import CSVIngestDriver
@@ -92,141 +62,77 @@ POINTS = {
 }
 
 class ROSkidDriver(CSVIngestDriver):
-    def declare_stream(self, ref_name: str) -> None:
-        point_uri = POINTS.get(ref_name)
-        if point_uri is None:
-            self.declare(ref_name)          # unmapped column: ingest it, no point
+    def declare_stream(self, ref_name):
+        if ref_name not in POINTS:
+            self.declare(ref_name)          # no point in the model: ingest it anyway
             return
-        self.declare(ref_name, value_kind="numeric", point_uri=point_uri)
+        self.declare(ref_name, value_kind="numeric", point_uri=POINTS[ref_name])
 ```
 
-The `unit` and `quantity_kind` arguments are gone. The point already carries
-both in the model for this example. 
+The unit and quantity kind have gone, because the model's points already carry
+them. `Permeate TDS` is still ingested onto a placeholder point. It just
+cannot be reached from the RO until someone adds the point to the model. The
+config does not change.
 
-`Permeate TDS` does not have a corresponding point in the model, so just its reference is added
- `self.declare(ref_name)`. It still
-gets ingested and still gets a placeholder point, but they aren't reachable
-through `wbs:RO` until somebody adds the point to the model. 
+Copy URIs exactly. A typo does not fail; it creates a new point that nothing in
+the model refers to.
 
-The config from the first tutorial is unchanged:
+## The model checks what you declare
 
-```toml
-[[drivers]]
-spec        = "ro_skid_driver.py:ROSkidDriver"
-source_id   = "ro-skid"
-watch_dir   = "./data/ro-skid"
-glob        = "*.csv"
-format      = "wide"
-date_col    = "Date"
-clock_col   = "Time"
-day_first   = false
-null_values = ["NaN"]
-interval    = 60.0
-```
+When the point already exists, registering a stream compares what you declare
+with what the model says:
 
-The driver still contributes no RDF of its own beyond its stream
-registrations. The difference is where those registrations land: on points the
-plant model already owns, rather than on placeholders minted for them.
+- if the point says nothing about a field, your value is written onto it;
+- if it already holds the same value, nothing changes;
+- if it holds a different value, say `qudtqk:Pressure` against your
+  `quantity_kind="temperature"`, registration raises `ValueError` and stores
+  nothing.
 
-## Step 3: what the check buys you
+Compare that with the first tutorial, where nothing could contradict you. A
+placeholder point has no prior opinion, so declaring a pressure column as a
+temperature produced a confidently wrong point and no complaint. Here the
+mistake fails before a single row is stored.
 
-Because the point exists, registration now compares what you declared against
-what the graph says, and refuses to write a contradiction:
+Units are the exception, and in one specific way. The skid reports feed pressure
+in psi. Suppose the model recorded that point in pascals. Declaring
+`unit="psi"` is not a contradiction, since the two convert. The raw rows are
+stored in psi, and reads convert them to the model's pascals, so nobody
+querying the point needs to know the skid's preference. A unit that does not
+convert, such as celsius on a pressure point, raises. [Units](../explanation/units.md#how-a-unit-gets-recorded)
+has the rules. The model as shipped records no unit for this point at all, so
+declaring psi simply writes it onto the point.
 
-| the point has | you declare | result |
-|---|---|---|
-| nothing for that field | a value | the value is written onto the point |
-| the same value | the same value | no change |
-| `qudtqk:Pressure` | `quantity_kind="temperature"` | `ValueError`, nothing inserted |
+## Check that the data arrived
 
-In the first tutorial nothing could
-contradict you: a placeholder point has no prior opinion, so declaring
-`quantity_kind="temperature"` on a pressure column produced a confidently
-wrong point and no complaint. Here the model already holds the opinion, and
-the mistake fails at declaration time, before a single row is stored.
-
-Units are the one field that tolerates a difference, and only in one specific
-way.
-
-## Step 4: units the source reports differently
-
-The skid reports feed pressure in psi. Suppose the model had annotated
-`wbs:RO-in-pressure` in pascals. Declaring psi does not conflict and does not
-overwrite:
-
-```python
-self.declare("Feed Pressure", value_kind="numeric",
-             point_uri="urn:swro/RO-in-pressure", unit="psi")
-```
-
-The two are convertible, so psi is recorded on the *reference node* as the
-storage unit: the raw rows stay in psi, and reads convert to the point's
-pascals automatically. `units()` reports pascals, and nobody querying the
-point has to know the skid's preference.
-
-A non-convertible unit (celsius on a pressure point) raises instead. The rules
-are in [units](../explanation/units.md#how-a-unit-gets-recorded).
-
-For `wbs:RO-in-pressure` as the model actually ships it — no unit at all —
-declaring `unit="psi"` writes psi onto the point, because a field the point
-lacks is added rather than compared.
-
-## Step 5: check the binding
-
-Drop a file in, wait one interval, and confirm the rows arrived through the
-plant model. The test is that a query starting from
-*equipment* reaches them:
+The test of a binding is whether a query that starts from equipment reaches the
+data:
 
 ```python
 (acq.query().entity(uri="wbs:RO", alias="ro")
- .measurement(alias="m", quantity_kind="pressure")
+ .measurement(alias="p", quantity_kind="pressure")
  .dataframe().tail(3))
 ```
 
-If that has rows, the binding worked: the driver's data is now reachable by
-equipment topology, by quantity kind, and by everything else in the
-[querying tutorial](querying.md), exactly like every other point on the skid.
+If that returns rows, the driver's readings now have a place in the plant. They
+can be found by topology, by what they measure, and by everything else in the
+[querying tutorial](querying.md), like every other point on the skid.
 
-If instead the data only shows up under `measurement()` on an empty query, the
-`point_uri` did not match anything and a placeholder point was minted. Listing
-every point in the plant shows them:
+If the data shows up only under `acq.query().measurement()`, the `point_uri`
+matched nothing and a placeholder was created instead. Its label is the column
+name and its URI ends in `__point`, so it is easy to spot in that query's
+output. Fix the URI and restart the driver. Rows already written stay on the
+placeholder; re-declaring does not move them.
 
-```python
-acq.query().measurement(alias="m").metadata()
-```
+## Moving from one version to the other
 
-`metadata()` adds an `m.label` column whenever the matched points carry an
-`rdfs:label`, and a placeholder's label is its `ref_name`, here the column
-name `Feed Flow`. A row like that next to a URI ending in `__point` is a
-binding that missed.
+If you already ran the first driver, switching to this one strands nothing. A
+stream's identity comes from its source and column name, `ro-skid` and
+`Feed Pressure`, not from the point it is attached to. Declaring a `point_uri`
+links the same stream to the model's point, and its history comes with it.
 
-Fix the URI and re-declare. The misdirected rows stay under the placeholder,
-so clear them or leave them orphaned deliberately; re-declaring does not move
-data that was already written.
-
-## Which version to write
-
-Bind to an existing model whenever there is one. It is the normal case for a
-real deployment, the only way two sources can feed the same point, and the
-only version where the graph can tell you that you got a column wrong.
-
-Ingest without one, as in [your first driver](first-driver.md), when no model
-describes the source yet. The data is not stranded by that choice: it is stored,
-described, and queryable by what it measures from the first tick.
-
-Going from one to the other is a small change, and it does not strand the data
-you already collected. Load the model, point `declare()` at the real URIs, and
-restart the driver.
-
-Rows already written come along. A stream's `ref_uri` is computed from
-`(source_id, ref_name)`, so it does not change when you add a `point_uri`; the
-new point is linked to the same reference node, and reads follow that link.
-The history was never stored per point.
-
-What you are left with is the old placeholder point, still linked to the same
-reference node and still turning up in `measurement()` on an empty query. It
-is stale metadata, not a second copy of the data. Drop it once the binding is
-confirmed:
+All that is left behind is the old placeholder point, still in the graph. It is
+stale metadata, not a second copy of the data. Once the binding works, delete
+it, taking its URI from the query above:
 
 ```python
 acq.sparql_update(
@@ -235,8 +141,6 @@ acq.sparql_update(
 )
 ```
 
-Take the placeholder's URI from the `m` column of the query above; it is the
-one ending in `__point`.
-
-Every option, base class and hook is in the
-[driver reference](../reference/drivers.md).
+Bind to a model whenever there is one. It is the only way two sources can feed
+the same point, and the only version in which the model can tell you that a
+column was described wrongly.

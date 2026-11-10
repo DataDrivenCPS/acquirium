@@ -2,7 +2,7 @@
 from pathlib import Path
 
 import acquirium as aq
-from escapement import emit, empty
+from acquirium.functions import emit, empty
 
 
 def convert(frame, context):

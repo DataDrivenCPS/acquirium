@@ -1,7 +1,8 @@
 """Pure calculations; this self-contained file is pinned by its content digest."""
 
 import polars as pl
-from escapement import emit
+
+from acquirium.functions import emit
 
 
 def tank_mean(frame, context):

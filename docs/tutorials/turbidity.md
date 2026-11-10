@@ -2,136 +2,190 @@
 title: Follow a turbidity alarm
 ---
 
-A filter's turbidity rises above its limit. One high reading might be noise;
-fifteen minutes of high readings deserves attention. We want an alarm that
-follows that rule and changes when better data arrives.
+A filter's effluent turbidity rises above its limit. One high reading might be
+a bubble past the sensor. Fifteen minutes of high readings means the filter
+needs attention. So the alarm we want is not a simple threshold: it has to look
+at a stretch of time, cope with gaps in the data, and change its mind when
+better data arrives.
 
-This example builds on [your first app](first-app.md). It uses the turbidity
-calculations from the [bulk-ingest example](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/bulk_ingest),
-with a small, fixed set of readings so we can follow the results.
-
-## Run the example
-
-From the repository root, with the [development environment](getting-started.md)
-installed:
+This tutorial builds that alarm from a chain of small apps, each doing one
+thing. It continues from [your first app](first-app.md). The apps come from the
+[bulk-ingest example](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/bulk_ingest/chain.py),
+and a short script feeds them twenty-five minutes of readings so that we can
+follow every result:
 
 ```sh
 uv run --locked python -m examples.turbidity.run
 ```
 
-The script starts a temporary server, runs twenty-five minutes of data through
-the apps, checks the results, and shuts down. It does not wait twenty-five
-minutes: timestamps describe when readings happened.
+The script starts a temporary server, loads the data, prints what the alarm
+does, and shuts down. It takes seconds, not twenty-five minutes, because every
+reading carries the time it was taken.
 
-## Make one stream per location
+## The plant and its readings
 
-There are four sampling locations. Each has a turbidity point in
-[model.ttl](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/bulk_ingest/model.ttl). The script loads that model
-and registers a stream for each point:
+The plant has four sampling locations, among them Filter 3 and the combined
+effluent. Each has a turbidity point in the
+[plant model](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/bulk_ingest/model.ttl),
+and the script registers one stream per point. The analysers report twice a
+minute. Filter 3 runs at 0.8 NTU from 00:02 to 00:20, above its 0.5 NTU limit,
+and its readings for minute 00:10 are missing.
 
-```python
-client.register_streams([{
-    "source_id": SOURCE,
-    "ref_name": "turbidity-2",
-    "point_uri": "urn:bulk/loc-2-turbidity",
-    "unit": NTU,
-    "quantity_kind": TURBIDITY,
-    "value_kind": "numeric",
-}])
-```
+## Average each minute
 
-The first app selects those streams from the graph and groups them by location.
-Each location gets its own calculation. The later apps keep those groups until
-we explicitly combine them for a plant total.
-
-## Average a minute at a time
-
-The analyser reports twice per minute. A one-minute average gives us an even
-grid to work with:
+Two readings a minute, at whatever second the analyser chose, are awkward to
+compare. The first app averages them onto a one-minute grid:
 
 ```python
-window=aq.FixedBucket(MINUTE)
+snap = aq.App(
+    name="bulk-turbidity-snap",
+    inputs=[aq.Selection(RAW_TURBIDITY, role="turbidity")],
+    outputs={"turbidity": location_turbidity},
+    function=aq.PythonFunction.from_file(CALCULATIONS, "snap_to_minute"),
+    window=aq.FixedBucket(MINUTE),
+)
 ```
 
-The function takes the mean of the readings in that bucket. Its result carries
-the bucket's start time: readings at 00:02:00 and 00:02:30 produce one value at
-00:02. A reading that arrives late revises the same bucket.
-
-## Fill a short gap
-
-Filter 3 has no readings during minute 00:10. Its averages on either side are
-0.80 NTU. The next app interpolates between them, producing 0.80 NTU for the
-missing minute.
-
-It reads the averaging app's output directly:
+`RAW_TURBIDITY` is a query over the plant model that finds every turbidity
+point and the location it belongs to. Each location becomes a separate group,
+so the app runs once per location and never mixes Filter 3's readings with
+another location's. `FixedBucket(MINUTE)` hands the function one minute of
+readings at a time, and the function returns their mean:
 
 ```python
-inputs=[aq.Selection.outputs_of(snap, "turbidity", role="snapped")]
+def snap_to_minute(frame, context):
+    if frame.is_empty():
+        return {"turbidity": empty()}
+    return {"turbidity": emit(context, frame["value"].mean())}
 ```
 
-There is no stream ID to copy between apps. The name `"turbidity"` identifies
-an output port, and each location's results stay together.
+The result carries the bucket's start time: readings at 00:02:00 and 00:02:30
+make one value at 00:02.
 
-Interpolation needs a reading on both sides of the gap. This app uses
-`Rolling` to look backward and forward, and leaves gaps of two hours or more
-empty. Estimates can therefore appear or change when later data arrives.
+## Fill the gap
+
+Filter 3 has no average for 00:10, and a missing minute in the middle of a
+high stretch would break the alarm. The next app fills short gaps by drawing a
+straight line between the values on either side:
+
+```python
+fill = aq.App(
+    name="bulk-turbidity-fill",
+    inputs=[aq.Selection.outputs_of(snap, "turbidity", role="snapped")],
+    outputs={"turbidity": location_turbidity},
+    function=aq.PythonFunction.from_file(CALCULATIONS, "fill_gaps"),
+    window=aq.Rolling(lookback_ns=MAX_GAP, step_ns=MINUTE, lookahead_ns=MAX_GAP),
+)
+```
+
+Two things are new. The input is another app's output: `outputs_of(snap,
+"turbidity")` refers to the averaging app's port by name, so there is no stream
+ID to copy, and each location's results stay in their group. And the window
+looks both ways. To fill 00:10, the function needs a value before the gap and
+one after it, so `Rolling` gives each minute two hours of context in each
+direction. The function interpolates when it finds values on both sides, and
+leaves gaps of two hours or more empty.
+
+Here both neighbours are 0.80 NTU, so the filled value at 00:10 is 0.80. Note
+what looking ahead implies: an estimate can change when later data arrives.
 
 ## Wait for a sustained excursion
 
-Filter 3's one-minute values exceed 0.5 NTU from 00:02 through 00:20. A
-threshold app first turns each value into `1` for high or `0` for normal.
+Two more apps turn turbidity into an alarm. The first compares each minute with
+the location's limit and writes 1 for high or 0 for normal. The second looks
+for a long enough run of ones:
 
-The sustained-alarm app then looks for fifteen uninterrupted minutes of high
-values. On a one-minute grid, that means sixteen high samples, including both
-endpoints. Its first `1` is at 00:17. It remains on through 00:20.
+```python
+SUSTAINED_MINUTES = {
+    "urn:bulk/loc-0": 15,
+    "urn:bulk/loc-1": 15,
+    "urn:bulk/loc-2": 15,   # Filter 3
+    "urn:bulk/loc-3": 5,    # combined effluent
+}
 
-The duration is a parameter for each location. Filter 3 uses fifteen minutes;
-the combined effluent uses five. The same function handles both. You can read
-the declarations in [chain.py](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/bulk_ingest/chain.py) and the
-calculation in [transforms.py](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/bulk_ingest/transforms.py).
+sustained = aq.App(
+    name="bulk-turbidity-sustained",
+    inputs=[aq.Selection.outputs_of(high, "alarm", role="high", parameters={
+        location: {"sustained_minutes": minutes}
+        for location, minutes in SUSTAINED_MINUTES.items()
+    })],
+    outputs={"alarm": location_alarm},
+    function=aq.PythonFunction.from_file(CALCULATIONS, "sustained_high_turbidity"),
+    window=aq.Rolling(lookback_ns=15 * MINUTE, step_ns=MINUTE),
+)
+```
+
+The duration differs by location, so it is a parameter of each group, which
+the function reads from `context["parameters"]`. One function serves every
+location:
+
+```python
+def sustained_high_turbidity(frame, context):
+    t = context["window_ns"]
+    if frame.filter(pl.col("event_time_ns") == t).is_empty():
+        return {"alarm": empty()}
+    minutes = context["parameters"]["sustained_minutes"]
+    span = frame.filter(pl.col("event_time_ns") >= t - minutes * MINUTE_NS)
+    every_minute_high = span.height == minutes + 1 and span["value"].min() == 1
+    return {"alarm": emit(context, 1 if every_minute_high else 0)}
+```
+
+Fifteen minutes on a one-minute grid is sixteen samples, counting both ends.
+Filter 3 has been high since 00:02, so its alarm comes on at 00:17 and stays on
+until the excursion ends at 00:20.
 
 ## Count alarms across the plant
 
-Now we combine the locations:
+The last app is the first to combine locations. `combine=True` puts every
+location's alarm into a single calculation, and since each alarm is 0 or 1,
+their sum is the number of locations in sustained alarm:
 
 ```python
-inputs=[aq.Selection.outputs_of(sustained, "alarm", role="sustained", combine=True)]
-function=aq.Native.sum("locations")
+plant_alarms = aq.App(
+    name="bulk-plant-turbidity-alarms",
+    inputs=[aq.Selection.outputs_of(sustained, "alarm", role="sustained", combine=True)],
+    outputs={"locations": plant_count},
+    function=aq.Native.sum("locations"),
+)
 ```
 
-The inputs are zeros and ones, so their sum is the number of locations in
-sustained alarm at each minute. Only Filter 3 is high in this run; the count
-is one from 00:17 through 00:20.
+A sum needs no Python, so `Native.sum` runs inside the engine. Only Filter 3
+goes high in this run, so the count is 1 from 00:17 to 00:20.
 
-## Replace an estimate with readings
-
-Before making a correction, save the current snapshot:
+The script reads all of these results the way you would read any stream, by
+asking for the location and the app that produced the output:
 
 ```python
-original = client.engine_snapshot()["epoch"]
+filter3 = client.query().entity(uri="urn:bulk/loc-2", alias="filter3")
+alarm = filter3.measurement(alias="alarm", app="bulk-turbidity-sustained")
+alarm.dataframe()
 ```
 
-The missing readings finally arrive: 0.15 and 0.25 NTU. Their average is 0.20,
-below the filter's limit. The filled value at 00:10 changes from 0.80 to 0.20
-because it now comes from observations.
+## When the missing readings arrive
 
-That one minute breaks the high interval. Neither remaining stretch lasts
-fifteen minutes, so the sustained alarms disappear and the plant count becomes
-zero throughout. We only insert the missing source readings; the dependent
-apps update automatically.
+Now the readings for 00:10 turn up late, as data from the field often does.
+They are 0.15 and 0.25 NTU: Filter 3 briefly dipped below its limit.
 
-Read the alarm at the saved snapshot:
+The script inserts those two readings and nothing else, and every app
+downstream updates on its own. The average for 00:10 is now 0.20, a measured
+value instead of an estimate, so the gap fill steps aside. The high-turbidity
+app sees a normal minute at 00:10. That splits the excursion into two stretches
+of eight and ten minutes, neither of which lasts fifteen, so the sustained
+alarm disappears from the whole run and the plant count drops to zero.
+
+That is the right answer, but it raises a question: the alarm *did* fire, and
+someone may have acted on it. Acquirium keeps every published version. The
+script saved the snapshot number, the epoch, when it first read the alarm, and
+reading at that epoch still shows the alarm on for four minutes:
 
 ```python
-from acquirium.apps import output_reference
-
-reference = output_reference(sustained.name, "urn:bulk/loc-2", "alarm")
-client.stream(reference).dataframe(epoch=original)
+stream = alarm.data().stream_info()["ref_uri"][0]
+client.stream(stream).dataframe(epoch=first)
 ```
 
-It still shows the original alarm. This lets us distinguish what the data says
-now from what it said when we first raised the alarm.
+So you can always tell what the data says now from what it said when a decision
+was made.
 
-The alarm here is a stored zero-or-one signal. To deliver notifications, use a
-[consumer of committed changes](../how-to/consume-streaming-changes.md), where
-you can decide how to handle an alarm that is later revised.
+The alarm in this tutorial is a stored signal of zeros and ones. To send
+notifications from it, [consume the committed changes](../how-to/consume-streaming-changes.md),
+where you also decide what to do when an alarm is later revised.

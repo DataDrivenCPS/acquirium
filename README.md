@@ -59,9 +59,8 @@ with a driver and write a Python threshold function. Next,
 filling, and a sustained high interval. The turbidity demo starts its own
 temporary server and checks its results.
 
-To build your own, use [built-in calculations](docs/how-to/calculate-derived-streams.md)
-or [a Python function](docs/how-to/write-soft-sensors.md). The
-[app reference](docs/reference/apps.md) covers the interface options.
+To build your own, see [calculate a derived stream](docs/how-to/write-soft-sensors.md).
+The [app reference](docs/reference/apps.md) covers the interface options.
 
 ## Documentation and tests
 
