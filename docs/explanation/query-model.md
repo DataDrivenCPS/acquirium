@@ -219,8 +219,8 @@ This is the middle ground between a single `frm=` and `frm="*"`:
 `alias()` renames the current node, but the previous alias keeps working as
 an alternative handle in `target=`, `frm=` and `of=`; display uses the latest
 name.
-
-**TODO:** This might be a bad idea. Remove old aliases
+Note that the previous alias stays reserved for that node, so giving it to
+another node raises a `ValueError`.
 
 The terminals take `include_dependencies=` (default `True`).
 `True` queries the deployment data together with the resolved ontology and
