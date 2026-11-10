@@ -64,8 +64,9 @@ rows per stream, in `order` direction).
 `include_dependencies`, `cast_value` and `value_mode` act at fetch time, so
 they are set on `data()` (or on `Query.dataframe()`) and have no data-object
 counterpart.
-
-**TODO:** dataframe funcitons are not consistent with each other. make them consistent, or just remove one
+`streams=` exists only on the data object's `dataframe()`.
+It keeps the listed streams, which are identified by their number in the
+object's `stream_info()`, by ref URI or by a `Stream` handle.
 
 ## Shapes
 
