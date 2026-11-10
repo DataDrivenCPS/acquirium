@@ -7,8 +7,6 @@ Acquirium connects plant models and semantic queries to sensor streams.
 Escapement stores the readings and runs the calculations that keep derived
 streams current. Data lives in a local DuckDB file or PostgreSQL.
 
-Databases from before Escapement are not imported. Use a new data directory.
-
 ## Development setup
 
 ```sh
@@ -26,7 +24,7 @@ A script can own a shared local server instead:
 ```python
 import acquirium as aq
 
-client = aq.init(data_dir=".acquirium-native", exact_only=True)
+client = aq.init(data_dir=".acquirium", exact_only=True)
 try:
     client.register_streams([{
         "source_id": "gateway", "ref_name": "temperature",
@@ -55,10 +53,11 @@ pending if a computation fails.
 An app turns selected source streams into derived streams. New readings and
 corrections update the results, including those of downstream apps.
 
-Start with [your first app](docs/tutorials/first-app.md): convert Fahrenheit to
-Celsius, then correct a reading. Next, [follow a turbidity alarm](docs/tutorials/turbidity.md)
-through averaging, gap filling, and a sustained high interval. Both demos start
-their own temporary server and check their results.
+Start with [your first app](docs/tutorials/first-app.md): generate a sine wave
+with a driver and write a Python threshold function. Next,
+[follow a turbidity alarm](docs/tutorials/turbidity.md) through averaging, gap
+filling, and a sustained high interval. The turbidity demo starts its own
+temporary server and checks its results.
 
 To build your own, use [built-in calculations](docs/how-to/calculate-derived-streams.md)
 or [a Python function](docs/how-to/write-soft-sensors.md). The
@@ -77,7 +76,7 @@ To record experiments, see [your first experiment](docs/tutorials/first-experime
 uv run pytest tests/unit
 ```
 
-The native/semantic integration tests use temporary local engine databases and
+The integration tests use temporary local engine databases and
 require no Docker services. MQTT service tests still need a broker.
 The optional Docker configuration runs Acquirium and Mosquitto; native builds
 forward your SSH agent with BuildKit.

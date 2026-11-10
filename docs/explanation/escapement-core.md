@@ -15,9 +15,8 @@ published one.
 
 Acquirium owns everything semantic: the graph and its ontology inference,
 stream registrations, app compilation, unit resolution, and the HTTP and Python
-interfaces. Stream registrations live only in RDF. The server rebuilds its
-reference lookup from the graph whenever the graph changes; there is no SQL
-stream registry. Experiment records are kept in a separate SQL ledger; see
+interfaces. Stream registrations live in RDF. The server rebuilds its reference lookup
+whenever the graph changes. Experiment records are kept in a separate SQL ledger; see
 [Experiments](experiments.md).
 
 ## Writes

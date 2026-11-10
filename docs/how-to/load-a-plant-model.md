@@ -171,7 +171,7 @@ Nothing enforces an order, but this one avoids avoidable churn:
 
 1. **Ontologies first**, if you have extensions of your own. They go in
    `[ontologies] sources`, not through `insert_graph`; see the
-   [server configuration](../reference/server-config.md#the-ontologies-section).
+   [server configuration](../reference/server-config.md#ontologies).
 2. **The plant model**, as above, in one call.
 3. **Drivers**, once the points they bind to exist. A driver that declares a
    `point_uri` the graph already has gets its metadata checked against that
@@ -206,4 +206,4 @@ integer `ref_id` used by timeseries rows. A reload that keeps the point and
 reference relationship keeps the data reachable. A reload that renames a
 point without preserving that relationship leaves its rows stored but
 unreachable through the new point, as described in
-[the stream lifecycle](../explanation/stream-lifecycle.md#the-read-path).
+[the stream lifecycle](../explanation/stream-lifecycle.md).

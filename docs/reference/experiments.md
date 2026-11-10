@@ -3,8 +3,7 @@
 A **Study** holds variable declarations. An **Experiment** is one run of that
 Study. Each call to `record()` adds an **Observation** to the active run.
 
-The tables below describe the implemented Python API. The
-[proposed read API](#proposed-read-api) is not implemented yet.
+The tables below describe the Python API.
 
 ## Studies and run lifecycle
 
@@ -84,24 +83,16 @@ string. A scalar can carry a unit without registering a stream. `observed`
 accepts a plant property URI or a `Point` wrapper.
 
 Variable handles expose `variable_id`, `uri`, `label`, `role`, `kind`, `metadata`,
-and `created_at`. New IDs are reference URIs derived from the Study ID and label.
-Older UUID IDs remain unchanged; `uri` provides their absolute graph URI.
+and `created_at`. IDs are reference URIs derived from the Study ID and label; `uri` provides
+the absolute graph URI.
 
 Variable user metadata has the same meaning for hand and model declarations.
 For example, `study.output("cost").scalar(unit="USD", objective="minimize")`
 exposes `cost.unit == "USD"` and `cost.metadata == {"objective": "minimize"}`.
-An explicit `metadata={...}` accepts arbitrary string-keyed JSON; legacy
-extra descriptive keywords merge into that object. Equal duplicate values
-merge; conflicting values raise an error naming the fields to repair.
-
-| Legacy access or query | Current access or query |
-|---|---|
-| `cost.metadata["unit"]` | `cost.unit` |
-| `cost.metadata["observed"]` | `cost.observed` |
-| `study.variables.where(objective="minimize")` | `study.variables.where(**{"metadata.objective": "minimize"})` |
-| `study.variables.query().include("objective")` | `study.variables.query().include("metadata.objective")` |
-
-Run metadata keeps its existing contract, including `where(scenario=...)`.
+Use `metadata={...}` for arbitrary string-keyed JSON. Access semantic fields as
+`cost.unit` or `cost.observed`, and filter user fields by their namespaced paths,
+such as `study.variables.where(**{"metadata.objective": "minimize"})`.
+Run attributes can be filtered directly, for example `where(scenario="baseline")`.
 Exact `metadata={...}` run selection compares saved document fields; ordinary
 attribute expressions filter RDF projections. These are separate operations.
 
@@ -175,9 +166,8 @@ read_at=None)` supports advanced explicitly keyed declarations: a keyed reader
 returns a mapping from key tuples to numeric values. The declaration's `keys`
 determines the expected shape. Ordinary single-stream readers return numbers.
 
-The prototype automatic Pyomo options, `record_all()`, and
-`declare_from(role=...)` have been removed. Use explicit declarations,
-`sample()`, `record_values()`, and the adapter input/output namespaces. See [Record a whole model](../how-to/record-a-whole-model.md).
+See [Record a whole model](../how-to/record-a-whole-model.md) for a runnable
+example of explicit declarations, `sample()`, and `record_values()`.
 
 ### Keyed time series
 
@@ -470,20 +460,10 @@ resolved value and supplied text separately: `unit="unit:PSI"` and
 Collection `.frame()` methods keep saved metadata dictionaries in `Object` columns;
 variable frames also expose descriptive metadata keys as columns.
 
-Saved metadata comes from complete documents in the graph, preserving supplied
-semantic strings, list order, null positions, and nested empty containers.
-Queryable attributes are written alongside each document. Lifecycle and recorded
-values remain in SQL; metadata writes enter a durable outbox in the same SQL
-transaction. Reads deliver pending updates before returning metadata. Successful
-graph writes are acknowledged by removing their outbox entries, and interrupted
-delivery is safely replayed after restart. There are no permanent SQL metadata
-snapshots or field-level SQL fallbacks.
-
-Opening an existing ledger migrates its metadata snapshots and pinned resolutions
-to resolved outbox writes before removing the old columns. See
-[Storage migrations](storage-migrations.md). Backups must include both SQL and the
-graph: the outbox recovers pending writes, while acknowledged metadata is owned by
-the graph. A missing authoritative graph raises an error requiring restoration.
+Metadata reads deliver pending graph updates before returning complete saved
+documents. For recording, delivery, and restart behavior, see
+[experiment storage](../explanation/experiments.md#storage). Back up the graph,
+ledger, and sample store together; see [recovery](storage-migrations.md).
 
 ### Metadata rules
 
@@ -583,7 +563,7 @@ in the client that records or loads. Loading a pickle runs code named in its
 bytes, so load pickles only from people you trust. A pickle loads only where
 the classes it names still import, usually with the same library versions
 that wrote it. A format the library itself defines, such as a model spec,
-outlasts upgrades better. [`examples/flexpse-codec`](../../examples/flexpse-codec/README.md)
+outlasts upgrades better. [`examples/flexpse-codec`](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/flexpse-codec)
 saves flex-pse models through their spec this way.
 
 `aq.register_value_handler()` is the other extension point: it converts a type
@@ -626,29 +606,6 @@ they print their selection; call `.all()` or `.frame()` to read it:
 <Experiment 3f2a… succeeded {'scenario': 'baseline'}>
 <ObservationCollection study='pumps' variable='cost'>
 <Observation 'cost' = 500 (run 3f2a…, #1)>
-```
-
-## Proposed read API
-
-These methods are proposed and are **not implemented**:
-
-| Proposed method | Contract |
-|---|---|
-| `variables.one()` | Return exactly one variable; error on zero or multiple matches |
-| `runs.one()` | Return exactly one Experiment; error on zero or multiple matches |
-| `run.dataframe(variable)` | Read all recorded sample intervals for that variable in that run |
-
-The intended workflow is:
-
-```python
-# Proposed API; this code does not run on the current branch.
-power_variables = study.variables.where(role="output", unit="kW")
-power = power_variables.one()
-
-baseline_runs = study.experiments.where(scenario="baseline")
-baseline = baseline_runs.one()
-
-power_samples = baseline.dataframe(power)
 ```
 
 ## HTTP API

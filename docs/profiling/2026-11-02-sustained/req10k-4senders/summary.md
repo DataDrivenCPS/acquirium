@@ -1,3 +1,7 @@
+---
+orphan: true
+---
+
 100 streams in requests of 10,000 readings from 4 senders, 20 s per rate after 0 readings of history, a native 15-minute mean of each stream. Latency is from submission to publication.
 
 | Offered/s | Sent/s | Published/s | p50 ms | p95 ms | p99 ms | Max ms | Epochs/s | Requests/epoch | Epoch ms | Ingest p50 ms | Ingest p99 ms | Peak pending | Drain s | Result |

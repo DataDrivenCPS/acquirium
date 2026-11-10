@@ -16,7 +16,7 @@ already in the graph, and attaching the data stream to that point.
 
 The same file lands in the folder every day:
 
-```csv
+```text
 Date,Time,Feed Flow,Permeate Flow,Feed Pressure,Permeate TDS
 8/1/2026,12:00:00 AM,120.5,55.2,801,210
 8/1/2026,12:15:00 AM,120.1,55.0,803,208
@@ -90,7 +90,6 @@ POINTS = {
     "Permeate Flow": "urn:swro/RO-out-flow-mass-water",
     "Feed Pressure": "urn:swro/RO-in-pressure",
 }
-
 
 class ROSkidDriver(CSVIngestDriver):
     def declare_stream(self, ref_name: str) -> None:

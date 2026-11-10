@@ -2,8 +2,6 @@
 title: Debugging queries for an unexpected result
 ---
 
-<!-- TODO: intro -->
-
 ## When a query returns nothing or more/less than you expect
 
 An empty or unexpected result is usually one of five things.

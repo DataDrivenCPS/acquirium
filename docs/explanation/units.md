@@ -2,13 +2,10 @@
 title: Units
 ---
 
-<!-- TODO: intro -->
-
-This is an explanation of how acquirium handles units: where a unit is
-recorded, what happens when the unit of a stream and the unit of its point
-disagree, and how values are converted, automatically and on request.
-Units are QUDT units throughout; free text is resolved to a QUDT URI wherever
-a unit is accepted.
+A measurement point describes a physical quantity, while a stream carries the
+source's readings. Their units can differ: a pressure point may use pascals
+while its instrument reports psi. Acquirium records both and converts values
+when they are read. Units use QUDT URIs; labels and symbols are resolved to them.
 
 ## Where a unit lives
 
@@ -31,7 +28,7 @@ effective unit, so `units()` still reports one.
 A stream with neither reports `None`, and `convert_to()` needs `from_unit=`
 for it.
 
-`where(unit=...)` filter and `include("unit")` only works if the point node has an annotated unit.
+`where(unit=...)` and `include("unit")` use the unit annotated on the point.
 
 ## How a unit gets recorded
 
@@ -40,8 +37,6 @@ unit=...)` in a driver, or `register_streams()` directly.
 Free text is resolved against QUDT at that point, jointly with the
 `quantity_kind` when both are given, so a quantity kind can disambiguate a
 unit and vice versa (see [text resolution](text-resolution.md)).
-
-TODO: This has a risk of registering arbitrary units due to mismatch in text resolver. We need a mechanism to verify the resolved units from the users.
 
 When the `point_uri` already exists in the graph, the unit you pass is checked
 against the point's:
@@ -56,7 +51,7 @@ against the point's:
 Note that this is the one metadata field that tolerates a mismatch.
 Every other field (`quantity_kind`, `medium`, `substance`, `data_source`)
 raises on a conflict, because there is no equivalent of a conversion for them.
-See the [lifecycle guide](stream-lifecycle.md#what-registration-writes-to-the-graph).
+See the [lifecycle guide](stream-lifecycle.md).
 
 ## What convertible means
 
@@ -89,8 +84,6 @@ graph was edited after the stream was registered.
 A conversion you asked for with `convert_to()` is different: if it cannot be
 applied when the values are fetched, the fetch raises `ValueError` rather
 than returning values in the wrong unit.
-
-**TODO:** We need to test and demonstrate this feature
 
 ## Converting on request
 

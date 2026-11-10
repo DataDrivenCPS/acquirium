@@ -1,3 +1,7 @@
+---
+orphan: true
+---
+
 # Execution profile
 
 Paired fresh-process controls; median milliseconds per measured epoch.

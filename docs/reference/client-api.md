@@ -2,8 +2,6 @@
 title: Acquirium Client API
 ---
 
-<!-- TODO: intro -->
-
 This is the reference for the Python client: every public method, with its
 signature and a one-line description.
 The four sections follow the objects you hold: `Acquirium`, the `Query` it
@@ -83,7 +81,7 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 | `insert_timeseries_arrow(source_id, table: pa.Table, *, request_id=None, wait=30, timeout=60, retry_for=60) -> dict` | Insert `(ts, ref_name, value)` Arrow data with timezone-aware timestamps. Reuse request ID and payload on retry. |
 | `delete_timeseries(source_id, ref_name, timestamps, *, request_id=None, wait=30, timeout=60, retry_for=60) -> dict` | Explicitly delete observations; returns one receipt directly. |
 | `wait(receipt, *, timeout=30) -> dict` | Wait for an accepted receipt sequence to publish, then return a snapshot token. Raises for paused or timed-out pending work. |
-| `engine_status() -> dict` | Native frontiers, backlog, processor state, and paused error. |
+| `engine_status() -> dict` | Accepted/applied progress, backlog, processor state, and paused error. |
 | `engine_snapshot() -> dict` | Capture the committed epoch, applied frontier, and active complete plan. |
 | `retry_engine() -> dict` | Resume the accepted prefix after repairing its failed artifact/environment. |
 | `changes(*, epoch=0, ordinal=0, limit=1000, timeout=30) -> dict` | Page committed signed changes after an exclusive cursor; use `complete_through` before exposing partial epochs. |
@@ -92,13 +90,13 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 
 | method | description |
 |---|---|
-| `deploy_app(declaration: App) -> dict` | Compile semantic selections, persist deployment intent, and activate the complete native plan. Check the returned `app` status/error. |
-| `list_apps() -> dict` | List declarations with active/pending state and native operators. |
+| `deploy_app(declaration: App) -> dict` | Compile semantic selections, persist deployment intent, and activate the complete plan. Check the returned `app` status/error. |
+| `list_apps() -> dict` | List declarations with active/pending state and compiled operators. |
 | `inspect_app(name: str) -> dict` | Return the declaration, operators, desired/active plan IDs, graph revision, and error. |
-| `remove_app(name: str) -> dict` | Remove operators and their semantic output metadata; retract current values while retaining native history. |
+| `remove_app(name: str) -> dict` | Remove operators and their semantic output metadata; retract current values while retaining history. |
 
 See the [app reference](apps.md) and [soft-sensor guide](../how-to/write-soft-sensors.md)
-for native declarations and the Python subprocess function contract.
+for declarations and the Python function contract.
 
 ### Experiments
 
@@ -378,7 +376,7 @@ and are listed once above.
 | method | description |
 |---|---|
 | `register_datasource(source_id) -> str`, `register_streams(streams) -> None` | As on `Acquirium`. |
-| `insert_timeseries(*, source_id, ref_name, rows, request_id=None, wait=30, timeout=60, retry_for=60) -> dict` | Keyword-only form of the `Acquirium` method; the same bounded native retry identity applies. |
+| `insert_timeseries(*, source_id, ref_name, rows, request_id=None, wait=30, timeout=60, retry_for=60) -> dict` | Keyword-only form of the `Acquirium` method; the same bounded retry identity applies. |
 | `insert_timeseries_batch(source_id, streams, *, request_id=None, wait=30, timeout=60, retry_for=60) -> dict` | One atomic bounded request for several streams. |
 | `insert_timeseries_arrow(source_id, table, *, request_id=None, wait=30, timeout=60, retry_for=60) -> dict` | As on `Acquirium`. |
 | `resolve_storage_keys(uris: list[str]) -> dict[str, str]` | Map point URIs to the canonical ref URIs used by timeseries APIs; canonical ref URIs pass through. |
@@ -390,52 +388,6 @@ and are listed once above.
 
 | method | description |
 |---|---|
-| `deploy_app(definition: dict) -> dict` | Raw HTTP form behind `Acquirium.deploy_app`; the high-level client serializes a native `App` declaration. |
+| `deploy_app(definition: dict) -> dict` | Raw HTTP form behind `Acquirium.deploy_app`; the high-level client serializes an `App` declaration. |
 | `list_apps() -> dict`, `inspect_app(name: str) -> dict` | Raw inspection documents behind the high-level methods. |
 | `remove_app(name: str) -> dict` | Remove a deployment. |
-
-## Coming from the old interface
-
-Optional. Skip this unless you have queries written against the previous
-`find_*` methods.
-
-The old builder (`acquirium.Q`, `acq.find_entity()`) has been removed.
-`acq.find_all_data()` remains as a shorthand for `acq.query().measurement()`.
-The rewrite is usually mechanical: one verb per old method, one `where()` in
-place of the `filter_by_*` family.
-
-| old | new |
-|---|---|
-| `find_entity(_class=, uri=, alias=)` | `entity(cls, uri=, alias=)` |
-| `find_entity(process=...)` | `entity(cls, process=...)` |
-| `find_related(_class=, _from=, hops=, predicates=)` | `related(cls, frm=, max_depth=, via=)` |
-| `find_related(direction=)` | `related(direction=)` |
-| `find_data(_from=, alias=, filters_dict=)` | `measurement(frm=, alias=, **attrs)` |
-| `find_all_data()` | `measurement(frm="*")`, or `measurement()` on an empty query |
-| `find_all_data(uri=)` | `measurement(uri=)` |
-| `find_related_data(...)` | `related(...).measurement(...)` |
-| `relate_to(other, _from=, hops=)` | `related(cls, frm=, max_depth=)` |
-| `filter_by_unit(v)` | `where(unit=v)` |
-| `filter_by_medium(v)` | `where(medium=v)` |
-| `filter_by_substance(v)` | `where(substance=v)` |
-| `filter_by_quantity_kind(v)` | `where(quantity_kind=v)` |
-| `filter_by_enumeration_kind(v)` | `where(enumeration_kind=v)` |
-| `filter_data_nodes(predicate=, value=, _from=)` | `where(attr=value, target=)` |
-| `filter_by_*(..., exclude=True)` | `where(attr=Not(value))` |
-| `show_query_graph()` | `to_sparql()` |
-
-Keyword names changed with them: `_class` is `cls`, `_from` is `frm`, `hops`
-is `max_depth`, and `predicates` is `via`.
-`metadata()`, `data()`, `dataframe()`, `execute()` and `to_sparql()` kept
-their names and behave the same.
-
-Two behavior differences matter when porting.
-
-Defaults changed.
-`related()` returns nearest matches where `find_related` returned everything
-reachable, so add `nearest=False` if you relied on the old behavior.
-
-Filtering is one vocabulary now.
-Anywhere you passed a predicate URI to `filter_data_nodes`, you now pass a
-named attribute to `where()`, and the same names work as inline keyword
-arguments on `entity()`, `related()` and `measurement()`.

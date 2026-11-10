@@ -148,9 +148,12 @@ in order:
 | `event_time_ns` | `Int64` |
 | `sample_key` | `Int64` |
 | `value` | `Float64` |
+| `text` | `String` |
 | `quality` | `UInt32` |
 
-Use finite values and sample key zero. `escapement.emit(context, value, quality=0)`
+Numeric results set `value` and leave `text` null; numeric functions may also
+omit the `text` column. Use finite numbers and sample key zero.
+`escapement.emit(context, value, quality=0)`
 builds a row at the window timestamp; a `None` value produces an empty frame.
 `empty()` also builds an empty frame. An empty result removes the previous
 result for that window. Return the complete result, including unchanged rows.

@@ -1,3 +1,7 @@
+---
+orphan: true
+---
+
 # CA DPR (Title 22, Article 10, SBDDW-23-001) — TOC & Alarm Requirements
 
 Source: `docs/regulations/CA_DPR_2023_SBDDW-23-001_reg_text.pdf` (downloaded from

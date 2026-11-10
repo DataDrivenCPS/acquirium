@@ -208,8 +208,8 @@ graph writes. Delivery is idempotent: a crash before acknowledgment replays the
 write, and successful acknowledgment removes the pending payload. Lifecycle
 updates patch their own fields without replacing descriptive metadata. Backup
 and restore must include the authoritative graph as well as the SQL ledger.
-The [integration plan](../plans/experiment-metadata-integration.md) describes the
-implemented boundary and recovery behavior.
+See [storage upgrades and recovery](../reference/storage-migrations.md) for
+backup and restore requirements.
 
 Stream annotations and stream ranges read live data. Record a range's rows for
 a fixed copy; an annotation has no copy form.

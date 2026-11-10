@@ -2,8 +2,6 @@
 title: Glossary
 ---
 
-<!-- TODO: intro -->
-
 This is a reference for the vocabulary of the other guides.
 
 ## RDF terms
@@ -24,7 +22,6 @@ This is a reference for the vocabulary of the other guides.
 | model | the RDF description of one plant | `deployments/WATERTAP/models/seawater-ro/model.ttl` |
 | Turtle | the text format RDF is written in (`.ttl` files, graph inserts) | `model.ttl` |
 | SPARQL | the query language for RDF graphs; every `Query` compiles to it | `q.to_sparql()` |
-
 
 ## The plant model
 
@@ -78,7 +75,6 @@ two.
 | `max_depth` | how many hops a traversal may take | `related("tank", max_depth=1)` |
 | `nearest` | keep only the closest match per source instead of every match in range; along a direction, the first place (own connection points, pipe, entity with its connection points, ...) holding a match | `related("pump", nearest=False)` |
 
-
 ## Data
 
 | term | meaning | example |
@@ -89,7 +85,6 @@ two.
 | `cast_value` | a client-side cast applied after the values arrive | `"float"`, `"int"`, `"str"`, `None` |
 | wide | one column per point, aligned on the timestamp | `time, m__wbs:RO-in-pressure, ...` |
 | narrow | one row per reading, with its point in its own column | `data_alias, point_id, time, value_numeric, ...` |
-
 
 ## Experiments
 

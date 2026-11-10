@@ -1,3 +1,7 @@
+---
+orphan: true
+---
+
 # Execution profile
 
 Execution: fresh; paired fresh-owner controls; median milliseconds per measured epoch.

@@ -1,10 +1,14 @@
+---
+orphan: true
+---
+
 # Memory and restart cost against history size
 
 Measured on 2026-11-02 with release Escapement built from `e663c44`,
 Python 3.12.11, Linux x86_64, 16 logical CPUs and 93 GiB of memory. These are
 single sequential runs on a shared developer machine, whose load average from
 other work was between 4 and 10; they are not repeated estimates. The
-[harness](../../../examples/operating_limits/README.md) drives the native
+[harness](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/operating_limits) drives the native
 engine directly with Acquirium's server defaults; [summary.md](summary.md)
 and [results.json](results.json) hold every measurement, and
 [before-summary.md](before-summary.md) the same sweep on `b539b60`, before
@@ -52,7 +56,7 @@ the same loads held 349, 971, 2,604 and 4,547 MiB.
 - **Ingest holds about 235,000 readings a second** through the engine with
   native means, in requests of 10,000. The inbox never filled. HTTP and
   Python functions cost more per reading; see the
-  [bulk ingest](../../../examples/bulk_ingest/README.md) and
+  [bulk ingest](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/bulk_ingest) and
   [model workload](../2026-10-18-model/README.md) measurements.
 
 ## Wide plans
@@ -108,4 +112,4 @@ Plans of 10,000 operators fit, at about half the ingest rate of narrow ones.
 - Text readings, which store a string per row.
 - The PostgreSQL store, whose open scans the same log over the network.
 - Python functions over long histories, beyond the per-window costs already
-  in the [membrane example](../../../examples/membrane_monitoring/README.md).
+  in the [membrane example](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/membrane_monitoring).

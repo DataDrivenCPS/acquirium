@@ -2,51 +2,27 @@
 title: The query model
 ---
 
-This is an explanation of the ideas behind the `Query` interface: what a
-query is, why we built it this way, how free text turns into ontology terms,
-and how a query is executed.
-Using the interface is covered in the [querying tutorial](../tutorials/querying.md).
+A `Query` describes a pattern in the plant model: a pump, a tank connected to
+it, or measurements on either one. The server finds the places where that
+pattern matches. The [querying tutorial](../tutorials/querying.md) shows the calls.
 
-## The mental model of Querying in Acquirium
+## Build a pattern
 
-A `Query` is a description of what you are looking for.
-You chain verbs to describe a pattern (a pump, a tank near it, the measurements on either one, etc.), and the server finds every place in the plant model where that
-pattern matches.
+`acq.query()` starts an empty query. Each verb returns a new query, so you can
+keep a partial pattern and extend it in different directions. Call `metadata()`
+to inspect the matches as you go. Time-series values are fetched when you ask
+for a dataframe.
 
-`acq.query()` starts an empty `Query`.
-Every verb returns a new immutable `Query`, so you can hold on to a partial
-query and extend it in different directions.
-
-The `Query` interface is an opinionated view over the underlying plant knowledge graph.
-It is different from querying a raw RDF graph.
-This view treats certain edges as attributes of the source nodes.
-For instance a measurement's unit is a separate triple in RDF: `:source qudt:hasUnit :unit`, but here, it is just the measurement's `unit` attribute.
-For the same reason, edges whose meaning is not plant topology (class hierarchies, external references etc.) are hidden from generic traversal.
-
-This interface classifies nodes into two main categories.
-Every concept, system, equipment and connection is treated as an `Entity` node,
-while every measurement (i.e. `s223:Property`) is treated as a `Data` node.
-
-The `Query` interface is lazy.
-The actual query execution will happen after the user executes certain functions like `.metadata()`, `.dataframe()` or `.facets()`.
-This is what lets you build a query step by step and check `.metadata()` after every step, without paying for data you do not need yet.
-
-### Why?
-
-The main reasons we designed this interface are:
-- SPARQL and other declarative languages are not designed for incremental querying, where users can visualize intermediate results while building queries
-- We see the advantages of *dataframe* systems compared to SQL databases for data science and data exploration tasks
-- Previous systems that combine data and metadata access (e.g. Mortar, Energon, Chrontext) all depend on declarative languages and do not focus on data-metadata co-exploration
-- We do not expect our intended users to be familiar with RDF and SPARQL
-
-Read [our paper](https://dl.acm.org/doi/abs/10.1145/3744256.3812557) for more info.
-
+The interface distinguishes entities, such as equipment and connections, from
+measurement points. It treats a measurement's unit as an attribute, even though
+RDF stores it as a separate relationship. Generic traversal follows plant
+topology; class hierarchies and external references have their own roles in
+matching and data access.
 
 ## Free text and what it resolves to
 
 Every place that takes a class, a predicate or an attribute value also takes
 free text.
-This is a design element for us towards our goal to avoid/reduce RDF exposure to our users.
 The server matches it against the ontologies (exact match on a label first,
 then semantic similarity) and picks the best hit.
 `"ozone unit"` becomes `nawi:OzonationUnit`, `"mg/L"` becomes `unit:MilliGM-PER-L`.
@@ -71,7 +47,6 @@ Note that only the ontologies are searchable this way, not your plant's own
 instance labels.
 `entity("pump")` resolves the *class* `Pump`; it will not find the item named "pump-1" in the plant by
 its label.
-
 
 ## How Queries are executed
 
@@ -99,7 +74,6 @@ A source stops at the first place that returns a row.
 `max_depth=0` continues until every pending source's frontier is empty, so loops end.
 Layer results are cached until the graph changes, so repeating a query is cheap.
 You can always inspect what will run with `.to_sparql()`.
-
 
 ### Hidden Predicates
 
@@ -202,8 +176,6 @@ predicate for one hop, so a model that attaches points with a predicate
 other than `hasProperty` is reached by `measurement()` but not by
 `context()` until that predicate is added to the relation.
 
-
-
 ## Miscellaneous
 
 `measurement(frm=...)` also accepts a list of aliases, attaching one
@@ -219,8 +191,6 @@ This is the middle ground between a single `frm=` and `frm="*"`:
 `alias()` renames the current node, but the previous alias keeps working as
 an alternative handle in `target=`, `frm=` and `of=`; display uses the latest
 name.
-
-**TODO:** This might be a bad idea. Remove old aliases
 
 The terminals take `include_dependencies=` (default `True`).
 `True` queries the deployment data together with the resolved ontology and

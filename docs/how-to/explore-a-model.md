@@ -2,8 +2,6 @@
 title: Explore a model
 ---
 
-<!-- TODO: intro -->
-
 ## Building a query step by step
 
 A `Query` is immutable and lazy, so you can build it the way you build a
@@ -113,8 +111,6 @@ Note that repeating `metadata()` on a partial query costs one graph query and
 no data transfer, so checking often is cheap.
 
 ## Exploring what is there
-
-TODO: More exploration/visulaization methods and __repr__ and __str__ for visualizing query object will be implemented
 
 In a new plant, the hard part is knowing what to ask for.
 `options()` and `facets()` answer that: they report the attribute values that

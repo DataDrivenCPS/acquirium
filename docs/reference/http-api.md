@@ -25,10 +25,10 @@ The server exposes semantic graph operations and one Escapement timeseries engin
 | `POST /timeseries_info` | `{uris: [...]}` to counts and UTC bounds |
 | `GET /engine/status` | Accepted/applied frontiers, backlog, paused error, timings, worker queue/RSS, server PID and peak RSS |
 | `GET /engine/snapshot` | Published epoch, applied sequence, complete active plan |
-| `GET /engine/changes` | Bounded signed native feed pages with exclusive epoch/ordinal cursor and complete-epoch frontier |
+| `GET /engine/changes` | Bounded signed change-feed pages with exclusive epoch/ordinal cursor and complete-epoch frontier |
 | `POST /engine/retry` | Explicitly retry a paused epoch |
 | `GET /apps` | Desired declarations and active operators |
-| `GET/PUT/DELETE /apps/{name}` | Inspect, deploy a native semantic declaration, or remove |
+| `GET/PUT/DELETE /apps/{name}` | Inspect, deploy an app declaration, or remove |
 | `GET /resolve_text`, `POST /resolve_record` | Semantic text resolution |
 | `POST /resolve_unit`, `/resolve_conversion`, `/conversion_factors` | Unit resolution and conversion factors |
 | `GET /embedding_status` | Exact/semantic index state |
@@ -39,15 +39,15 @@ JSON values contain timestamp/value pairs. Integer timestamps are UTC nanosecond
 timezone-aware datetime strings are also accepted. Values are numbers or text,
 each stored as its stream's `value_kind` ([values](../explanation/values.md));
 null, blank and non-finite values are dropped. Arrow timestamps must be timezone-aware. Duplicate keys keep the last
-row before native submission; source/request IDs and normalized payloads identify
-retries within the bounded native retry window.
+row before submission to the engine; source/request IDs and normalized payloads identify
+retries within the bounded retry window.
 
 JSON rows sharing a source/request ID commit as one request. Different sources
 or IDs commit independently. Ingestion's `wait` query parameter is a nonnegative
 publication timeout in seconds (default 30, zero for immediate durable admission).
 Responses include database-scoped receipt sequences and `accepted`/`published`
 state. Failed or timed-out computation after admission remains accepted/pending;
-inspect the receipt and native status before retrying with the same identity.
+inspect the receipt and engine status before retrying with the same identity.
 Admission capacity rejection returns HTTP 503 with `Retry-After: 1`.
 
 The change-feed endpoint accepts `epoch=0`, `ordinal=0`, and `limit=1000`

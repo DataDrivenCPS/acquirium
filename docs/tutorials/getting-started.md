@@ -2,8 +2,6 @@
 title: Getting started
 ---
 
-<!-- TODO: intro -->
-
 For a script or notebook, you can let Acquirium start a local server:
 
 ```python
@@ -28,10 +26,9 @@ acquirium server --config acquirium.toml
 Zero-config `aq.init()` uses exact-only text resolution and starts without
 downloading an embedding model. A standalone server, or `aq.init()` with
 `exact_only=False`, builds the semantic text-resolution indexes on its first
-start and can take 5-10 minutes; later starts reuse the cache under
-`data_dir/embedding_cache`.
-See [the embedding indexes](../explanation/server-internals.md#the-embedding-indexes)
-for what is being built and when it is rebuilt.
+start; later starts reuse the cache under `data_dir/embedding_cache`.
+See [text-resolution settings](../reference/server-config.md#text-resolution)
+for choosing exact or semantic matching.
 The server answers on `http://127.0.0.1:8000` (`GET /health`) once the core
 is up.
 
@@ -44,8 +41,12 @@ acq.query().entity("pump").metadata()
 
 A fresh server starts with no model loaded.
 
-The examples in these tutorials use the public WaterTAP seawater-ro
-model, which produces simulated data.
+Start with [your first app](first-app.md) to generate a signal with a driver
+and apply a threshold. It needs no plant model. Then
+[follow a turbidity alarm](turbidity.md) through a chain of calculations.
+
+The query and data tutorials use the WaterTAP seawater-RO model, which produces
+simulated plant data.
 
 To run WaterTAP, follow the [WaterTAP deployment guide](https://github.com/DataDrivenCPS/acquirium/blob/main/deployments/WATERTAP/readme.md):
 

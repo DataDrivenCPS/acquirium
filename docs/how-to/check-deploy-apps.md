@@ -27,9 +27,9 @@ apps and recalculates the history affected by the change.
 To use a declaration factory from the command line:
 
 ```sh
-acquirium app deploy examples/transformation/temperature_conversion.py:fahrenheit_to_celsius
+acquirium app deploy examples/transformation/threshold_app.py:high_wave
 acquirium app list --json
-acquirium app inspect fahrenheit-to-celsius --json
+acquirium app inspect high-wave --json
 ```
 
 A factory accepts `(client, parameters)` and returns an `App`. Add `--dry-run`

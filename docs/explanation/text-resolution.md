@@ -2,8 +2,6 @@
 title: Text resolution
 ---
 
-<!-- TODO: intro -->
-
 ## How matching works
 
 Each text is matched in two stages.

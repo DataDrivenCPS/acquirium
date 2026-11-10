@@ -1,12 +1,15 @@
+---
+orphan: true
+---
+
 # Persistent worker pool — 2026-10-18
 
-Escapement now owns a bounded pool of persistent pure Python workers. The
-temperature chain reuses imported modules across entrypoints and epochs, with
-separate replicas for independent ready operators. Acquirium pins native revision
-`83fdccbac99e409c193c51b0aa95b67558998ee2` from the
-[feature branch](https://github.com/gtfierro/escapement/tree/feature/python-worker-pool).
-See the [implementation design](../../plans/escapement-python-workers.md) and
-[authoring contract](../../how-to/write-soft-sensors.md).
+These measurements compare fresh processes with Escapement's bounded persistent
+worker pool at revision `83fdccbac99e409c193c51b0aa95b67558998ee2`. The temperature
+chain reuses imported modules across entrypoints and epochs, with separate
+replicas for independent ready operators. See the
+[worker settings](../../reference/server-config.md) and
+[Python function contract](../../reference/apps.md#python-functions).
 
 ![Fresh processes versus a warm pool](pool-comparison.png)
 
@@ -98,13 +101,10 @@ pre-existing untracked RO example test was excluded. Native Clippy passes with
 warnings denied; changed
 profiling/integration Python code passes Ruff.
 
-Current limits are deliberate: all Python operators obey the pure contract;
-there is no automatic purity detection or stateful checkpoint support. The
-pool grows on demand to a fixed resident bound, without adaptive scaling or
-group chunking. Groups within one operator invocation run serially. Module
-digests and interpreter paths identify reuse; helpers, model assets, and full
-dependency environments are not yet hermetic bundles. Native history retention
-and operating-scale capacity remain separate work.
+These measurements use stateless functions. The pool grows on demand to a fixed
+resident bound, and groups within an operator run serially. Module digests and
+interpreter paths identify reuse. For dependency versioning and explicit
+sequential state, see the [app interface](../../reference/apps.md).
 
 ## Reproduce and inspect
 

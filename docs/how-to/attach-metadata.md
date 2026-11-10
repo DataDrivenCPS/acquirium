@@ -18,11 +18,10 @@ pressure point.
 
 Run metadata uses these attribute rules. Variable declarations keep semantic
 and source fields explicit and store all user JSON under `metadata`, whether
-created by hand or through a model adapter. For example, a legacy variable
-`category="simulation"` is queried as `metadata.category` after upgrade;
-`variable.metadata` contains `{"category": "simulation"}`. Units remain
-available as `variable.unit` and the semantic query attribute `unit`.
-See [experiment declaration conversion](../reference/experiments.md#declaring-variables).
+created by hand or through a model adapter. For example, a variable declared
+with `metadata={"category": "simulation"}` is queried as `metadata.category`.
+Units remain available as `variable.unit` and the query attribute `unit`.
+See [experiment declarations](../reference/experiments.md#declaring-variables).
 Create them through the [experiment interface](record-experiments.md), which
 creates their nodes and handles their lifecycle.
 

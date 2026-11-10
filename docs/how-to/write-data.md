@@ -7,7 +7,6 @@ Drivers can pull data from any source, and once registered, acquirium manages ru
 Use this only if you want to build your own data ingestion pipeline.
 This might be useful for backfills, one-off imports and tests.
 
-
 ## Writing data
 
 The client can write timeseries data directly.

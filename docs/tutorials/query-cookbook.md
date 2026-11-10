@@ -2,8 +2,6 @@
 title: Query cookbook
 ---
 
-<!-- TODO: intro -->
-
 This tutorial shows how to write acquirum queries based on common questions a plant engineer may ask. 
 
 This tutorial uses data from the WaterTAP seawater-RO model, 
@@ -257,7 +255,6 @@ reading is directly downstream of.
  .context("pump", via="upstream", alias="pump")
  .metadata())
 ```
-<!-- TODO: capture output against seawater-ro -->
 
 Readings on a pump's own outlet connection point appear too, because the
 outlet pressure is downstream of the pump.

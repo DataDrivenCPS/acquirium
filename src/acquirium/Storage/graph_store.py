@@ -1026,9 +1026,9 @@ class OxigraphGraphStore:
     def export_graph(self, *, include_dependencies: bool = True, format: str = "turtle") -> str:
         """Serialize all deployment data, optionally with ontology dependencies.
 
-        ``include_dependencies=False`` never means the legacy plant graph alone: it
-        includes every registered source-owned graph and Acquirium's managed
-        deployment data. ``True`` adds the resolved ontology/shape closure.
+        ``include_dependencies=False`` includes every registered source-owned
+        graph and Acquirium's managed deployment data. ``True`` adds the resolved
+        ontology/shape closure.
         """
         fmt = (format or "turtle").lower()
         with self._lock:

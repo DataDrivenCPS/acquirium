@@ -1,3 +1,7 @@
+---
+orphan: true
+---
+
 # Native model workload and worker telemetry
 
 Measured on 2026-10-18 with release Escapement
@@ -7,7 +11,7 @@ machine, not repeated estimates of production capacity. No integration tests ran
 during the original five measurements; other applications were not isolated. Environment files
 retain each run's native source identity, model hash, and initial load average.
 
-The [benchmark](../../../examples/model_workload/README.md) runs four independent
+The [benchmark](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/model_workload) runs four independent
 pointwise soft sensors, each with temperature, conductivity, flow, and pressure
 inputs. Every worker loads the same immutable synthetic RBF model once. Its
 arrays occupy 10 MiB; process RSS also includes interpreter/libraries and work
@@ -94,15 +98,15 @@ recorded as evidence, not a comparable capacity measurement. The comparison
 figure shows only the original five cases.
 
 Many independent device pipelines can already expose operator concurrency.
-Group splitting is therefore conditional on a representative narrow-operator
-bottleneck, as explained in the [scheduling investigation](../../plans/parallel-group-execution.md).
-Batched Arrow/function APIs remain a separate optimization to profile rather
-than infer from these totals.
+These results measure concurrency across independent operators. They do not
+measure splitting one operator's windows across workers or batch-function
+performance. See [batch functions](../../reference/apps.md#batch-functions)
+for that interface.
 
 These short runs establish measured behavior for this synthetic workload. They
 do not establish leak freedom, long-duration memory bounds, trained-model
 accuracy, crash-safe source delivery, or a universal worker recommendation.
-Automatic scaling and stateful operators remain future work.
+These cases do not measure automatic scaling or sequential functions.
 
 ## Reproduction and retained evidence
 

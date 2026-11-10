@@ -1,3 +1,7 @@
+---
+orphan: true
+---
+
 # Execution profile
 
 Execution: pooled; paired fresh-owner controls; median milliseconds per measured epoch.

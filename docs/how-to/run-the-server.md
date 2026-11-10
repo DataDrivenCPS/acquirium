@@ -2,9 +2,6 @@
 title: Run the server
 ---
 
-<!-- TODO: intro -->
-
-
 This is a guide to running and configuring the acquirium server: the config
 file, storage backends, ontologies, and the HTTP API.
 
@@ -14,9 +11,9 @@ file, storage backends, ontologies, and the HTTP API.
 acquirium server --config acquirium.toml
 ```
 
-The server hosts the graph store, the timeseries store, the HTTP API, the
-bounded in-process worker pool that runs apps, and the child processes that
-run drivers.
+The server owns the graph, experiment ledger, and Escapement engine.
+Escapement runs Python calculations in worker processes. Drivers run in their
+own child processes and send readings through the HTTP API.
 Without `--config` it looks for `acquirium.toml` in the working directory,
 and starts with defaults when there is none.
 
@@ -39,7 +36,7 @@ The CLI also has a `driver` group (`start`, `list`, `stop`), covered in the
 
 Startup runs in this order:
 
-1. Read the config, open both stores, load the ontologies.
+1. Read the config, open the graph, engine, and experiment ledger, and load the ontologies.
 2. Build or load the embedding indexes.
 3. Read the registered streams from the graph.
    A reference node failing the canonical-URI check aborts startup.
@@ -57,9 +54,9 @@ Check `GET /drivers/list` for configured drivers and
 The `Acquirium()` client constructor waits for `/health` (60 seconds by
 default) so scripts can start before the server finishes booting.
 
-A cold first start builds the embedding indexes and loads the ontologies,
-and can take 5-10 minutes.
-A warm restart with an intact data directory is much faster.
+With semantic text resolution enabled, the first start downloads a model and
+builds its indexes. Set `exact_only=true` to resolve names and symbols without
+that download; see [text resolution](resolve-text.md).
 
 ## Docker
 

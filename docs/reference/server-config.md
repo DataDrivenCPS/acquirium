@@ -9,7 +9,7 @@ Paths resolve relative to the configuration file.
 [server]
 host = "127.0.0.1"
 port = 8000
-data_dir = ".acquirium-native"
+data_dir = ".acquirium"
 exact_only = true
 recreate = false
 engine_workers = 2
@@ -22,7 +22,7 @@ max_pending_requests = 100000
 | `data_dir` | `.acquirium` | Graph, indexes, deployment manifest, and default engine database |
 | `engine_path` | `data_dir/escapement.duckdb` | Engine store: a DuckDB file, or a `postgres://` URL (tables go in the URL's `search_path` schema) |
 | `experiments_path` | `engine_path` if it is a `postgres://` URL, else `data_dir/experiments.duckdb` | Experiment ledger: a DuckDB file or a `postgres://` URL. Holds Studies, runs, observations, and artifact bytes; their samples are Escapement streams |
-| `engine_workers` | 2 | Maximum concurrent native operator executions |
+| `engine_workers` | 2 | Maximum concurrent app calculations |
 | `python_pool_size` | `engine_workers` | Maximum resident Python workers across function artifacts; zero uses fresh processes for profiling |
 | `python_max_worker_jobs` | 10000 | Recycle a process after this many jobs |
 | `python_max_worker_age` | 1800 | Recycle expired processes between jobs, in seconds |
@@ -45,20 +45,32 @@ Environment overrides include `ACQUIRIUM_DATA_DIR`, `ACQUIRIUM_ENGINE_PATH`,
 `ACQUIRIUM_PYTHON_MAX_WORKER_JOBS`, `ACQUIRIUM_PYTHON_MAX_WORKER_AGE`, `ACQUIRIUM_EPOCH_REQUESTS`,
 `ACQUIRIUM_MAX_PENDING_REQUESTS`, `ACQUIRIUM_DRAIN_TIMEOUT`, `ACQUIRIUM_GRAPH_PATH`,
 `ACQUIRIUM_EXACT_ONLY`, `ACQUIRIUM_EMBEDDING_MODEL`, `ACQUIRIUM_RECREATE`, and
-`ACQUIRIUM_WORKERS`. Backend selection and PostgreSQL DSNs have been removed.
+`ACQUIRIUM_WORKERS`.
 
 With `recreate = false`, the experiment ledger's schema upgrades run
 automatically through the [versioned migration ledger](storage-migrations.md);
 existing records are retained.
 
-`[ontologies] sources` still accepts RDF paths/URLs and `{source, as}` records for
-canonical IRI overrides. `[[drivers]]` entries name driver specs and source-specific
-configuration. `[[apps]]` entries name a declaration or `(client, parameters)`
-factory, for example:
+## Text resolution
+
+`exact_only=true` resolves exact ontology names and symbols without downloading
+an embedding model. With `false`, unmatched text uses semantic similarity.
+See [resolve text](../how-to/resolve-text.md) for diagnostics and unit conversion.
+
+## Ontologies
+
+`[ontologies] sources` accepts RDF paths/URLs and `{source, as}` records for
+canonical IRI overrides.
+
+## Drivers and apps
+
+`[[drivers]]` entries name driver specs and source-specific configuration.
+`[[apps]]` entries name a declaration or `(client, parameters)` factory:
+
 
 ```toml
 [[apps]]
-spec = "examples/transformation/temperature_conversion.py:fahrenheit_to_celsius"
+spec = "examples/transformation/threshold_app.py:high_wave"
 ```
 
 A file spec imports under its name without `.py`, so that name must be unique:
@@ -67,4 +79,4 @@ directory, is rejected.
 
 Configured drivers start before configured app factories so their plant metadata
 is available for semantic selection. See the [driver reference](drivers.md) and
-[native app reference](apps.md).
+[app reference](apps.md).

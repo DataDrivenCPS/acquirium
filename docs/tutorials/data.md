@@ -2,8 +2,6 @@
 title: Working with data
 ---
 
-<!-- TODO: intro -->
-
 This is a guide to querying data (timeseries) with Acquirium.
 
 This tutorial uses data from the WaterTAP seawater-RO model, 
@@ -23,7 +21,6 @@ To improve the performance of querying, acquirium does not fetch anything until 
 For further operations on the data query, acquirium lets you create a data object with `.data()`.
 This object is a lazy reference to the underlying data.
 
-
 ```python
 from acquirium import Acquirium
 
@@ -37,8 +34,6 @@ d
 ```text
 DataObject(lazy, ~55980 rows, range=2026-08-05T16:28:39.137381+00:00 to 2026-08-08T05:30:48.864274+00:00, aliases=['m'], entities=['Equipment'])
 ```
-
-**TODO:** measure the overhead and scalability of this feature
 
 The data object lets you check what the query would retrieve before fetching it.
 For instance, the `~55980` figure above is a real count from the server.
@@ -66,8 +61,6 @@ rows per stream, in `order` direction).
 `include_dependencies`, `cast_value` and `value_mode` act at fetch time, so
 they are set on `data()` (or on `Query.dataframe()`) and have no data-object
 counterpart.
-
-**TODO:** dataframe funcitons are not consistent with each other. make them consistent, or just remove one
 
 ## Shapes
 
@@ -119,7 +112,6 @@ is the point as a CURIE.
 Numeric and text readings live in separate columns, `value_numeric` and
 `value_text`.
 
-
 ### Column names in wide shape
 
 A wide column is named after its alias.
@@ -169,7 +161,6 @@ shape: (2, 5)
 │ 2026-08-08 05:52:16.983763 UTC ┆ 7e6                       ┆ 101325.0                   ┆ 6.8105e6                             ┆ 304.016483 │
 └────────────────────────────────┴───────────────────────────┴────────────────────────────┴──────────────────────────────────────┴────────────┘
 ```
-**TODO:** Find a better way to create the schema from aliases
 
 Both `dataframe()` methods shorten the identifiers by default
 (`compact=True`): URIs are CURIEs and the narrow shape identifies a point by a
@@ -194,8 +185,6 @@ d.units()
 {'flow': ['http://qudt.org/vocab/unit/KiloGM-PER-SEC']}
 ```
 `convert_to()` returns a new data object by converting the values into a target unit.
-
-**TODO**: this method and its params should be renamed (something like: `.convert()`)
 
 ```python
 kg_per_min = d.convert_to("kg/min")
@@ -239,8 +228,6 @@ ValueError: convert_to: no convertible unit pair for
 ```
 
 ## Taking the result apart
-
-**TODO:** This is quite ugly, think of a better way:
 
 A query that matched several points and several entities comes back as one
 object. These four methods split it up.
@@ -292,8 +279,6 @@ urn:swro/P2 (5892, 2)
 This is useful for per-equipment work, like fitting a model per pump.
 
 `latest(alias)` returns the newest reading.
-
-**TODO:** I think latest also can be improved or removed
 
 ```python
 d.latest("m")

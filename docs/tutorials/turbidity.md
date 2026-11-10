@@ -26,7 +26,7 @@ minutes: timestamps describe when readings happened.
 ## Make one stream per location
 
 There are four sampling locations. Each has a turbidity point in
-[model.ttl](../../examples/bulk_ingest/model.ttl). The script loads that model
+[model.ttl](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/bulk_ingest/model.ttl). The script loads that model
 and registers a stream for each point:
 
 ```python
@@ -87,8 +87,8 @@ endpoints. Its first `1` is at 00:17. It remains on through 00:20.
 
 The duration is a parameter for each location. Filter 3 uses fifteen minutes;
 the combined effluent uses five. The same function handles both. You can read
-the declarations in [chain.py](../../examples/bulk_ingest/chain.py) and the
-calculation in [transforms.py](../../examples/bulk_ingest/transforms.py).
+the declarations in [chain.py](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/bulk_ingest/chain.py) and the
+calculation in [transforms.py](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/bulk_ingest/transforms.py).
 
 ## Count alarms across the plant
 

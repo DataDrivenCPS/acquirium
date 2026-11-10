@@ -1,9 +1,13 @@
+---
+orphan: true
+---
+
 # Publication latency under sustained ingest
 
 Measured on 2026-11-02 with release Escapement built from `dbab4f2`, Python
 3.12.11, Linux x86_64, 16 logical CPUs and 93 GiB of memory, on a shared
 developer machine whose load average was between 1.7 and 3.5. Each case is one
-run. The [harness](../../../examples/operating_limits/README.md#sustained-ingest)
+run. The [harness](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/operating_limits#sustained-ingest)
 drives the native engine with Acquirium's server defaults and wakes the
 processor after every request, as the server does. Each case's directory
 holds its `results.json` and `summary.md`.
@@ -75,7 +79,7 @@ from the two request sizes, `ingest` costs about 7 ms per request plus about
 1 µs per reading, so a driver sending a few readings at a time pays most of
 7 ms for each request. The HTTP server's normalization
 adds to these costs; see the
-[bulk ingest](../../../examples/bulk_ingest/README.md) measurements.
+[bulk ingest](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/bulk_ingest) measurements.
 
 Raising the ceiling means making admission cheaper: writing several requests
 in one transaction, or accepting requests without waiting for an epoch's

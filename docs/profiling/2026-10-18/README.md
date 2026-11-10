@@ -1,20 +1,18 @@
+---
+orphan: true
+---
+
 # Python soft-sensor execution profile — 2026-10-18
 
-Follow-up: the [persistent pool is implemented and measured](../2026-10-18-pool/README.md).
-The findings below describe the original fresh-process executor.
-
-Repeated Python initialization is the dominant cost in the temperature chain.
-Proceed with a persistent, bounded Python worker pool **inside Escapement**;
-retain the pure function contract and native atomic publication. The proposed
-[worker design](../../plans/escapement-python-workers.md) covers release identity,
-reuse, replicas, stateful operators, and later adaptive scaling. Pooling has not
-yet been implemented or benchmarked, so these results do not predict its speedup.
+These measurements use fresh-process execution. Repeated Python initialization
+dominates the temperature chain's compute time. For a controlled comparison
+with persistent workers, see the [pool measurements](../2026-10-18-pool/README.md).
 
 ![Native epoch scaling and actual Python worker stages](execution-profile.png)
 
 ## Experiment
 
-The [reusable profiling harness](../../../examples/profiling/README.md) executes
+The [reusable profiling harness](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/profiling) executes
 the actual temperature functions through the pinned release Escapement engine.
 Five workload shapes × three worker limits × paired instrumented/control cases
 × five measured epochs produced **150 verified epochs and 390 instrumented

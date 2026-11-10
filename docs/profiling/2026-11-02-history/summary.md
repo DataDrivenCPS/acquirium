@@ -1,3 +1,7 @@
+---
+orphan: true
+---
+
 100 streams, one reading per stream every 1 s, a native 15-minute mean of each.
 
 | Readings | Derived rows | Load s | Readings/s | Load RSS MiB | Load peak MiB | Bytes/row loaded | DB MiB | Reopen s | Reopen RSS MiB | Bytes/row reopened | 1 h read ms | Stream read ms | Correction ms |

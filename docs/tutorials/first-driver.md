@@ -2,8 +2,6 @@
 title: Your first driver
 ---
 
-<!-- TODO: intro -->
-
 A driver is a Python class that collects data from somewhere (a file drop, an
 MQTT feed, a simulation, an instrument) and pushes it into the server on a
 schedule, for continuous data ingest.
@@ -28,7 +26,7 @@ Attaching this data to a model of the plant is in the
 An RO skid exports one file per day into a folder.
 Each file looks like this:
 
-```csv
+```text
 Date,Time,Feed Flow,Permeate Flow,Feed Pressure,Permeate TDS
 8/1/2026,12:00:00 AM,120.5,55.2,801,210
 8/1/2026,12:15:00 AM,120.1,55.0,803,208
@@ -91,7 +89,6 @@ Create `ro_skid_driver.py` next to the config:
 ```python
 from acquirium import CSVIngestDriver
 
-
 class ROSkidDriver(CSVIngestDriver):
     pass
 ```
@@ -124,7 +121,6 @@ COLUMNS = {
     "Feed Pressure": ("Feed pressure", "psi",     "pressure"),
     "Permeate TDS":  ("Permeate TDS",  "mg/L",    "mass concentration"),
 }
-
 
 class ROSkidDriver(CSVIngestDriver):
     def declare_stream(self, ref_name: str) -> None:
@@ -187,7 +183,6 @@ COLUMNS = {
     "Feed Pressure": ("Feed pressure", "psi",     "pressure"),
     "Permeate TDS":  ("Permeate TDS",  "mg/L",    "mass concentration"),
 }
-
 
 class ROSkidDriver(CSVIngestDriver):
     def prepare_frame(self, df, path):

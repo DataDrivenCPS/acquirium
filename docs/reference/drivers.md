@@ -2,8 +2,6 @@
 title: Driver reference
 ---
 
-<!-- TODO: intro -->
-
 This is the reference for authoring and configuring drivers: the class
 hierarchy, every hook and helper with its signature, the persistent state
 API, the configuration keys, the built-in drivers and the CLI.
@@ -18,8 +16,6 @@ The process imports the class and talks back to the server with an
 `Acquirium` client.
 A driver process stops when the server stops, and a driver that crashes
 cannot take the server down with it.
-
-**TODO:** We'll develop drivers that can run on an edge device and connect to a remote acquirium server to push data.
 
 After startup the actor runs a fixed loop:
 
@@ -66,11 +62,6 @@ from acquirium import (Driver, IngestDriver, PollingIngestDriver, EventIngestDri
                        UndeclaredStreamError, DriverBufferFull, to_observations, to_timestamp)
 from acquirium.DriverState import DriverState
 ```
-
-<!-- TODO: `from acquirium import DriverState` silently resolves to the
-     acquirium.DriverState *module*, not the class, because the module shadows
-     the name. Export the class from `acquirium/__init__.py` (or rename the
-     module) and simplify this import. -->
 
 The other built-ins are imported by their module path, as in the `spec`
 values below.
@@ -239,13 +230,8 @@ skipped.
 | `prepare_frame(df: pl.DataFrame, path: Path) -> pl.DataFrame` | transform the raw frame after `skip_cols`, before timestamps are parsed |
 | `declare_stream(ref_name: str) -> None` | called once per distinct `ref_name` in each batch; default `self.declare(ref_name)` |
 
-<!-- TODO: `XLSXIngestDriver` and `ParquetIngestDriver` have neither hook —
-     they call `self.declare(name)` inline in `read()`, so attaching point
-     URIs, units or quantity kinds to an Excel or Parquet source means
-     overriding `read()` wholesale. Lift both hooks into a shared tabular base
-     and this section covers all three again. -->
-
-The reshaping they use is public:
+For XLSX or Parquet sources, override `read()` to customize point metadata.
+The tabular reshaping helpers are public:
 
 ```python
 to_observations(df: pl.DataFrame, *, time_col=None, date_col=None, clock_col=None,
@@ -272,12 +258,9 @@ keys need no declaration.
 | `source_id` | none | the driver's datasource; required by the ingest bases unless set in `setup()` |
 | `server_url`, `server_port` | `127.0.0.1`, the `[server]` port | under `[driver]`: where the actors reach the server |
 
-**TODO:** We can make default driver naming unique to avoid collisions.
-
-<!-- TODO: two more keys the supervisor reads are undocumented above:
-     `[driver] use_ssl` (false; it is in the sample acquirium.toml) and
-     `[driver] insert_batch_rows` (50000, passed to the actor's client). Add
-     them once we decide whether they are public config. -->
+Set distinct `name` and `driver_id` values when configuring the same class
+more than once: the name identifies the running driver, and the ID identifies
+its saved state.
 
 ## Built-in drivers
 

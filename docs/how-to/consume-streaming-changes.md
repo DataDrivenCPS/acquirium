@@ -4,7 +4,7 @@ title: Consume committed streaming changes
 
 `client.changes()` reads a bounded page from Escapement's durable signed feed.
 It contains committed source and derived changes; accepted unpublished work never
-appears. The [end-to-end workload](../../examples/streaming/README.md) demonstrates
+appears. The [end-to-end workload](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/streaming) demonstrates
 continuous production, consumption, retry, and restart over real HTTP.
 
 ```python

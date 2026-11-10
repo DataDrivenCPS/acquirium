@@ -2,6 +2,26 @@
 title: Server internals
 ---
 
+```text
+                       ┌───────────────────── acquirium server ─────────────────────┐
+ ┌────────────┐  HTTP  │                                                            │
+ │ your code, │ ◀────▶ │  graph store (Oxigraph)       Escapement engine            │
+ │ notebooks  │        │  plant model, ontologies,     raw and derived readings in  │
+ └────────────┘        │  inferred view                DuckDB or PostgreSQL         │
+                       │                               app operators                │
+                       │  embedding indexes              └─ Python worker pool      │
+                       │  text resolution                                           │
+                       │                               experiment ledger            │
+                       │                               DuckDB or PostgreSQL         │
+                       │        ▲ HTTP                                              │
+                       │  ┌─────┴────────────┐                                      │
+                       │  │ driver processes │                                      │
+                       │  └─────▲────────────┘                                      │
+                       └────────┼───────────────────────────────────────────────────┘
+                                │ poll or subscribe
+                SCADA · historians · CSV · MQTT · lab sheets
+```
+
 One server process owns:
 
 - **The Escapement engine**, which stores raw and derived readings and runs app

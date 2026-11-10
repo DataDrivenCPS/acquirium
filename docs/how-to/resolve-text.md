@@ -2,9 +2,6 @@
 title: Resolve text to URIs
 ---
 
-<!-- TODO: intro -->
-
-
 This is a guide to how acquirium turns free text into ontology URIs: the
 `resolve()` API, how matching works, and unit conversion.
 The querying and data guides use this machinery implicitly; this doc is for
@@ -99,5 +96,5 @@ offsets when both URIs are already known.
 - `GET /embedding_status` reports index state when resolution returns
   nothing at all: an index still building resolves nothing until it is done.
   A `"semantic": false` there means the server runs with
-  [`exact_only`](../reference/server-config.md#exact-only-resolution), which
+  [`exact_only`](../reference/server-config.md#text-resolution), which
   resolves exact names and symbols but never near-misses.

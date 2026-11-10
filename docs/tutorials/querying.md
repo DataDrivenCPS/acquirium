@@ -2,8 +2,6 @@
 title: Querying
 ---
 
-<!-- TODO: intro -->
-
 In this tutorial, we show how querying metadata (what equipment exists, how things
 connect, and what measurements hang off them) and data (the actual timeseries)
 is done with Acquirium.
@@ -45,7 +43,7 @@ Timeseries values are requested separately, covered under
 [Getting the values](#getting-the-values).
 
 Entity queries may also filter by attribute, e.g. by process. 
-These attributes are added as keywords, and are further described in the [where section](#where())
+These attributes are added as keywords, and are further described in the [where section](#where)
 
 ```python
 q = acq.query().entity("Equipment", process="reverse osmosis")  # filter by attribute
@@ -84,7 +82,6 @@ The default alias is the text you typed (`pump`, `Equipment` above).
 To provide an alias: either use the `alias=` keyword or the `.alias()` method.
 
 Note that it is recommended to assign an alias to a node built from `uri=`; otherwise the column is named by the node's internal numeric id.
-
 
 ```python
 q = acq.query().entity(uri="wbs:RO", alias="ro")     # same thing as:
@@ -248,7 +245,6 @@ The default is 3 (1 for predicate lists).
 `max_depth=0` means unbounded.
 Be aware that unbounded walks over a large plant can be slow.
 
-
 ## measurement()
 
 `measurement()` adds the data-bearing points of the node the pointer is on:
@@ -324,13 +320,6 @@ shape: (8, 4)
 │ wbs:P1 ┆ wbs:PXR            ┆ wbs:P1-out-pressure ┆ null                            │
 └────────┴────────────────────┴─────────────────────┴─────────────────────────────────┘
 ```
-TODO: organize the metadata table to group nulls together.
-
-<!-- TODO: `metadata()` returns rows in no guaranteed order, so this
-     `.head(8)` capture shows a different eight rows on every run. Sort the
-     frame in the example, or show the full result. -->
-<!-- TODO: two other captures in this file are `.head()`/`.tail()` of an
-     unordered result for the same reason; decide on one convention. -->
 
 ### direction= and nearest=
 
@@ -377,7 +366,6 @@ belong to.
  .context(process="reverse osmosis")
  .metadata())
 ```
-<!-- TODO: capture output against seawater-ro -->
 
 The new node is an ordinary entity node: it gets a column, takes an alias,
 and `where(target=)`, `include()`, `related()` and `DataObject.by()` work on
@@ -427,7 +415,6 @@ pump.
  .context("pump", via="upstream", alias="feed_pump")
  .metadata())
 ```
-<!-- TODO: capture output against seawater-ro -->
 
 `via=` also takes the explicit forms `related()` takes: a predicate
 (`"^"` inverts), a list of predicates, or a tuple of step chains.
@@ -697,9 +684,6 @@ shape: (7, 3)                                    # include("unit", required=True
 └────────┴─────────────────────────────────┴─────────────────────┘
 ```
 
-<!-- TODO: two RO-out-retentate-flow-mass-* points truncate to the same
-     display string; widen the capture or pick a shorter example so the
-     required=True table does not look like it has a duplicate row. -->
 Note that the four points dropped by `required=True` are the three pressures
 and the temperature, which is what [Which measurement points carry no
 unit?](query-cookbook.md#which-measurement-points-carry-no-unit) lists
