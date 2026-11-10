@@ -114,8 +114,6 @@ no data transfer, so checking often is cheap.
 
 ## Exploring what is there
 
-TODO: More exploration/visulaization methods and __repr__ and __str__ for visualizing query object will be implemented
-
 In a new plant, the hard part is knowing what to ask for.
 `options()` and `facets()` answer that: they report the attribute values that
 actually occur in your current matches, so you can narrow down step by step.
