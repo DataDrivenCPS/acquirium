@@ -2,7 +2,7 @@
 title: Explore a model
 ---
 
-<!-- TODO: intro -->
+This is a guide to exploring a plant model you do not know yet: building a query step by step, and using `options()` and `facets()` to see which values occur in the matches.
 
 ## Building a query step by step
 

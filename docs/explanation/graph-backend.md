@@ -2,8 +2,6 @@
 title: Graph backend architecture
 ---
 
-<!-- TODO: intro -->
-
 This is a guide to the graph backend: the persistent graphs, the derived
 query views, the update rules, and the interfaces application and driver
 authors use.

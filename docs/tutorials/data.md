@@ -2,8 +2,6 @@
 title: Working with data
 ---
 
-<!-- TODO: intro -->
-
 This is a guide to querying data (timeseries) with Acquirium.
 
 This tutorial uses data from the WaterTAP seawater-RO model, 

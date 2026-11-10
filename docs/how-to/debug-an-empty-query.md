@@ -2,7 +2,8 @@
 title: Debugging queries for an unexpected result
 ---
 
-<!-- TODO: intro -->
+This is a guide to finding out why a query returns nothing, or more or fewer rows than expected.
+It lists the common causes, each with a way to check it.
 
 ## When a query returns nothing or more/less than you expect
 

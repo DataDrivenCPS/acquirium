@@ -2,7 +2,7 @@
 title: Values
 ---
 
-<!-- TODO: intro -->
+This is an explanation of how Acquirium stores readings that can be numbers or text, and how `value_mode` and `cast_value` decide what a query returns.
 
 ## Numbers and text
 

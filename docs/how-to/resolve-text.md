@@ -2,9 +2,6 @@
 title: Resolve text to URIs
 ---
 
-<!-- TODO: intro -->
-
-
 This is a guide to how acquirium turns free text into ontology URIs: the
 `resolve()` API, how matching works, and unit conversion.
 The querying and data guides use this machinery implicitly; this doc is for

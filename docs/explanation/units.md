@@ -2,8 +2,6 @@
 title: Units
 ---
 
-<!-- TODO: intro -->
-
 This is an explanation of how acquirium handles units: where a unit is
 recorded, what happens when the unit of a stream and the unit of its point
 disagree, and how values are converted, automatically and on request.

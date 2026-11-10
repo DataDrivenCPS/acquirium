@@ -2,8 +2,6 @@
 title: Driver reference
 ---
 
-<!-- TODO: intro -->
-
 This is the reference for authoring and configuring drivers: the class
 hierarchy, every hook and helper with its signature, the persistent state
 API, the configuration keys, the built-in drivers and the CLI.

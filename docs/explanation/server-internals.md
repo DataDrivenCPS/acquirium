@@ -2,7 +2,8 @@
 title: Server internals
 ---
 
-<!-- TODO: intro -->
+This is an explanation of what the server stores and what it builds at startup: the two timeseries storage backends, the graph store and the embedding indexes.
+For the config keys that select them, see the [server configuration reference](../reference/server-config.md).
 
 ## Storage backends
 

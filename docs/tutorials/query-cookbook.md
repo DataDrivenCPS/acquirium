@@ -2,8 +2,6 @@
 title: Query cookbook
 ---
 
-<!-- TODO: intro -->
-
 This tutorial shows how to write acquirum queries based on common questions a plant engineer may ask. 
 
 This tutorial uses data from the WaterTAP seawater-RO model, 

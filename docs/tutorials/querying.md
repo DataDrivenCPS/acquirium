@@ -2,8 +2,6 @@
 title: Querying
 ---
 
-<!-- TODO: intro -->
-
 In this tutorial, we show how querying metadata (what equipment exists, how things
 connect, and what measurements hang off them) and data (the actual timeseries)
 is done with Acquirium.

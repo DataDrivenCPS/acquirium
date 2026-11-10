@@ -2,8 +2,6 @@
 title: Your first driver
 ---
 
-<!-- TODO: intro -->
-
 A driver is a Python class that collects data from somewhere (a file drop, an
 MQTT feed, a simulation, an instrument) and pushes it into the server on a
 schedule, for continuous data ingest.

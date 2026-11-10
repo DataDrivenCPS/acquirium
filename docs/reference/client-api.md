@@ -2,8 +2,6 @@
 title: Acquirium Client API
 ---
 
-<!-- TODO: intro -->
-
 This is the reference for the Python client: every public method, with its
 signature and a one-line description.
 The four sections follow the objects you hold: `Acquirium`, the `Query` it

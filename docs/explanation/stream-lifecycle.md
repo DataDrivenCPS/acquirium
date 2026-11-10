@@ -2,8 +2,6 @@
 title: The data stream lifecycle
 ---
 
-<!-- TODO: intro -->
-
 This is a guide to how a timeseries stream comes into existence, how its rows
 are stored, and how a query finds them again.
 It is background for driver authors and for anyone debugging ingestion; using

@@ -2,8 +2,6 @@
 title: Glossary
 ---
 
-<!-- TODO: intro -->
-
 This is a reference for the vocabulary of the other guides.
 
 ## RDF terms
