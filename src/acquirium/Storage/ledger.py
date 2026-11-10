@@ -27,7 +27,6 @@ LEDGER_TABLES = (
     "experiment_runs",
     "experiment_variables",
     "experiment_templates",
-    "experiment_metadata_resolutions",
     "experiment_streams",
     "schema_migrations",
 )

@@ -1,7 +1,8 @@
-"""Shared variable declaration validation and legacy document normalization.
+"""Shared variable declaration validation and normalization.
 
-Known semantic/index/source fields remain explicit. Other legacy descriptive
-fields move under ``metadata``; conflicting duplicate values require repair.
+Known semantic/index/source fields remain explicit. Other descriptive fields,
+such as ``objective="minimize"``, move under ``metadata``; a field given there
+and at the top level must have the same value.
 """
 from __future__ import annotations
 
@@ -50,14 +51,9 @@ def stream_key(key: Any, keys: tuple[str, ...]) -> tuple:
 
 
 def normalize_metadata(values: Mapping[str, Any]) -> dict:
-    """Convert legacy fields losslessly, rejecting conflicting user values."""
+    """Move descriptive fields under ``metadata``, rejecting conflicting values."""
     from acquirium.Client.explore.attributes import REGISTRY
     values = deepcopy(dict(values))
-    adapter_format = values.pop("_adapter_format", None)
-    if adapter_format == 1:
-        # Format 1's adapter_metadata was its authoritative user object; the
-        # metadata field was a disposable projection, not a second user object.
-        values["metadata"] = json.loads(values.pop("adapter_metadata"))
     values.pop(FORMAT, None)
     user = values.pop("metadata", {})
     if not isinstance(user, Mapping):
@@ -73,7 +69,7 @@ def normalize_metadata(values: Mapping[str, Any]) -> dict:
         else:
             user[key] = value
     if conflicts:
-        raise ValueError(f"conflicting legacy declaration metadata fields: {', '.join(sorted(conflicts))}; repair before upgrading")
+        raise ValueError(f"conflicting declaration metadata fields: {', '.join(sorted(conflicts))}")
     return {FORMAT: FORMAT_VERSION, **explicit, "metadata": to_json(user, path="metadata")}
 
 
@@ -112,7 +108,7 @@ class Declaration:
             semantic_fields={k: v for k, v in values.items() if k != FORMAT})
 
     def document(self):
-        """Serialize a declaration without validation or legacy conversion."""
+        """Serialize a declaration without validation or normalization."""
         values = {**self.semantic_fields, **{name: getattr(self, name) for name in _PROPERTIES},
                   "keys": list(self.keys), "observed_by_key": list(self.observed_by_key),
                   "observed": None if isinstance(self.observed, Mapping) else getattr(self.observed, "uri", self.observed),
@@ -177,7 +173,7 @@ def validate_declaration(component: Declaration, *, model=False, metadata_is_jso
 
 
 def prepare_declaration(label, role, kind, values, *, variable_id=None, resolve=None):
-    """Normalize and validate external input, including legacy declarations."""
+    """Normalize and validate external input."""
     component = validate_declaration(Declaration.from_document(label, role, kind,
         normalize_metadata(values), variable_id=variable_id), metadata_is_json=True)
     return component.resolve(resolve) if resolve is not None else component

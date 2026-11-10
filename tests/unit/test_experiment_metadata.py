@@ -17,7 +17,7 @@ from rdflib.namespace import RDF
 from requests import HTTPError
 
 from acquirium.Client.explore.attributes import ATTR_NS
-from acquirium.ExperimentMetadata import EXPERIMENT, variable_record, annotation_uri, run_uri, variable_uri
+from acquirium.ExperimentMetadata import EXPERIMENT, annotation_uri, run_uri, variable_uri
 from acquirium.Experiments import ExperimentStore
 from acquirium.Storage.ledger import DuckDBLedger
 from acquirium.Storage.graph_registry import source_graph_uri
@@ -441,30 +441,6 @@ def test_container_shapes_come_from_shared_objects(local):
     run = ledger.start(study, values)
     record = {**ledger.run(run["run_id"]), "metadata": {}}  # Without SQL snapshots, these must come from the graph.
     assert ledger.read_metadata([record], EXPERIMENT.Run, "run_id")[0]["metadata"] == values
-
-
-def test_legacy_uuid_declarations_backfill_without_changing_observation_ids(local):
-    ledger, store, graph = local.ledger, local.store, local.graph
-    study, (variable,), (run,) = _study(ledger, "legacy declarations", [("pressure", "scalar", {"unit": "PSI"})],
-                                        [{"scenario": "baseline"}])
-    ledger.observe(run["run_id"], variable["variable_id"], value=12.5)
-    ledger.finish(run["run_id"], "succeeded")
-    legacy_id = "b54c74d2-cfa6-4c08-a732-a5f7fefb5c4d"
-    with store._lock, store._write_conn() as conn:
-        conn.execute("UPDATE experiment_variables SET variable_id=? WHERE variable_id=?", [legacy_id, variable["variable_id"]])
-        conn.execute("UPDATE experiment_observations SET variable_id=? WHERE variable_id=?", [legacy_id, variable["variable_id"]])
-        from acquirium.Storage.metadata_outbox import enqueue
-        record = variable_record(study, dict(variable_id=legacy_id, label="pressure", role="output", kind="scalar", metadata={"unit": "PSI"}, created_at=datetime.now(timezone.utc)))
-        ledger._queue_metadata(conn, ledger.metadata_graph.record_update(record))
-        enqueue(conn, {"operation": "delete", "subject": variable_uri(variable["variable_id"])})
-    declarations = ledger.variables(study)
-    assert [item["variable_id"] for item in declarations] == [legacy_id]
-    assert declarations[0]["metadata"]["unit"] == "PSI"
-    legacy = URIRef(variable_uri(legacy_id))
-    assert (legacy, RDF.type, EXPERIMENT.Variable) in graph.dataset
-    assert (legacy, HAS_UNIT, URIRef(PSI)) in graph.dataset
-    observations = ledger.observations(study)
-    assert [(item["variable_id"], item["value"]) for item in observations] == [(legacy_id, 12.5)]
 
 
 def test_object_reads_repair_failed_publication_and_do_not_hide_read_errors(local, monkeypatch):

@@ -41,7 +41,10 @@ def migrate(conn, *, backend: str, component: str, migrations: tuple[Migration, 
     ).fetchall())
     known = {migration.version: migration.name for migration in migrations}
     if any(known.get(version) != name for version, name in applied.items()):
-        raise RuntimeError(f"incompatible {component} schema migration history")
+        raise RuntimeError(
+            f"incompatible {component} schema migration history: this database was written "
+            "by another version of Acquirium and cannot be upgraded; use a fresh data directory"
+        )
     for migration in migrations:
         if migration.version in applied:
             continue
@@ -56,30 +59,38 @@ def migrate(conn, *, backend: str, component: str, migrations: tuple[Migration, 
         )
 
 
-# IF NOT EXISTS also adopts databases upgraded before the migration ledger
-# existed. Keep these definitions unchanged; append future versions instead.
-EXPERIMENT_MIGRATIONS = (
-    Migration(1, "observation_keys", (
-        "ALTER TABLE experiment_observations ADD COLUMN IF NOT EXISTS key_json VARCHAR",
-    )),
+def _baseline(conn) -> None:
+    from uuid import uuid4
+
+    from acquirium.Storage.metadata_outbox import execute
+    for statement in _BASELINE:
+        execute(conn, statement)
+    execute(conn, "INSERT INTO experiment_metadata_state VALUES (?, 0, 0)", [str(uuid4())])
+
+
+_BASELINE = (
+    "CREATE TABLE experiment_templates (template_id VARCHAR PRIMARY KEY, name VARCHAR UNIQUE NOT NULL, created_at TIMESTAMP NOT NULL)",
+    "CREATE TABLE experiment_variables (variable_id VARCHAR PRIMARY KEY, template_id VARCHAR NOT NULL, label VARCHAR NOT NULL, role VARCHAR NOT NULL, kind VARCHAR NOT NULL, created_at TIMESTAMP NOT NULL, UNIQUE(template_id, label))",
+    "CREATE TABLE experiment_runs (run_id VARCHAR PRIMARY KEY, template_id VARCHAR NOT NULL, status VARCHAR NOT NULL, started_at TIMESTAMP NOT NULL, finished_at TIMESTAMP, error_json VARCHAR)",
+    "CREATE TABLE experiment_observations (run_id VARCHAR NOT NULL, variable_id VARCHAR, sequence BIGINT NOT NULL, recorded_at TIMESTAMP NOT NULL, occurred_at TIMESTAMP, value_json VARCHAR, artifact_digest VARCHAR, ref_uri VARCHAR, range_start TIMESTAMP, range_end TIMESTAMP, key_json VARCHAR, PRIMARY KEY(run_id, sequence))",
+    # The Escapement request sequence each time-series observation's data was
+    # accepted at; its epoch is looked up from it.
+    "CREATE TABLE experiment_observation_accepted (run_id VARCHAR NOT NULL, sequence BIGINT NOT NULL, accepted BIGINT NOT NULL, PRIMARY KEY (run_id, sequence))",
+    "CREATE TABLE experiment_artifacts (digest VARCHAR PRIMARY KEY, filename VARCHAR NOT NULL, media_type VARCHAR, byte_length BIGINT NOT NULL, created_at TIMESTAMP NOT NULL)",
+    # Artifact bytes commit with the rows that reference them.
+    "CREATE TABLE experiment_artifact_chunks (digest VARCHAR NOT NULL, seq INTEGER NOT NULL, data BYTEA NOT NULL, PRIMARY KEY(digest, seq))",
+    # Every stream a run may have written: a row is added before the first
+    # sample and removed only after the stream's samples are cleared.
+    "CREATE TABLE experiment_streams (ref_uri VARCHAR PRIMARY KEY, run_id VARCHAR NOT NULL, source_id VARCHAR NOT NULL, ref_name VARCHAR NOT NULL)",
+    # Resolved graph writes, delivered in version order.
+    "CREATE TABLE experiment_metadata_state (generation VARCHAR NOT NULL, version BIGINT NOT NULL, published_version BIGINT NOT NULL)",
+    "CREATE TABLE experiment_metadata_outbox (version BIGINT PRIMARY KEY, update_text VARCHAR NOT NULL)",
+    "CREATE INDEX experiment_variables_template_idx ON experiment_variables(template_id)",
+    "CREATE INDEX experiment_runs_template_idx ON experiment_runs(template_id, status, started_at)",
+    "CREATE INDEX experiment_observations_variable_idx ON experiment_observations(variable_id, run_id, sequence)",
+    "CREATE INDEX experiment_observations_ref_idx ON experiment_observations(ref_uri, range_start, range_end)",
 )
 
-# Imported last: the migration imports experiment records only when it runs.
-from acquirium.Storage.metadata_outbox import migrate_documents
-EXPERIMENT_MIGRATIONS += (Migration(2, "graph_metadata_outbox", migrate_documents),)
-
-EXPERIMENT_MIGRATIONS += (Migration(3, "declaration_upgrade_frontier", (
-    "ALTER TABLE experiment_metadata_state ADD COLUMN declaration_format INTEGER DEFAULT 0",
-    "ALTER TABLE experiment_metadata_state ADD COLUMN declaration_upgrade_version BIGINT",
-)),)
-
-# Samples moved to Escapement. The ledger lists every stream a run may have
-# written: a row is added before the first sample and removed only after the
-# stream's samples are cleared.
-EXPERIMENT_MIGRATIONS += (Migration(4, "experiment_streams", (
-    "CREATE TABLE IF NOT EXISTS experiment_streams (ref_uri VARCHAR PRIMARY KEY, run_id VARCHAR NOT NULL, source_id VARCHAR NOT NULL, ref_name VARCHAR NOT NULL)",
-    # The Escapement request sequence each time-series observation's data
-    # was accepted at; its epoch is looked up from it. A separate table: DuckDB cannot alter experiment_observations in the
-    # transaction where migration 2 updates it.
-    "CREATE TABLE IF NOT EXISTS experiment_observation_accepted (run_id VARCHAR NOT NULL, sequence BIGINT NOT NULL, accepted BIGINT NOT NULL, PRIMARY KEY (run_id, sequence))",
-)),)
+# Version 1 creates the whole schema. Ledgers from releases before it are not
+# upgraded. Keep these definitions unchanged; append future versions instead.
+EXPERIMENT_MIGRATIONS = (Migration(1, "baseline", _baseline),)

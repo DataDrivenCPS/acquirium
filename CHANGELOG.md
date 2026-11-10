@@ -10,6 +10,11 @@ change in any release.
 
 ## [Unreleased]
 
+### Removed
+- Upgrades of experiment ledgers from earlier releases. The ledger schema is
+  now a single baseline migration, and an older ledger is refused at startup
+  with a message to use a fresh data directory.
+
 ### Fixed
 - `AcquiriumClient` inserts without a `request_id` failed with
   `NameError: name 'uuid' is not defined`, which broke every driver insert.

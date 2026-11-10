@@ -1,4 +1,4 @@
-"""Declaration upgrades and atomic recording contracts on both SQL backends."""
+"""Declaration normalization and atomic recording contracts on both SQL backends."""
 import base64
 from datetime import datetime, timezone
 
@@ -6,9 +6,8 @@ import pytest
 from rdflib import Literal, URIRef
 
 from acquirium.ExperimentDeclarations import Declaration, normalize_metadata, prepare_declaration
-from acquirium.ExperimentMetadata import EXPERIMENT, variable_record, variable_uri
+from acquirium.ExperimentMetadata import variable_uri
 from acquirium.Experiments import ExperimentStore
-from acquirium.Metadata import read_documents
 from acquirium.Storage.metadata_outbox import enqueue, execute
 from tests.unit.test_experiment_metadata import MemoryGraphStore
 
@@ -82,59 +81,6 @@ def test_failed_recording_commits_no_observation(experiment_ledger, tmp_path, mo
     ledger.finish(run, "succeeded")
     assert ledger.clear()["samples"] == 1
     assert counts(store)["experiment_artifact_chunks"] == counts(store)["experiment_streams"] == counts(store)["samples"] == 0
-
-
-def legacy_document(ledger, graph, study, *, conflicting=False):
-    variable = ledger.declare(study, "power", "output", "scalar", {})
-    ledger.sync_metadata_graph()
-    metadata = {"unit": "old spelling", "category": "legacy", "metadata": {"empty": [None, {}, []]}}
-    if conflicting:
-        metadata["metadata"]["category"] = "different"
-    record = variable_record(study, {**variable, "metadata": metadata})
-    update = ledger.metadata_graph.record_update(record)
-    with ledger.store._lock, ledger.store._write_conn() as conn:
-        enqueue(conn, update)
-        execute(conn, "UPDATE experiment_metadata_state SET declaration_format=0, declaration_upgrade_version=NULL")
-    # Deliver the original representation, as an older process would.
-    ledger.metadata._publish_pending()
-    return variable, metadata
-
-
-def test_legacy_conflict_aborts_before_normalized_mutations(experiment_ledger, tmp_path):
-    ledger, graph, study = ledger_for(experiment_ledger, tmp_path)
-    variable, old = legacy_document(ledger, graph, study, conflicting=True)
-    uri = variable_uri(variable["variable_id"])
-    document = read_documents(graph, [uri])[uri]
-    before = counts(experiment_ledger)
-    with pytest.raises(ValueError, match="category.*repair"):
-        ledger.variables(study)
-    assert read_documents(graph, [uri])[uri] == document
-    assert counts(experiment_ledger) == before
-    with experiment_ledger._own_conn() as conn:
-        assert execute(conn, "SELECT declaration_upgrade_version FROM experiment_metadata_state").fetchone()[0] is None
-
-
-def test_interrupted_declaration_upgrade_replays_without_resolver(experiment_ledger, tmp_path, monkeypatch):
-    ledger, graph, study = ledger_for(experiment_ledger, tmp_path)
-    variable, old = legacy_document(ledger, graph, study)
-    with monkeypatch.context() as patch:
-        patch.setattr(graph, "flush_metadata", lambda: (_ for _ in ()).throw(OSError("interrupted flush")))
-        with pytest.raises(OSError, match="interrupted"):
-            ledger.variables(study)
-    with experiment_ledger._own_conn() as conn:
-        format_, scheduled, published = execute(conn, "SELECT declaration_format,declaration_upgrade_version,published_version FROM experiment_metadata_state").fetchone()
-    assert format_ == 0 and scheduled > published
-    restarted = ExperimentStore(experiment_ledger, graph_store=graph,
-        resolve=lambda *_: (_ for _ in ()).throw(AssertionError("upgrade must reuse semantic terms")))
-    saved = restarted.variables(study)[0]
-    assert saved["variable_id"] == variable["variable_id"]
-    assert saved["metadata"]["unit"] == "old spelling"
-    assert saved["metadata"]["metadata"] == {"category": "legacy", "empty": [None, {}, []]}
-    assert saved["metadata"]["_resolved_semantics"]["unit"] == "urn:unit:power"
-    assert restarted.declare(study, "power", "output", "scalar", old)["created"] is False
-    with experiment_ledger._own_conn() as conn:
-        assert execute(conn, "SELECT declaration_format FROM experiment_metadata_state").fetchone()[0] == 1
-        assert execute(conn, "SELECT count(*) FROM experiment_metadata_outbox").fetchone()[0] == 0
 
 
 def test_source_clear_is_an_outbox_ordering_barrier(experiment_ledger, tmp_path):
@@ -236,23 +182,25 @@ def test_stream_delivery_preserves_each_triples_subject(experiment_ledger, tmp_p
     assert not list(graph.dataset.objects(point, ACQUIRIUM_SOURCE_ID))
 
 
-def test_upgrade_keeps_user_overrides_and_semantic_assertions_in_their_sources(experiment_ledger, tmp_path):
+def test_user_overrides_and_semantic_assertions_stay_in_their_sources(experiment_ledger, tmp_path):
     from acquirium.Client.metadata import plan_write, update_text
     from acquirium.internals.internals_namespaces import HAS_UNIT
     ledger, graph, study = ledger_for(experiment_ledger, tmp_path)
-    variable, _ = legacy_document(ledger, graph, study)
+    variable = ledger.declare(study, "power", "output", "scalar",
+                              {"unit": "old spelling", "category": "original", "metadata": {"empty": [None, {}, []]}})
+    ledger.sync_metadata_graph()
     subject = variable_uri(variable["variable_id"])
     owner = graph.source_graph_uri("metadata")
-    write = plan_write(subject, {"category": "edited", "unit": "urn:unit:override"}, role="data", resolve=lambda *_: None)
+    write = plan_write(subject, {"metadata": {"category": "edited"}, "unit": "urn:unit:override"}, role="data", resolve=lambda *_: None)
     graph.sparql_update(update_text([write]), graph_uri=owner)
     saved = ledger.variables(study)[0]["metadata"]
-    assert saved["metadata"] == {"category": "edited", "empty": [None, {}, []]}
+    # An override document replaces the whole user object.
+    assert saved["metadata"] == {"category": "edited"}
     assert saved["unit"] == "urn:unit:override"
     base = graph.dataset.graph(graph.source_graph_uri("experiments"))
     user = graph.dataset.graph(owner)
     assert set(base.objects(URIRef(subject), HAS_UNIT)) == {URIRef("urn:unit:power")}
     assert set(user.objects(URIRef(subject), HAS_UNIT)) == {URIRef("urn:unit:override")}
-    assert saved["_resolved_semantics"]["unit"] == "urn:unit:override"
 
 
 def test_resolvers_run_before_sql_writer_transactions(experiment_ledger, tmp_path):

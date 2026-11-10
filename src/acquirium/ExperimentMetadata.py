@@ -16,7 +16,7 @@ import polars as pl
 from rdflib import Namespace, URIRef
 from rdflib.namespace import RDF
 
-from acquirium.Client.explore.attributes import ATTR_NS, REGISTRY, Attr, Registry
+from acquirium.Client.explore.attributes import ATTR_NS, Attr, Registry
 from acquirium.Client.explore.core import Query
 from acquirium.Client.explore.typed import coerce, column_dtype
 from acquirium.Client.metadata import flatten, plan_write, is_uri
@@ -40,11 +40,8 @@ def run_uri(run_id: str) -> str:
 
 
 def variable_uri(variable_id: str) -> str:
-    # Earlier releases stored bare UUIDs. Keep those SQL IDs and give their
-    # graph nodes an absolute URI; new declarations already use stream URIs.
-    if variable_id.startswith(("urn:", "http://", "https://")):
-        return variable_id
-    return str(EXPERIMENT[f"variable/{variable_id}"])
+    # Variable IDs are already stream reference URIs.
+    return variable_id
 
 
 def annotation_uri(annotation_id: str) -> str:
@@ -248,18 +245,6 @@ class ExperimentMetadata:
         self._on_publish = on_publish
         self._generation_checked = False
 
-    @staticmethod
-    def preflight_legacy(conn):
-        """Reject ambiguous legacy JSON before schema migrations remove snapshots."""
-        from acquirium.ExperimentDeclarations import normalize_metadata
-        columns = {row[0] for row in execute(conn, "SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='experiment_variables'").fetchall()}
-        if "metadata_json" in columns:
-            for identifier, value in execute(conn, "SELECT variable_id, metadata_json FROM experiment_variables").fetchall():
-                try:
-                    normalize_metadata(json.loads(value))
-                except (TypeError, ValueError) as error:
-                    raise ValueError(f"cannot upgrade declaration {identifier!r}: {error}") from error
-
     def enqueue(self, conn, update):
         enqueue(conn, update)
 
@@ -320,7 +305,6 @@ class ExperimentMetadata:
     def sync(self):
         with self.lock:
             self._publish_pending()
-            self._upgrade_declarations()
             # Retry reconciliation even when an earlier delivery was acknowledged
             # before app compilation failed. No SQL transaction is open here.
             if self._on_publish is not None:
@@ -378,99 +362,6 @@ class ExperimentMetadata:
         return [{**item, "experiment_metadata": values[EXPERIMENT.Run, item["experiment_id"]],
                  "variable_metadata": values[EXPERIMENT.Variable, item["variable_id"]]} for item in items]
 
-    def _upgrade_declarations(self):
-        """Schedule normalized graph documents once, then await their frontier.
-
-        The delivery lock covers reads and scheduling. All graph reads and
-        validation finish before the SQL writer transaction begins.
-        """
-        from acquirium.ExperimentDeclarations import FORMAT_VERSION
-        with self.store._own_conn() as conn:
-            version, scheduled, published = execute(conn, "SELECT declaration_format, declaration_upgrade_version, published_version FROM experiment_metadata_state").fetchone()
-            if version == FORMAT_VERSION:
-                return
-            rows = execute(conn, "SELECT variable_id FROM experiment_variables").fetchall() if scheduled is None else []
-        if scheduled is None:
-            subjects = [variable_uri(row[0]) for row in rows]
-            updates = self._declaration_updates(subjects)
-            with self.store._lock, self.store._write_conn() as conn:
-                for update in updates:
-                    enqueue(conn, update)
-                scheduled = execute(conn, "SELECT version FROM experiment_metadata_state").fetchone()[0]
-                execute(conn, "UPDATE experiment_metadata_state SET declaration_upgrade_version=?", [scheduled])
-        self._publish_pending()
-        with self.store._lock, self.store._write_conn() as conn:
-            execute(conn, "UPDATE experiment_metadata_state SET declaration_format=? WHERE published_version>=declaration_upgrade_version", [FORMAT_VERSION])
-
-    def _declaration_updates(self, subjects):
-        """Prepare source-owned replacements without moving semantic assertions."""
-        from acquirium.ExperimentDeclarations import FORMAT, FORMAT_VERSION, normalize_metadata
-        from acquirium.Client.metadata import _builtin_predicate
-        from acquirium.Metadata import decode_document_rows
-        from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
-        from rdflib.util import from_n3
-        graph = self.writer.graph_store
-        effective = read_documents(graph, subjects)
-        main = str(graph.source_graph_uri("experiments"))
-        overrides = str(graph.source_graph_uri(METADATA_SOURCE_ID))
-        sources = {owner: graph.metadata_triples(subjects, graph_uri=owner) for owner in (main, overrides)}
-        documents = {owner: decode_document_rows(subjects, [
-            (subject, pred, str(from_n3(value)), owner)
-            for subject, triples in records.items() for _,pred,value in triples if pred.startswith(DOCUMENT_NS)])
-            for owner,records in sources.items()}
-        semantic_preds = {_builtin_predicate(attr, "data"): name
-                          for name, attr in REGISTRY.items() if "data" in attr.roles and not attr.literal}
-        def metadata(document):
-            return {k:v for k,v in document.items() if k not in RESERVED_METADATA_KEYS}
-        def canonical(triples):
-            result = {}
-            for _,pred,value in triples:
-                obj = from_n3(value)
-                if pred in semantic_preds and str(obj) != str(EXPERIMENT.Variable):
-                    result.setdefault(semantic_preds[pred], []).append(str(obj))
-            return {k: values[0] if len(values) == 1 else sorted(values) for k,values in result.items()}
-        updates = []
-        for subject in subjects:
-            original = documents[main][subject]
-            if "variable_id" not in original:
-                raise RuntimeError(f"experiment metadata graph has no document for {subject!r}")
-            try:
-                # Conflicts are checked against the effective old user object
-                # before any normalization event is scheduled.
-                effective_metadata = normalize_metadata(metadata(effective[subject]))
-                normalized = {owner: normalize_metadata(metadata(documents[owner][subject]))
-                              for owner in sources if documents[owner][subject]}
-            except (TypeError, ValueError) as error:
-                raise ValueError(f"cannot upgrade declaration {subject!r}: {error}") from error
-            pins = {}
-            for owner, values in normalized.items():
-                old = documents[owner][subject]
-                pins.update(canonical(sources[owner][subject]))
-                if old.get(FORMAT) == FORMAT_VERSION:
-                    continue
-                if owner == overrides:
-                    # Promoting separate legacy user roots into one namespace
-                    # retains their effective values in the overriding document.
-                    # Original source documents and semantic assertions remain
-                    # owned by their original graphs.
-                    values["metadata"] = effective_metadata["metadata"]
-                if pins:
-                    values["_resolved_semantics"] = dict(pins)
-                kept = []
-                for triple in sources[owner][subject]:
-                    _,pred,_ = triple
-                    root = pred[len(ATTR_NS):].split(".", 1)[0] if pred.startswith(ATTR_NS) else None
-                    if not pred.startswith(DOCUMENT_NS) and (root is None or root in RESERVED_METADATA_KEYS or root in REGISTRY):
-                        kept.append(triple)
-                projection = {k:v for k,v in values.items() if k not in REGISTRY and k not in {FORMAT, "_resolved_semantics"}}
-                write = plan_write(subject, projection, role="data", resolve=lambda *_: None,
-                                   namespaces=self.writer.namespaces())
-                complete = {**values, **{k:v for k,v in old.items() if k in RESERVED_METADATA_KEYS}}
-                triples = [*kept, *[[str(s), str(p), o.n3()] for s,p,o in write.triples if not str(p).startswith(DOCUMENT_NS)],
-                           *[[str(s), str(p), o.n3()] for s,p,o in document_triples(subject, complete)]]
-                updates.append({"operation": "replace", "subject": subject, "graph_uri": owner, "triples": triples})
-        return updates
-
 
 def stream_update(writer, source, name, study_id, run_id, variable_id, label, metadata, keys, key):
     """Resolve an owned stream's graph intent before entering the SQL writer."""
@@ -480,7 +371,7 @@ def stream_update(writer, source, name, study_id, run_id, variable_id, label, me
     canonical = metadata.get("_resolved_semantics", {})
     semantics = {field: metadata[field] for field in POINT_FIELD_KINDS if field in metadata}
     resolved = {field: canonical.get(field, str(value) if is_uri(value) else None) for field, value in semantics.items()}
-    # Unresolved legacy spellings remain in declaration documents; no resolver
+    # Unresolved spellings remain in declaration documents; no resolver
     # is called during recording or replay.
     semantics = {field: value for field, value in semantics.items() if resolved[field] is not None}
     point = _build_stream_triples(graph, {"source_id": source, "ref_name": name, "label": label,

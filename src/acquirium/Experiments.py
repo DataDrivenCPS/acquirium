@@ -128,20 +128,12 @@ class ExperimentStore:
         # The ledger stores provenance records and artifact bytes; time-series
         # samples are Escapement streams (``store.samples``).
         with store._lock, store._write_conn() as conn:
-            self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_templates (template_id VARCHAR PRIMARY KEY, name VARCHAR UNIQUE NOT NULL, created_at TIMESTAMP NOT NULL)")
-            self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_variables (variable_id VARCHAR PRIMARY KEY, template_id VARCHAR NOT NULL, label VARCHAR NOT NULL, role VARCHAR NOT NULL, kind VARCHAR NOT NULL, metadata_json VARCHAR NOT NULL, created_at TIMESTAMP NOT NULL, UNIQUE(template_id, label))")
-            self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_runs (run_id VARCHAR PRIMARY KEY, template_id VARCHAR NOT NULL, status VARCHAR NOT NULL, metadata_json VARCHAR NOT NULL, started_at TIMESTAMP NOT NULL, finished_at TIMESTAMP, error_json VARCHAR)")
-            self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_observations (run_id VARCHAR NOT NULL, variable_id VARCHAR, sequence BIGINT NOT NULL, recorded_at TIMESTAMP NOT NULL, occurred_at TIMESTAMP, value_json VARCHAR, artifact_digest VARCHAR, ref_uri VARCHAR, range_start TIMESTAMP, range_end TIMESTAMP, PRIMARY KEY(run_id, sequence))")
-            self.metadata.preflight_legacy(conn)
+            tables = {row[0] for row in self._execute(conn, "SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema()").fetchall()}
+            if "experiment_templates" in tables and "schema_migrations" not in tables:
+                raise RuntimeError("this experiment ledger was written by an earlier version of Acquirium "
+                                   "and cannot be upgraded; use a fresh data directory")
             migrate(conn, backend="postgres" if conn.__class__.__module__.startswith("psycopg") else "duckdb", component="experiments",
                     migrations=EXPERIMENT_MIGRATIONS)
-            self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_artifacts (digest VARCHAR PRIMARY KEY, filename VARCHAR NOT NULL, media_type VARCHAR, byte_length BIGINT NOT NULL, created_at TIMESTAMP NOT NULL)")
-            # Artifact bytes commit with the rows that reference them.
-            self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_artifact_chunks (digest VARCHAR NOT NULL, seq INTEGER NOT NULL, data BYTEA NOT NULL, PRIMARY KEY(digest, seq))")
-            self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_variables_template_idx ON experiment_variables(template_id)")
-            self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_runs_template_idx ON experiment_runs(template_id, status, started_at)")
-            self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_observations_variable_idx ON experiment_observations(variable_id, run_id, sequence)")
-            self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_observations_ref_idx ON experiment_observations(ref_uri, range_start, range_end)")
         self._resolutions = {}
         # A recording holds its run's lock from reserving streams to
         # committing, so finishing the run waits for it; runs never wait on

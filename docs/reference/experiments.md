@@ -587,9 +587,6 @@ The server assigns each observation a run-local sequence and UTC `recorded_at`
 receipt time. Caller-supplied `occurred_at` is separate. Time-series writes use
 source `experiment/<run_id>` and a stable reference name derived from the variable ID and key.
 Each observation records the stream URI and minimum and maximum sample times.
-Observations written by older versions keep their original stream references.
-After upgrading, new writes use the new identity, including when resuming an
-older run; observation queries continue to include its earlier samples.
 Each run's stream has its own point, labeled with the variable name, with the
 attributes `study_id`, `run_id`, `variable_id`, and `observed` when declared.
 `ac.query().measurement(run_id=...)` or `measurement(observed=...)` selects
