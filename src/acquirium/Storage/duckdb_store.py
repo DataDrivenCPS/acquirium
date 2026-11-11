@@ -213,8 +213,9 @@ class DuckDBStore:
                 -- materializer.  It is deliberately independent from the
                 -- per-stream publication protocol above.
                 last_revision BIGINT NOT NULL DEFAULT 0,
-                CHECK (numeric_value IS NULL OR text_value IS NULL),
-                UNIQUE (ref_id, ts)
+                -- No UNIQUE (ref_id, ts): _insert_frame keeps one row per key
+                -- by deleting colliding rows before it inserts.
+                CHECK (numeric_value IS NULL OR text_value IS NULL)
             )
             """,
         ]

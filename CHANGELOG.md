@@ -10,6 +10,13 @@ change in any release.
 
 ## [Unreleased]
 
+### Changed
+- The DuckDB `timeseries` table no longer has the `UNIQUE (ref_id, ts)`
+  constraint. Writes still keep one row per stream and timestamp by deleting
+  colliding rows before inserting. Opening an existing database rebuilds the
+  table once to drop the constraint; allow space for the replacement table
+  when upgrading a large database.
+
 ## [0.4.0a9] - 2026-11-09
 
 ### Removed

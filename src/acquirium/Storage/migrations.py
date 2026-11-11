@@ -95,8 +95,33 @@ def _duckdb_publication_columns(conn) -> None:
     conn.execute("ALTER TABLE timeseries_migration_v1 RENAME TO timeseries")
 
 
+def _duckdb_drop_timeseries_unique(conn) -> None:
+    unique = conn.execute(
+        "SELECT count(*) FROM duckdb_constraints() WHERE schema_name=current_schema() "
+        "AND table_name='timeseries' AND constraint_type='UNIQUE'"
+    ).fetchone()[0]
+    if not unique:
+        return
+    # DuckDB cannot drop a constraint in place, so the table is rebuilt inside
+    # the migration transaction. Startup recreates secondary indexes after
+    # migrations, and the view still uses this name.
+    columns = "ref_id, ts, numeric_value, text_value, deleted, last_stream_version, last_revision"
+    conn.execute("""CREATE TABLE timeseries_migration_v2 (
+        ref_id INTEGER NOT NULL, ts TIMESTAMP NOT NULL,
+        numeric_value DOUBLE, text_value VARCHAR,
+        deleted BOOLEAN NOT NULL DEFAULT FALSE,
+        last_stream_version BIGINT NOT NULL DEFAULT 0,
+        last_revision BIGINT NOT NULL DEFAULT 0,
+        CHECK (numeric_value IS NULL OR text_value IS NULL)
+    )""")
+    conn.execute(f"INSERT INTO timeseries_migration_v2 ({columns}) SELECT {columns} FROM timeseries")
+    conn.execute("DROP TABLE timeseries")
+    conn.execute("ALTER TABLE timeseries_migration_v2 RENAME TO timeseries")
+
+
 DUCKDB_TIMESERIES_MIGRATIONS = (
     Migration(1, "publication_columns", _duckdb_publication_columns),
+    Migration(2, "drop_timeseries_unique", _duckdb_drop_timeseries_unique),
 )
 EXPERIMENT_MIGRATIONS = (
     Migration(1, "observation_keys", (
