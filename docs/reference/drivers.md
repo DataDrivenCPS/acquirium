@@ -261,7 +261,11 @@ keys need no declaration.
 | `source_id` | none | the driver's datasource; required by the ingest bases unless set in `setup()` |
 | `server_url`, `server_port` | `127.0.0.1`, the `[server]` port | under `[driver]`: where the actors reach the server |
 
-**TODO:** We can make default driver naming unique to avoid collisions.
+Note that the default `name` is not unique.
+Two `[[drivers]]` entries with the same class and no `name` get the same name,
+and the second one fails to start with `Driver '<name>' is already running`.
+The server logs the error and continues.
+To run one class twice, set a different `name` and `driver_id` on each entry.
 
 <!-- TODO: two more keys the supervisor reads are undocumented above:
      `[driver] use_ssl` (false; it is in the sample acquirium.toml) and
