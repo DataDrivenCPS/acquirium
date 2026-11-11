@@ -966,12 +966,10 @@ class AcquiriumClient:
         return {**self._write_metadata(writes), "nodes": len(writes)}
 
     def _check_study_variable_terms(self, records: Mapping[str, Mapping[str, Any]]) -> None:
-        """Refuse to change the unit, quantity kind, medium or substance of a
-        Study variable. Each run's streams copy these terms from the variable
-        when they are created (the fields in ``POINT_FIELD_KINDS``), so they
-        are fixed at declaration.
+        """Raise if a write sets a ``POINT_FIELD_KINDS`` field on a Study
+        variable. Run streams copy these fields at creation, so they are fixed.
 
-        Only nodes whose write sets one of those terms are checked, with::
+        The nodes setting one are looked up with::
 
             SELECT ?s WHERE {
               VALUES ?s { <node-1> <node-2> }
