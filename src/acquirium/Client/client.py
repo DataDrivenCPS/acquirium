@@ -961,8 +961,23 @@ class AcquiriumClient:
         missing = sorted(set(subjects) - set(roles))
         if missing:
             raise ValueError(f"unknown node(s), not in any data graph: {missing}")
+        self._check_study_variable_terms(subjects)
         writes = self._plan_metadata(subjects, roles)
         return {**self._write_metadata(writes), "nodes": len(writes)}
+
+    def _check_study_variable_terms(self, records: Mapping[str, Mapping[str, Any]]) -> None:
+        """A Study variable's unit, quantity kind, medium and substance are
+        fixed when it is declared: its runs' streams carry copies of them."""
+        from acquirium.ExperimentMetadata import EXPERIMENT
+        touched = [uri for uri, values in records.items() if values.keys() & POINT_FIELD_KINDS.keys()]
+        if not touched:
+            return
+        sparql = ("SELECT ?s WHERE { VALUES ?s { " + " ".join(f"<{u}>" for u in touched) + " } "
+                  f"?s a <{EXPERIMENT.Variable}> }}")
+        variables = sorted(str(row[0]) for row in self.sparql_query(sparql, include_dependencies=False)["rows"])
+        if variables:
+            raise ValueError(f"cannot change the unit, quantity kind, medium or substance of Study "
+                             f"variable(s) {variables}; declare a new variable instead")
 
     def _plan_metadata(self, records: Mapping[str, Mapping[str, Any]],
                        roles: Mapping[str, str]) -> list:

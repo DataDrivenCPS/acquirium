@@ -229,7 +229,9 @@ def make_client(roles_rows, resolved=None):
     client = AcquiriumClient.__new__(AcquiriumClient)
     client.base_url = "http://test:8000"
     client._namespaces_cache = {"x": "urn:x#"}
-    client.sparql_query = MagicMock(return_value={"columns": ["s", "ref"], "rows": roles_rows})
+    # No test node is a Study variable.
+    client.sparql_query = MagicMock(side_effect=lambda sparql, **_: {
+        "columns": ["s", "ref"], "rows": [] if "experiment:Variable" in sparql else roles_rows})
     client.sparql_update = MagicMock(return_value={"ok": True, "message": "update applied"})
     client.resolve = MagicMock(side_effect=lambda record, min_score=0.4: {
         k: (resolved or {}).get(t) for k, (t, kind) in record.items()})
