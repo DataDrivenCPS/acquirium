@@ -966,16 +966,31 @@ class AcquiriumClient:
         return {**self._write_metadata(writes), "nodes": len(writes)}
 
     def _check_study_variable_terms(self, records: Mapping[str, Mapping[str, Any]]) -> None:
-        """A Study variable's unit, quantity kind, medium and substance are
-        fixed when it is declared: its runs' streams carry copies of them."""
+        """Refuse to change the unit, quantity kind, medium or substance of a
+        Study variable. Each run's streams copy these terms from the variable
+        when they are created (the fields in ``POINT_FIELD_KINDS``), so they
+        are fixed at declaration.
+
+        Only nodes whose write sets one of those terms are checked, with::
+
+            SELECT ?s WHERE {
+              VALUES ?s { <node-1> <node-2> }
+              ?s a <urn:acquirium:experiment:Variable>
+            }
+        """
         from acquirium.ExperimentMetadata import EXPERIMENT
-        touched = [uri for uri, values in records.items() if values.keys() & POINT_FIELD_KINDS.keys()]
-        if not touched:
+        nodes = [uri for uri, values in records.items()
+                 if any(term in values for term in POINT_FIELD_KINDS)]
+        if not nodes:
             return
-        sparql = ("SELECT ?s WHERE { VALUES ?s { " + " ".join(f"<{u}>" for u in touched) + " } "
-                  f"?s a <{EXPERIMENT.Variable}> }}")
-        variables = sorted(str(row[0]) for row in self.sparql_query(sparql, include_dependencies=False)["rows"])
-        if variables:
+        listed = " ".join(f"<{uri}>" for uri in nodes)
+        sparql = f"""SELECT ?s WHERE {{
+  VALUES ?s {{ {listed} }}
+  ?s a <{EXPERIMENT.Variable}>
+}}"""
+        rows = self.sparql_query(sparql, include_dependencies=False)["rows"]
+        if rows:
+            variables = sorted(str(row[0]) for row in rows)
             raise ValueError(f"cannot change the unit, quantity kind, medium or substance of Study "
                              f"variable(s) {variables}; declare a new variable instead")
 
