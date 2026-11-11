@@ -502,3 +502,55 @@ class TestLazyStats:
         client.timeseries_info_batch.assert_called_once()
         (uris,), _ = client.timeseries_info_batch.call_args
         assert uris == [self.R1]
+
+
+class TestConvertToStoredUnitMismatch:
+    """A stream whose stored unit does not convert to the point's annotation
+    is read as stored, so convert_to() must not treat the annotation as the
+    unit of its values."""
+
+    PSI, DEG_C, PA, K = "urn:unit#PSI", "urn:unit#DEG_C", "urn:unit#PA", "urn:unit#K"
+
+    def _data(self, *, stored, annotated, compatible):
+        from acquirium.Client.data_object import BindingInfo
+
+        data = _data_object(
+            [BindingInfo(nid=0, point_uri="urn:t#p1", ref_uri="urn:t#r1", alias="p",
+                         entity_contexts=[{}], property_unit=annotated, ref_unit=stored)],
+            [("p", "urn:t#p1", "urn:t#r1")],
+        )
+        client = data._client
+        client.get_conversion_factors.return_value = {"compatible": compatible}
+        client.resolve_conversion.side_effect = lambda src, tgt: {
+            "factors": {"from_uri": src, "to_uri": tgt, "from_multiplier": 2.0,
+                        "from_offset": 0.0, "to_multiplier": 1.0, "to_offset": 0.0}
+        }
+        return data, client
+
+    def test_raises_instead_of_converting_from_the_annotation(self):
+        import pytest
+
+        data, client = self._data(stored=self.PSI, annotated=self.DEG_C, compatible=False)
+        with pytest.raises(ValueError, match="stored in urn:unit#PSI, which does not convert"):
+            data.convert_to(self.K)
+        client.resolve_conversion.assert_not_called()
+
+    def test_raises_when_the_check_itself_fails(self):
+        import pytest
+
+        data, client = self._data(stored=self.PSI, annotated=self.DEG_C, compatible=False)
+        client.get_conversion_factors.side_effect = RuntimeError("unknown unit")
+        with pytest.raises(ValueError, match="pass from_unit"):
+            data.convert_to(self.K)
+
+    def test_from_unit_states_the_unit_of_the_values(self):
+        data, client = self._data(stored=self.PSI, annotated=self.DEG_C, compatible=False)
+        out = data.convert_to(self.PA, from_unit=self.PSI)
+        client.get_conversion_factors.assert_not_called()
+        assert out.units() == {"p": [self.PA]}
+
+    def test_convertible_stored_unit_converts_from_the_annotation(self):
+        data, client = self._data(stored=self.PSI, annotated=self.PA, compatible=True)
+        out = data.convert_to("urn:unit#BAR")
+        client.resolve_conversion.assert_called_once_with(self.PA, "urn:unit#BAR")
+        assert out.units() == {"p": ["urn:unit#BAR"]}

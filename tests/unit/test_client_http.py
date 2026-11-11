@@ -240,7 +240,7 @@ class TestResolve:
             "eu": "http://qudt.org/vocab/unit/GAL_US-PER-MIN", "qty": None, "pinned": "urn:x", "empty": None}
 
     def test_bound_curies_expand(self, client):
-        assert client.resolve("watr:UltrafiltrationUnit", "class") == "urn:nawi-water-ontology#UltrafiltrationUnit"
+        assert client.resolve("watr:UltrafiltrationUnit", "class") == "https://watermetadata.org/ontology/watr#UltrafiltrationUnit"
         assert client.resolve("quantitykind:Pressure", "quantity_kind", top_k=2) == [{
             "uri": "http://qudt.org/vocab/quantitykind/Pressure",
             "kind": "quantity_kind", "score": 1.0, "match_stage": "passthrough",
