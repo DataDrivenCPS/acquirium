@@ -10,13 +10,13 @@ This is a reference for the vocabulary of the other guides.
 |---|---|---|
 | URI | the full, globally unique name of a thing; every class, predicate, entity, point and unit has one | `urn:swro/RO`, `http://qudt.org/vocab/unit/PSI` |
 | CURIE | a compact URI, written `prefix:local` | `wbs:RO` is `urn:swro/` + `RO` |
-| free text | a plain phrase the server resolves to a URI, against one vocabulary (its *kind*: class, predicate, substance, process, role, unit or quantity kind) | `"ro membrane"` resolves to `nawi:ReverseOsmosisMembrane` |
+| free text | a plain phrase the server resolves to a URI, against one vocabulary (its *kind*: class, predicate, substance, process, role, unit or quantity kind) | `"ro membrane"` resolves to `watr:ReverseOsmosisMembrane` |
 | literal | a plain value in a triple rather than a name for something; matched verbatim, never resolved | `"SCADA"`, `42.0` |
 | prefix | the short name standing in for a namespace | `wbs` |
 | namespace | the URI a prefix expands to | `urn:swro/` |
 | triple | one statement: subject, predicate, object | `wbs:RO s223:hasConnectionPoint wbs:RO-in` |
 | predicate | the middle of a triple; the kind of edge | `s223:hasConnectionPoint` |
-| class | a category a node belongs to, via `rdf:type` | `nawi:ReverseOsmosisMembrane` |
+| class | a category a node belongs to, via `rdf:type` | `watr:ReverseOsmosisMembrane` |
 | instance | one actual thing of a class | `wbs:RO` |
 | ontology | the shared vocabulary the model is written in | s223, NAWI water, QUDT |
 | model | the RDF description of one plant | `deployments/WATERTAP/models/seawater-ro/model.ttl` |
@@ -39,10 +39,10 @@ This is a reference for the vocabulary of the other guides.
 | datasource | who writes a set of streams; the graph-side record of a source | `watertap-seawater-ro` |
 | deployment graph | the inferred union of every source's data, which queries run against | — |
 | dependencies | the resolved ontology and shape triples queried alongside it | `include_dependencies=True` |
-| medium | what flows at a connection point, or what a property is measured in | `nawi:Water-Brine` |
-| substance | the constituent a measurement is about | `nawi:Constituent-Salt` |
-| quantity kind | what a measurement measures, in QUDT's vocabulary | `qudtqk:MassConcentration` |
-| process | the treatment process an entity performs | `nawi:Process-ReverseOsmosis` |
+| medium | what flows at a connection point, or what a property is measured in | `watr:Water-Brine` |
+| substance | the constituent a measurement is about | `watr:Constituent-Salt` |
+| quantity kind | what a measurement measures, in QUDT's vocabulary | `quantitykind:MassConcentration` |
+| process | the treatment process an entity performs | `watr:Process-ReverseOsmosis` |
 | unit | the QUDT unit a measurement carries | `unit:MilliGM-PER-L` |
 
 ### Stream identifiers

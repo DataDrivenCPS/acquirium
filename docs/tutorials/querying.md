@@ -647,9 +647,9 @@ shape: (3, 4)
 ┌────────┬─────────────────────────────┬───────────────────────────────┬────────┐
 │ ro     ┆ ro.process                  ┆ m                             ┆ m.unit │
 ╞════════╪═════════════════════════════╪═══════════════════════════════╪════════╡
-│ wbs:RO ┆ nawi:Process-ReverseOsmosis ┆ wbs:RO-in-pressure            ┆ null   │
-│ wbs:RO ┆ nawi:Process-ReverseOsmosis ┆ wbs:RO-out-pressure           ┆ null   │
-│ wbs:RO ┆ nawi:Process-ReverseOsmosis ┆ wbs:RO-out-retentate-pressure ┆ null   │
+│ wbs:RO ┆ watr:Process-ReverseOsmosis ┆ wbs:RO-in-pressure            ┆ null   │
+│ wbs:RO ┆ watr:Process-ReverseOsmosis ┆ wbs:RO-out-pressure           ┆ null   │
+│ wbs:RO ┆ watr:Process-ReverseOsmosis ┆ wbs:RO-out-retentate-pressure ┆ null   │
 └────────┴─────────────────────────────┴───────────────────────────────┴────────┘
 ```
 
@@ -777,13 +777,13 @@ Plain names are included, `-` prefixed names are dropped.
 ```
 ```text
 shape: (3, 2)
-┌───────────────────────────────┬─────────────────┐
-│ m                             ┆ m.quantity_kind │
-╞═══════════════════════════════╪═════════════════╡
-│ wbs:RO-out-pressure           ┆ qudtqk:Pressure │
-│ wbs:RO-in-pressure            ┆ qudtqk:Pressure │
-│ wbs:RO-out-retentate-pressure ┆ qudtqk:Pressure │
-└───────────────────────────────┴─────────────────┘
+┌───────────────────────────────┬───────────────────────┐
+│ m                             ┆ m.quantity_kind       │
+╞═══════════════════════════════╪═══════════════════════╡
+│ wbs:RO-out-pressure           ┆ quantitykind:Pressure │
+│ wbs:RO-in-pressure            ┆ quantitykind:Pressure │
+│ wbs:RO-out-retentate-pressure ┆ quantitykind:Pressure │
+└───────────────────────────────┴───────────────────────┘
 ```
 
 All three take the same column names: an attribute of the current node

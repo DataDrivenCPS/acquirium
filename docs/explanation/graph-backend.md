@@ -280,7 +280,7 @@ plan changes. App transforms do not write arbitrary graph data.
 
 Each output reference uses `derived:<app-name>` as its timeseries `source_id`.
 This identifies the app's streams without creating a caller-owned graph. The
-planner records `acquirium:producedBy "<app name>"` on derived points, allowing
+planner records `acq:producedBy "<app name>"` on derived points, allowing
 queries to select them with the `app` attribute.
 
 When an output has no explicit label, the planner generates an `rdfs:label`

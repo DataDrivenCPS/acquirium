@@ -20,9 +20,9 @@ The text matcher finds the closest match it can, for classes, predicates and att
 acq.client.resolve("ro membrane", "class", top_k=3, min_score=0.3)
 ```
 ```text
-[{'uri': 'urn:nawi-water-ontology#ReverseOsmosisMembrane',        'score': 0.839, ...},
- {'uri': 'urn:nawi-water-ontology#ElectricallyConductingMembrane', 'score': 0.788, ...},
- {'uri': 'urn:nawi-water-ontology#MolybdenumSulfideBasedMembrane', 'score': 0.786, ...}]
+[{'uri': 'https://watermetadata.org/ontology/watr#ReverseOsmosisMembrane',        'score': 0.839, ...},
+ {'uri': 'https://watermetadata.org/ontology/watr#ElectricallyConductingMembrane', 'score': 0.788, ...},
+ {'uri': 'https://watermetadata.org/ontology/watr#MolybdenumSulfideBasedMembrane', 'score': 0.786, ...}]
 ```
 
 Here the top match is the right one, but the runners-up are close.

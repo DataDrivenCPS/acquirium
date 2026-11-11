@@ -63,7 +63,7 @@ with its `ref_name` when none was given:
     a                        acq:VirtualPoint ;
     rdfs:label               "P1 outlet pressure" ;
     qudt:hasUnit             unit:PA ;
-    qudt:hasQuantityKind     qudtqk:Pressure ;
+    qudt:hasQuantityKind     quantitykind:Pressure ;
     ref:hasExternalReference <urn:acquirium#399ce39c-...> .
 ```
 

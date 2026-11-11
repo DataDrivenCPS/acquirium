@@ -16,7 +16,7 @@ the score threshold:
 
 ```python
 acq.client.resolve("ro membrane", "class")
-# 'urn:nawi-water-ontology#ReverseOsmosisMembrane'
+# 'https://watermetadata.org/ontology/watr#ReverseOsmosisMembrane'
 
 acq.client.resolve("blorp", "class", min_score=0.9)
 # None
@@ -29,9 +29,9 @@ This is useful for checking a suspicious match:
 acq.client.resolve("ro membrane", "class", top_k=2, min_score=0.3)
 ```
 ```text
-[{'uri': 'urn:nawi-water-ontology#ReverseOsmosisMembrane',
+[{'uri': 'https://watermetadata.org/ontology/watr#ReverseOsmosisMembrane',
   'label': 'Reverse Osmosis Membrane', 'score': 0.839, 'match_stage': 'semantic', ...},
- {'uri': 'urn:nawi-water-ontology#ElectricallyConductingMembrane',
+ {'uri': 'https://watermetadata.org/ontology/watr#ElectricallyConductingMembrane',
   'label': 'Electrically Conducting Membrane', 'score': 0.788, 'match_stage': 'semantic', ...}]
 ```
 
