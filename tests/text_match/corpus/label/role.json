@@ -5,84 +5,84 @@
     {
       "text": "backwash",
       "expected": [
-        "urn:nawi-water-ontology#Role-Backwash"
+        "https://watermetadata.org/ontology/watr#Role-Backwash"
       ],
       "stage": "exact"
     },
     {
       "text": "permeate",
       "expected": [
-        "urn:nawi-water-ontology#Role-Permeate"
+        "https://watermetadata.org/ontology/watr#Role-Permeate"
       ],
       "stage": "exact"
     },
     {
       "text": "feed",
       "expected": [
-        "urn:nawi-water-ontology#Role-Feed"
+        "https://watermetadata.org/ontology/watr#Role-Feed"
       ],
       "stage": "exact"
     },
     {
       "text": "drain",
       "expected": [
-        "urn:nawi-water-ontology#Role-Drain"
+        "https://watermetadata.org/ontology/watr#Role-Drain"
       ],
       "stage": "exact"
     },
     {
       "text": "storage",
       "expected": [
-        "urn:nawi-water-ontology#Role-Storage"
+        "https://watermetadata.org/ontology/watr#Role-Storage"
       ],
       "stage": "exact"
     },
     {
       "text": "equalization",
       "expected": [
-        "urn:nawi-water-ontology#Role-Equalization"
+        "https://watermetadata.org/ontology/watr#Role-Equalization"
       ],
       "stage": "exact"
     },
     {
       "text": "pretreatment",
       "expected": [
-        "urn:nawi-water-ontology#Role-Pretreatment"
+        "https://watermetadata.org/ontology/watr#Role-Pretreatment"
       ],
       "stage": "exact"
     },
     {
       "text": "posttreatment",
       "expected": [
-        "urn:nawi-water-ontology#Role-Posttreatment"
+        "https://watermetadata.org/ontology/watr#Role-Posttreatment"
       ],
       "stage": "exact"
     },
     {
       "text": "aerobic",
       "expected": [
-        "urn:nawi-water-ontology#Role-Aerobic"
+        "https://watermetadata.org/ontology/watr#Role-Aerobic"
       ],
       "stage": "exact"
     },
     {
       "text": "anaerobic",
       "expected": [
-        "urn:nawi-water-ontology#Role-Anaerobic"
+        "https://watermetadata.org/ontology/watr#Role-Anaerobic"
       ],
       "stage": "exact"
     },
     {
       "text": "anoxic",
       "expected": [
-        "urn:nawi-water-ontology#Role-Anoxic"
+        "https://watermetadata.org/ontology/watr#Role-Anoxic"
       ],
       "stage": "exact"
     },
     {
       "text": "primary",
       "expected": [
-        "urn:nawi-water-ontology#Role-Primary",
+        "https://watermetadata.org/ontology/watr#Role-Primary",
         "http://data.ashrae.org/standard223#Role-Primary"
       ],
       "stage": "exact"
@@ -90,7 +90,7 @@
     {
       "text": "secondary",
       "expected": [
-        "urn:nawi-water-ontology#Role-Secondary",
+        "https://watermetadata.org/ontology/watr#Role-Secondary",
         "http://data.ashrae.org/standard223#Role-Secondary"
       ],
       "stage": "exact"
@@ -98,7 +98,7 @@
     {
       "text": "tertiary",
       "expected": [
-        "urn:nawi-water-ontology#Role-Tertiary"
+        "https://watermetadata.org/ontology/watr#Role-Tertiary"
       ],
       "stage": "exact"
     },
@@ -168,42 +168,42 @@
     {
       "text": "nitrogen removal",
       "expected": [
-        "urn:nawi-water-ontology#Role-NitrogenRemoval"
+        "https://watermetadata.org/ontology/watr#Role-NitrogenRemoval"
       ],
       "stage": "exact"
     },
     {
       "text": "phosphorus removal",
       "expected": [
-        "urn:nawi-water-ontology#Role-PhosphorusRemoval"
+        "https://watermetadata.org/ontology/watr#Role-PhosphorusRemoval"
       ],
       "stage": "exact"
     },
     {
       "text": "nutrient removal",
       "expected": [
-        "urn:nawi-water-ontology#Role-NutrientRemoval"
+        "https://watermetadata.org/ontology/watr#Role-NutrientRemoval"
       ],
       "stage": "exact"
     },
     {
       "text": "solids handling",
       "expected": [
-        "urn:nawi-water-ontology#Role-SolidsHandling"
+        "https://watermetadata.org/ontology/watr#Role-SolidsHandling"
       ],
       "stage": "exact"
     },
     {
       "text": "make up",
       "expected": [
-        "urn:nawi-water-ontology#Role-MakeUp"
+        "https://watermetadata.org/ontology/watr#Role-MakeUp"
       ],
       "stage": "exact"
     },
     {
       "text": "makeup",
       "expected": [
-        "urn:nawi-water-ontology#Role-MakeUp"
+        "https://watermetadata.org/ontology/watr#Role-MakeUp"
       ],
       "stage": "exact"
     },
@@ -231,7 +231,7 @@
     {
       "text": "stepfeed",
       "expected": [
-        "urn:nawi-water-ontology#Role-Stepfeed"
+        "https://watermetadata.org/ontology/watr#Role-Stepfeed"
       ],
       "stage": "exact"
     }

@@ -5,241 +5,241 @@
     {
       "text": "reverse osmosis",
       "expected": [
-        "urn:nawi-water-ontology#Process-ReverseOsmosis"
+        "https://watermetadata.org/ontology/watr#Process-ReverseOsmosis"
       ]
     },
     {
       "text": "ultrafiltration",
       "expected": [
-        "urn:nawi-water-ontology#Process-Ultrafiltration"
+        "https://watermetadata.org/ontology/watr#Process-Ultrafiltration"
       ],
       "stage": "exact"
     },
     {
       "text": "granular activated carbon",
       "expected": [
-        "urn:nawi-water-ontology#Process-GranularActivatedCarbon"
+        "https://watermetadata.org/ontology/watr#Process-GranularActivatedCarbon"
       ]
     },
     {
       "text": "advanced oxidation process",
       "expected": [
-        "urn:nawi-water-ontology#Process-AdvancedOxidation"
+        "https://watermetadata.org/ontology/watr#Process-AdvancedOxidation"
       ]
     },
     {
       "text": "membrane distillation",
       "expected": [
-        "urn:nawi-water-ontology#Process-MembraneDistillation"
+        "https://watermetadata.org/ontology/watr#Process-MembraneDistillation"
       ]
     },
     {
       "text": "trickling filtration",
       "expected": [
-        "urn:nawi-water-ontology#Process-TricklingFiltration"
+        "https://watermetadata.org/ontology/watr#Process-TricklingFiltration"
       ]
     },
     {
       "text": "biosolids disposal",
       "expected": [
-        "urn:nawi-water-ontology#Process-BiosolidsDisposal"
+        "https://watermetadata.org/ontology/watr#Process-BiosolidsDisposal"
       ]
     },
     {
       "text": "electrocoagulation",
       "expected": [
-        "urn:nawi-water-ontology#Process-Electrocoagulation"
+        "https://watermetadata.org/ontology/watr#Process-Electrocoagulation"
       ]
     },
     {
       "text": "closed circuit reverse osmosis",
       "expected": [
-        "urn:nawi-water-ontology#Process-ClosedCircuitReverseOsmosis"
+        "https://watermetadata.org/ontology/watr#Process-ClosedCircuitReverseOsmosis"
       ]
     },
     {
       "text": "modified ludzack-ettinger",
       "expected": [
-        "urn:nawi-water-ontology#Process-MLE"
+        "https://watermetadata.org/ontology/watr#Process-MLE"
       ]
     },
     {
       "text": "high-density sludge process",
       "expected": [
-        "urn:nawi-water-ontology#Process-HighDensitySludge"
+        "https://watermetadata.org/ontology/watr#Process-HighDensitySludge"
       ]
     },
     {
       "text": "solvent extraction",
       "expected": [
-        "urn:nawi-water-ontology#Process-SolventExtraction"
+        "https://watermetadata.org/ontology/watr#Process-SolventExtraction"
       ]
     },
     {
       "text": "microfiltration",
       "expected": [
-        "urn:nawi-water-ontology#Process-Microfiltration"
+        "https://watermetadata.org/ontology/watr#Process-Microfiltration"
       ],
       "stage": "exact"
     },
     {
       "text": "activated sludge",
       "expected": [
-        "urn:nawi-water-ontology#Process-ActivatedSludge"
+        "https://watermetadata.org/ontology/watr#Process-ActivatedSludge"
       ],
       "stage": "exact"
     },
     {
       "text": "aeration",
       "expected": [
-        "urn:nawi-water-ontology#Process-Aeration"
+        "https://watermetadata.org/ontology/watr#Process-Aeration"
       ],
       "stage": "exact"
     },
     {
       "text": "aerobic digestion",
       "expected": [
-        "urn:nawi-water-ontology#Process-AerobicDigestion"
+        "https://watermetadata.org/ontology/watr#Process-AerobicDigestion"
       ],
       "stage": "exact"
     },
     {
       "text": "anaerobic digestion",
       "expected": [
-        "urn:nawi-water-ontology#Process-AnaerobicDigestion"
+        "https://watermetadata.org/ontology/watr#Process-AnaerobicDigestion"
       ],
       "stage": "exact"
     },
     {
       "text": "chlorination",
       "expected": [
-        "urn:nawi-water-ontology#Process-Chlorination"
+        "https://watermetadata.org/ontology/watr#Process-Chlorination"
       ],
       "stage": "exact"
     },
     {
       "text": "dechlorination",
       "expected": [
-        "urn:nawi-water-ontology#Process-Dechlorination"
+        "https://watermetadata.org/ontology/watr#Process-Dechlorination"
       ],
       "stage": "exact"
     },
     {
       "text": "coagulation",
       "expected": [
-        "urn:nawi-water-ontology#Process-Coagulation"
+        "https://watermetadata.org/ontology/watr#Process-Coagulation"
       ],
       "stage": "exact"
     },
     {
       "text": "flocculation",
       "expected": [
-        "urn:nawi-water-ontology#Process-Flocculation"
+        "https://watermetadata.org/ontology/watr#Process-Flocculation"
       ],
       "stage": "exact"
     },
     {
       "text": "sedimentation",
       "expected": [
-        "urn:nawi-water-ontology#Process-Sedimentation"
+        "https://watermetadata.org/ontology/watr#Process-Sedimentation"
       ],
       "stage": "exact"
     },
     {
       "text": "UV disinfection",
       "expected": [
-        "urn:nawi-water-ontology#Process-UVDisinfection"
+        "https://watermetadata.org/ontology/watr#Process-UVDisinfection"
       ],
       "stage": "exact"
     },
     {
       "text": "ozonation",
       "expected": [
-        "urn:nawi-water-ontology#Process-Ozonation"
+        "https://watermetadata.org/ontology/watr#Process-Ozonation"
       ],
       "stage": "exact"
     },
     {
       "text": "nitrification",
       "expected": [
-        "urn:nawi-water-ontology#Process-Nitrification"
+        "https://watermetadata.org/ontology/watr#Process-Nitrification"
       ],
       "stage": "exact"
     },
     {
       "text": "denitrification",
       "expected": [
-        "urn:nawi-water-ontology#Process-Denitrification"
+        "https://watermetadata.org/ontology/watr#Process-Denitrification"
       ],
       "stage": "exact"
     },
     {
       "text": "ion exchange",
       "expected": [
-        "urn:nawi-water-ontology#Process-IonExchange"
+        "https://watermetadata.org/ontology/watr#Process-IonExchange"
       ],
       "stage": "exact"
     },
     {
       "text": "dewatering",
       "expected": [
-        "urn:nawi-water-ontology#Process-Dewatering"
+        "https://watermetadata.org/ontology/watr#Process-Dewatering"
       ],
       "stage": "exact"
     },
     {
       "text": "media filtration",
       "expected": [
-        "urn:nawi-water-ontology#Process-MediaFiltration"
+        "https://watermetadata.org/ontology/watr#Process-MediaFiltration"
       ],
       "stage": "exact"
     },
     {
       "text": "rapid sand filtration",
       "expected": [
-        "urn:nawi-water-ontology#Process-RapidSandFiltration"
+        "https://watermetadata.org/ontology/watr#Process-RapidSandFiltration"
       ],
       "stage": "exact"
     },
     {
       "text": "electrodialysis",
       "expected": [
-        "urn:nawi-water-ontology#Process-Electrodialysis"
+        "https://watermetadata.org/ontology/watr#Process-Electrodialysis"
       ],
       "stage": "exact"
     },
     {
       "text": "pH adjustment",
       "expected": [
-        "urn:nawi-water-ontology#Process-pHAdjustment"
+        "https://watermetadata.org/ontology/watr#Process-pHAdjustment"
       ],
       "stage": "exact"
     },
     {
       "text": "screening",
       "expected": [
-        "urn:nawi-water-ontology#Process-Screening"
+        "https://watermetadata.org/ontology/watr#Process-Screening"
       ],
       "stage": "exact"
     },
     {
       "text": "softening",
       "expected": [
-        "urn:nawi-water-ontology#Process-Softening"
+        "https://watermetadata.org/ontology/watr#Process-Softening"
       ],
       "stage": "exact"
     },
     {
       "text": "evaporation",
       "expected": [
-        "urn:nawi-water-ontology#Process-Evaporation"
+        "https://watermetadata.org/ontology/watr#Process-Evaporation"
       ],
       "stage": "exact"
     },
     {
       "text": "chemical precipitation",
       "expected": [
-        "urn:nawi-water-ontology#Process-ChemicalPrecipitation"
+        "https://watermetadata.org/ontology/watr#Process-ChemicalPrecipitation"
       ],
       "stage": "exact"
     }

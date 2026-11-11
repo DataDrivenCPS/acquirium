@@ -40,77 +40,77 @@
     {
       "text": "has accuracy",
       "expected": [
-        "urn:nawi-water-ontology#hasAccuracy"
+        "https://watermetadata.org/ontology/watr#hasAccuracy"
       ],
       "stage": "exact"
     },
     {
       "text": "has precision",
       "expected": [
-        "urn:nawi-water-ontology#hasPrecision"
+        "https://watermetadata.org/ontology/watr#hasPrecision"
       ],
       "stage": "exact"
     },
     {
       "text": "has bias",
       "expected": [
-        "urn:nawi-water-ontology#hasBias"
+        "https://watermetadata.org/ontology/watr#hasBias"
       ],
       "stage": "exact"
     },
     {
       "text": "has response time",
       "expected": [
-        "urn:nawi-water-ontology#hasResponseTime"
+        "https://watermetadata.org/ontology/watr#hasResponseTime"
       ],
       "stage": "exact"
     },
     {
       "text": "has drop rate",
       "expected": [
-        "urn:nawi-water-ontology#hasDropRate"
+        "https://watermetadata.org/ontology/watr#hasDropRate"
       ],
       "stage": "exact"
     },
     {
       "text": "has measurement range",
       "expected": [
-        "urn:nawi-water-ontology#hasMeasurementRange"
+        "https://watermetadata.org/ontology/watr#hasMeasurementRange"
       ],
       "stage": "exact"
     },
     {
       "text": "has numeric resolution",
       "expected": [
-        "urn:nawi-water-ontology#hasNumericResolution"
+        "https://watermetadata.org/ontology/watr#hasNumericResolution"
       ],
       "stage": "exact"
     },
     {
       "text": "has temporal resolution",
       "expected": [
-        "urn:nawi-water-ontology#hasTemporalResolution"
+        "https://watermetadata.org/ontology/watr#hasTemporalResolution"
       ],
       "stage": "exact"
     },
     {
       "text": "has process",
       "expected": [
-        "urn:nawi-water-ontology#hasProcess"
+        "https://watermetadata.org/ontology/watr#hasProcess"
       ],
       "stage": "exact"
     },
     {
       "text": "has calibration curve",
       "expected": [
-        "urn:nawi-water-ontology#hasCalibrationCurve"
+        "https://watermetadata.org/ontology/watr#hasCalibrationCurve"
       ],
       "stage": "exact"
     },
     {
       "text": "has processed data",
       "expected": [
-        "urn:nawi-water-ontology#hasProcessedData"
+        "https://watermetadata.org/ontology/watr#hasProcessedData"
       ],
       "stage": "exact"
     }

@@ -11,47 +11,47 @@
     {
       "text": "tank",
       "expected": [
-        "urn:nawi-water-ontology#Tank"
+        "https://watermetadata.org/ontology/watr#Tank"
       ]
     },
     {
       "text": "thickener",
       "expected": [
-        "urn:nawi-water-ontology#Thickener"
+        "https://watermetadata.org/ontology/watr#Thickener"
       ]
     },
     {
       "text": "reactor",
       "expected": [
-        "urn:nawi-water-ontology#Reactor"
+        "https://watermetadata.org/ontology/watr#Reactor"
       ]
     },
     {
       "text": "membrane",
       "expected": [
-        "urn:nawi-water-ontology#ReverseOsmosisMembrane",
-        "urn:nawi-water-ontology#IonExchangeMembrane",
-        "urn:nawi-water-ontology#MultifunctionalMembrane",
-        "urn:nawi-water-ontology#ElectricallyConductingMembrane"
+        "https://watermetadata.org/ontology/watr#ReverseOsmosisMembrane",
+        "https://watermetadata.org/ontology/watr#IonExchangeMembrane",
+        "https://watermetadata.org/ontology/watr#MultifunctionalMembrane",
+        "https://watermetadata.org/ontology/watr#ElectricallyConductingMembrane"
       ]
     },
     {
       "text": "meter",
       "expected": [
         "http://data.ashrae.org/standard223#ElectricityMeter",
-        "urn:nawi-water-ontology#TurbidityMeter",
-        "urn:nawi-water-ontology#OxygenMeter",
-        "urn:nawi-water-ontology#FlowSensor",
+        "https://watermetadata.org/ontology/watr#TurbidityMeter",
+        "https://watermetadata.org/ontology/watr#OxygenMeter",
+        "https://watermetadata.org/ontology/watr#FlowSensor",
         "http://data.ashrae.org/standard223#FlowSensor"
       ]
     },
     {
       "text": "basin",
       "expected": [
-        "urn:nawi-water-ontology#AerationBasin",
-        "urn:nawi-water-ontology#MixingBasin",
-        "urn:nawi-water-ontology#CoagulationBasin",
-        "urn:nawi-water-ontology#FlocculationBasin"
+        "https://watermetadata.org/ontology/watr#AerationBasin",
+        "https://watermetadata.org/ontology/watr#MixingBasin",
+        "https://watermetadata.org/ontology/watr#CoagulationBasin",
+        "https://watermetadata.org/ontology/watr#FlocculationBasin"
       ]
     }
   ]
