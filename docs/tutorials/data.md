@@ -30,6 +30,13 @@ acq = Acquirium(server_url="127.0.0.1", server_port=8000)
 d = (acq.query().entity("Equipment")
      .measurement(alias="m", quantity_kind="mass flow rate")
      .data())
+d.total_rows     # asks the server for the count, fetches no values
+```
+```text
+55980
+```
+
+```python
 d
 ```
 ```text
@@ -39,7 +46,8 @@ DataObject(lazy, ~55980 rows, range=2026-08-05T16:28:39.137381+00:00 to 2026-08-
 **TODO:** measure the overhead and scalability of this feature
 
 The data object lets you check what the query would retrieve before fetching it.
-For instance, the `~55980` figure above is a real count from the server.
+`total_rows` and `time_range` ask the server for the row count and the time range of the matched streams.
+Note that printing the object does not contact the server: before one of them is read, it shows the number of matched streams in place of the row count and the range.
 
 Values are fetched (and cached) only when you call `.dataframe()`.
 

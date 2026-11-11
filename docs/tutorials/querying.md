@@ -481,11 +481,12 @@ place of the CURIE.
 The seawater-ro points carry no labels, so none appear here.
 
 `data()` returns a `DataObject`, a lazy reference to the same data.
-It reports the row count and time range before fetching anything, and lets
+It reports the row count and time range before fetching any values, and lets
 you take one alias at a time:
 
 ```python
 d = q.data()
+d.total_rows     # asks the server for the count
 d
 ```
 ```text
