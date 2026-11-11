@@ -580,7 +580,7 @@ class AcquiriumClient:
             })
             # -> {"unit": "http://qudt.org/vocab/unit/GAL_US-PER-MIN",
             #     "quantity_kind": ".../quantitykind/VolumeFlowRate",
-            #     "medium": "urn:nawi-water-ontology#Water"}
+            #     "medium": "https://watermetadata.org/ontology/watr#Water"}
 
         The field name *is* the role — no ``kind`` to supply, no label, no
         tuple. Recognised fields (``unit``, ``quantity_kind``, ``medium``,
