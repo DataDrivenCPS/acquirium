@@ -1349,6 +1349,32 @@ class DataObject:
                 units.append(unit)
         return out
 
+    def _check_values_in_annotated_unit(self, b: BindingInfo) -> None:
+        """Raise if ``b``'s values could not be brought to its annotated unit.
+
+        A stream stored in a unit that does not convert to the point's
+        annotation is read as stored, with a warning. Its values are then
+        not in the unit ``units()`` reports, so ``convert_to()`` must not
+        use that unit as the source. Registration rejects such a pair; this
+        guards a model edited afterwards.
+        """
+        stored, annotated = b.ref_unit, b.property_unit
+        if not stored or not annotated or stored == annotated:
+            return
+        try:
+            compatible = bool(
+                self._client.get_conversion_factors(stored, annotated).get("compatible", False)
+            )
+        except Exception:
+            compatible = False
+        if not compatible:
+            raise ValueError(
+                f"convert_to: point <{b.point_uri}> (alias '{b.alias}') is annotated "
+                f"{annotated} but its stream is stored in {stored}, which does not convert, "
+                f"so its values are still in {stored}. Correct the unit in the model, or "
+                f"pass from_unit to state the unit of the values."
+            )
+
     def convert_to(
         self,
         to_unit: str,
@@ -1377,7 +1403,8 @@ class DataObject:
         Raises:
             KeyError: If ``alias`` is not one of :attr:`aliases`.
             ValueError: If ``from_unit`` is None and a point has no unit
-                annotation, or if the units are incompatible.
+                annotation, or its stream is stored in a unit that does not
+                convert to the annotation; or if the units are incompatible.
         """
         if self._query_params.get("cast_value") == "str":
             raise ValueError("convert_to() needs numeric values; this object was built with cast_value='str'")
@@ -1408,6 +1435,8 @@ class DataObject:
         # pending/materialize paths only ever see exact units.
         conversions: list[tuple[tuple[str, str, str], str, str]] = []
         for b in affected:
+            if from_unit is None:
+                self._check_values_in_annotated_unit(b)
             src = from_unit if from_unit is not None else self._effective_unit(b)
             if src is None:
                 raise ValueError(
