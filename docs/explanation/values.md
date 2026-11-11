@@ -33,13 +33,29 @@ When reading, `value_mode` decides which of those columns you get.
 
 | value_mode | you get |
 |---|---|
-| `"default"` | the column the stream was registered as; for a stream with no registered kind, the queried range is probed: numeric-only reads as numbers, text-only as text, and a mix as `"coalesce"` |
+| `"default"` | the column the stream was registered as: numbers for a numeric stream, text for a text stream |
 | `"numeric"` | numeric readings only, text rows filtered out |
 | `"text"` | text readings only, numeric rows filtered out |
 | `"coalesce"` | both columns as one string column, so no row is lost |
 
-**TODO:** I'm not sure how reliable this is, I need to check.
+`"default"` does not inspect the stored values; it follows the registered `value_kind`.
+A stream registered without a `value_kind` is a text stream, so numbers
+written to it are stored and returned as text.
 
+Note that `"default"` returns every row of the stream.
+On a numeric stream, a reading that was stored as text comes back as a row
+with a null value, not as text.
+`"numeric"` leaves these rows out, `"text"` returns only these rows, and
+`"coalesce"` returns them next to the numbers as strings.
+For instance, a numeric stream that received `12.5`, `"13.0"`, `"Bad"` and
+`14.0` reads as follows:
+
+| value_mode | values |
+|---|---|
+| `"default"` | `12.5`, `13.0`, null, `14.0` |
+| `"numeric"` | `12.5`, `13.0`, `14.0` |
+| `"text"` | `"Bad"` |
+| `"coalesce"` | `"12.5"`, `"13.0"`, `"Bad"`, `"14.0"` |
 
 ```python
 d = q.data(value_mode="numeric")
