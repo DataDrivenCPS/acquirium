@@ -252,7 +252,7 @@ releases for recovery, and deploy a newly versioned calculation.
 
 Complete any work spawned by a function before returning. A failed function
 pauses publication for all apps. `retry_engine()` reprocesses the waiting
-requests in order, at most `epoch_requests` per epoch; deployments within one
-epoch resolve to the last, so a corrected deployment replaces the failed one
-only if it falls in the same epoch.
+requests in order. Deployments within one epoch resolve to the last, and the
+first epoch after a failure extends through the newest waiting deployment, so a
+corrected deployment replaces the failed one wherever it was accepted.
 Worker-pool settings and limits are in [server configuration](server-config.md).

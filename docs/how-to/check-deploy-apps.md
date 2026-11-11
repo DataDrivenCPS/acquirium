@@ -164,12 +164,8 @@ client.inspect_app("wave-ratio")["app"]["status"]
 ```
 
 The retry works through the waiting writes in order, under the newest
-deployment, and the other apps catch up. Do this soon after the failure. The
-retry takes up to `epoch_requests` waiting writes at a time, 128 by default,
-which for a driver writing once a second is about two minutes' worth. If the
-corrected deployment arrived later than that, the retry runs the broken version
-again. Restarting the server with a larger `epoch_requests` in its
-[configuration](../reference/server-config.md) lets it reach the fix.
+deployment, and the other apps catch up. It reaches the fix however many writes
+arrived while the engine was paused.
 
 When the cause is outside the code, such as a missing package or a deleted
 calculation file, fix that and call `client.retry_engine()` alone. Keep each

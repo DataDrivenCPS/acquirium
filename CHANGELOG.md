@@ -16,6 +16,8 @@ change in any release.
   with a message to use a fresh data directory.
 
 ### Fixed
+- `retry_engine()` after a failed calculation never reached a corrected
+  deployment accepted more than `epoch_requests` writes behind the failure.
 - `AcquiriumClient` inserts without a `request_id` failed with
   `NameError: name 'uuid' is not defined`, which broke every driver insert.
 - A driver's `source_id` from its `[[drivers]]` config is set before `setup()`
