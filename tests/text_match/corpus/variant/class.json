@@ -684,31 +684,31 @@
     {
       "text": "heat-exchanger",
       "expected": [
-        "http://data.ashrae.org/standard223#HeatExchanger"
+        "https://watermetadata.org/ontology/watr#HeatExchanger"
       ]
     },
     {
       "text": "HeatExchanger",
       "expected": [
-        "http://data.ashrae.org/standard223#HeatExchanger"
+        "https://watermetadata.org/ontology/watr#HeatExchanger"
       ]
     },
     {
       "text": "heat exchangers",
       "expected": [
-        "http://data.ashrae.org/standard223#HeatExchanger"
+        "https://watermetadata.org/ontology/watr#HeatExchanger"
       ]
     },
     {
       "text": "heat exchager",
       "expected": [
-        "http://data.ashrae.org/standard223#HeatExchanger"
+        "https://watermetadata.org/ontology/watr#HeatExchanger"
       ]
     },
     {
       "text": "HEAT EXCHANGER",
       "expected": [
-        "http://data.ashrae.org/standard223#HeatExchanger"
+        "https://watermetadata.org/ontology/watr#HeatExchanger"
       ]
     },
     {
@@ -997,6 +997,192 @@
       "text": "RESERVOIR",
       "expected": [
         "https://watermetadata.org/ontology/watr#Reservoir"
+      ]
+    },
+    {
+      "text": "de-watering",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Dewatering"
+      ]
+    },
+    {
+      "text": "ph adjust",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-pHControl"
+      ]
+    },
+    {
+      "text": "de-chlorination",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-ChlorineResidualRemoval"
+      ]
+    },
+    {
+      "text": "dechlorinate",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-ChlorineResidualRemoval"
+      ]
+    },
+    {
+      "text": "DECHLORINATION",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-ChlorineResidualRemoval"
+      ]
+    },
+    {
+      "text": "disinfecting",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Disinfection"
+      ]
+    },
+    {
+      "text": "disinfection process",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Disinfection"
+      ]
+    },
+    {
+      "text": "disenfection",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Disinfection"
+      ]
+    },
+    {
+      "text": "DISINFECTION",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Disinfection"
+      ]
+    },
+    {
+      "text": "dewater",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Dewatering"
+      ]
+    },
+    {
+      "text": "dewatering process",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Dewatering"
+      ]
+    },
+    {
+      "text": "DEWATERING",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Dewatering"
+      ]
+    },
+    {
+      "text": "dewatring",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Dewatering"
+      ]
+    },
+    {
+      "text": "pH-adjustment",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-pHControl"
+      ]
+    },
+    {
+      "text": "pHAdjustment",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-pHControl"
+      ]
+    },
+    {
+      "text": "PH ADJUSTMENT",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-pHControl"
+      ]
+    },
+    {
+      "text": "adjustment of pH",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-pHControl"
+      ]
+    },
+    {
+      "text": "ph adjusment",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-pHControl"
+      ]
+    },
+    {
+      "text": "pH adjusting",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-pHControl"
+      ]
+    },
+    {
+      "text": "softning",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Softening"
+      ]
+    },
+    {
+      "text": "SOFTENING",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Softening"
+      ]
+    },
+    {
+      "text": "softening process",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Softening"
+      ]
+    },
+    {
+      "text": "neutralisation",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Neutralization"
+      ]
+    },
+    {
+      "text": "neutralizaton",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Neutralization"
+      ]
+    },
+    {
+      "text": "nitrogen-removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-NitrogenRemoval"
+      ]
+    },
+    {
+      "text": "NitrogenRemoval",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-NitrogenRemoval"
+      ]
+    },
+    {
+      "text": "nitrogen removl",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-NitrogenRemoval"
+      ]
+    },
+    {
+      "text": "removal of nitrogen",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-NitrogenRemoval"
+      ]
+    },
+    {
+      "text": "solids-handling",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-VolumeReduction"
+      ]
+    },
+    {
+      "text": "SolidsHandling",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-VolumeReduction"
+      ]
+    },
+    {
+      "text": "solid handling",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-VolumeReduction"
       ]
     }
   ]

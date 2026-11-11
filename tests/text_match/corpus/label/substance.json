@@ -79,6 +79,7 @@
     {
       "text": "volatile organic compounds",
       "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-VolatileOrganicCompounds",
         "http://data.ashrae.org/standard223#Constituent-VolatileOrganicCompounds"
       ],
       "stage": "exact"
@@ -229,6 +230,109 @@
       "text": "disinfectant",
       "expected": [
         "https://watermetadata.org/ontology/watr#Disinfectant"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "arsenic",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-Arsenic"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "dissolved solids",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-DissolvedSolids"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "hardness",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-Hardness"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "inorganic solids",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-InorganicSolids"
+      ]
+    },
+    {
+      "text": "lead",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-Lead"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "organic nitrogen",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-OrganicNitrogen"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "organic solids",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-OrganicSolids"
+      ]
+    },
+    {
+      "text": "pfas",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-PFAS"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "phosphate",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-Phosphate"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "phosphorus",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-Phosphorus"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "protozoa",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-Protozoa"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "silica",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-Silica"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "sulfate",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-Sulfate"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "viruses",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-Viruses"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "reducing agent",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#ReducingAgent"
       ],
       "stage": "exact"
     }

@@ -53,6 +53,13 @@
         "https://watermetadata.org/ontology/watr#CoagulationBasin",
         "https://watermetadata.org/ontology/watr#FlocculationBasin"
       ]
+    },
+    {
+      "text": "disinfection",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Disinfection"
+      ],
+      "stage": "exact"
     }
   ]
 }

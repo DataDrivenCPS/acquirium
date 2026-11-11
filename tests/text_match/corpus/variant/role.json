@@ -3,42 +3,6 @@
   "kind": "role",
   "cases": [
     {
-      "text": "Backwash",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-Backwash"
-      ]
-    },
-    {
-      "text": "BACKWASH",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-Backwash"
-      ]
-    },
-    {
-      "text": "back-wash",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-Backwash"
-      ]
-    },
-    {
-      "text": "back wash",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-Backwash"
-      ]
-    },
-    {
-      "text": "Role-Backwash",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-Backwash"
-      ]
-    },
-    {
-      "text": "bakwash",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-Backwash"
-      ]
-    },
-    {
       "text": "pre-treatment",
       "expected": [
         "https://watermetadata.org/ontology/watr#Role-Pretreatment"
@@ -177,30 +141,6 @@
       ]
     },
     {
-      "text": "nitrogen-removal",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-NitrogenRemoval"
-      ]
-    },
-    {
-      "text": "NitrogenRemoval",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-NitrogenRemoval"
-      ]
-    },
-    {
-      "text": "nitrogen removl",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-NitrogenRemoval"
-      ]
-    },
-    {
-      "text": "removal of nitrogen",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-NitrogenRemoval"
-      ]
-    },
-    {
       "text": "equalisation",
       "expected": [
         "https://watermetadata.org/ontology/watr#Role-Equalization"
@@ -308,24 +248,6 @@
       "text": "evaporater",
       "expected": [
         "http://data.ashrae.org/standard223#Role-Evaporator"
-      ]
-    },
-    {
-      "text": "solids-handling",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-SolidsHandling"
-      ]
-    },
-    {
-      "text": "SolidsHandling",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-SolidsHandling"
-      ]
-    },
-    {
-      "text": "solid handling",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-SolidsHandling"
       ]
     },
     {

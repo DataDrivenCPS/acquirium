@@ -196,6 +196,19 @@
         "https://watermetadata.org/ontology/watr#VariableFrequencyDrive",
         "http://data.ashrae.org/standard223#VariableFrequencyDrive"
       ]
+    },
+    {
+      "text": "BFP",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#BeltFilterPress"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "MBBR",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#MovingBedBioreactor"
+      ]
     }
   ]
 }

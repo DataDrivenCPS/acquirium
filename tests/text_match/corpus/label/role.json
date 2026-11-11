@@ -3,13 +3,6 @@
   "kind": "role",
   "cases": [
     {
-      "text": "backwash",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-Backwash"
-      ],
-      "stage": "exact"
-    },
-    {
       "text": "permeate",
       "expected": [
         "https://watermetadata.org/ontology/watr#Role-Permeate"
@@ -166,34 +159,6 @@
       "stage": "exact"
     },
     {
-      "text": "nitrogen removal",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-NitrogenRemoval"
-      ],
-      "stage": "exact"
-    },
-    {
-      "text": "phosphorus removal",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-PhosphorusRemoval"
-      ],
-      "stage": "exact"
-    },
-    {
-      "text": "nutrient removal",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-NutrientRemoval"
-      ],
-      "stage": "exact"
-    },
-    {
-      "text": "solids handling",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-SolidsHandling"
-      ],
-      "stage": "exact"
-    },
-    {
       "text": "make up",
       "expected": [
         "https://watermetadata.org/ontology/watr#Role-MakeUp"
@@ -204,8 +169,7 @@
       "text": "makeup",
       "expected": [
         "https://watermetadata.org/ontology/watr#Role-MakeUp"
-      ],
-      "stage": "exact"
+      ]
     },
     {
       "text": "relief",
@@ -232,6 +196,13 @@
       "text": "stepfeed",
       "expected": [
         "https://watermetadata.org/ontology/watr#Role-Stepfeed"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "overflow",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Role-Overflow"
       ],
       "stage": "exact"
     }

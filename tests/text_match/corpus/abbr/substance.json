@@ -149,6 +149,7 @@
     {
       "text": "VOC",
       "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-VolatileOrganicCompounds",
         "http://data.ashrae.org/standard223#Constituent-VolatileOrganicCompounds"
       ]
     },

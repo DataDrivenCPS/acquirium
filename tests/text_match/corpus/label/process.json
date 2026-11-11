@@ -18,7 +18,7 @@
     {
       "text": "granular activated carbon",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-GranularActivatedCarbon"
+        "https://watermetadata.org/ontology/watr#Process-GACFiltration"
       ]
     },
     {
@@ -37,12 +37,6 @@
       "text": "trickling filtration",
       "expected": [
         "https://watermetadata.org/ontology/watr#Process-TricklingFiltration"
-      ]
-    },
-    {
-      "text": "biosolids disposal",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-BiosolidsDisposal"
       ]
     },
     {
@@ -118,13 +112,6 @@
       "stage": "exact"
     },
     {
-      "text": "dechlorination",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Dechlorination"
-      ],
-      "stage": "exact"
-    },
-    {
       "text": "coagulation",
       "expected": [
         "https://watermetadata.org/ontology/watr#Process-Coagulation"
@@ -141,16 +128,15 @@
     {
       "text": "sedimentation",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Sedimentation"
+        "https://watermetadata.org/ontology/watr#Process-Settling"
       ],
       "stage": "exact"
     },
     {
       "text": "UV disinfection",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-UVDisinfection"
-      ],
-      "stage": "exact"
+        "https://watermetadata.org/ontology/watr#Process-UVIrradiation"
+      ]
     },
     {
       "text": "ozonation",
@@ -181,13 +167,6 @@
       "stage": "exact"
     },
     {
-      "text": "dewatering",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Dewatering"
-      ],
-      "stage": "exact"
-    },
-    {
       "text": "media filtration",
       "expected": [
         "https://watermetadata.org/ontology/watr#Process-MediaFiltration"
@@ -209,23 +188,9 @@
       "stage": "exact"
     },
     {
-      "text": "pH adjustment",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-pHAdjustment"
-      ],
-      "stage": "exact"
-    },
-    {
       "text": "screening",
       "expected": [
         "https://watermetadata.org/ontology/watr#Process-Screening"
-      ],
-      "stage": "exact"
-    },
-    {
-      "text": "softening",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Softening"
       ],
       "stage": "exact"
     },
@@ -240,6 +205,88 @@
       "text": "chemical precipitation",
       "expected": [
         "https://watermetadata.org/ontology/watr#Process-ChemicalPrecipitation"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "backwash",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Process-Backwashing"
+      ]
+    },
+    {
+      "text": "water treatment process",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Process"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "composting",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Process-Composting"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "dosing",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Process-Dosing"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "enhanced biological phosphorus removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Process-EnhancedBiologicalPhosphorusRemoval"
+      ]
+    },
+    {
+      "text": "gac filtration",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Process-GACFiltration"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "hydrolysis",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Process-Hydrolysis"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "solid-liquid separation",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Process-SolidLiquidSeparation"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "sulfite dosing",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Process-SulfiteDosing"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "thermal hydrolysis",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Process-ThermalHydrolysis"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "thermal treatment",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Process-ThermalTreatment"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "ultraviolet irradiation",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Process-UVIrradiation"
       ],
       "stage": "exact"
     }

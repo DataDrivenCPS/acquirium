@@ -29,7 +29,7 @@
     {
       "text": "GAC",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-GranularActivatedCarbon"
+        "https://watermetadata.org/ontology/watr#Process-GACFiltration"
       ]
     },
     {
@@ -119,7 +119,7 @@
     {
       "text": "UV",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-UVDisinfection"
+        "https://watermetadata.org/ontology/watr#Process-UVIrradiation"
       ]
     },
     {
@@ -167,13 +167,19 @@
     {
       "text": "UV treatment",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-UVDisinfection"
+        "https://watermetadata.org/ontology/watr#Process-UVIrradiation"
       ]
     },
     {
       "text": "GAC adsorption",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-GranularActivatedCarbon"
+        "https://watermetadata.org/ontology/watr#Process-GACFiltration"
+      ]
+    },
+    {
+      "text": "EBPR",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Process-EnhancedBiologicalPhosphorusRemoval"
       ]
     }
   ]

@@ -45,24 +45,6 @@
       ]
     },
     {
-      "text": "biosolids handling",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-SolidsHandling"
-      ]
-    },
-    {
-      "text": "sludge handling",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-SolidsHandling"
-      ]
-    },
-    {
-      "text": "solids processing",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-SolidsHandling"
-      ]
-    },
-    {
       "text": "holding",
       "expected": [
         "https://watermetadata.org/ontology/watr#Role-Storage",
@@ -134,36 +116,6 @@
       "text": "flow balancing",
       "expected": [
         "https://watermetadata.org/ontology/watr#Role-Equalization"
-      ]
-    },
-    {
-      "text": "nitrogen reduction",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-NitrogenRemoval"
-      ]
-    },
-    {
-      "text": "removing nitrogen",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-NitrogenRemoval"
-      ]
-    },
-    {
-      "text": "phosphate removal",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-PhosphorusRemoval"
-      ]
-    },
-    {
-      "text": "removing phosphorus",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-PhosphorusRemoval"
-      ]
-    },
-    {
-      "text": "nutrient reduction",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-NutrientRemoval"
       ]
     },
     {
@@ -250,18 +202,6 @@
       ]
     },
     {
-      "text": "backwashing",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-Backwash"
-      ]
-    },
-    {
-      "text": "filter backwash",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-Backwash"
-      ]
-    },
-    {
       "text": "drainage",
       "expected": [
         "https://watermetadata.org/ontology/watr#Role-Drain"
@@ -289,12 +229,6 @@
       "text": "chilling",
       "expected": [
         "http://data.ashrae.org/standard223#Role-Cooling"
-      ]
-    },
-    {
-      "text": "stabilizing",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Role-Stabilization"
       ]
     },
     {

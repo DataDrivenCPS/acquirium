@@ -22,18 +22,12 @@
       ]
     },
     {
-      "text": "disinfection",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Disinfection"
-      ],
-      "stage": "exact"
-    },
-    {
       "text": "incineration",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Incineration"
-      ],
-      "stage": "exact"
+        "https://watermetadata.org/ontology/watr#Process-FluidizedBedIncineration",
+        "https://watermetadata.org/ontology/watr#Process-MultipleHearthIncineration",
+        "https://watermetadata.org/ontology/watr#Process-Combustion"
+      ]
     },
     {
       "text": "filtration process",

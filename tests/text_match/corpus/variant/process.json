@@ -39,21 +39,9 @@
       ]
     },
     {
-      "text": "de-watering",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Dewatering"
-      ]
-    },
-    {
       "text": "ion-exchange",
       "expected": [
         "https://watermetadata.org/ontology/watr#Process-IonExchange"
-      ]
-    },
-    {
-      "text": "ph adjust",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-pHAdjustment"
       ]
     },
     {
@@ -71,7 +59,7 @@
     {
       "text": "disinfection by UV",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-UVDisinfection"
+        "https://watermetadata.org/ontology/watr#Process-UVIrradiation"
       ]
     },
     {
@@ -321,24 +309,6 @@
       ]
     },
     {
-      "text": "de-chlorination",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Dechlorination"
-      ]
-    },
-    {
-      "text": "dechlorinate",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Dechlorination"
-      ]
-    },
-    {
-      "text": "DECHLORINATION",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Dechlorination"
-      ]
-    },
-    {
       "text": "coagulate",
       "expected": [
         "https://watermetadata.org/ontology/watr#Process-Coagulation"
@@ -389,85 +359,61 @@
     {
       "text": "sedimentaion",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Sedimentation"
+        "https://watermetadata.org/ontology/watr#Process-Settling"
       ]
     },
     {
       "text": "Sedimentation.",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Sedimentation"
+        "https://watermetadata.org/ontology/watr#Process-Settling"
       ]
     },
     {
       "text": "SEDIMENTATION",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Sedimentation"
+        "https://watermetadata.org/ontology/watr#Process-Settling"
       ]
     },
     {
       "text": "sedimentation process",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Sedimentation"
+        "https://watermetadata.org/ontology/watr#Process-Settling"
       ]
     },
     {
       "text": "sedementation",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Sedimentation"
-      ]
-    },
-    {
-      "text": "disinfecting",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Disinfection"
-      ]
-    },
-    {
-      "text": "disinfection process",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Disinfection"
-      ]
-    },
-    {
-      "text": "disenfection",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Disinfection"
-      ]
-    },
-    {
-      "text": "DISINFECTION",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Disinfection"
+        "https://watermetadata.org/ontology/watr#Process-Settling"
       ]
     },
     {
       "text": "UV-disinfection",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-UVDisinfection"
+        "https://watermetadata.org/ontology/watr#Process-UVIrradiation"
       ]
     },
     {
       "text": "uv_disinfection",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-UVDisinfection"
+        "https://watermetadata.org/ontology/watr#Process-UVIrradiation"
       ]
     },
     {
       "text": "UVDisinfection",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-UVDisinfection"
+        "https://watermetadata.org/ontology/watr#Process-UVIrradiation"
       ]
     },
     {
       "text": "uv disinfecton",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-UVDisinfection"
+        "https://watermetadata.org/ontology/watr#Process-UVIrradiation"
       ]
     },
     {
       "text": "U.V. disinfection",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-UVDisinfection"
+        "https://watermetadata.org/ontology/watr#Process-UVIrradiation"
       ]
     },
     {
@@ -585,30 +531,6 @@
       ]
     },
     {
-      "text": "dewater",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Dewatering"
-      ]
-    },
-    {
-      "text": "dewatering process",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Dewatering"
-      ]
-    },
-    {
-      "text": "DEWATERING",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Dewatering"
-      ]
-    },
-    {
-      "text": "dewatring",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Dewatering"
-      ]
-    },
-    {
       "text": "MediaFiltration",
       "expected": [
         "https://watermetadata.org/ontology/watr#Process-MediaFiltration"
@@ -659,25 +581,25 @@
     {
       "text": "granular-activated-carbon",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-GranularActivatedCarbon"
+        "https://watermetadata.org/ontology/watr#Process-GACFiltration"
       ]
     },
     {
       "text": "GranularActivatedCarbon",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-GranularActivatedCarbon"
+        "https://watermetadata.org/ontology/watr#Process-GACFiltration"
       ]
     },
     {
       "text": "granulated activated carbon",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-GranularActivatedCarbon"
+        "https://watermetadata.org/ontology/watr#Process-GACFiltration"
       ]
     },
     {
       "text": "granular activated carbn",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-GranularActivatedCarbon"
+        "https://watermetadata.org/ontology/watr#Process-GACFiltration"
       ]
     },
     {
@@ -759,42 +681,6 @@
       ]
     },
     {
-      "text": "pH-adjustment",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-pHAdjustment"
-      ]
-    },
-    {
-      "text": "pHAdjustment",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-pHAdjustment"
-      ]
-    },
-    {
-      "text": "PH ADJUSTMENT",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-pHAdjustment"
-      ]
-    },
-    {
-      "text": "adjustment of pH",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-pHAdjustment"
-      ]
-    },
-    {
-      "text": "ph adjusment",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-pHAdjustment"
-      ]
-    },
-    {
-      "text": "pH adjusting",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-pHAdjustment"
-      ]
-    },
-    {
       "text": "backwashing process",
       "expected": [
         "https://watermetadata.org/ontology/watr#Process-Backwashing"
@@ -825,24 +711,6 @@
       ]
     },
     {
-      "text": "softning",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Softening"
-      ]
-    },
-    {
-      "text": "SOFTENING",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Softening"
-      ]
-    },
-    {
-      "text": "softening process",
-      "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Softening"
-      ]
-    },
-    {
       "text": "evaporating",
       "expected": [
         "https://watermetadata.org/ontology/watr#Process-Evaporation"
@@ -869,19 +737,25 @@
     {
       "text": "incinerate",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Incineration"
+        "https://watermetadata.org/ontology/watr#Process-FluidizedBedIncineration",
+        "https://watermetadata.org/ontology/watr#Process-MultipleHearthIncineration",
+        "https://watermetadata.org/ontology/watr#Process-Combustion"
       ]
     },
     {
       "text": "incinerating",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Incineration"
+        "https://watermetadata.org/ontology/watr#Process-FluidizedBedIncineration",
+        "https://watermetadata.org/ontology/watr#Process-MultipleHearthIncineration",
+        "https://watermetadata.org/ontology/watr#Process-Combustion"
       ]
     },
     {
       "text": "incineraton",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Incineration"
+        "https://watermetadata.org/ontology/watr#Process-FluidizedBedIncineration",
+        "https://watermetadata.org/ontology/watr#Process-MultipleHearthIncineration",
+        "https://watermetadata.org/ontology/watr#Process-Combustion"
       ]
     },
     {
@@ -1005,15 +879,39 @@
       ]
     },
     {
-      "text": "neutralisation",
+      "text": "Backwash",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Neutralization"
+        "https://watermetadata.org/ontology/watr#Process-Backwashing"
       ]
     },
     {
-      "text": "neutralizaton",
+      "text": "BACKWASH",
       "expected": [
-        "https://watermetadata.org/ontology/watr#Process-Neutralization"
+        "https://watermetadata.org/ontology/watr#Process-Backwashing"
+      ]
+    },
+    {
+      "text": "back-wash",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Process-Backwashing"
+      ]
+    },
+    {
+      "text": "back wash",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Process-Backwashing"
+      ]
+    },
+    {
+      "text": "Role-Backwash",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Process-Backwashing"
+      ]
+    },
+    {
+      "text": "bakwash",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Process-Backwashing"
       ]
     }
   ]

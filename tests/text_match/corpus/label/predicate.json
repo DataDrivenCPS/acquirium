@@ -113,6 +113,41 @@
         "https://watermetadata.org/ontology/watr#hasProcessedData"
       ],
       "stage": "exact"
+    },
+    {
+      "text": "achieves treatment objective",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#achievesTreatmentObjective"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "has complete composition",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#hasCompleteComposition"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "has treatment objective",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#hasTreatmentObjective"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "includes process",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#includesProcess"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "targets constituent",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#targetsConstituent"
+      ],
+      "stage": "exact"
     }
   ]
 }

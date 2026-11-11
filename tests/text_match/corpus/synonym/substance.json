@@ -17,6 +17,7 @@
     {
       "text": "nitrogen",
       "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-Nitrogen",
         "http://data.ashrae.org/standard223#Constituent-N2"
       ]
     },
@@ -222,6 +223,7 @@
     {
       "text": "pathogens",
       "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-Pathogens",
         "https://watermetadata.org/ontology/watr#Constituent-Bacteria"
       ]
     },
@@ -554,6 +556,7 @@
     {
       "text": "chlorine residual",
       "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-ChlorineResidual",
         "https://watermetadata.org/ontology/watr#Disinfectant-Chlorine"
       ]
     },

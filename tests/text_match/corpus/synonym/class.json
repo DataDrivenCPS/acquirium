@@ -5,6 +5,7 @@
     {
       "text": "clarifier",
       "expected": [
+        "https://watermetadata.org/ontology/watr#Clarifier",
         "https://watermetadata.org/ontology/watr#SedimentationTank"
       ]
     },
@@ -731,21 +732,21 @@
     {
       "text": "media filter",
       "expected": [
-        "https://watermetadata.org/ontology/watr#MediaFiltration",
+        "https://watermetadata.org/ontology/watr#MediaFiltrationUnit",
         "https://watermetadata.org/ontology/watr#RapidSandFilter"
       ]
     },
     {
       "text": "granular media filter",
       "expected": [
-        "https://watermetadata.org/ontology/watr#MediaFiltration",
+        "https://watermetadata.org/ontology/watr#MediaFiltrationUnit",
         "https://watermetadata.org/ontology/watr#RapidSandFilter"
       ]
     },
     {
       "text": "multimedia filter",
       "expected": [
-        "https://watermetadata.org/ontology/watr#MediaFiltration"
+        "https://watermetadata.org/ontology/watr#MediaFiltrationUnit"
       ]
     },
     {
@@ -853,13 +854,13 @@
     {
       "text": "heat exchange unit",
       "expected": [
-        "http://data.ashrae.org/standard223#HeatExchanger"
+        "https://watermetadata.org/ontology/watr#HeatExchanger"
       ]
     },
     {
       "text": "heat transfer unit",
       "expected": [
-        "http://data.ashrae.org/standard223#HeatExchanger"
+        "https://watermetadata.org/ontology/watr#HeatExchanger"
       ]
     },
     {
@@ -1073,6 +1074,206 @@
       "expected": [
         "https://watermetadata.org/ontology/watr#IonExchangeMembrane"
       ]
+    },
+    {
+      "text": "lime softening",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Softening"
+      ]
+    },
+    {
+      "text": "hardness removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Softening"
+      ]
+    },
+    {
+      "text": "sludge drying",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Drying"
+      ]
+    },
+    {
+      "text": "sludge dewatering",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Dewatering"
+      ]
+    },
+    {
+      "text": "pH control",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-pHControl"
+      ]
+    },
+    {
+      "text": "pH correction",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-pHControl"
+      ]
+    },
+    {
+      "text": "water softening",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Softening"
+      ]
+    },
+    {
+      "text": "chlorine removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-ChlorineResidualRemoval"
+      ]
+    },
+    {
+      "text": "chlorine neutralization",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-ChlorineResidualRemoval"
+      ]
+    },
+    {
+      "text": "pathogen inactivation",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Disinfection"
+      ]
+    },
+    {
+      "text": "pathogen removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Disinfection"
+      ]
+    },
+    {
+      "text": "microbial inactivation",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Disinfection"
+      ]
+    },
+    {
+      "text": "solids dewatering",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Dewatering"
+      ]
+    },
+    {
+      "text": "water removal from sludge",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Dewatering"
+      ]
+    },
+    {
+      "text": "biosolids dewatering",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Dewatering"
+      ]
+    },
+    {
+      "text": "mechanical dewatering",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Dewatering"
+      ]
+    },
+    {
+      "text": "pH neutralization",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Neutralization",
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-pHControl"
+      ]
+    },
+    {
+      "text": "acid neutralization",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Neutralization"
+      ]
+    },
+    {
+      "text": "neutralizing",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Neutralization"
+      ]
+    },
+    {
+      "text": "heat drying",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Drying"
+      ]
+    },
+    {
+      "text": "thermal drying",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Drying"
+      ]
+    },
+    {
+      "text": "biosolids drying",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Drying"
+      ]
+    },
+    {
+      "text": "calcium and magnesium removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Softening"
+      ]
+    },
+    {
+      "text": "biosolids handling",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-VolumeReduction"
+      ]
+    },
+    {
+      "text": "sludge handling",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-VolumeReduction"
+      ]
+    },
+    {
+      "text": "solids processing",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-VolumeReduction"
+      ]
+    },
+    {
+      "text": "nitrogen reduction",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-NitrogenRemoval"
+      ]
+    },
+    {
+      "text": "removing nitrogen",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-NitrogenRemoval"
+      ]
+    },
+    {
+      "text": "phosphate removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-PhosphorusRemoval"
+      ]
+    },
+    {
+      "text": "removing phosphorus",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-PhosphorusRemoval"
+      ]
+    },
+    {
+      "text": "nutrient reduction",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-NutrientRemoval"
+      ]
+    },
+    {
+      "text": "stabilizing",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Stabilization"
+      ]
+    },
+    {
+      "text": "ammonia removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-AmmoniaControl"
+      ],
+      "stage": "exact"
     }
   ]
 }
