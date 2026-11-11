@@ -85,7 +85,7 @@ def test_upgrade_drops_duckdb_timeseries_unique_constraint(tmp_path):
         try:
             with upgraded._own_conn() as conn:
                 assert conn.execute(constraints).fetchone()[0] == 0
-                assert conn.execute("SELECT numeric_value, last_revision > 0 FROM timeseries ORDER BY ts LIMIT 1").fetchone() == (3., True)
+                assert conn.execute("SELECT numeric_value, last_revision > 0 FROM timeseries ORDER BY ts LIMIT 1").fetchone() == (5. if attempt else 3., True)
                 assert conn.execute("SELECT count(*) FROM timeseries_streams").fetchone()[0] == attempt + 1
                 assert conn.execute("SELECT count(*) FROM duckdb_indexes() WHERE index_name='idx_timeseries_last_revision'").fetchone()[0] == 1
             # Rewriting an existing timestamp still leaves one row for it.

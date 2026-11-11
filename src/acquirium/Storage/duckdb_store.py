@@ -357,13 +357,18 @@ class DuckDBStore:
             f"UPDATE {SYSTEM_STATE_TABLE} SET current_revision = current_revision + 1 RETURNING current_revision"
         ).fetchone()[0])
 
-    @staticmethod
-    def _insert_frame(conn, df: pl.DataFrame, revision: int) -> None:
-        """Upsert a prepared frame on *conn*: delete colliding (ref, ts) rows, insert.
+    STAGING_TABLE = "_acquirium_staging_timeseries"
 
-        The frame carries ref_uri strings; ids are assigned for unseen uris and
-        the rows keyed by ref_id, all inside the caller's transaction.
+    @classmethod
+    def _insert_frame(cls, conn, df: pl.DataFrame, revision: int) -> None:
+        """Upsert a prepared frame on *conn* through a temporary staging table.
+
+        The frame carries ref_uri strings. Ids are assigned for unseen uris and
+        the rows staged by ref_id. Colliding (ref_id, ts) rows are then deleted
+        from the timeseries table and the staged rows inserted in
+        (ref_id, ts) order, all inside the caller's transaction.
         """
+        staging = cls.STAGING_TABLE
         conn.register("_acquirium_incoming_timeseries", df)
         try:
             conn.execute(
@@ -373,28 +378,37 @@ class DuckDBStore:
                 ON CONFLICT (ref_uri) DO NOTHING
                 """
             )
+            # OR REPLACE: a caller-scoped transaction can write more than once
+            # on the same connection, and a failed write leaves its table behind.
             conn.execute(
                 f"""
-                DELETE FROM {TIMESERIES_TABLE}
-                USING (
-                    SELECT r.ref_id, i.ts
-                    FROM _acquirium_incoming_timeseries AS i
-                    JOIN {REF_IDS_TABLE} AS r USING (ref_uri)
-                ) AS incoming
-                WHERE {TIMESERIES_TABLE}.ref_id = incoming.ref_id
-                  AND {TIMESERIES_TABLE}.ts = incoming.ts
-                """
-            )
-            conn.execute(
-                f"""
-                INSERT INTO {TIMESERIES_TABLE} (ref_id, ts, numeric_value, text_value, last_revision)
-                SELECT r.ref_id, i.ts, i.numeric_value, i.text_value, ?
+                CREATE OR REPLACE TEMP TABLE {staging} AS
+                SELECT r.ref_id, i.ts, i.numeric_value, i.text_value
                 FROM _acquirium_incoming_timeseries AS i
                 JOIN {REF_IDS_TABLE} AS r USING (ref_uri)
-                """, [revision]
+                """
             )
         finally:
             conn.unregister("_acquirium_incoming_timeseries")
+        conn.execute(
+            f"""
+            DELETE FROM {TIMESERIES_TABLE}
+            USING {staging} AS incoming
+            WHERE {TIMESERIES_TABLE}.ref_id = incoming.ref_id
+              AND {TIMESERIES_TABLE}.ts = incoming.ts
+            """
+        )
+        # DuckDB appends in the order given, so each write lands as a run
+        # sorted by stream and time.
+        conn.execute(
+            f"""
+            INSERT INTO {TIMESERIES_TABLE} (ref_id, ts, numeric_value, text_value, last_revision)
+            SELECT ref_id, ts, numeric_value, text_value, ?
+            FROM {staging}
+            ORDER BY ref_id, ts
+            """, [revision]
+        )
+        conn.execute(f"DROP TABLE {staging}")
 
     # ---- stream reference registry ----
 
