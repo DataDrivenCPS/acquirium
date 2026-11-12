@@ -520,10 +520,12 @@ class DuckDBStore:
                 logger, "timeseries ref_uri=%s start=%s end=%s limit=%s order=%s mode=%s",
                 ref_uri, start, end, limit, order, mode,
             ):
-                ref_id_row = conn.execute(
-                    f"SELECT ref_id FROM {REF_IDS_TABLE} WHERE ref_uri = ?", [ref_uri]
-                ).fetchone()
-                if ref_id_row is None:
+                # fetchall(), not fetchone(): a partly read execute() result
+                # stays open, and DuckDB then refuses the relation below.
+                ref_id_rows = conn.execute(
+                    f"SELECT ref_id FROM {REF_IDS_TABLE} WHERE ref_uri = ? LIMIT 1", [ref_uri]
+                ).fetchall()
+                if not ref_id_rows:
                     # Never written to: no id, no rows.
                     return
 
@@ -531,7 +533,7 @@ class DuckDBStore:
                 # physically (its last_stream_version stays resolvable by a
                 # batch reader) but is invisible to this API.
                 clauses = ["ref_id = ?", "NOT deleted"]
-                params: list[Any] = [ref_id_row[0]]
+                params: list[Any] = [ref_id_rows[0][0]]
                 if start:
                     clauses.append("ts >= ?")
                     params.append(self._to_utc_naive(start))
@@ -576,17 +578,13 @@ class DuckDBStore:
                         has_numeric, has_text = conn.execute(
                             f"SELECT COUNT(numeric_value) > 0, COUNT(text_value) > 0 FROM {TIMESERIES_TABLE} WHERE {where}",
                             params,
-                        ).fetchone()
+                        ).fetchall()[0]
                         if has_numeric and has_text:
                             resolved = "coalesce"
                         else:
                             resolved = "numeric" if has_numeric else "text"
                 # Streamed, not materialized: batches are pulled as the caller
                 # consumes them, so an unbounded range need not fit in memory.
-                # The lookups above each read one row with fetchone(), which
-                # leaves the execute() result open; DuckDB refuses a relation
-                # on the connection until that result is completed.
-                conn.complete()
                 reader = conn.sql(query, params=params).to_arrow_reader(batch_size)
             for batch in reader:
                 rows += batch.num_rows
@@ -879,8 +877,8 @@ class DuckDBStore:
     def _stream_value_kind(self, conn, ref_uri: str) -> str | None:
         """Look up a stream's value kind on *conn* — the caller's connection, so
         a streaming read can resolve it without opening a second connection."""
-        row = conn.execute(
-            f"SELECT value_kind FROM {STREAMS_TABLE} WHERE ref_uri = ?",
+        rows = conn.execute(
+            f"SELECT value_kind FROM {STREAMS_TABLE} WHERE ref_uri = ? LIMIT 1",
             [ref_uri],
-        ).fetchone()
-        return row[0] if row else None
+        ).fetchall()
+        return rows[0][0] if rows else None
