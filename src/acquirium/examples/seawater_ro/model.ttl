@@ -138,14 +138,14 @@ wbs:storage-tank-3-out-tds-concentration-sensor a watr:ConcentrationSensor ;
     s223:hasObservationLocation wbs:storage-tank-3-out ;
     s223:observes wbs:storage-tank-3-out-tds-concentration .
 
-wbs:RO-membrane-area a s223:QuantifiableObservableProperty ;
+wbs:RO-membrane-area a s223:QuantifiableProperty ;
     qudt:hasQuantityKind qudtqk:Area ;
     qudt:hasUnit unit:M2 .
 
-wbs:anti-scalant-addition-anti-scalant-dose a s223:QuantifiableObservableProperty ;
+wbs:anti-scalant-addition-anti-scalant-dose a s223:QuantifiableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance watr:WastewaterTreatmentChemical ;
-    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
     qudt:hasUnit unit:MilliGM-PER-L ;
     rdfs:comment "anti-scalant dose; watr has no anti-scalant class, the substance is the generic treatment chemical" .
 
@@ -160,17 +160,17 @@ wbs:desalination-system a s223:System ;
         wbs:RO,
         wbs:S1 .
 
-wbs:ferric-chloride-addition-ferric-chloride-dose a s223:QuantifiableObservableProperty ;
+wbs:ferric-chloride-addition-ferric-chloride-dose a s223:QuantifiableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance watr:Coagulant-FerricChloride ;
-    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
     qudt:hasUnit unit:MilliGM-PER-L ;
     rdfs:comment "ferric chloride dose" .
 
-wbs:lime-addition-lime-dose a s223:QuantifiableObservableProperty ;
+wbs:lime-addition-lime-dose a s223:QuantifiableProperty ;
     s223:ofMedium s223:Fluid-Water ;
     s223:ofSubstance watr:pHAdjuster-Lime ;
-    qudt:hasQuantityKind qudtqk:Concentration ;
+    qudt:hasQuantityKind qudtqk:MassConcentration ;
     qudt:hasUnit unit:MilliGM-PER-L ;
     rdfs:comment "lime dose" .
 
