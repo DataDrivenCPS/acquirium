@@ -267,7 +267,10 @@ def test_chain_views_history_pagination_and_middle_removal(system):
     assert client.client.resolve_storage_keys([head], view="raw") == {head: ref}
     assert client.client.timeseries_info_batch([ref])[ref].row_count == 2
     assert client.client.timeseries_exists_batch([ref], view="raw") == {ref}
-    assert client.client.timeseries_info_batch([ref], epoch=initial)[ref].row_count == 2
+    assert client.client.stream_views([ref, clean]) == {
+        ref: {"current": head, "raw": ref, "unit": NTU},
+        clean: {"current": head, "raw": ref, "unit": NTU},
+    }
     assert http.get("/timeseries", params={"uri": ref, "view": "typo"}).status_code == 422
     # The iterator captures both the resolved head and its epoch before deployment.
     pages = manager.timeseries_batch(ref, batch_size=1)

@@ -626,16 +626,28 @@ class Manager:
         return self.core.batches(stream, start=start, end=end, limit=limit, order=order,
                                  batch_size=batch_size, epoch=epoch, mode=mode)
 
-    def timeseries_info_batch(self, uris, *, view="current", epoch=None):
+    def stream_views(self, uris):
+        """How each stream reads now: the stream its ``current`` and ``raw``
+        views resolve to, and the unit a replacement head reports, if any."""
+        from acquirium.replacements import resolve, units
+
+        plan = self.core.engine.snapshot().plan
+        heads = resolve(plan, uris, view="current")
+        bases = resolve(plan, uris, view="raw")
+        stage_units = units(plan)
+        return {uri: {"current": heads[uri], "raw": bases[uri], "unit": stage_units.get(heads[uri])}
+                for uri in uris}
+
+    def timeseries_info_batch(self, uris, *, view="current"):
+        """Current statistics, resolved and counted against one snapshot."""
         snapshot = self.core.engine.snapshot()
-        epoch = snapshot.epoch if epoch is None else epoch
-        keys = self.resolve_storage_keys(uris, view=view, epoch=epoch)
-        info = self.core.info(set(keys.values()), snapshot=snapshot, epoch=epoch)
+        keys = self.resolve_storage_keys(uris, view=view, epoch=snapshot.epoch)
+        info = self.core.info(set(keys.values()), snapshot=snapshot)
         return {uri: info[key] for uri, key in keys.items()}
 
-    def timeseries_exists_batch(self, uris: list[str], *, view="current", epoch=None) -> list[str]:
+    def timeseries_exists_batch(self, uris: list[str], *, view="current") -> list[str]:
         """The stream or point URIs among ``uris`` that have any row."""
-        info = self.timeseries_info_batch(uris, view=view, epoch=epoch)
+        info = self.timeseries_info_batch(uris, view=view)
         return sorted(uri for uri, stats in info.items() if stats["row_count"])
 
     def register_datasource(self, source_id: str) -> str:

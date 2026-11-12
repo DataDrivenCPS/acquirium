@@ -126,7 +126,7 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 | `changes(*, epoch=0, ordinal=0, limit=1000, timeout=30) -> dict` | Page committed signed changes after an exclusive cursor; use `complete_through` before exposing partial epochs. |
 
 The same `view` choices apply to reads, counts, and existence checks
-(`timeseries_exists_batch(uris, *, view="current", epoch=None)`). Query terminals
+(`timeseries_exists_batch(uris, *, view="current")`). Query terminals
 choose `current` for normal discovery and `stored` for app or explicit reference
 filters; `view` overrides that default. Normal discovery reports one logical
 measurement per query node and entity context. See
@@ -428,7 +428,8 @@ and are listed once above.
 | `resolve_storage_keys(uris, *, view="current", epoch=None) -> dict[str, str]` | Resolve points or references to the chain head, base (`raw`), or exact stage (`stored`) at one epoch. |
 | `timeseries_df(uri, start=None, end=None, limit=None, order="asc", timeout=60.0, *, value_mode="default", epoch=None, end_ns=None, after=None, view="current") -> pl.DataFrame` | All rows of one stream by `ref_uri`; empty results preserve their schema. Pass one captured epoch for related reads. |
 | `timeseries_batches(uri, start=None, end=None, limit=None, order="asc", *, value_mode="default", epoch=None, timeout=60.0, after=None, view="current") -> Iterator[pl.DataFrame]` | The same, one frame per Arrow record batch. |
-| `timeseries_info_batch(uris, *, view="current", epoch=None) -> dict` | `row_count`, `earliest`, `latest` for several streams in one request. |
+| `timeseries_info_batch(uris, *, view="current") -> dict` | Current `row_count`, `earliest`, `latest` for several streams in one request. |
+| `stream_views(uris) -> dict` | For each reference, the streams its `current` and `raw` views read now and the unit (or None) its current view reports. |
 
 ### Apps
 

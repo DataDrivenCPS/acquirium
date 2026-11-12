@@ -297,9 +297,9 @@ class Core:
 
         return pages()
 
-    def info(self, streams, *, snapshot=None, epoch=None):
-        """Count and time bounds at one epoch. Current statistics use the
-        captured snapshot's index; historical statistics page through history."""
+    def info(self, streams, *, snapshot=None):
+        """Reading count and earliest and latest times per stream, from one
+        snapshot's index, without reading the rows."""
 
         def iso(value):
             if value is None:
@@ -314,18 +314,7 @@ class Core:
         snapshot = self.engine.snapshot() if snapshot is None else snapshot
         result = {}
         for stream in streams:
-            if epoch is None or epoch == snapshot.epoch:
-                stats = snapshot.stats(stream) or {"count": 0, "first_ns": None, "last_ns": None}
-            else:
-                # Historical statistics share the existing paginated reader.
-                stats = {"count": 0, "first_ns": None, "last_ns": None}
-                for batch in self.batches(stream, epoch=epoch, mode="coalesce"):
-                    if batch.num_rows:
-                        times = batch["ts"].cast(pa.int64())
-                        if stats["first_ns"] is None:
-                            stats["first_ns"] = times[0].as_py()
-                        stats["last_ns"] = times[-1].as_py()
-                        stats["count"] += batch.num_rows
+            stats = snapshot.stats(stream) or {"count": 0, "first_ns": None, "last_ns": None}
             result[stream] = dict(
                 row_count=stats["count"],
                 earliest=iso(stats["first_ns"]),

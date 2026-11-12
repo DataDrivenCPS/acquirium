@@ -577,7 +577,6 @@ class InsertGraphRequest(BaseModel):
 class TimeseriesInfoRequest(BaseModel):
     uris: list[str]
     view: View = "current"
-    epoch: int | None = Field(default=None, ge=0)
 
 
 class RecordFieldSpec(BaseModel):
@@ -970,7 +969,11 @@ def register_datasource(req: RegisterDatasourceRequest) -> dict[str, Any]:
 
 
 class ResolveStorageKeysRequest(TimeseriesInfoRequest):
-    pass
+    epoch: int | None = Field(default=None, ge=0)
+
+
+class StreamViewsRequest(BaseModel):
+    uris: list[str]
 
 
 @app.post("/resolve_storage_keys")
@@ -982,6 +985,14 @@ def resolve_storage_keys(req: ResolveStorageKeysRequest) -> dict[str, str]:
         return app.state.manager.resolve_storage_keys(req.uris, view=req.view, epoch=req.epoch)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/stream_views")
+@_engine_errors
+def stream_views(req: StreamViewsRequest) -> dict[str, Any]:
+    """The streams each reference's ``current`` and ``raw`` views read now,
+    and the unit its current view reports when a replacement declares one."""
+    return app.state.manager.stream_views(req.uris)
 
 
 
@@ -1114,13 +1125,13 @@ def get_timeseries(
 @app.post("/timeseries_info")
 @_engine_errors
 def timeseries_info(req: TimeseriesInfoRequest) -> dict[str, Any]:
-    return app.state.manager.timeseries_info_batch(req.uris, view=req.view, epoch=req.epoch)
+    return app.state.manager.timeseries_info_batch(req.uris, view=req.view)
 
 
 @app.post("/timeseries_exists")
 def timeseries_exists(req: TimeseriesInfoRequest) -> dict[str, Any]:
     try:
-        return {"uris": app.state.manager.timeseries_exists_batch(req.uris, view=req.view, epoch=req.epoch)}
+        return {"uris": app.state.manager.timeseries_exists_batch(req.uris, view=req.view)}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

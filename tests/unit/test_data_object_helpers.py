@@ -338,6 +338,10 @@ class TestLazyStats:
             "rows": [[entities[0], "urn:t#p1", self.R1, "urn:unit#m"],
                      [entities[1], "urn:t#p2", self.R2, "urn:unit#m"]],
         }
+        # No replacements: every stream reads as itself.
+        client.stream_views.side_effect = lambda uris: {
+            uri: {"current": uri, "raw": uri, "unit": None} for uri in uris
+        }
         client.timeseries_info_batch.return_value = {
             self.R1: SimpleNamespace(row_count=3, earliest=self.T0, latest=self.T1),
         }

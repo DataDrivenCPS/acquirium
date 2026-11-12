@@ -7,7 +7,7 @@ import polars as pl
 import warnings
 
 from acquirium.Client.streams import Stream
-from acquirium.replacements import VIEWS, resolve, units
+from acquirium.replacements import VIEWS
 
 if TYPE_CHECKING:
     from acquirium.Client.explore.core import Query
@@ -401,9 +401,8 @@ class _StreamStats:
         if self.info is None:
             self.info = {}
             if self.client is not None:
-                epoch = self.client.engine_snapshot()["epoch"]
                 for view, refs in self._groups():
-                    info = self.client.timeseries_info_batch(refs, view=view, epoch=epoch)
+                    info = self.client.timeseries_info_batch(refs, view=view)
                     self.info.update({(ref, view): value for ref, value in info.items()})
         return self.info
 
@@ -413,9 +412,8 @@ class _StreamStats:
         if self.exists is None:
             self.exists = set()
             if self.client is not None:
-                epoch = self.client.engine_snapshot()["epoch"]
                 for view, refs in self._groups():
-                    found = self.client.timeseries_exists_batch(refs, view=view, epoch=epoch)
+                    found = self.client.timeseries_exists_batch(refs, view=view)
                     self.exists.update((ref, view) for ref in found)
         return self.exists
 
@@ -550,16 +548,17 @@ class DataObject:
 
         # Keep one logical measurement per node and entity context. Prefer
         # the base point's label and units when both it and a stage matched.
-        plan = query.client.engine_snapshot()["plan"]
-        bases = resolve(plan, [b.ref_uri for b in bindings], view="raw")
-        heads = resolve(plan, [b.ref_uri for b in bindings], view="current")
-        stage_units = units(plan)
+        streams = query.client.stream_views(sorted({b.ref_uri for b in bindings}))
         logical = {}
-        for binding in sorted(bindings, key=lambda b: b.ref_uri != bases[b.ref_uri]):
-            ref = binding.ref_uri if binding.view == "stored" else bases[binding.ref_uri]
+        for binding in sorted(bindings, key=lambda b: b.ref_uri != streams[b.ref_uri]["raw"]):
+            stream = streams[binding.ref_uri]
+            ref = binding.ref_uri if binding.view == "stored" else stream["raw"]
+            # A current read returns the final stage's values, in that stage's unit.
+            unit = stream["unit"] if binding.view == "current" else None
+            units = dict(property_unit=unit, ref_unit=unit) if unit else {}
             for context in binding.entity_contexts or [{}]:
                 key = (binding.nid, ref, binding.view, tuple(sorted(context.items())))
-                logical.setdefault(key, replace(binding, ref_uri=ref, entity_contexts=[context]))
+                logical.setdefault(key, replace(binding, ref_uri=ref, entity_contexts=[context], **units))
         merged = {}
         for binding in logical.values():
             key = (binding.nid, binding.point_uri, binding.ref_uri, binding.view)
@@ -567,12 +566,7 @@ class DataObject:
                 merged[key].entity_contexts.extend(binding.entity_contexts)
             else:
                 merged[key] = binding
-        # A current read returns the final stage's values, in that stage's unit.
-        bindings = [
-            replace(b, property_unit=stage_units[heads[b.ref_uri]], ref_unit=stage_units[heads[b.ref_uri]])
-            if b.view == "current" and heads.get(b.ref_uri) in stage_units else b
-            for b in merged.values()
-        ]
+        bindings = list(merged.values())
 
         return cls(
             _bindings=bindings,

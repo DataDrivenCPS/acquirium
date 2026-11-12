@@ -36,9 +36,9 @@ def stats_calls(hist, monkeypatch):
     calls = []
     original = hist.client.timeseries_info_batch
 
-    def counting(uris):
+    def counting(uris, **kwargs):
         calls.append(list(uris))
-        return original(uris)
+        return original(uris, **kwargs)
 
     monkeypatch.setattr(hist.client, "timeseries_info_batch", counting)
     return calls
@@ -50,9 +50,9 @@ def exists_calls(hist, monkeypatch):
     calls = []
     original = hist.client.timeseries_exists_batch
 
-    def counting(uris):
+    def counting(uris, **kwargs):
         calls.append(list(uris))
-        return original(uris)
+        return original(uris, **kwargs)
 
     monkeypatch.setattr(hist.client, "timeseries_exists_batch", counting)
     return calls
