@@ -11,6 +11,9 @@ change in any release.
 ## [Unreleased]
 
 ### Changed
+- Acquirium requires DuckDB 2.0 (`duckdb>=2.0.0`). An existing database file
+  opens as is and keeps its storage format. A database created by DuckDB 2.0
+  uses the 2.0 storage format, which DuckDB 1.x cannot open.
 - The DuckDB `timeseries` table no longer has the `UNIQUE (ref_id, ts)`
   constraint. Writes still keep one row per stream and timestamp by deleting
   colliding rows before inserting. Opening an existing database rebuilds the
