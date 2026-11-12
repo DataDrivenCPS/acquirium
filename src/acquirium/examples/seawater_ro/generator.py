@@ -87,9 +87,10 @@ def generate(
 ) -> pl.DataFrame:
     """Plant data from ``start`` up to, not including, ``end``.
 
-    Returns one row per ``step`` with a ``timestamp`` column (UTC) and one
-    column per model point, named after the point and in the point's unit.
-    Naive datetimes are read as UTC. The default is the year 2025 in
+    Returns the narrow layout ``insert_timeseries_arrow`` takes: one row per
+    step and model point, with the columns ``ts`` (UTC), ``ref_name`` (the
+    point's local name) and ``value`` (in the point's unit). Rows are ordered
+    by time. Naive datetimes are read as UTC. The default is the year 2025 in
     10 minute steps.
     """
     start, end = _utc(start), _utc(end)
@@ -159,6 +160,8 @@ def generate(
     for name, value in CONSTANTS.items():
         columns[name] = np.full(len(micros), value)
 
-    frame = pl.DataFrame(columns)
-    timestamp = pl.Series("timestamp", micros, dtype=pl.Datetime("us", "UTC"))
-    return frame.insert_column(0, timestamp)
+    wide = pl.DataFrame(columns).insert_column(
+        0, pl.Series("ts", micros, dtype=pl.Datetime("us", "UTC"))
+    )
+    narrow = wide.unpivot(index="ts", variable_name="ref_name", value_name="value")
+    return narrow.sort("ts", maintain_order=True)
