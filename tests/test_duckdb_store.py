@@ -299,6 +299,39 @@ def test_timeseries_limit(store):
 
 
 @pytest.mark.unit
+def test_timeseries_windowed_and_limited_reads_agree(store):
+    """A read takes one of two SQL shapes depending on window and limit.
+
+    Every combination must return what filtering and sorting the stored rows
+    in Python returns, so the two shapes cannot drift apart.
+    """
+    uri = "urn:test:duck:ts_shapes"
+    days = [9, 3, 17, 1, 12, 6, 20, 14, 4, 11]
+    # Written in three batches out of time order, with one value rewritten.
+    for chunk in (days[:4], days[4:7], days[7:]):
+        store.upsert_rows(uri, [(_utc(2024, 3, d), float(d)) for d in chunk], value_kind="numeric")
+    store.upsert_rows(uri, [(_utc(2024, 3, 12), 120.0)], value_kind="numeric")
+    stored = sorted((_utc(2024, 3, d), 120.0 if d == 12 else float(d)) for d in days)
+    bounds = [None, _utc(2024, 3, 4), _utc(2024, 3, 13), _utc(2024, 3, 25)]
+    for start in bounds:
+        for end in bounds:
+            for limit in (None, 1, 3, 100):
+                for order in ("asc", "desc"):
+                    expected = [(ts, v) for ts, v in stored
+                                if (start is None or ts >= start) and (end is None or ts <= end)]
+                    if order == "desc":
+                        expected.reverse()
+                    if limit:
+                        expected = expected[:limit]
+                    got = [
+                        (ts, v)
+                        for batch in store.timeseries(uri, start=start, end=end, limit=limit, order=order)
+                        for ts, v in zip(batch.column("ts").to_pylist(), batch.column("value").to_pylist())
+                    ]
+                    assert got == expected, (start, end, limit, order)
+
+
+@pytest.mark.unit
 def test_timeseries_iterator_survives_other_queries(store):
     uri = "urn:test:duck:ts_lifecycle"
     store.upsert_rows(uri, [(_utc(2024, 6, 1), "1"), (_utc(2024, 6, 2), "2")])
