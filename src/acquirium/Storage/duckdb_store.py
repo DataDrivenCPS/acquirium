@@ -476,9 +476,9 @@ class DuckDBStore:
             return {}
         placeholders = ", ".join("?" * len(point_uris))
         with self._own_conn() as conn, timed_debug(logger, "resolve_storage_keys n=%d", len(point_uris)):
-            d = conn.execute(
+            d = conn.sql(
                 f"SELECT point_uri, ref_uri FROM {STREAMS_TABLE} WHERE point_uri IN ({placeholders})",
-                point_uris,
+                params=point_uris,
             ).to_arrow_table().to_pydict()
         registered = dict(zip(d["point_uri"], d["ref_uri"]))
         return {uri: registered.get(uri, uri) for uri in point_uris}
@@ -579,7 +579,11 @@ class DuckDBStore:
                             resolved = "numeric" if has_numeric else "text"
                 # Streamed, not materialized: batches are pulled as the caller
                 # consumes them, so an unbounded range need not fit in memory.
-                reader = conn.execute(query, params).to_arrow_reader(batch_size)
+                # The lookups above each read one row with fetchone(), which
+                # leaves the execute() result open; DuckDB refuses a relation
+                # on the connection until that result is completed.
+                conn.complete()
+                reader = conn.sql(query, params=params).to_arrow_reader(batch_size)
             for batch in reader:
                 rows += batch.num_rows
                 numeric_col = batch.column("numeric_value")
@@ -629,7 +633,7 @@ class DuckDBStore:
             return {}
         placeholders = ", ".join("?" * len(ref_uris))
         with self._own_conn() as conn, timed_debug(logger, "timeseries_info_batch n=%d", len(ref_uris)):
-            d = conn.execute(
+            d = conn.sql(
                 f"""
                 SELECT r.ref_uri,
                        COUNT(*)   AS row_count,
@@ -640,7 +644,7 @@ class DuckDBStore:
                 WHERE r.ref_uri IN ({placeholders}) AND NOT t.deleted
                 GROUP BY r.ref_uri
                 """,
-                ref_uris,
+                params=ref_uris,
             ).to_arrow_table().to_pydict()
         result: dict[str, TimeseriesInfo] = {}
         for uri, cnt, earliest_raw, latest_raw in zip(
@@ -744,7 +748,7 @@ class DuckDBStore:
         """
         try:
             with self._own_conn() as conn, timed_debug(logger, "query_logs point_uri=%s clauses=%d", point_uri, len(clauses)):
-                tbl = conn.execute(query, params).to_arrow_table()
+                tbl = conn.sql(query, params=params).to_arrow_table()
         except Exception as exc:
             logger.error("query_logs failed: %s", exc)
             return []
@@ -806,7 +810,7 @@ class DuckDBStore:
     def sql_query(self, query: str) -> dict[str, Any]:
         logger.debug("sql_query: %s", query.replace("\n", " ")[:200])
         with self._own_conn() as conn, timed_debug(logger, "sql_query"):
-            tbl = conn.execute(query).to_arrow_table()
+            tbl = conn.sql(query).to_arrow_table()
         d = tbl.to_pydict()
         cols = tbl.schema.names
         return {
