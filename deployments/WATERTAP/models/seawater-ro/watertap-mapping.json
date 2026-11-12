@@ -1,7 +1,7 @@
 {
   "source_flowsheet": "watertap.flowsheets.seawater_RO_desalination.seawater_RO_desalination",
   "erd_type": "pressure_exchanger",
-  "model_file": "model.ttl",
+  "model_file": "src/acquirium/examples/seawater_ro/model.ttl",
   "namespace": "urn:swro/",
   "notes": [
     "Translator blocks fs.tb_prtrt_desal / fs.tb_desal_psttrt are not physical equipment; their state variables are mapped onto the connection crossing the pretreatment->desalination boundary and the RO permeate connection point respectively.",

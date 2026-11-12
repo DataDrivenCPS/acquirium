@@ -19,7 +19,7 @@ This is a reference for the vocabulary of the other guides.
 | class | a category a node belongs to, via `rdf:type` | `watr:ReverseOsmosisMembrane` |
 | instance | one actual thing of a class | `wbs:RO` |
 | ontology | the shared vocabulary the model is written in | s223, NAWI water, QUDT |
-| model | the RDF description of one plant | `deployments/WATERTAP/models/seawater-ro/model.ttl` |
+| model | the RDF description of one plant | `src/acquirium/examples/seawater_ro/model.ttl` |
 | Turtle | the text format RDF is written in (`.ttl` files, graph inserts) | `model.ttl` |
 | SPARQL | the query language for RDF graphs; every `Query` compiles to it | `q.to_sparql()` |
 

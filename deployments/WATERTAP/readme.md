@@ -144,7 +144,7 @@ mapped output of interest is the pump's mechanical work (`Pump1-Work`).
 ```
 deployments/WATERTAP/
 ├── models/
-│   ├── seawater-ro/          build-and-solve.py · generate-values.py · model.ttl · watertap-mapping.json
+│   ├── seawater-ro/          build-and-solve.py · generate-values.py · watertap-mapping.json  (model: src/acquirium/examples/seawater_ro/model.ttl)
 │   ├── seawater-ro-fouled/   build-and-solve.py · generate-values.py · model.ttl · watertap-mapping.json
 │   └── simple-pipe/          build-and-solve.py · generate-values.py · model.ttl · watertap-mapping.json
 └── scripts/
