@@ -59,6 +59,49 @@ def test_upsert_rows_conflict_updates(store):
     assert rows == ["2.0"]
 
 
+def _key_counts(store, ref):
+    """Physical rows and distinct timestamps stored for one stream."""
+    with store._own_conn() as conn:
+        return conn.execute(
+            "SELECT count(*), count(DISTINCT t.ts) FROM timeseries t JOIN ref_ids r USING (ref_id) WHERE r.ref_uri = ?",
+            [ref],
+        ).fetchone()
+
+
+@pytest.mark.unit
+def test_insert_frame_dedupes_duplicates_within_the_frame(store):
+    ref = "urn:test/internal_duplicates"
+    # The table has no unique constraint: _insert_frame alone keeps one row
+    # per (ref, ts), so it is called directly, bypassing the public methods.
+    frame = store._prepare_frame(store._rows_frame(
+        ref, [(_utc(2024, 1, 1), 1.0), (_utc(2024, 1, 2), 2.0), (_utc(2024, 1, 1), 3.0)], "numeric"))
+    assert frame.height == 3
+    with store._lock, store._write_conn() as conn:
+        written = store._insert_frame(conn, frame, store._next_revision(conn))
+    assert written == 2
+    assert _key_counts(store, ref) == (2, 2)
+    rows = pa.Table.from_batches(list(store.timeseries(ref)))
+    # The last occurrence of the repeated timestamp wins.
+    assert rows.column("value").to_pylist() == [3.0, 2.0]
+    assert store.bulk_insert_polars(frame.with_columns(pl.lit("urn:test/internal_duplicates_bulk").alias("ref_uri"))) == 2
+    assert _key_counts(store, "urn:test/internal_duplicates_bulk") == (2, 2)
+
+
+@pytest.mark.unit
+def test_insert_frame_replaces_rows_already_in_the_table(store):
+    ref = "urn:test/stored_duplicates"
+    first = store._prepare_frame(store._rows_frame(
+        ref, [(_utc(2024, 1, 1), 1.0), (_utc(2024, 1, 2), 2.0)], "numeric"))
+    second = store._prepare_frame(store._rows_frame(
+        ref, [(_utc(2024, 1, 2), 20.0), (_utc(2024, 1, 3), 30.0)], "numeric"))
+    for frame in (first, second, second):
+        with store._lock, store._write_conn() as conn:
+            assert store._insert_frame(conn, frame, store._next_revision(conn)) == 2
+    assert _key_counts(store, ref) == (3, 3)
+    rows = pa.Table.from_batches(list(store.timeseries(ref)))
+    assert rows.column("value").to_pylist() == [1.0, 20.0, 30.0]
+
+
 @pytest.mark.unit
 def test_upsert_rows_empty(store):
     n = store.upsert_rows("urn:test:duck:empty", [])

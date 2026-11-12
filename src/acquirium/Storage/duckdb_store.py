@@ -321,8 +321,7 @@ class DuckDBStore:
         """Physically replace a stream and record its latest reset atomically."""
         with self._lock, self._write_conn() as conn:
             revision = RevisionPublisher(self).reset(conn, [ref_uri])
-            self._insert_frame(conn, frame, revision)
-        return frame.height
+            return self._insert_frame(conn, frame, revision)
 
     def bulk_insert_polars(self, df: pl.DataFrame) -> int:
         """Bulk-insert a Polars DataFrame with canonical or split value columns.
@@ -333,20 +332,19 @@ class DuckDBStore:
             logger.debug("bulk_insert_polars: empty DataFrame, skipping")
             return 0
         in_rows = len(df)
-        with timed_debug(logger, "bulk_insert_polars prepare/dedupe rows=%d", in_rows):
+        with timed_debug(logger, "bulk_insert_polars prepare rows=%d", in_rows):
             df = self._prepare_frame(df)
-        logger.debug("bulk_insert_polars: %d rows after dedupe (was %d)", len(df), in_rows)
-        with self._lock, timed_debug(logger, "bulk_insert_polars DELETE+INSERT rows=%d", len(df)), self._write_conn() as conn:
-            self._insert_frame(conn, df, self._next_revision(conn))
-        return len(df)
+        with self._lock, timed_debug(logger, "bulk_insert_polars DELETE+INSERT rows=%d", in_rows), self._write_conn() as conn:
+            written = self._insert_frame(conn, df, self._next_revision(conn))
+        logger.debug("bulk_insert_polars: %d rows after dedupe (was %d)", written, in_rows)
+        return written
 
     @staticmethod
     def _prepare_frame(df: pl.DataFrame) -> pl.DataFrame:
-        """Split value columns, normalise ts to naive UTC, dedupe on (ref_uri, ts)."""
-        df = prepare_value_columns(df).with_columns(
+        """Split value columns and normalise ts to naive UTC."""
+        return prepare_value_columns(df).with_columns(
             pl.col("ts").dt.convert_time_zone("UTC").dt.replace_time_zone(None)
         )
-        return df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
 
     @staticmethod
     def _next_revision(conn) -> int:
@@ -360,14 +358,19 @@ class DuckDBStore:
     STAGING_TABLE = "_acquirium_staging_timeseries"
 
     @classmethod
-    def _insert_frame(cls, conn, df: pl.DataFrame, revision: int) -> None:
+    def _insert_frame(cls, conn, df: pl.DataFrame, revision: int) -> int:
         """Upsert a prepared frame on *conn* through a temporary staging table.
 
         The frame carries ref_uri strings. Ids are assigned for unseen uris and
         the rows staged by ref_id. Colliding (ref_id, ts) rows are then deleted
         from the timeseries table and the staged rows inserted in
         (ref_id, ts) order, all inside the caller's transaction.
+
+        The table has no unique constraint, so this is the only place that
+        keeps one row per (ref_id, ts). A key repeated within the frame keeps
+        its last row. Returns the number of rows written.
         """
+        df = df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
         staging = cls.STAGING_TABLE
         conn.register("_acquirium_incoming_timeseries", df)
         try:
@@ -409,6 +412,7 @@ class DuckDBStore:
             """, [revision]
         )
         conn.execute(f"DROP TABLE {staging}")
+        return df.height
 
     # ---- stream reference registry ----
 
