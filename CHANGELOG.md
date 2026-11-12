@@ -25,6 +25,15 @@ change in any release.
   from `self.config` themselves. A value assigned in `setup()` still wins.
 
 ### Added
+- Replacement outputs: `aq.ReplacementOutput(of=None, unit=None, label=None)`
+  continues the measurement an input selects instead of describing a new one.
+  Normal reads, and app inputs that select that measurement, return the final
+  stage of the chain of replacements; `view="raw"` returns the original
+  samples and `view="stored"` one stage. A replacement inherits its input's
+  quantity kind, value kind and unit, and may change the unit to a compatible
+  one. Adding or removing the last stage rebinds consumers and recalculates
+  their history. The turbidity tutorial's cleaner replaces the analyser
+  readings, and its alarm reads them.
 - `acquirium.functions` provides the calculation helpers (`emit`, `empty`,
   `emit_windows`, `previous_value` and the rest), so calculation files no
   longer import `escapement` directly.
@@ -81,12 +90,12 @@ change in any release.
   changed rows, compute time).
 - `examples/bulk_ingest`: a CSV backfill through a six-app turbidity chain, with
   throughput, per-app work, and a full recomputation check.
-- `Selection.outputs_of(app, port, role=..., combine=False, parameters=None)` selects
+- `Selection.outputs_of(app, port, combine=False, parameters=None)` selects
   one output port of an upstream app. Deploy rejects it while that app or port
   is missing, and removing an upstream app with dependents fails. Output points
   record `acq:outputPort` and `acq:outputGroup`.
-- App state reports `matches` (streams selected per input role) and a warning for
-  each role that selected no streams.
+- App state reports `matches` (streams selected per input) and a warning for
+  each input that selected no streams.
 - `Selection(parameters={group: {name: value}})` gives each listed group's
   operator typed JSON parameters, read as `context["parameters"]`, and selects
   only the listed groups; skipped groups appear in warnings. Parameters are part
@@ -97,6 +106,12 @@ change in any release.
   read it. Requires the Escapement rolling-window release.
 
 ### Changed
+- **Breaking:** an app's `inputs` map input names to selections,
+  `inputs={"raw": selection}`, or to a list of selections that feed one input.
+  `Selection` no longer takes `role=`, and `Selection.from_query` takes
+  `measurement=` (was `alias=`). The function's frame carries the name in an
+  `input` column (was `role`), as do `context["previous"]["rows"]` and
+  `previous_rows`. Saved app declarations load unchanged.
 - `examples/transformation` is a sine-wave polling driver and a Python
   threshold app, deployed from Python or from `[[apps]]` in the config. The
   first-app tutorial builds it step by step.

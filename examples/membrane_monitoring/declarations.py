@@ -56,7 +56,7 @@ def register(client):
     client.insert_graph_file(DIRECTORY / "metadata.ttl", source_id="membrane-layout")
 
 
-def measured(kind, role, parameters=None):
+def measured(kind, parameters=None):
     """Each skid's point of class ``kind``, grouped by skid."""
     return aq.Selection(
         PREFIXES
@@ -67,7 +67,6 @@ def measured(kind, role, parameters=None):
             ?stream acq:sourceId "{SOURCE}" .
         }}
         """,
-        role=role,
         parameters=parameters,
     )
 
@@ -83,10 +82,10 @@ def declarations(*, module=None):
 
     permeability = aq.App(
         name=PERMEABILITY,
-        inputs=[
-            measured("PermeateFlux", "flux", FIT),
-            measured("TransmembranePressure", "tmp"),
-        ],
+        inputs={
+            "flux": measured("PermeateFlux", FIT),
+            "tmp": measured("TransmembranePressure"),
+        },
         outputs={"permeability": output(), "variance": output()},
         function=function("permeability"),
         # One estimate per hour, from that hour's mean flux and TMP.
@@ -95,28 +94,26 @@ def declarations(*, module=None):
     return [
         aq.App(
             name=SMOOTHED,
-            inputs=[measured("PermeateConductivity", "conductivity", SMOOTHING)],
+            inputs={"conductivity": measured("PermeateConductivity", SMOOTHING)},
             outputs={"smoothed": output(CONDUCTIVITY_UNIT)},
             function=function("smoothed"),
         ),
         aq.App(
             name=DRIFT,
-            inputs=[measured("PermeateConductivity", "conductivity", DRIFT_LIMITS)],
+            inputs={"conductivity": measured("PermeateConductivity", DRIFT_LIMITS)},
             outputs={"cusum": output(CONDUCTIVITY_UNIT), "alarm": output(CONDUCTIVITY_UNIT)},
             function=function("drift"),
         ),
         permeability,
         aq.App(
             name=RESIDUAL,
-            inputs=[
-                measured("PermeateFlux", "flux"),
-                measured("TransmembranePressure", "tmp"),
+            inputs={
+                "flux": measured("PermeateFlux"),
+                "tmp": measured("TransmembranePressure"),
                 # Each reading reads the latest hourly estimate at or before
                 # it, and none once the fit is two hours stale.
-                aq.Selection.outputs_of(
-                    permeability, "permeability", role="permeability", as_of=2 * HOUR
-                ),
-            ],
+                "permeability": aq.Selection.outputs_of(permeability, "permeability", as_of=2 * HOUR),
+            },
             outputs={"expected": output(), "residual": output()},
             function=function("residual", sequential=False),
         ),

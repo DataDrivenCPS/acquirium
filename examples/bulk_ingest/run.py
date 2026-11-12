@@ -189,7 +189,7 @@ def run(args):
     print(f"generated {args.days} day(s): {rows} rows, {readings} readings")
     client = aq.init(write_config(root, incoming, args.engine_path), timeout=180)
     try:
-        query = SOFT_SENSORS[0].inputs[0].query
+        query = SOFT_SENSORS[0].inputs["turbidity"].query
         wait_for(lambda: len(client.client.sparql_query(query)["rows"]) == len(LOCATIONS),
                  60, "driver did not register the turbidity points")
         started = time.monotonic()

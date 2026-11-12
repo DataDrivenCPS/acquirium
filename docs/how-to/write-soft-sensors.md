@@ -30,7 +30,7 @@ keep track of:
 ```python
 mean = aq.App(
     name="wave-mean",
-    inputs=[aq.Selection.from_query(wave, alias="wave")],
+    inputs={"wave": aq.Selection.from_query(wave, measurement="wave")},
     outputs={"mean": aq.Output()},
     function=aq.Native.mean("mean"),
     window=aq.FixedBucket(4 * SECOND),
@@ -70,7 +70,7 @@ A second app can read the first one's output:
 ```python
 high = aq.App(
     name="high-mean",
-    inputs=[aq.Selection.outputs_of(mean, "mean", role="mean")],
+    inputs={"mean": aq.Selection.outputs_of(mean, "mean")},
     outputs={"alarm": aq.Output()},
     function=aq.Native.threshold("alarm", above=0.5),
 )
@@ -164,7 +164,7 @@ Deploy it over ten-second buckets:
 ```python
 app = aq.App(
     name="wave-spread",
-    inputs=[aq.Selection.from_query(wave, alias="wave")],
+    inputs={"wave": aq.Selection.from_query(wave, measurement="wave")},
     outputs={"spread": aq.Output()},
     function=aq.PythonFunction.from_file(Path("spread.py"), "spread"),
     window=aq.FixedBucket(10 * SECOND),
@@ -202,7 +202,7 @@ a rolling window that looks back four seconds, every two seconds:
 ```python
 app = aq.App(
     name="wave-spread",
-    inputs=[aq.Selection.from_query(wave, alias="wave")],
+    inputs={"wave": aq.Selection.from_query(wave, measurement="wave")},
     outputs={"spread": aq.Output()},
     function=aq.PythonFunction.from_file(Path("spread.py"), "spread"),
     window=aq.Rolling(lookback_ns=4 * SECOND, step_ns=2 * SECOND),
@@ -257,7 +257,7 @@ and deploy it with `sequential=True`:
 ```python
 smoother = aq.App(
     name="wave-smooth",
-    inputs=[aq.Selection.from_query(wave, alias="wave")],
+    inputs={"wave": aq.Selection.from_query(wave, measurement="wave")},
     outputs={"smooth": aq.Output()},
     function=aq.PythonFunction.from_file(Path("smooth.py"), "smooth", sequential=True),
     window=aq.Pointwise(),

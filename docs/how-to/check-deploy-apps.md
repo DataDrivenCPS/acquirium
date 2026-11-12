@@ -91,7 +91,7 @@ Deploy it:
 ```python
 ratio_app = aq.App(
     name="wave-ratio",
-    inputs=[aq.Selection.from_query(wave, alias="wave")],
+    inputs={"wave": aq.Selection.from_query(wave, measurement="wave")},
     outputs={"ratio": aq.Output()},
     function=aq.PythonFunction.from_file(Path("ratio.py"), "ratio"),
     window=aq.Pointwise(),
@@ -144,7 +144,7 @@ Rebuild the declaration and deploy it:
 ```python
 fixed_app = aq.App(
     name="wave-ratio",
-    inputs=[aq.Selection.from_query(wave, alias="wave")],
+    inputs={"wave": aq.Selection.from_query(wave, measurement="wave")},
     outputs={"ratio": aq.Output()},
     function=aq.PythonFunction.from_file(Path("ratio.py"), "ratio"),
     window=aq.Pointwise(),

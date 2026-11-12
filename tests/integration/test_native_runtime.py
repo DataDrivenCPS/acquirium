@@ -74,7 +74,7 @@ def test_sine_wave_driver_and_python_threshold(tmp_path, deployment):
         ))
         client.deploy_app(aq.App(
             name="high-wave",
-            inputs=[aq.Selection.from_query(wave, alias="wave")],
+            inputs={"wave": aq.Selection.from_query(wave, measurement="wave")},
             outputs={"high": aq.Output()},
             function=aq.PythonFunction.from_file(revised, "threshold"),
             window=aq.Pointwise(),

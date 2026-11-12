@@ -118,15 +118,15 @@ The value 9.0 represents a bad reading, outside the signal's valid range.
 calculations = Path("pipeline_functions.py")
 valid = aq.App(
     name="pipeline-valid",
-    inputs=[aq.Selection.from_query(raw, alias="raw")],
-    outputs={"valid": aq.Output(replaces="raw")},
+    inputs={"raw": aq.Selection.from_query(raw, measurement="raw")},
+    outputs={"valid": aq.ReplacementOutput()},
     function=aq.PythonFunction.from_file(calculations, "reject_invalid"),
     window=aq.Pointwise(),
 )
 filled = aq.App(
     name="pipeline-filled",
-    inputs=[aq.Selection.outputs_of(valid, "valid", role="valid")],
-    outputs={"filled": aq.Output(replaces="valid")},
+    inputs={"valid": aq.Selection.outputs_of(valid, "valid")},
+    outputs={"filled": aq.ReplacementOutput()},
     function=aq.PythonFunction.from_file(calculations, "interpolate"),
     # Calculate every minute using observations from both sides of that minute.
     window=aq.Rolling(
@@ -137,7 +137,7 @@ filled = aq.App(
 )
 high = aq.App(
     name="pipeline-high",
-    inputs=[aq.Selection.outputs_of(filled, "filled", role="filled")],
+    inputs={"filled": aq.Selection.outputs_of(filled, "filled")},
     outputs={"high": aq.Output()},
     # Keep the filled value only when it is strictly above the alarm limit.
     function=aq.Native.threshold("high", above=0.5),
@@ -176,8 +176,9 @@ join: that stream has no row at that timestamp.
 | 00:02 | 0.8 | 0.8 | 0.8 | 0.8 |
 | 00:03 | 0.4 | 0.4 | 0.4 | — |
 
-The `replaces` declarations form one chain from the original measurement to
-`filled`. `raw.dataframe()` now reads the filled stream. Use `view="raw"` for
+The two replacement outputs form one chain from the original measurement to
+`filled`: `valid` replaces the raw signal, and `filled` replaces `valid`. Each
+inherits the signal's unit and quantity kind. `raw.dataframe()` now reads the filled stream. Use `view="raw"` for
 the original samples, as the comparison table does. Each query with an `app`
 filter reads that particular stage, so the intermediate `valid` result stays
 accessible. The alarm is an ordinary output and does not extend the chain.

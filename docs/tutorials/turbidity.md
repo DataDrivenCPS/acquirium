@@ -12,13 +12,17 @@ This tutorial builds that alarm from two apps. It continues from
 [Soft sensor app](first-app.md).
 
 ```text
-raw turbidity → turbidity-clean → turbidity-alarm
+analyser readings ──replaced by──> turbidity-clean ──read by──> turbidity-alarm
 ```
 
-The first app cleans each analyser's readings into one value per minute. The
-second reads that clean stream and decides whether turbidity has stayed above
-the limit for long enough. Each answers one question, and the clean stream is
-useful on its own: a report or a second alarm can read it too.
+The first app cleans each analyser's readings into one value per minute. It
+does not just add another stream beside them: it declares that its output
+*replaces* them. From then on, asking for Filter 3's turbidity returns the
+cleaned values, while the analyser's own readings stay stored underneath. The
+second app asks for each location's turbidity, so it gets the clean stream
+without naming the cleaner, and decides whether turbidity has stayed above the
+limit for long enough. A report or a second alarm would get the clean stream
+the same way.
 
 The code is in [`examples/turbidity`](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/turbidity):
 `calculations.py` holds the two functions and `apps.py` the declarations. A
@@ -91,12 +95,15 @@ Filter 3 at 00:05, the frame holds twenty readings, from 00:00:00 to
 00:09:30. Here are four of them, with the `stream` and `context` columns left
 out:
 
-| role | time | value | text |
+| input | time | value | text |
 | --- | --- | ---: | --- |
 | `"raw"` | 2026-01-01 00:04:30 UTC | 0.85 | `null` |
 | `"raw"` | 2026-01-01 00:05:00 UTC | 0.75 | `null` |
 | `"raw"` | 2026-01-01 00:05:30 UTC | `null` | `"Fault"` |
 | `"raw"` | 2026-01-01 00:06:00 UTC | 0.75 | `null` |
+
+`input` is the name the [app declaration](#app-declaration) gives this input,
+`"raw"`. An app with several inputs uses it to tell their rows apart.
 
 Each row has either a numeric `value` or `text`. The fault code arrives with
 `value` null and its code in `text`.
@@ -165,7 +172,9 @@ def clean(frame: pd.DataFrame, context):
    At 00:10 both neighbours are 0.80 NTU, so the filled value is 0.80.
 
 The function returns the calculated series as `time` and `value` columns.
-Acquirium keeps the row for this call's output minute. No row at that minute
+It may, because its output is a replacement, described
+[below](#replacing-the-analyser-readings); an ordinary output returns rows only
+at `output_time`. Acquirium keeps the row for this call's output minute. No row at that minute
 removes its previous result. Other minutes are maintained by their own calls.
 A missing minute needs valid neighbours on both sides within the window;
 existing minute averages remain unchanged.
@@ -176,11 +185,9 @@ existing minute averages remain unchanged.
 from pathlib import Path
 import acquirium as aq
 
-NTU = "http://qudt.org/vocab/unit/NTU"
 TURBIDITY = "http://qudt.org/vocab/quantitykind/Turbidity"
 MINUTE = 60 * 1_000_000_000
 CALCULATIONS = Path("examples/turbidity/calculations.py")
-SOURCE = "turbidity-analysers"
 
 # How far a reading may sit from the median around it before it counts as a spike.
 SPIKES = {
@@ -190,26 +197,28 @@ SPIKES = {
     "urn:turbidity:combined": {"threshold": 0.5},
 }
 
-raw = (
+# Every location's turbidity.
+turbidity = (
     client.query()
-    .measurement(alias="raw", quantity_kind=TURBIDITY, data_source=SOURCE)
+    .measurement(alias="turbidity", quantity_kind=TURBIDITY)
     .context(alias="location")
 )
 clean = aq.App(
     name="turbidity-clean",
-    inputs=[aq.Selection.from_query(
-        raw, alias="raw", group="location", parameters=SPIKES
-    )],
-    outputs={"turbidity": aq.Output(replaces="raw", unit=NTU, quantity_kind=TURBIDITY, on_group=True)},
+    inputs={"raw": aq.Selection.from_query(
+        turbidity, measurement="turbidity", group="location", parameters=SPIKES
+    )},
+    # The clean stream replaces the analyser readings it is calculated from.
+    outputs={"turbidity": aq.ReplacementOutput()},
     function=aq.PythonFunction.from_file(CALCULATIONS, "clean"),
     window=aq.Rolling(lookback_ns=5 * MINUTE, step_ns=MINUTE, lookahead_ns=5 * MINUTE),
 )
 ```
 
-The registrations tag the analyser measurements with
-`data_source="turbidity-analysers"`. The query finds those measurements and the
-location each belongs to. `group="location"` makes one calculation per
-location.
+The query finds each turbidity measurement and the location it belongs to.
+`inputs` names the app's one input `"raw"`; `measurement="turbidity"` says
+which of the query's aliases selects its streams. `group="location"` makes one
+calculation per location.
 
 `parameters` gives each location its settings, keyed by the location's URI.
 The combined effluent normally reads well under 0.3 NTU, so a smaller jump
@@ -219,25 +228,81 @@ recalculates only that location's history. Only the listed locations are
 cleaned: a fifth analyser needs an entry here too, and deployment warns about
 locations the query finds but `SPIKES` leaves out.
 
-`on_group=True` attaches the clean stream to its location as another turbidity
-measurement. It has no analyser source tag, so the cleaning app stays bound
-to the original readings even when more replacement stages are added.
-
-`replaces="raw"` declares this output as the complete cleaned version of the
-input selected under `raw`. A normal query for the original measurement now
-reads the clean stream. `query.dataframe(view="raw", value_mode="coalesce")`
-reads its original samples, including faults and spikes. Queries with `app="turbidity-clean"`
-read that app's stored output explicitly.
-
-Because this output replaces `raw`, that role binds exactly the analyser
-streams the query selects; following the replacement would lead the app back
-to its own output. Other apps' selections do follow it, as the alarm's does.
-
 `Rolling` gives each call five minutes of readings on either side of
 `output_time`, at one-minute steps. The spike check needs that context, and so
 does a gap fill, which needs an average after the gap as well as before it.
 Note what looking ahead implies: a clean value can change when later data
 arrives.
+
+## Replacing the analyser readings
+
+Most derived streams sit beside their inputs. The high-wave stream in
+[Soft sensor app](first-app.md) is new information, and the sine wave is
+still the answer to "what did the driver produce?". Cleaning is different:
+nobody downstream should use Filter 3's raw readings when cleaned ones exist.
+The cleaner's output says so:
+
+```python
+outputs={"turbidity": aq.ReplacementOutput()}
+```
+
+An ordinary `aq.Output` describes a new measurement. A `ReplacementOutput`
+continues the measurement its input selects: the clean stream becomes the
+authoritative turbidity for each analyser, with the analyser's unit and
+quantity kind. The cleaner has one input, so the replacement needs no
+arguments; an app with several inputs names the one it replaces, as in
+`ReplacementOutput(of="raw")`.
+
+To see this, read the analyser point that the script registered for Filter 3,
+once its readings are in:
+
+```python
+analyser = client.query().measurement(alias="turbidity", uri="urn:turbidity:filter-3-turbidity")
+analyser.dataframe()                                   # The clean values.
+analyser.dataframe(view="raw", value_mode="coalesce")  # The analyser's readings.
+```
+
+| Time (UTC) | `dataframe()` | `dataframe(view="raw")` |
+| --- | ---: | ---: |
+| 00:05:00 | 0.75 | 0.75 |
+| 00:05:30 | — | `Fault` |
+| 00:09:00 | 0.80 | 0.75 |
+| 00:09:30 | — | 0.85 |
+| 00:10:00 | 0.80 | — |
+| 00:22:00 | 0.15 | 0.15 |
+| 00:22:30 | — | 9.9 |
+
+The normal read returns one clean value per minute: the fault and the spike
+are gone, and the missing minute at 00:10 is filled. `view="raw"` returns the
+readings as the analyser sent them; `value_mode="coalesce"` includes the
+`Fault` text reading. Nothing has been overwritten. A query for Filter 3's
+turbidity by location, `filter3.measurement(quantity_kind=TURBIDITY)`, also
+returns the clean values: the analyser point and the clean stream are one
+measurement.
+
+A few rules keep a replacement trustworthy:
+
+- **It is complete.** A reading the cleaner drops stays dropped; it does not
+  fall back to the raw value underneath.
+- **It measures the same thing.** It keeps the input's quantity kind and
+  value kind. It may change the unit only to a compatible one, with
+  `ReplacementOutput(unit=...)`, and reads then report that unit.
+- **It has one successor at a time.** Each stream has at most one replacement,
+  but a replacement can itself be replaced. An app that corrected the clean
+  stream for analyser drift would select `turbidity-clean`'s output and
+  declare its own `ReplacementOutput()`. Reads, and the alarm, would then
+  follow the chain to the drift-corrected stage.
+
+The cleaner's own `raw` input is the one place that does not follow the
+replacement: it binds exactly the analyser streams its query selects, because
+following the chain would lead the cleaner back to its own output. The clean
+stream is not attached to the location as a second measurement, so the
+cleaner's query never matches it.
+
+A query that names the app, such as `measurement(app="turbidity-clean")`,
+reads that app's stored output exactly. The
+[replacement reference](../reference/apps.md#replacement-outputs) lists every
+view.
 
 ## Sustained turbidity threshold
 
@@ -290,27 +355,21 @@ means a gap the cleaner could not fill, and the alarm does not count it as high.
 ### App declaration
 
 ```python
-turbidity = (
-    client.query()
-    .measurement(alias="turbidity", quantity_kind=TURBIDITY)
-    .context(alias="location")
-)
 alarm = aq.App(
     name="turbidity-alarm",
-    inputs=[aq.Selection.from_query(
-        turbidity, alias="turbidity", group="location", parameters=LIMITS
-    )],
+    inputs={"turbidity": aq.Selection.from_query(
+        turbidity, measurement="turbidity", group="location", parameters=LIMITS
+    )},
     outputs={"alarm": aq.Output(on_group=True)},
     function=aq.PythonFunction.from_file(CALCULATIONS, "alarm"),
     window=aq.Rolling(lookback_ns=15 * MINUTE, step_ns=MINUTE),
 )
 ```
 
-The alarm asks for each location's turbidity, without naming the cleaning
-app. The query matches both the analyser's measurement and the clean stream
-beside it, and both are one identity: the clean stream replaces the analyser
-readings, so it is the authoritative turbidity for that location. The alarm
-binds it once per location.
+The alarm uses the cleaner's query: each location's turbidity, without naming
+the cleaning app. This is the replacement at work. The query matches the
+analyser measurements, and the clean stream replaces them, so the alarm binds
+the clean stream once per location.
 
 A selection follows replacements to the end of the chain unless it says
 otherwise. If another app later replaces `turbidity-clean`, for example to
@@ -331,12 +390,13 @@ client.deploy_app(alarm)
 
 The order does not matter. An alarm deployed on its own would read the analyser
 readings; deploying the cleaner then moves it to the clean stream. The script
-then inserts the readings and reads both outputs for Filter 3, asking for the
-location and the app that produced each one:
+then inserts the readings and reads both results for Filter 3. The clean
+values are a normal read of the analyser point; the alarm is a new
+measurement, which `on_group=True` attaches to its location:
 
 ```python
+clean_values = client.query().measurement(alias="clean", uri="urn:turbidity:filter-3-turbidity")
 filter3 = client.query().entity(uri="urn:turbidity:filter-3", alias="filter3")
-clean_values = filter3.measurement(alias="clean", app="turbidity-clean")
 alarm_values = filter3.measurement(alias="alarm", app="turbidity-alarm")
 clean_values.dataframe().join(alarm_values.dataframe(), on="time", how="left")
 ```

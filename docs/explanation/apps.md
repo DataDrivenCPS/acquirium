@@ -38,10 +38,12 @@ which of its results a given reading had influenced.
 
 ## Replacement chains
 
-A cleaning app can declare `Output(replaces="raw", ...)`. Its output continues
-the identity of one physical input under the role `raw`. A second replacement
-can continue that identity further. Each input has at most one replacement,
-so the chain has one final stage.
+A cleaning app can declare an `aq.ReplacementOutput()`. Instead of describing
+a new measurement, its output continues the identity of the one physical stream
+its input selects, with that stream's quantity kind and, unless it converts
+it, unit. A second replacement selects the first one's output and continues
+the identity further. Each stage has at most one replacement, so the chain has
+one final stage.
 
 Normal measurement reads select that final stage. `view="raw"` selects the
 original samples; `view="stored"` selects a particular physical stage. App

@@ -15,7 +15,7 @@ import re
 from uuid import uuid4
 from pathlib import Path
 from threading import RLock
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from escapement import (
     artifact_digest,
@@ -61,10 +61,13 @@ def _digest(value):
 
 @dataclass(frozen=True)
 class Selection:
-    """SPARQL selection with explicit stream/group columns and a function role."""
+    """SPARQL selection with explicit stream and group columns.
+
+    An app names each of its inputs by its key in ``App.inputs``; the
+    selection says which streams that input reads.
+    """
 
     query: str
-    role: str = "input"
     stream: str = "stream"
     group: str | None = "group"
     unit: str | None = "unit"
@@ -76,9 +79,9 @@ class Selection:
     # Per-group operator parameters (JSON values), keyed by group. When set,
     # only the listed groups are selected; inspect warns about the groups skipped.
     parameters: Mapping[str, Mapping[str, Any]] | None = None
-    # A maximum age in nanoseconds: read this role as of each window, its
+    # A maximum age in nanoseconds: read this input as of each window, its
     # latest reading at or before the window's timestamp and no older, instead
-    # of the readings in the window. Such a role creates no windows.
+    # of the readings in the window. Such an input creates no windows.
     as_of: int | None = None
     # Which replacement stage each selected identity binds: "current" (the
     # chain's final stage), "raw" (its original input), or "stored" (exactly
@@ -86,7 +89,7 @@ class Selection:
     view: str | None = None
 
     @classmethod
-    def outputs_of(cls, app, port, *, role, combine=False, parameters=None, as_of=None):
+    def outputs_of(cls, app, port, *, combine=False, parameters=None, as_of=None):
         """Select one output port of another app.
 
         By default each upstream group feeds its own operator, under the same
@@ -108,7 +111,6 @@ class Selection:
             }}"""
         return cls(
             query,
-            role=role,
             group=None if combine else "group",
             upstream=app.name,
             upstream_port=port,
@@ -121,7 +123,7 @@ class Selection:
         cls,
         query,
         *,
-        alias: str,
+        measurement: str,
         group: str | None = None,
         target_unit: str | None = None,
         exclude_app: str | None = None,
@@ -130,20 +132,22 @@ class Selection:
     ):
         """Freeze the query DSL as SPARQL; resolve its inputs again on graph edits.
 
-        ``parameters`` maps groups to values the function reads from
-        ``context["parameters"]``, as for ``outputs_of``. ``view`` chooses the
-        replacement stage each matched measurement binds; by default it is
-        the chain's final stage, as for a normal read.
+        ``measurement`` and ``group`` are aliases in the query: the
+        measurement node whose streams this input reads, and the entity whose
+        streams share one calculation. ``parameters`` maps groups to values
+        the function reads from ``context["parameters"]``, as for
+        ``outputs_of``. ``view`` chooses the replacement stage each matched
+        measurement binds; by default it is the chain's final stage, as for a
+        normal read.
         """
-        node = query.query_graph.resolve_alias(alias)
+        node = query.query_graph.resolve_alias(measurement)
         if node is None or node not in query.query_graph.data_nodes:
-            raise ValueError(f"{alias!r} must name a measurement alias")
+            raise ValueError(f"{measurement!r} must name a measurement alias")
         group_node = query.query_graph.resolve_alias(group) if group else None
         if group and group_node is None:
             raise ValueError(f"unknown group alias {group!r}")
         return cls(
             query.to_sparql(),
-            role=alias,
             stream=f"ext{node}",
             group=f"v{group_node}" if group_node is not None else f"ext{node}",
             unit=f"extunit{node}",
@@ -156,7 +160,7 @@ class Selection:
 
 
 def _selection_dict(selection):
-    # Omitted when unset, so declarations saved before as-of roles keep their form.
+    # Omitted when unset, so declarations saved before as-of inputs keep their form.
     data = asdict(selection)
     for key in ("as_of", "view"):
         if data[key] is None:
@@ -204,15 +208,46 @@ class Output:
     on_group: bool = False
     # "text" for a port whose function emits text; reads default to it.
     value_kind: str = "numeric"
-    # Input role whose measurement identity this complete output continues.
-    replaces: str | None = None
+
+
+@dataclass(frozen=True)
+class ReplacementOutput:
+    """An output that continues one input's measurement as its authoritative stage.
+
+    ``of`` names the input it replaces; an app with one input may leave it
+    out. The quantity kind and value kind come from that input, and so does
+    the unit unless ``unit`` names a compatible one. Reads of the input's
+    measurement, and other apps that select it, follow the replacement.
+    """
+
+    of: str | None = None
+    unit: str | None = None
+    label: str | None = None
+
+
+def _input_items(inputs):
+    """``(name, selection)`` pairs for an app's inputs mapping."""
+    if not isinstance(inputs, Mapping):
+        raise ValueError("app inputs map input names to selections")
+    items = []
+    for name, value in inputs.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError("input names must be nonempty strings")
+        selections = [value] if isinstance(value, Selection) else value
+        if (not isinstance(selections, (list, tuple)) or not selections
+                or any(not isinstance(item, Selection) for item in selections)):
+            raise ValueError(f"input {name!r} must be a Selection or a list of them")
+        items.extend((name, item) for item in selections)
+    return items
 
 
 @dataclass(frozen=True)
 class App:
     name: str
-    inputs: tuple[Selection, ...] | list[Selection]
-    outputs: Mapping[str, Output]
+    # Each input's name keys one selection, or a list of selections that
+    # feed the same input. The function's frame labels rows with the name.
+    inputs: Mapping[str, Selection | Sequence[Selection]]
+    outputs: Mapping[str, Output | ReplacementOutput]
     function: PythonFunction | Native | Mapping[str, Any]
     window: Pointwise | FixedBucket | Rolling = field(default_factory=Pointwise)
 
@@ -228,25 +263,39 @@ class App:
         if not isinstance(self.window, (Pointwise, FixedBucket, Rolling)):
             raise ValueError("only pointwise, fixed-bucket and rolling windows are supported")
         function = _function_dict(self.function)
+        items = _input_items(self.inputs)
         if any(not key for key in self.outputs):
             raise ValueError("output port names must be nonempty")
-        if any(type(spec.on_group) is not bool for spec in self.outputs.values()):
-            raise ValueError("output on_group must be a boolean")
-        for spec in self.outputs.values():
-            if spec.replaces is not None and (not isinstance(spec.replaces, str) or not spec.replaces):
-                raise ValueError("output replaces must name an input role")
-            if spec.replaces is not None and spec.replaces not in {s.role for s in self.inputs}:
-                raise ValueError(f"unknown replacement input role {spec.replaces!r}")
-            if spec.value_kind != normalize_value_kind(spec.value_kind):
-                raise ValueError("output value_kind must be 'numeric' or 'text'")
+        outputs = {}
+        for port, spec in self.outputs.items():
+            if isinstance(spec, ReplacementOutput):
+                of = spec.of
+                if of is None:
+                    if len(self.inputs) != 1:
+                        raise ValueError(
+                            f"replacement output {port!r} must name the input it replaces "
+                            "with of=, because the app has several inputs"
+                        )
+                    of = next(iter(self.inputs))
+                if of not in self.inputs:
+                    raise ValueError(f"replacement output {port!r} names unknown input {of!r}")
+                outputs[port] = {"replaces": of, "unit": spec.unit, "label": spec.label}
+            elif isinstance(spec, Output):
+                if type(spec.on_group) is not bool:
+                    raise ValueError("output on_group must be a boolean")
+                if spec.value_kind != normalize_value_kind(spec.value_kind):
+                    raise ValueError("output value_kind must be 'numeric' or 'text'")
+                outputs[port] = asdict(spec)
+            else:
+                raise ValueError(f"output {port!r} must be an Output or a ReplacementOutput")
         ages = {}
-        for selection in self.inputs:
+        for name, selection in items:
             if selection.as_of is not None and (
                 type(selection.as_of) is not int or selection.as_of <= 0
             ):
                 raise ValueError("as_of must be a positive number of nanoseconds")
-            if ages.setdefault(selection.role, selection.as_of) != selection.as_of:
-                raise ValueError(f"input {selection.role!r} is read as of different ages")
+            if ages.setdefault(name, selection.as_of) != selection.as_of:
+                raise ValueError(f"input {name!r} is read as of different ages")
             if selection.view is not None and selection.view not in replacements.VIEWS:
                 raise ValueError("selection view must be 'current', 'raw', or 'stored'")
             for values in (selection.parameters or {}).values():
@@ -262,14 +311,13 @@ class App:
                     raise ValueError("parameter values must be JSON") from error
         if function.get("kind") == "python":
             sizes = [value for key, value in self.window.to_dict().items() if key.endswith("_ns")]
-            sizes.extend(selection.as_of for selection in self.inputs if selection.as_of is not None)
+            sizes.extend(selection.as_of for _, selection in items if selection.as_of is not None)
             if any(type(value) is int and value % 1000 for value in sizes):
                 raise ValueError("Python soft sensor windows and as-of ages must have microsecond precision")
         return dict(
             name=self.name,
-            inputs=[_selection_dict(item) for item in self.inputs],
-            outputs={key: {k: v for k, v in asdict(value).items() if k != "replaces" or v is not None}
-                     for key, value in self.outputs.items()},
+            inputs=[{"input": name, **_selection_dict(selection)} for name, selection in items],
+            outputs=outputs,
             function=function,
             window=self.window.to_dict(),
         )
@@ -293,15 +341,95 @@ class App:
             )
         else:
             raise ValueError("only pointwise, fixed-bucket and rolling windows are supported")
+        inputs = {}
+        for item in data["inputs"]:
+            item = _upgrade_input(item)
+            name = item.pop("input")
+            inputs.setdefault(name, []).append(Selection(**item))
         app = cls(
             data["name"],
-            tuple(Selection(**item) for item in data["inputs"]),
-            {key: Output(**item) for key, item in data["outputs"].items()},
+            {name: items[0] if len(items) == 1 else items for name, items in inputs.items()},
+            {key: _output_from_dict(item) for key, item in data["outputs"].items()},
             data["function"],
             value,
         )
         app.to_dict()
         return app
+
+    def input_items(self):
+        """``(name, selection)`` pairs, one per selection."""
+        return _input_items(self.inputs)
+
+
+def _upgrade_input(item):
+    """A stored input selection, with the key earlier versions called ``role``."""
+    item = dict(item)
+    if "role" in item:
+        if "input" in item:
+            raise ValueError("an input selection names its input once")
+        item["input"] = item.pop("role")
+    return item
+
+
+def _upgrade_declaration(declaration):
+    return {**declaration, "inputs": [_upgrade_input(item) for item in declaration["inputs"]]}
+
+
+def _upgrade_state(state):
+    """Saved state with every declaration in the current form; the plan is unchanged."""
+    if not isinstance(state, dict):
+        return state
+    state = dict(state)
+    if "apps" in state:
+        state["apps"] = {name: _upgrade_declaration(item) for name, item in state["apps"].items()}
+    if state.get("previous") is not None:
+        state["previous"] = _upgrade_state(state["previous"])
+    return state
+
+
+def _output_from_dict(item):
+    if "replaces" in item:
+        # Earlier versions also stored the replacement's quantity and value
+        # kinds; both now come from its input.
+        return ReplacementOutput(of=item["replaces"], unit=item.get("unit"), label=item.get("label"))
+    return Output(**item)
+
+
+def _output_metadata(rdf, name, group, port, reference, spec, resolved=None):
+    """Graph metadata for one output stream and its point.
+
+    A replacement's point carries the unit, quantity kind and value kind it
+    inherited, and is not attached to its group: reads and selections of
+    the measurement it replaces already reach it.
+    """
+    if isinstance(spec, ReplacementOutput):
+        resolved = resolved or {}
+        unit, quantity_kind = resolved.get("unit"), resolved.get("quantity_kind")
+        value_kind, on_group = resolved.get("value_kind", "numeric"), False
+    else:
+        unit, quantity_kind = spec.unit, spec.quantity_kind
+        value_kind, on_group = spec.value_kind, spec.on_group
+    ref, point = URIRef(reference), URIRef(f"{reference}__point")
+    rdf.add((ref, ACQUIRIUM_SOURCE_ID, Literal(f"derived:{name}")))
+    rdf.add((ref, ACQUIRIUM_REF_NAME, Literal(_json([group, port]))))
+    rdf.add((ref, ACQUIRIUM_VALUE_KIND, Literal(value_kind)))
+    rdf.add((point, RDF.type, VIRTUAL_POINT))
+    rdf.add((point, RDF.type, S223.Property))
+    if value_kind == "numeric" and unit and quantity_kind:
+        rdf.add((point, RDF.type, S223.QuantifiableProperty))
+    rdf.add((point, HAS_EXTERNAL_REFERENCE, ref))
+    rdf.add((point, PRODUCED_BY, Literal(name)))
+    rdf.add((point, OUTPUT_PORT, Literal(port)))
+    rdf.add((point, OUTPUT_GROUP, URIRef(group) if looks_like_uri(group) else Literal(group)))
+    if on_group:
+        if not looks_like_uri(group):
+            raise ValueError("output on_group requires a group URI")
+        rdf.add((URIRef(group), S223.hasProperty, point))
+    rdf.add((point, RDFS.label, Literal(spec.label or f"{name} {port}")))
+    if unit:
+        rdf.add((point, HAS_UNIT, URIRef(unit)))
+    if quantity_kind:
+        rdf.add((point, HAS_QUANTITY_KIND, URIRef(quantity_kind)))
 
 
 def _warnings(report):
@@ -360,10 +488,10 @@ class Apps:
         self.path = Path(directory) / "apps.json"
         self._revision = -1
         self.error = None
-        # Streams matched and groups skipped per app and input role by the
+        # Streams matched and groups skipped per app and input by the
         # installed compilation.
         self.report = {}
-        self.state = (
+        self.state = _upgrade_state(
             json.loads(self.path.read_text())
             if self.path.exists()
             else {"apps": {}, "plan": None}
@@ -467,22 +595,24 @@ class Apps:
                 upstream, port = item.get("upstream"), item.get("upstream_port")
                 if upstream and port not in declarations.get(upstream, {}).get("outputs", {}):
                     raise ValueError(
-                        f"app {name!r} input {item['role']!r} needs output {port!r} "
+                        f"app {name!r} input {item['input']!r} needs output {port!r} "
                         f"of app {upstream!r}, which is not deployed"
                     )
-        operators, metadata, matches, skipped = [], {}, {}, {}
+        operators, matches, skipped, ports = [], {}, {}, []
+        # The selection behind each bound input, so a rebound input can
+        # describe the stream it ends up reading.
+        selected = {}
         for name, declaration in sorted(declarations.items()):
             app = App.from_dict(declaration)
-            as_of = {s.role: s.as_of for s in app.inputs if s.as_of is not None}
+            items = app.input_items()
+            as_of = {role: s.as_of for role, s in items if s.as_of is not None}
             groups, parameters = {}, {}
             matches[name], skipped[name] = {}, {}
-            for selection in app.inputs:
-                if not selection.role:
-                    raise ValueError("input roles must be nonempty")
+            for role, selection in items:
                 conversion = (
                     self._conversions(selection.target_unit) if selection.target_unit else None
                 )
-                matches[name].setdefault(selection.role, 0)
+                matches[name].setdefault(role, 0)
                 result = self.graph.sparql_query(selection.query, wait_for_fresh=True)
                 columns = result.get("columns", [])
                 if selection.stream not in columns or (
@@ -515,7 +645,7 @@ class Apps:
                     if selection.parameters is not None:
                         values = selection.parameters.get(str(group))
                         if values is None:
-                            skipped[name].setdefault(selection.role, set()).add(str(group))
+                            skipped[name].setdefault(role, set()).add(str(group))
                             continue
                         merged = parameters.setdefault(str(group), {})
                         for key, value in values.items():
@@ -533,10 +663,10 @@ class Apps:
                             raise ValueError("input unit is required for conversion")
                         context.update(conversion(str(unit)))
                     groups.setdefault(str(group), []).append(
-                        Input(str(stream), selection.role, context=context)
+                        Input(str(stream), role, context=context)
                     )
-                    matches[name][selection.role] += 1
-            rdf = Graph()
+                    selected.setdefault((_operator_id(name, str(group)), role, str(stream)), selection)
+                    matches[name][role] += 1
             function_template = self._group_function(declaration["function"])
             for group, inputs in sorted(groups.items()):
                 group_parameters = dict(parameters.get(group, {}))
@@ -564,45 +694,31 @@ class Apps:
                     as_of=as_of,
                 )
                 operators.append(operator.to_dict())
-                for port, reference in outputs.items():
-                    spec = app.outputs[port]
-                    ref, point = URIRef(reference), URIRef(f"{reference}__point")
-                    rdf.add((ref, ACQUIRIUM_SOURCE_ID, Literal(f"derived:{name}")))
-                    rdf.add((ref, ACQUIRIUM_REF_NAME, Literal(_json([group, port]))))
-                    rdf.add((ref, ACQUIRIUM_VALUE_KIND, Literal(spec.value_kind)))
-                    rdf.add((point, RDF.type, VIRTUAL_POINT))
-                    rdf.add((point, RDF.type, S223.Property))
-                    if spec.value_kind == "numeric" and spec.unit and spec.quantity_kind:
-                        rdf.add((point, RDF.type, S223.QuantifiableProperty))
-                    rdf.add((point, HAS_EXTERNAL_REFERENCE, ref))
-                    rdf.add((point, PRODUCED_BY, Literal(name)))
-                    rdf.add((point, OUTPUT_PORT, Literal(port)))
-                    rdf.add(
-                        (
-                            point,
-                            OUTPUT_GROUP,
-                            URIRef(group) if looks_like_uri(group) else Literal(group),
-                        )
-                    )
-                    if spec.on_group:
-                        if not looks_like_uri(group):
-                            raise ValueError("output on_group requires a group URI")
-                        rdf.add((URIRef(group), S223.hasProperty, point))
-                    rdf.add(
-                        (point, RDFS.label, Literal(spec.label or f"{name} {port}"))
-                    )
-                    if spec.unit:
-                        rdf.add((point, HAS_UNIT, URIRef(spec.unit)))
-                    if spec.quantity_kind:
-                        rdf.add((point, HAS_QUANTITY_KIND, URIRef(spec.quantity_kind)))
-            metadata[name] = rdf
+                ports.extend((name, group, port, reference, app.outputs[port])
+                             for port, reference in outputs.items())
         if any(spec.get("replaces") is not None for app in declarations.values() for spec in app["outputs"].values()):
             streams = self._replacement_metadata(operators, declarations)
         else:
             streams = {}
-        replacements.compile(operators, declarations, streams=streams, previous_plan=self.state.get("plan"))
-        # A role that follows replacements counts each identity once, however
-        # many of its stages the query matched.
+        def rebind(operator, item, target, metadata):
+            # Units and conversion factors describe the values the input reads.
+            selection = selected[(operator["id"], item["role"], item["stream"])]
+            unit = metadata.get("unit")
+            context = dict(item["context"])
+            if unit:
+                for column in (selection.unit, selection.point_unit):
+                    if column and column in context:
+                        context[column] = unit
+                if selection.target_unit:
+                    context.update(self._conversions(selection.target_unit)(unit))
+            return dict(item, stream=target, context=context)
+
+        resolved = replacements.compile(
+            operators, declarations, streams=streams, previous_plan=self.state.get("plan"),
+            compatible=self._compatible_units, rebind=rebind,
+        )
+        # An input that follows replacements counts each identity once,
+        # however many of its stages the query matched.
         for (name, role), view in replacements.input_views(declarations).items():
             if view != "stored":
                 matches[name][role] = sum(
@@ -610,6 +726,9 @@ class Apps:
                     for operator in operators if app_of(operator["id"]) == name
                     for item in operator["inputs"]
                 )
+        metadata = {name: Graph() for name in declarations}
+        for name, group, port, reference, spec in ports:
+            _output_metadata(metadata[name], name, group, port, reference, spec, resolved.get(reference))
         report = {
             name: {
                 "matches": matches[name],
@@ -624,14 +743,23 @@ class Apps:
             operator["version"] = _digest(definition)
         return operators, metadata, report
 
+    def _compatible_units(self, before, after):
+        """Whether a replacement may express its input's values in another unit."""
+        if self.converter is None:
+            raise ValueError("changing a replacement's unit needs unit conversion support")
+        converter = self.converter()
+        return converter.check_compatible(converter.resolve_unit(before), converter.resolve_unit(after))
+
     def _replacement_metadata(self, operators, declarations):
-        # Candidate outputs need no graph lookup. Read missing source metadata
+        # Candidate ordinary outputs need no graph lookup; replacement outputs
+        # inherit theirs in replacements.compile. Read missing source metadata
         # in one batch, without inspecting unrelated registrations.
         streams, sources = {}, set()
         for operator in operators:
             specs = declarations[app_of(operator["id"])]["outputs"]
             for port, ref in operator["outputs"].items():
-                streams[ref] = specs[port]
+                if specs[port].get("replaces") is None:
+                    streams[ref] = specs[port]
             roles = {spec["replaces"] for spec in specs.values() if spec.get("replaces") is not None}
             sources.update(item["stream"] for item in operator["inputs"] if item["role"] in roles)
         missing = sources - streams.keys()

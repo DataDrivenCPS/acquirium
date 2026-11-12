@@ -33,7 +33,7 @@ def manager(tmp_path_factory):
 def test_output_property_types_and_discovery(manager, fields, quantitative):
     declaration = App(
         "property-types",
-        [Selection("SELECT ?stream ?group WHERE { BIND(<urn:input> AS ?stream) BIND(<urn:plant> AS ?group) }")],
+        {"input": Selection("SELECT ?stream ?group WHERE { BIND(<urn:input> AS ?stream) BIND(<urn:plant> AS ?group) }")},
         {"result": Output(on_group=True, **fields)},
         {"kind": "mean", "port": "result", "per_stream": False},
     )

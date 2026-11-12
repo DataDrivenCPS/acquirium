@@ -18,7 +18,7 @@ def fahrenheit_to_celsius(client, parameters):
     )
     return aq.App(
         name="fahrenheit-to-celsius",
-        inputs=[aq.Selection.from_query(query, alias="temperature")],
+        inputs={"temperature": aq.Selection.from_query(query, measurement="temperature")},
         outputs={"celsius": aq.Output(unit="http://qudt.org/vocab/unit/DEG_C")},
         function=aq.PythonFunction.from_file(Path(__file__), "convert"),
         window=aq.Pointwise(),

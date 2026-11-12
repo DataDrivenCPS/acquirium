@@ -50,8 +50,8 @@ def permeability(frame, context):
     from each window's mean flux and TMP. ``forgetting`` below 1 discounts
     older windows so the estimate follows fouling; the estimate's variance
     is state too, so it is written beside it."""
-    flux = frame.filter(pl.col("role") == "flux")["value"].drop_nulls()
-    tmp = frame.filter(pl.col("role") == "tmp")["value"].drop_nulls()
+    flux = frame.filter(pl.col("input") == "flux")["value"].drop_nulls()
+    tmp = frame.filter(pl.col("input") == "tmp")["value"].drop_nulls()
     if flux.is_empty() or tmp.is_empty() or tmp.mean() <= 0:
         return {"permeability": empty(), "variance": empty()}
     parameters = context["parameters"]
@@ -68,9 +68,9 @@ def permeability(frame, context):
 def residual(frame, context):
     """Expected flux from the latest permeability estimate, read as of each
     reading, and the measured flux's departure from it. Not sequential."""
-    flux = frame.filter(pl.col("role") == "flux")["value"].drop_nulls()
-    tmp = frame.filter(pl.col("role") == "tmp")["value"].drop_nulls()
-    estimate = frame.filter(pl.col("role") == "permeability")["value"].drop_nulls()
+    flux = frame.filter(pl.col("input") == "flux")["value"].drop_nulls()
+    tmp = frame.filter(pl.col("input") == "tmp")["value"].drop_nulls()
+    estimate = frame.filter(pl.col("input") == "permeability")["value"].drop_nulls()
     if flux.is_empty() or tmp.is_empty() or estimate.is_empty():
         return {"expected": empty(), "residual": empty()}
     expected = estimate[-1] * tmp.mean()

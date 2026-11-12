@@ -50,8 +50,8 @@ def declarations(*, threshold=27.0, module=None):
     return [
         aq.App(
             name=MEAN,
-            inputs=[
-                aq.Selection(
+            inputs={
+                "temperature": aq.Selection(
                     PREFIXES
                     + f"""
                     SELECT ?stream ?group ?unit WHERE {{
@@ -60,18 +60,17 @@ def declarations(*, threshold=27.0, module=None):
                         ?stream acq:sourceId "{SOURCE}" .
                     }}
                     """,
-                    role="temperature",
                     target_unit=UNIT,
                 )
-            ],
+            },
             outputs={"mean": output},
             function=aq.PythonFunction.from_file(module, "tank_mean"),
             window=aq.FixedBucket(BUCKET_NS),
         ),
         aq.App(
             name=HOTTEST,
-            inputs=[
-                aq.Selection(
+            inputs={
+                "mean": aq.Selection(
                     PREFIXES
                     + f"""
                     SELECT ?stream ?group WHERE {{
@@ -79,16 +78,15 @@ def declarations(*, threshold=27.0, module=None):
                         ?point acq:producedBy "{MEAN}" ; ref:hasExternalReference ?stream .
                     }}
                     """,
-                    role="mean",
                 )
-            ],
+            },
             outputs={"hottest": output},
             function=aq.PythonFunction.from_file(module, "hottest_tank"),
         ),
         aq.App(
             name=ALARM,
-            inputs=[
-                aq.Selection(
+            inputs={
+                "hottest": aq.Selection(
                     PREFIXES
                     + f"""
                     SELECT ?stream ?group WHERE {{
@@ -96,10 +94,9 @@ def declarations(*, threshold=27.0, module=None):
                         ?point acq:producedBy "{HOTTEST}" ; ref:hasExternalReference ?stream .
                     }}
                     """,
-                    role="hottest",
                     parameters={PLANT: {"threshold": float(threshold)}},
                 )
-            ],
+            },
             outputs={"alarm": output},
             # Passes the hottest temperature through while it is above the threshold.
             function=aq.Native.threshold("alarm", above=aq.Parameter("threshold")),

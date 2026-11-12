@@ -3,6 +3,7 @@ from copy import deepcopy
 from dataclasses import replace
 from contextlib import nullcontext
 from io import BytesIO
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 import polars as pl
@@ -21,50 +22,96 @@ TURBIDITY = "http://qudt.org/vocab/quantitykind/Turbidity"
 MINUTE = 60_000_000_000
 
 
-def selection(ref, *, role="raw", group="urn:replacement:tank", parameters=None, as_of=None):
+DEG_C = "http://qudt.org/vocab/unit/DEG_C"
+DEG_F = "http://qudt.org/vocab/unit/DEG_F"
+
+
+def selection(ref, *, group="urn:replacement:tank", parameters=None, as_of=None, unit=None, **kwargs):
+    bind = f" BIND(<{unit}> AS ?unit)" if unit else ""
     return aq.Selection(
-        f"SELECT ?stream ?group WHERE {{ BIND(<{ref}> AS ?stream) BIND(<{group}> AS ?group) }}",
-        role=role, parameters={group: parameters} if parameters else None, as_of=as_of,
+        f"SELECT ?stream ?group ?unit WHERE {{ BIND(<{ref}> AS ?stream) BIND(<{group}> AS ?group){bind} }}",
+        parameters={group: parameters} if parameters else None, as_of=as_of, **kwargs,
     )
 
 
 def declaration(name, ref, function, **kwargs):
-    return aq.App(name, [selection(ref)],
-                  {"out": aq.Output(unit=NTU, quantity_kind=TURBIDITY, replaces="raw")},
-                  function, **kwargs)
+    return aq.App(name, {"raw": selection(ref)}, {"out": aq.ReplacementOutput()}, function, **kwargs)
 
 
 def test_declaration_roundtrip_and_reserved_parameters():
     app = declaration("clean", "urn:raw", aq.Native.mean("out"))
+    assert app.to_dict()["outputs"] == {"out": {"replaces": "raw", "unit": None, "label": None}}
     assert aq.App.from_dict(app.to_dict()).to_dict() == app.to_dict()
     ordinary = replace(app, outputs={"out": aq.Output()})
     assert "replaces" not in ordinary.to_dict()["outputs"]["out"]
-    for role in ("", "missing", 1):
-        with pytest.raises(ValueError, match="role"):
-            replace(app, outputs={"out": aq.Output(replaces=role)}).to_dict()
+    with pytest.raises(ValueError, match="unknown input 'missing'"):
+        replace(app, outputs={"out": aq.ReplacementOutput(of="missing")}).to_dict()
+    # With several inputs, a replacement must say which one it continues.
+    two = replace(app, inputs={**app.inputs, "reference": selection("urn:other")})
+    with pytest.raises(ValueError, match="must name the input it replaces"):
+        two.to_dict()
+    assert replace(two, outputs={"out": aq.ReplacementOutput(of="raw")}).to_dict()["outputs"]["out"]["replaces"] == "raw"
     with pytest.raises(ValueError, match="reserved"):
-        replace(app, inputs=[selection("urn:raw", parameters={"__acquirium": {}})]).to_dict()
+        replace(app, inputs={"raw": selection("urn:raw", parameters={"__acquirium": {}})}).to_dict()
+
+
+@pytest.mark.parametrize("inputs", [["raw"], {"": "raw"}, {"raw": []}, {"raw": ["query"]}])
+def test_inputs_map_names_to_selections(inputs):
+    if isinstance(inputs, dict):
+        inputs = {name: [selection("urn:raw") if item == "raw" else item for item in value]
+                  if isinstance(value, list) else selection("urn:raw") for name, value in inputs.items()}
+    with pytest.raises(ValueError, match="input"):
+        aq.App("bad", inputs, {"out": aq.Output()}, aq.Native.mean("out")).to_dict()
+
+
+def test_several_selections_feed_one_input_and_roundtrip():
+    app = aq.App("pair", {"raw": [selection("urn:a"), selection("urn:b")], "gain": selection("urn:g")},
+                 {"out": aq.Output()}, aq.Native.mean("out"))
+    data = app.to_dict()
+    assert [item["input"] for item in data["inputs"]] == ["raw", "raw", "gain"]
+    loaded = aq.App.from_dict(data)
+    assert isinstance(loaded.inputs["raw"], list) and isinstance(loaded.inputs["gain"], aq.Selection)
+    assert loaded.to_dict() == data
+
+
+def test_saved_declarations_with_roles_and_replaces_load():
+    from acquirium.apps import _upgrade_state
+
+    app = declaration("clean", "urn:raw", aq.Native.mean("out"))
+    data = app.to_dict()
+    legacy = dict(data, inputs=[{("role" if key == "input" else key): value
+                                 for key, value in item.items()} for item in data["inputs"]],
+                  outputs={"out": {"unit": NTU, "quantity_kind": TURBIDITY, "label": "Clean",
+                                   "on_group": True, "value_kind": "numeric", "replaces": "raw"}})
+    loaded = aq.App.from_dict(legacy)
+    assert loaded.inputs["raw"] == app.inputs["raw"]
+    assert loaded.outputs == {"out": aq.ReplacementOutput(of="raw", unit=NTU, label="Clean")}
+    state = _upgrade_state({"apps": {"clean": legacy}, "plan": None,
+                            "previous": {"apps": {"clean": deepcopy(legacy)}, "plan": None}})
+    for saved in (state["apps"]["clean"], state["previous"]["apps"]["clean"]):
+        assert [item["input"] for item in saved["inputs"]] == ["raw"]
+        assert "role" not in saved["inputs"][0]
 
 
 def test_selection_views_roundtrip_and_default_by_selection_kind():
     app = declaration("clean", "urn:raw", aq.Native.mean("out"))
     assert "view" not in app.to_dict()["inputs"][0]
-    raw = replace(app, inputs=[replace(app.inputs[0], view="raw")])
-    assert aq.App.from_dict(raw.to_dict()).inputs[0].view == "raw"
+    raw = replace(app, inputs={"raw": replace(app.inputs["raw"], view="raw")})
+    assert aq.App.from_dict(raw.to_dict()).inputs["raw"].view == "raw"
     with pytest.raises(ValueError, match="view"):
-        replace(app, inputs=[replace(app.inputs[0], view="typo")]).to_dict()
-    reader = aq.App("reader", [selection("urn:raw", role="turbidity")], {"out": aq.Output()},
+        replace(app, inputs={"raw": replace(app.inputs["raw"], view="typo")}).to_dict()
+    reader = aq.App("reader", {"turbidity": selection("urn:raw")}, {"out": aq.Output()},
                     aq.Native.mean("out"))
-    stage = aq.Selection.outputs_of(app, "out", role="stage")
-    both = replace(reader, inputs=[*reader.inputs, stage])
+    both = replace(reader, inputs={**reader.inputs, "stage": aq.Selection.outputs_of(app, "out")})
     declarations = {"clean": app.to_dict(), "reader": both.to_dict()}
     assert replacements.input_views(declarations) == {
         ("clean", "raw"): "stored", ("reader", "turbidity"): "current", ("reader", "stage"): "stored",
     }
-    claimed = replace(app, inputs=[replace(app.inputs[0], view="current")])
+    claimed = replace(app, inputs={"raw": replace(app.inputs["raw"], view="current")})
     with pytest.raises(ValueError, match="binds the stream it selects"):
         replacements.input_views({"clean": claimed.to_dict()})
-    mixed = replace(reader, inputs=[*reader.inputs, replace(reader.inputs[0], view="raw")])
+    mixed = replace(reader, inputs={"turbidity": [
+        reader.inputs["turbidity"], replace(reader.inputs["turbidity"], view="raw")]})
     with pytest.raises(ValueError, match="different views"):
         replacements.input_views({"reader": mixed.to_dict()})
 
@@ -245,7 +292,7 @@ def reader(*refs, view=None, group="urn:replacement:tank"):
     """An ordinary app whose one query matches several stages of one identity."""
     rows = " ".join(f"<{ref}>" for ref in refs)
     query = f"SELECT ?stream ?group WHERE {{ VALUES ?stream {{ {rows} }} BIND(<{group}> AS ?group) }}"
-    return aq.App("reader", [aq.Selection(query, role="turbidity", view=view)],
+    return aq.App("reader", {"turbidity": aq.Selection(query, view=view)},
                   {"out": aq.Output()}, aq.Native.mean("out"))
 
 
@@ -296,12 +343,11 @@ def test_consumers_follow_the_chain_as_stages_are_added_and_removed(system):
 def test_a_replacing_app_cannot_follow_its_own_output(system):
     manager, _, _, module, _, _, ref = system
     first = declaration("first", ref, aq.PythonFunction.from_file(module, "double"))
-    follower = replace(first, inputs=[*first.inputs, selection(ref, role="reference")])
+    follower = replace(first, inputs={**first.inputs, "reference": selection(ref)},
+                       outputs={"out": aq.ReplacementOutput(of="raw")})
     with pytest.raises(ValueError, match="follows its own output"):
         manager.deploy_app(follower)
-    looking_back = replace(first, inputs=[*first.inputs, selection(ref, role="reference")])
-    looking_back = replace(looking_back, inputs=[
-        looking_back.inputs[0], replace(looking_back.inputs[1], view="raw")])
+    looking_back = replace(follower, inputs={**first.inputs, "reference": selection(ref, view="raw")})
     manager.deploy_app(looking_back)
 
 
@@ -312,26 +358,73 @@ def test_competing_claims_metadata_and_group_cardinality(system):
     before = manager.core.engine.snapshot().plan
     with pytest.raises(ValueError, match="competing replacements"):
         manager.deploy_app(replace(app, name="sibling"))
-    for field, value in (("unit", None), ("quantity_kind", None), ("value_kind", "text")):
-        spec = replace(app.outputs["out"], **{field: value})
-        with pytest.raises(ValueError, match=f"preserve {field}"):
-            manager.deploy_app(replace(app, outputs={"out": spec}))
+    with pytest.raises(ValueError, match="not compatible with its input's unit"):
+        manager.deploy_app(replace(app, outputs={"out": aq.ReplacementOutput(unit=DEG_C)}))
     with pytest.raises(ValueError, match="drive execution"):
-        manager.deploy_app(replace(app, inputs=[selection(ref, as_of=MINUTE)]))
+        manager.deploy_app(replace(app, inputs={"raw": selection(ref, as_of=MINUTE)}))
     with pytest.raises(ValueError, match="exactly one"):
-        manager.deploy_app(replace(app, inputs=[selection(ref), selection("urn:another")]))
+        manager.deploy_app(replace(app, inputs={"raw": [selection(ref), selection("urn:another")]}))
     assert manager.core.engine.snapshot().plan == before
     # Repeated identical query rows still identify one physical input.
-    manager.deploy_app(replace(app, inputs=[selection(ref), selection(ref)]))
+    manager.deploy_app(replace(app, inputs={"raw": [selection(ref), selection(ref)]}))
     from rdflib import URIRef
-    manager.deploy_app(replace(app, outputs={"out": replace(app.outputs["out"], unit=URIRef(NTU))}))
+    manager.deploy_app(replace(app, outputs={"out": aq.ReplacementOutput(unit=URIRef(NTU))}))
+
+
+def test_replacements_inherit_metadata_and_may_change_to_a_compatible_unit(system, tmp_path):
+    from acquirium.internals.internals_namespaces import HAS_QUANTITY_KIND, HAS_UNIT
+    from rdflib import URIRef
+
+    manager, _, client, _, source, _, _ = system
+    point = f"urn:replacement:{source}:temperature"
+    client.register_streams([dict(source_id=source, ref_name="temperature", point_uri=point,
+                                  unit=DEG_F, quantity_kind="http://qudt.org/vocab/quantitykind/Temperature")])
+    ref = str(compute_ref_uri(source, "temperature"))
+    manager.core.wait(manager.insert_timeseries(source_id=source, ref_name="temperature",
+                                               rows=[(0, 68.), (1_000, 212.)], request_id="temperature"))
+    module = tmp_path / "celsius.py"
+    module.write_text(
+        "import polars as pl\n"
+        "def celsius(frame: pl.DataFrame, context):\n"
+        "    return {'out': frame.select('time', (pl.col('value') - 32) * 5 / 9)}\n"
+    )
+    to_celsius = aq.App("celsius", {"raw": selection(ref)}, {"out": aq.ReplacementOutput(unit=DEG_C)},
+                        aq.PythonFunction.from_file(module, "celsius"))
+    manager.deploy_app(to_celsius)
+    clean = output_reference("celsius", "urn:replacement:tank", "out")
+    graph = manager.graph_store.data_graph("derived:celsius")
+    assert (URIRef(f"{clean}__point"), HAS_UNIT, URIRef(DEG_C)) in graph
+    assert (URIRef(f"{clean}__point"), HAS_QUANTITY_KIND,
+            URIRef("http://qudt.org/vocab/quantitykind/Temperature")) in graph
+    # Without on_group, the replacement is not a property of the group.
+    assert not list(graph.triples((URIRef("urn:replacement:tank"), None, None)))
+    # A normal read returns the final stage, in its unit.
+    assert values(client, point) == pytest.approx([20., 100.])
+    data = client.query().measurement(alias="t", uri=point).data()
+    assert data.bindings[0].property_unit == DEG_C
+    assert data.bindings[0].ref_unit == DEG_C
+    # A consumer that selected the Fahrenheit stream converts from the stage it binds.
+    normalize = aq.PythonFunction.from_file(
+        Path(__file__).resolve().parents[2] / "scripts/apps/temperature_normalization.py", "normalize")
+    consumer = aq.App("fahrenheit", {"temperature": selection(ref, unit=DEG_F, target_unit=DEG_F)},
+                      {"temperature": aq.Output(unit=DEG_F)}, normalize)
+    manager.deploy_app(consumer)
+    assert bound(manager, "fahrenheit") == [clean]
+    assert values(client, output_reference("fahrenheit", "urn:replacement:tank", "temperature")) == (
+        pytest.approx([68., 212.]))
+    # A later stage inherits the changed unit, and may not change it to an incompatible one.
+    second = aq.App("second", {"raw": selection(clean)}, {"out": aq.ReplacementOutput()},
+                    aq.PythonFunction.from_file(module.parent / "celsius.py", "celsius"))
+    with pytest.raises(ValueError, match="not compatible"):
+        manager.deploy_app(replace(second, outputs={"out": aq.ReplacementOutput(unit=NTU)}))
+    assert replacements.units(manager.core.engine.snapshot().plan) == {clean: DEG_C}
 
 
 def test_failed_new_head_stale_values_and_successful_empty_result(system):
     manager, _, client, module, _, _, ref = system
     put(system, [(0, 1.)])
     app = declaration("clean", ref, aq.PythonFunction.from_file(module, "double"))
-    broken = replace(app, inputs=[selection(ref, parameters={"fail": True})])
+    broken = replace(app, inputs={"raw": selection(ref, parameters={"fail": True})})
     assert manager.deploy_app(broken)["status"] == "failed"
     assert values(client, ref) == []
     assert values(client, ref, view="raw") == [1.]
@@ -400,7 +493,7 @@ def test_whole_series_cleaner_corrections_and_deletions(system):
     app = declaration("minute-clean", ref, aq.PythonFunction.from_file(calculations.__file__, "clean"),
                       window=aq.Rolling(lookback_ns=2 * MINUTE, step_ns=MINUTE, lookahead_ns=2 * MINUTE))
     app = replace(app, outputs={"turbidity": replace(app.outputs["out"])},
-                  inputs=[selection(ref, parameters={"threshold": 1.0})])
+                  inputs={"raw": selection(ref, parameters={"threshold": 1.0})})
     put(system, [(0, .2), (30_000_000_000, .4), (2 * MINUTE, .6)])
     manager.deploy_app(app)
     assert values(client, ref) == pytest.approx([.3, .45, .6])
@@ -418,7 +511,7 @@ def test_removed_text_replacement_keeps_its_historical_read_kind(system):
     ref = str(compute_ref_uri(source, "state"))
     manager.core.wait(manager.insert_timeseries(source_id=source, ref_name="state",
                                                rows=[(0, "running")], request_id="state"))
-    app = aq.App("state-clean", [selection(ref)], {"out": aq.Output(replaces="raw", value_kind="text")},
+    app = aq.App("state-clean", {"raw": selection(ref)}, {"out": aq.ReplacementOutput()},
                  aq.PythonFunction.from_file(module, "passthrough"))
     manager.deploy_app(app)
     epoch = manager.core.engine.snapshot().epoch

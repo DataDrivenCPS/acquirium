@@ -48,11 +48,11 @@ def register(system, source):
 def mean(name, stream, group="urn:tank"):
     return App(
         name,
-        [
-            Selection(
+        {
+            "input": Selection(
                 f"SELECT ?stream ?group WHERE {{ BIND(<{stream}> AS ?stream) BIND(<{group}> AS ?group) }}"
             )
-        ],
+        },
         {"mean": Output()},
         {"kind": "mean", "port": "mean", "per_stream": False},
     )
@@ -64,10 +64,10 @@ def test_semantic_query_native_plan_http_ingestion_and_arrow_read(system):
     query = client.query().measurement(
         alias="temperature", unit="http://qudt.org/vocab/unit/DEG_F"
     )
-    selection = Selection.from_query(query, alias="temperature")
+    selection = Selection.from_query(query, measurement="temperature")
     declaration = App(
         "semantic-mean",
-        [selection],
+        {"temperature": selection},
         {"mean": Output()},
         {"kind": "mean", "port": "mean", "per_stream": False},
     )
@@ -110,10 +110,10 @@ def test_experiment_metadata_delivery_refreshes_app_membership(system, delivery)
     name = f"experiment-{delivery}"
     declaration = App(
         name,
-        [Selection(
+        {"input": Selection(
             f'SELECT ?stream WHERE {{ ?stream <urn:acquirium#sourceId> "experiment/{run}" . }}',
             group=None,
-        )],
+        )},
         {"mean": Output()},
         {"kind": "mean", "port": "mean", "per_stream": False},
     )
@@ -193,7 +193,7 @@ def test_metadata_move_keeps_group_outputs_stable_and_repairs_history(system):
     query = f"SELECT ?stream ?group WHERE {{ VALUES ?stream {{ <{ref}> }} ?stream <urn:group> ?group }}"
     declaration = App(
         "moving-mean",
-        [Selection(query)],
+        {"input": Selection(query)},
         {"mean": Output()},
         {"kind": "mean", "port": "mean", "per_stream": False},
     )
@@ -594,7 +594,7 @@ def test_frozen_unit_factors_execute_in_native_python_worker(system):
     )
     declaration = App(
         "units-app",
-        [selection],
+        {"temperature": selection},
         {"temperature": Output(unit="http://qudt.org/vocab/unit/DEG_C")},
         PythonFunction.from_file(module, "normalize"),
     )
@@ -648,12 +648,12 @@ def test_group_output_links_are_owned_and_removed_with_membership(system):
     )
     declaration = App(
         "attached-mean",
-        [
-            Selection(
+        {
+            "input": Selection(
                 f"SELECT ?stream ?group WHERE {{ VALUES ?stream {{ <{ref}> }} "
                 "?stream <urn:group> ?group }"
             )
-        ],
+        },
         {"mean": Output(on_group=True)},
         {"kind": "mean", "port": "mean", "per_stream": False},
     )
@@ -689,11 +689,11 @@ def test_output_attachment_rejects_literal_groups_without_changing_active_plan(s
     ref = register(system, "literal-group")
     declaration = App(
         "invalid-attachment",
-        [
-            Selection(
+        {
+            "input": Selection(
                 f'SELECT ?stream ?group WHERE {{ BIND(<{ref}> AS ?stream) BIND("tank" AS ?group) }}'
             )
-        ],
+        },
         {"mean": Output(on_group=True)},
         {"kind": "mean", "port": "mean", "per_stream": False},
     )
@@ -709,7 +709,7 @@ def test_output_attachment_requires_a_boolean():
     with pytest.raises(ValueError, match="on_group must be a boolean"):
         App(
             "invalid-output",
-            [],
+            {},
             {"value": Output(on_group="yes")},
             {"kind": "mean", "port": "value", "per_stream": False},
         ).to_dict()
@@ -724,12 +724,12 @@ def test_outputs_of_chains_by_port_combines_groups_and_guards_dependencies(syste
     ref = register(system, "ports")
     first = mean("ports-first", ref)
     with pytest.raises(ValueError, match="no output port"):
-        Selection.outputs_of(first, "missing", role="mean")
+        Selection.outputs_of(first, "missing")
 
     def downstream(name, **options):
         return App(
             name,
-            [Selection.outputs_of(first, "mean", role="mean", **options)],
+            {"mean": Selection.outputs_of(first, "mean", **options)},
             {"mean": Output()},
             {"kind": "mean", "port": "mean", "per_stream": False},
         )
@@ -769,7 +769,7 @@ def test_outputs_of_chains_by_port_combines_groups_and_guards_dependencies(syste
     empty = mean("ports-empty", "urn:ports:no-such-stream")
     empty = App(
         empty.name,
-        [Selection("SELECT ?stream ?group WHERE { FILTER(false) }")],
+        {"input": Selection("SELECT ?stream ?group WHERE { FILTER(false) }")},
         empty.outputs,
         empty.function,
     )
@@ -787,7 +787,7 @@ def test_selection_parameters_become_operator_parameters_for_listed_groups(syste
     def thresholds(name, parameters):
         return App(
             name,
-            [Selection.outputs_of(first, "mean", role="mean", parameters=parameters)],
+            {"mean": Selection.outputs_of(first, "mean", parameters=parameters)},
             {"mean": Output()},
             {"kind": "mean", "port": "mean", "per_stream": False},
         )
@@ -838,9 +838,9 @@ def test_python_functions_read_typed_parameters_and_the_window(system, tmp_path)
         "    return {'mean': emit(context, frame['value'][0] * context['parameters']['scale'])}\n"
     )
     template = mean("typed-parameters", ref)
-    selection = Selection(template.inputs[0].query, parameters={"urn:tank": {"scale": 2.5}})
+    selection = Selection(template.inputs["input"].query, parameters={"urn:tank": {"scale": 2.5}})
     declaration = App(
-        template.name, [selection], template.outputs, PythonFunction.from_file(module, "scaled")
+        template.name, {"input": selection}, template.outputs, PythonFunction.from_file(module, "scaled")
     )
     state = client.deploy_app(declaration)["app"]
     assert state["error"] is None, state
@@ -880,7 +880,7 @@ def test_python_context_includes_group_key_without_configured_parameters(system,
         group=grouping,
     )
     declaration = App(
-        source, [selection], {"identity": Output(value_kind="text")},
+        source, {"input": selection}, {"identity": Output(value_kind="text")},
         PythonFunction.from_file(module, "identify", batch=mode == "batch", sequential=mode == "sequential"),
     )
     state = client.deploy_app(declaration)["app"]
@@ -897,8 +897,8 @@ def test_group_parameter_cannot_override_selected_group(system):
     manager, _, client = system
     ref = register(system, "reserved-group-parameter")
     declaration = mean("reserved-group-parameter", ref)
-    query = declaration.inputs[0].query
-    declaration.inputs[0] = Selection(query, parameters={"urn:tank": {"group": "urn:other"}})
+    query = declaration.inputs["input"].query
+    declaration.inputs["input"] = Selection(query, parameters={"urn:tank": {"group": "urn:other"}})
     with pytest.raises(ValueError, match="parameter 'group' is reserved"):
         manager.deploy_app(declaration)
 
@@ -943,7 +943,7 @@ def test_arrow_pandas_and_polars_functions_share_a_pipeline(system, tmp_path, mo
     )
     first = App(source, mean(source, ref).inputs, {"mean": Output()},
                 aq.PythonFunction.from_file(module, "pandas_sum", batch=mode == "batch", sequential=mode == "sequential"))
-    second = App(f"{source}-double", [Selection.outputs_of(first, "mean", role="clean")],
+    second = App(f"{source}-double", {"clean": Selection.outputs_of(first, "mean")},
                  {"double": Output()}, aq.PythonFunction.from_file(module, "polars_double"))
     try:
         assert client.deploy_app(first)["app"]["status"] == "active"
@@ -980,25 +980,24 @@ def test_as_of_selections_read_the_latest_reading_of_a_slower_stream(system, tmp
         "import polars as pl\n"
         "from acquirium.functions import emit, empty\n"
         "def calibrated(frame, context):\n"
-        "    x = frame.filter(pl.col('role') == 'x')['value']\n"
-        "    gain = frame.filter(pl.col('role') == 'gain')['value']\n"
+        "    x = frame.filter(pl.col('input') == 'x')['value']\n"
+        "    gain = frame.filter(pl.col('input') == 'gain')['value']\n"
         "    if x.is_empty() or gain.is_empty():\n"
         "        return {'mean': empty()}\n"
         "    return {'mean': emit(context, x[0] * gain[0])}\n"
     )
     template = mean("as-of", reading)
-    def selected(stream, role, **options):
+    def selected(stream, **options):
         return Selection(
             f"SELECT ?stream ?group WHERE {{ BIND(<{stream}> AS ?stream) "
             "BIND(<urn:tank> AS ?group) }",
-            role=role,
             **options,
         )
 
     def declaration(age):
         return App(
             template.name,
-            [selected(reading, "x"), selected(gain, "gain", as_of=age)],
+            {"x": selected(reading), "gain": selected(gain, as_of=age)},
             template.outputs,
             PythonFunction.from_file(module, "calibrated"),
         )
@@ -1007,7 +1006,7 @@ def test_as_of_selections_read_the_latest_reading_of_a_slower_stream(system, tmp
     with pytest.raises(ValueError, match="positive"):
         declaration(0).to_dict()
     with pytest.raises(ValueError, match="different ages"):
-        App(template.name, [selected(gain, "gain", as_of=5), selected(reading, "gain")],
+        App(template.name, {"gain": [selected(gain, as_of=5), selected(reading)]},
             template.outputs, PythonFunction.from_file(module, "calibrated")).to_dict()
 
     state = client.deploy_app(declaration(3000))["app"]
@@ -1041,12 +1040,12 @@ def test_native_function_arguments_bind_to_each_groups_parameters(system):
     manager, http, client = system
     ref = register(system, "native-parameters")
     template = mean("native-parameters", ref)
-    query = template.inputs[0].query
+    query = template.inputs["input"].query
 
     def alarm(parameters):
         return App(
             template.name,
-            [Selection(query, parameters=parameters)],
+            {"input": Selection(query, parameters=parameters)},
             {"alarm": Output()},
             Native.threshold("alarm", above=Parameter("limit")),
         )
@@ -1152,8 +1151,8 @@ def test_dry_run_reports_the_work_of_a_deploy_without_making_it(system):
 
     dependent = App(
         "dry-run-dependent",
-        [Selection.outputs_of(App("dry-run-missing", [], {"mean": Output()}, Native.sum("mean")),
-                              "mean", role="mean")],
+        {"mean": Selection.outputs_of(App("dry-run-missing", {}, {"mean": Output()}, Native.sum("mean")),
+                                      "mean")},
         {"mean": Output()},
         Native.mean("mean"),
     )
@@ -1168,13 +1167,13 @@ def test_conflicting_parameters_for_one_group_are_rejected(system):
     manager, http, client = system
     ref = register(system, "conflict")
     template = mean("parameters-conflict", ref)
-    query = template.inputs[0].query
+    query = template.inputs["input"].query
     declaration = App(
         template.name,
-        [
-            Selection(query, role="a", parameters={"urn:tank": {"limit": 1}}),
-            Selection(query, role="b", parameters={"urn:tank": {"limit": 2}}),
-        ],
+        {
+            "a": Selection(query, parameters={"urn:tank": {"limit": 1}}),
+            "b": Selection(query, parameters={"urn:tank": {"limit": 2}}),
+        },
         template.outputs,
         template.function,
     )

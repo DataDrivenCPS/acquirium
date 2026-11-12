@@ -120,7 +120,7 @@ def test_semantic_python_chain_matches_full_recomputation_and_restart(tmp_path):
             output_reference(MEAN, TANK_A, "mean")
         ]
         # The query DSL also compiles the group attachment for a downstream app.
-        selection = aq.Selection.from_query(query, alias="mean", group="tank")
+        selection = aq.Selection.from_query(query, measurement="mean", group="tank")
         assert selection.group != selection.stream
 
         submit(

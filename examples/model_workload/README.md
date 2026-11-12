@@ -10,7 +10,7 @@ uv run --locked python -m examples.model_workload.run \
 ```
 
 Each phase lasts `--duration` seconds: low traffic, burst, and recovery. Every
-source request supplies four input roles to each of four independent operators.
+source request supplies four inputs to each of four independent operators.
 Each operator runs a synthetic radial-basis model whose immutable arrays load
 once per process. The default 2,048 copies use 10 MiB of model arrays per worker;
 interpreter, libraries, shared pages, and temporary inference arrays add RSS.

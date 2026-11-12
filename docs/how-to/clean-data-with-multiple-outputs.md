@@ -125,7 +125,7 @@ The reading 9.0 will be rejected and replaced with 0.5 by interpolation.
 ```python
 cleaner = aq.App(
     name="signal-cleaner",
-    inputs=[aq.Selection.from_query(raw, alias="raw")],
+    inputs={"raw": aq.Selection.from_query(raw, measurement="raw")},
     outputs={
         "thresholded": aq.Output(label="Valid signal"),
         "imputed": aq.Output(label="Gap-filled signal"),
@@ -188,7 +188,7 @@ one function. A downstream app can select the `imputed` port directly:
 ```python
 high = aq.App(
     name="cleaned-signal-high",
-    inputs=[aq.Selection.outputs_of(cleaner, "imputed", role="signal")],
+    inputs={"signal": aq.Selection.outputs_of(cleaner, "imputed")},
     outputs={"high": aq.Output()},
     function=aq.Native.threshold("high", above=0.5),
 )

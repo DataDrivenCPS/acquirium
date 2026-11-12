@@ -17,7 +17,7 @@ def normalize(frame, context):
 def temperature_normalization(client, parameters):
     query = client.query().measurement(alias="temperature", quantity_kind="temperature")
     return aq.App(name=NAME,
-        inputs=[aq.Selection.from_query(query, alias="temperature", target_unit=CELSIUS, exclude_app=NAME)],
+        inputs={"temperature": aq.Selection.from_query(query, measurement="temperature", target_unit=CELSIUS, exclude_app=NAME)},
         outputs={"temperature": aq.Output(unit=CELSIUS,
             quantity_kind="http://qudt.org/vocab/quantitykind/Temperature")},
         function=aq.PythonFunction.from_file(Path(__file__), "normalize"))

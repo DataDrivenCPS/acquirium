@@ -47,7 +47,7 @@ plant_count = aq.Output()
 
 snap = aq.App(
     name="bulk-turbidity-snap",
-    inputs=[aq.Selection(RAW_TURBIDITY, role="turbidity")],
+    inputs={"turbidity": aq.Selection(RAW_TURBIDITY)},
     outputs={"turbidity": location_turbidity},
     function=aq.PythonFunction.from_file(CALCULATIONS, "snap_to_minute"),
     window=aq.FixedBucket(MINUTE),
@@ -55,7 +55,7 @@ snap = aq.App(
 
 fill = aq.App(
     name="bulk-turbidity-fill",
-    inputs=[aq.Selection.outputs_of(snap, "turbidity", role="snapped")],
+    inputs={"snapped": aq.Selection.outputs_of(snap, "turbidity")},
     outputs={"turbidity": location_turbidity},
     function=aq.PythonFunction.from_file(CALCULATIONS, "fill_gaps"),
     window=aq.Rolling(lookback_ns=MAX_GAP, step_ns=MINUTE, lookahead_ns=MAX_GAP),
@@ -63,7 +63,7 @@ fill = aq.App(
 
 plant_turbidity = aq.App(
     name="bulk-plant-turbidity",
-    inputs=[aq.Selection.outputs_of(fill, "turbidity", role="filled", combine=True)],
+    inputs={"filled": aq.Selection.outputs_of(fill, "turbidity", combine=True)},
     outputs={
         "mean": plant_turbidity_output,
         "max": plant_turbidity_output,
@@ -74,7 +74,7 @@ plant_turbidity = aq.App(
 
 high = aq.App(
     name="bulk-turbidity-high",
-    inputs=[aq.Selection.outputs_of(fill, "turbidity", role="filled")],
+    inputs={"filled": aq.Selection.outputs_of(fill, "turbidity")},
     outputs={"alarm": location_alarm},
     function=aq.PythonFunction.from_file(CALCULATIONS, "high_turbidity"),
 )
@@ -90,17 +90,16 @@ SUSTAINED_MINUTES = {
 
 sustained = aq.App(
     name="bulk-turbidity-sustained",
-    inputs=[
-        aq.Selection.outputs_of(
+    inputs={
+        "high": aq.Selection.outputs_of(
             high,
             "alarm",
-            role="high",
             parameters={
                 location: {"sustained_minutes": minutes}
                 for location, minutes in SUSTAINED_MINUTES.items()
             },
         )
-    ],
+    },
     outputs={"alarm": location_alarm},
     function=aq.PythonFunction.from_file(CALCULATIONS, "sustained_high_turbidity"),
     window=aq.Rolling(lookback_ns=15 * MINUTE, step_ns=MINUTE),
@@ -108,7 +107,7 @@ sustained = aq.App(
 
 plant_alarms = aq.App(
     name="bulk-plant-turbidity-alarms",
-    inputs=[aq.Selection.outputs_of(sustained, "alarm", role="sustained", combine=True)],
+    inputs={"sustained": aq.Selection.outputs_of(sustained, "alarm", combine=True)},
     outputs={"locations": plant_count},
     # Sustained alarms are 0 or 1, so their sum counts the locations in alarm.
     function=aq.Native.sum("locations"),

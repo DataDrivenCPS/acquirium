@@ -112,7 +112,7 @@ summary_function = aq.PythonFunction.from_file("temperature_functions.py", "summ
 
 by_tank = aq.App(
     name="tank-temperature-summary",
-    inputs=[aq.Selection(selection_query, role="temperature", group="tank")],
+    inputs={"temperature": aq.Selection(selection_query, group="tank")},
     # Declare the two outputs that summarize() returns.
     outputs={"mean": aq.Output(), "peak": aq.Output()},
     function=summary_function,
@@ -218,7 +218,7 @@ The input frame has six columns. Four are shown below. `time` contains
 each reading's sample timestamp as a UTC datetime with microsecond precision.
 Stream URIs are abbreviated. Sort by time if the calculation requires ordered readings.
 
-| role | stream | time | value |
+| input | stream | time | value |
 | --- | --- | --- | ---: |
 | temperature | A1 | 2026-01-01 10:00:10 UTC | 20.0 |
 | temperature | A1 | 2026-01-01 10:00:40 UTC | 22.0 |
@@ -227,8 +227,9 @@ Stream URIs are abbreviated. Sort by time if the calculation requires ordered re
 
 The last row is the new reading; the other three were already stored.
 
-`stream` identifies the probe's stream. `role` contains the selection's name,
-`"temperature"`. Filter these columns to select particular inputs.
+`stream` identifies the probe's stream. `input` contains the input's name,
+`"temperature"`, the key it has in the app's `inputs`. Filter these columns to
+select particular inputs.
 
 The remaining columns are `text` and `context`.
 Here, `text` is null. Each row's
@@ -399,7 +400,7 @@ B2 ─► its call ─► B2 mean = 35
 ```python
 per_probe = aq.App(
     name="probe-means",
-    inputs=[aq.Selection(selection_query, role="temperature", group="stream")],
+    inputs={"temperature": aq.Selection(selection_query, group="stream")},
     outputs={"mean": aq.Output()},
     function=aq.Native.mean("mean"),
     window=aq.FixedBucket(MINUTE),
@@ -422,7 +423,7 @@ Repeat independently for A2, B1, and B2.
 ```python
 per_probe_summary = aq.App(
     name="probe-summaries",
-    inputs=[aq.Selection(selection_query, role="temperature", group="stream")],
+    inputs={"temperature": aq.Selection(selection_query, group="stream")},
     outputs={"mean": aq.Output(), "peak": aq.Output()},
     function=summary_function,
     window=aq.FixedBucket(MINUTE),
@@ -446,7 +447,7 @@ B2 ─┘
 ```python
 overall = aq.App(
     name="overall-temperature",
-    inputs=[aq.Selection(selection_query, role="temperature", group=None)],
+    inputs={"temperature": aq.Selection(selection_query, group=None)},
     outputs={"mean": aq.Output()},
     function=aq.Native.mean("mean"),
     window=aq.FixedBucket(MINUTE),
@@ -490,9 +491,9 @@ temperatures = client.query().entity("urn:nawi-water-ontology#Tank", alias="tank
     alias="temperature", label="Raw temperature"
 )
 # Each matched stream gets its own calculation.
-separate = aq.Selection.from_query(temperatures, alias="temperature")
+separate = aq.Selection.from_query(temperatures, measurement="temperature")
 # All matched probes belonging to the same tank enter the same calculation.
-together = aq.Selection.from_query(temperatures, alias="temperature", group="tank")
+together = aq.Selection.from_query(temperatures, measurement="temperature", group="tank")
 ```
 
 There is one naming detail to watch: omitting `group` from `from_query`

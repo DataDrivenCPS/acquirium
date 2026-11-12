@@ -160,7 +160,7 @@ def previous_rows(context):
     """The previous window's input readings, with a UTC datetime ``time`` column."""
     previous = context.get("previous")
     rows = previous["rows"] if previous else []
-    schema = {"role": pl.String, "stream": pl.String, **SCHEMA}
+    schema = {"input": pl.String, "stream": pl.String, **SCHEMA}
     return _as_library(pl.DataFrame(rows, schema=schema))
 
 
@@ -213,6 +213,8 @@ def _public_frame(frame):
             if (frame[name] % 1000 != 0).any():
                 raise ValueError("soft sensor timestamps must have microsecond precision")
             expressions.append((pl.col(name) // 1000).cast(_TIME).alias(name))
+    # The engine calls each input's name its role.
+    names["role"] = "input"
     return frame.with_columns(expressions).drop("sample_key", "quality", strict=False).rename({
         name: target for name, target in names.items() if name in frame.columns
     })
@@ -224,6 +226,8 @@ def _public_record(row):
         raise ValueError("Acquirium supports one reading per stream and timestamp")
     result.pop("quality", None)
     result["time"] = _datetime(result.pop("event_time_ns"))
+    if "role" in result:
+        result["input"] = result.pop("role")
     return result
 
 
@@ -283,6 +287,8 @@ def _public_context(context):
 
 def _public_input(item):
     result = dict(item)
+    if "role" in result:
+        result["input"] = result.pop("role")
     for name in ("valid_from", "valid_to"):
         if name in result:
             ns = result[name]

@@ -10,18 +10,18 @@ from examples.model_workload.model import ROLES, predict
 from examples.model_workload.run import scalar_prediction
 
 
-@pytest.mark.parametrize("missing_role", [False, True])
-def test_model_prediction_uses_public_datetime_interface(missing_role):
+@pytest.mark.parametrize("missing_input", [False, True])
+def test_model_prediction_uses_public_datetime_interface(missing_input):
     at = datetime(2026, 1, 1, 10, 0, 40, 123456, tzinfo=timezone.utc)
     values = [10., 250., 25., 2.5]
-    frame = pl.DataFrame({"role": ROLES, "time": [at] * 4, "value": values})
-    if missing_role:
+    frame = pl.DataFrame({"input": ROLES, "time": [at] * 4, "value": values})
+    if missing_input:
         frame = frame.head(3)
 
     result = predict(frame, {"output_time": at})["prediction"]
 
     assert result.schema == SCHEMA
-    if missing_role:
+    if missing_input:
         assert result.is_empty()
     else:
         assert result["time"].item() == at

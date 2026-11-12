@@ -41,8 +41,8 @@ def calibrate(frame: pl.DataFrame, context):
         assert len(all_turbidity.bindings) == 4
         assert all_turbidity.total_rows == 100
         calibrated = aq.App(
-            "calibrate", [aq.Selection.outputs_of(clean, "turbidity", role="clean")],
-            {"calibrated": aq.Output(replaces="clean", unit=NTU, quantity_kind=TURBIDITY, on_group=True)},
+            "calibrate", {"clean": aq.Selection.outputs_of(clean, "turbidity")},
+            {"calibrated": aq.ReplacementOutput()},
             aq.PythonFunction.from_file(module, "calibrate"),
         )
         client.deploy_app(calibrated)

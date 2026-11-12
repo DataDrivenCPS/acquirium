@@ -28,32 +28,29 @@ LIMITS = {
 
 
 def declarations(client):
-    raw = (
-        client.query()
-        .measurement(alias="raw", quantity_kind=TURBIDITY, data_source=SOURCE)
-        .context(alias="location")
-    )
-    clean = aq.App(
-        name="turbidity-clean",
-        inputs=[aq.Selection.from_query(
-            raw, alias="raw", group="location", parameters=SPIKES
-        )],
-        outputs={"turbidity": aq.Output(replaces="raw", unit=NTU, quantity_kind=TURBIDITY, on_group=True)},
-        function=aq.PythonFunction.from_file(CALCULATIONS, "clean"),
-        window=aq.Rolling(lookback_ns=5 * MINUTE, step_ns=MINUTE, lookahead_ns=5 * MINUTE),
-    )
-    # Every location's turbidity. The clean stream is the authoritative stage,
-    # so this binds it rather than the analyser readings.
+    # Every location's turbidity.
     turbidity = (
         client.query()
         .measurement(alias="turbidity", quantity_kind=TURBIDITY)
         .context(alias="location")
     )
+    clean = aq.App(
+        name="turbidity-clean",
+        inputs={"raw": aq.Selection.from_query(
+            turbidity, measurement="turbidity", group="location", parameters=SPIKES
+        )},
+        # The clean stream replaces the analyser readings it is calculated from.
+        outputs={"turbidity": aq.ReplacementOutput()},
+        function=aq.PythonFunction.from_file(CALCULATIONS, "clean"),
+        window=aq.Rolling(lookback_ns=5 * MINUTE, step_ns=MINUTE, lookahead_ns=5 * MINUTE),
+    )
+    # The same query. The clean stream is now each measurement's final stage,
+    # so the alarm reads it rather than the analyser readings.
     alarm = aq.App(
         name="turbidity-alarm",
-        inputs=[aq.Selection.from_query(
-            turbidity, alias="turbidity", group="location", parameters=LIMITS
-        )],
+        inputs={"turbidity": aq.Selection.from_query(
+            turbidity, measurement="turbidity", group="location", parameters=LIMITS
+        )},
         outputs={"alarm": aq.Output(on_group=True)},
         function=aq.PythonFunction.from_file(CALCULATIONS, "alarm"),
         window=aq.Rolling(lookback_ns=15 * MINUTE, step_ns=MINUTE),

@@ -83,13 +83,16 @@ with long strings shortened:
 
 | Column | Value |
 | --- | --- |
-| `role` | `"wave"` |
+| `input` | `"wave"` |
 | `stream` | `"urn:acquirium#7cf58971-2f06-503c-83b5-6da39e9177b9"` |
 | `time` | `2026-11-08 17:46:11.875366 UTC` |
 | `value` | `0.7071067811865475` |
 | `text` | `null` |
 | `context` | `'{"ext0":"urn:acquirium#…","extname0":"signal",…}'` |
 
+`input` names the input the row belongs to. The app declaration below names
+its one input `"wave"`, as the key in its `inputs`. An app with several inputs
+uses the names to tell their rows apart.
 `value` holds the reading. `time` holds its sample timestamp as a UTC datetime
 with microsecond precision. The dataframe's `context`
 column contains metadata for the input stream as a JSON string.
@@ -199,7 +202,7 @@ from pathlib import Path
 wave = client.query().measurement(alias="wave", uri="urn:example:sine-wave")
 app = aq.App(
     name="high-wave",
-    inputs=[aq.Selection.from_query(wave, alias="wave")],
+    inputs={"wave": aq.Selection.from_query(wave, measurement="wave")},
     outputs={"high": aq.Output()},
     function=aq.PythonFunction.from_file(
         Path("examples/transformation/sine_threshold.py"), "threshold"
@@ -208,7 +211,9 @@ app = aq.App(
 )
 ```
 
-The app declares `"high"` in `outputs`. The function returns its dataframe
+`inputs` names each input. `"wave"` is the input's name, which the frame's
+`input` column carries; `measurement="wave"` says which of the query's aliases
+selects its streams. The app declares `"high"` in `outputs`. The function returns its dataframe
 under that same key. `Pointwise()` asks for one call per
 timestamp. Windows that span several minutes of readings are the subject
 of the [turbidity tutorial](turbidity.md).

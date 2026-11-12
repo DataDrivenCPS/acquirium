@@ -26,8 +26,8 @@ SCALES.setflags(write=False)
 
 
 def predict(frame, context):
-    """Predict from the four input roles and emit at the context's output time."""
-    values = dict(frame.select("role", "value").iter_rows())
+    """Predict from the four inputs and emit at the context's output time."""
+    values = dict(frame.select("input", "value").iter_rows())
     if not all(role in values for role in ROLES):
         return {"prediction": empty()}
 

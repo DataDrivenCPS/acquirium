@@ -98,15 +98,14 @@ SELECT ?stream ?group WHERE {
 def threshold_app(limit_a, limit_b):
     return aq.App(
         name="parameterized-high",
-        inputs=[aq.Selection(
+        inputs={"signal": aq.Selection(
             sensor_query,
-            role="signal",
             # Map the selected sensor groups to their own limits.
             parameters={
                 "urn:parameter-demo:sensor-a": {"limit": limit_a},
                 "urn:parameter-demo:sensor-b": {"limit": limit_b},
             },
-        )],
+        )},
         outputs={"high": aq.Output()},
         function=aq.PythonFunction.from_file(
             Path("parameterized_threshold.py"), "threshold"

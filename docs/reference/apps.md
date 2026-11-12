@@ -2,22 +2,43 @@
 title: App interface
 ---
 
-An `aq.App` declares inputs, named output ports, a function, and a window. App
-names use letters, digits, underscores, dots, and hyphens. See
+An `aq.App` declares named inputs, named output ports, a function, and a
+window. App names use letters, digits, underscores, dots, and hyphens. See
 [Soft sensor app](../tutorials/first-app.md) for a complete example.
+
+## Inputs
+
+`inputs` maps each input's name to a selection, or to a list of selections that
+feed the same input:
+
+```python
+aq.App(
+    name="calibrated",
+    inputs={
+        "reading": aq.Selection.from_query(readings, measurement="reading"),
+        "gain": aq.Selection.outputs_of(calibration, "gain", as_of=HOUR),
+    },
+    ...
+)
+```
+
+Names must be nonempty. The function's input frame carries each row's input
+name in its `input` column, so a function with several inputs can tell their
+rows apart. Selections listed under one name must agree on `as_of` and `view`.
 
 ## Input selections
 
-`Selection.from_query(query, alias=..., group=None, parameters=None, view=None)`
-turns a query into an app input. `alias` identifies the measurement and becomes its input role. Without a
-`group`, each matched stream gets its own calculation. With an entity alias as
-`group`, all streams for that entity feed one calculation.
+`Selection.from_query(query, measurement=..., group=None, parameters=None, view=None)`
+turns a query into a selection. `measurement` is the alias of the query's
+measurement node whose streams the input reads. Without a `group`, each matched
+stream gets its own calculation. With an entity alias as `group`, all streams
+for that entity feed one calculation.
 
 The selection stores the query, rather than a fixed list of matches. Acquirium
 resolves it again when the graph changes. Scope queries to the intended points
 or sources; `exclude_app` can exclude an app's own outputs from a broad query.
 
-`Selection(query, stream="stream", group="group", role="input")` accepts SPARQL
+`Selection(query, stream="stream", group="group")` accepts SPARQL
 returning the named columns. Here `group=None` combines all selected streams into
 one app-wide group. Returned columns are available as strings in each input
 row's JSON `context`.
@@ -27,7 +48,7 @@ must apply the factors; declaring a target unit does not convert the frame.
 
 ### Outputs of another app
 
-`Selection.outputs_of(app, port, role=..., combine=False)` selects an upstream
+`Selection.outputs_of(app, port, combine=False)` selects an upstream
 output. By default it preserves the upstream groups. `combine=True` feeds every
 upstream group into one calculation. The upstream app and port must exist before
 deployment, and the upstream app cannot be removed while a deployed app selects it.
@@ -40,7 +61,7 @@ for selection through SPARQL.
 A selection's `parameters` maps group IDs to JSON values:
 
 ```python
-aq.Selection.outputs_of(fill, "turbidity", role="filled", parameters={
+aq.Selection.outputs_of(fill, "turbidity", parameters={
     "urn:bulk/loc-2": {"limit": 0.5},
     "urn:bulk/loc-3": {"limit": 0.3},
 })
@@ -64,8 +85,8 @@ and is omitted from function context.
 
 ## Outputs
 
-`Output(unit=None, quantity_kind=None, label=None, on_group=False, value_kind="numeric", replaces=None)` describes a
-numeric output. The port name is the key in the app's `outputs` mapping and in
+`Output(unit=None, quantity_kind=None, label=None, on_group=False, value_kind="numeric")` describes a
+new measurement. The port name is the key in the app's `outputs` mapping and in
 the function's return value.
 
 `on_group=True` attaches the output point to its group using `s223:hasProperty`.
@@ -79,15 +100,35 @@ membership keeps that identity. Derived source IDs are reserved as
 
 ### Replacement outputs
 
-`Output(replaces="raw", ...)` continues the measurement identity selected under
-the input role `raw`. That role must select exactly one physical stream per
-group and must drive execution, rather than use `as_of`. Quantity kind, stored
-unit, and value kind must match the input. One input can have one replacement;
-an ordinary diagnostic output may branch from any stage.
+`ReplacementOutput(of=None, unit=None, label=None)` continues the measurement
+an input selects, instead of describing a new one. Reads and other apps'
+inputs that select that measurement then find the replacement's values.
+
+```python
+aq.App(
+    name="turbidity-clean",
+    inputs={"raw": aq.Selection.from_query(turbidity, measurement="turbidity", group="location")},
+    outputs={"turbidity": aq.ReplacementOutput()},
+    ...
+)
+```
+
+`of` names the input replaced; it may be omitted when the app has one input.
+That input must select exactly one physical stream per group and must drive
+execution, rather than use `as_of`. The replacement inherits the input's
+quantity kind and value kind. It inherits the unit too, unless `unit` names
+another unit of the same dimension; a cleaner can convert degrees Fahrenheit to
+Celsius, but not to NTU. Reads and consumers then see the new unit, and a
+consumer's `target_unit` converts from it. A replacement is not attached to its
+group; it is found through the measurement it replaces.
+
+One input can have one replacement. A second replacement app selects the first
+one's output and replaces it in turn, without naming the original input. An
+ordinary diagnostic output may branch from any stage.
 
 ```text
-raw ──replaces──> cleaned ──replaces──> filled
-                      └──> diagnostic
+raw ──replaced by──> cleaned ──replaced by──> filled
+                        └──> diagnostic
 ```
 
 The function returns the complete series it calculated over its input frame,
@@ -118,10 +159,10 @@ App input selections take the same `view`, as `Selection(..., view=...)` or
 `current`: each matched identity binds the chain's final stage, once per
 group, however many of its stages the query matched. `raw` binds the original
 input, and `stored` binds exactly the stream selected. `Selection.outputs_of`
-binds `stored`, because it names one stage. A role that an output `replaces`
-always binds the stream it selects, and rejects `view="current"` or `"raw"`;
-that is how chain stages are ordered. A role that would follow the chain to its
-own app's output is rejected.
+binds `stored`, because it names one stage. An input that a replacement
+replaces always binds the stream it selects, and rejects `view="current"` or
+`"raw"`; that is how chain stages are ordered. An input that would follow the
+chain to its own app's output is rejected.
 
 Adding a stage at the end of a chain rebinds every `current` selection of that
 identity and recalculates its history, as any other input change does.
@@ -234,14 +275,14 @@ uses a pandas cleaner followed by a Polars alarm.
 
 ### Inputs and outputs
 
-The input frame has `role`, `stream`, `time`,
+The input frame has `input`, `stream`, `time`,
 `value`, `text`, and JSON `context` columns. Each reading has either a
 numeric `value` or `text`. Selected graph columns are strings in the row context.
 
 `time` is the input sample's timestamp, in UTC microseconds. In Polars its
 type is `Datetime("us", "UTC")`; in pandas it is an Arrow timestamp column.
-It is the timestamp supplied when the sample was inserted. `stream` identifies
-the input stream.
+It is the timestamp supplied when the sample was inserted. `input` is the
+row's [input name](#inputs), and `stream` identifies the input stream.
 
 The function's context describes the calculation. `output_time` is its output
 timestamp; `window_start` and `window_end` bound the window. `parameters`
@@ -340,9 +381,9 @@ uses this interface for drift detection and parameter estimation.
 at or before the window timestamp, no older than the maximum age. It retains
 that reading's own `time`. `outputs_of` accepts the same argument.
 
-An as-of role creates no windows; other inputs determine when to calculate.
+An as-of input creates no windows; other inputs determine when to calculate.
 A correction repairs the windows that read the value, up to its next reading or
-maximum age. All selections of one role must use the same age. Changing it
+maximum age. All selections of one input must use the same age. Changing it
 recalculates history. As-of inputs require a Python function.
 
 ## Deployment

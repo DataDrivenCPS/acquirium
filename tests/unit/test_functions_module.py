@@ -65,6 +65,10 @@ def test_sequential_helpers_use_datetime_rows_and_periods():
                      "outputs": {"mean": [row]}},
     })
     assert context["previous"]["output_time"] == AT
+    # The engine calls each input's name its role; functions see it as input.
+    assert context["previous"]["rows"][0]["input"] == "raw"
+    assert "role" not in context["previous"]["rows"][0]
+    assert f.previous_rows(context)["input"].item() == "raw"
     assert "sample_key" not in context["previous"]["rows"][0]
     assert "sample_key" not in context["previous"]["outputs"]["mean"][0]
     assert "quality" not in context["previous"]["rows"][0]
@@ -123,11 +127,11 @@ def test_function_window_precision_is_validated_before_deployment():
     import acquirium as aq
 
     function = {"kind": "python", "path": "calculation.py", "entrypoint": "mean", "sha256": "unused"}
-    app = aq.App("precision", [], {"mean": aq.Output()}, function, aq.FixedBucket(1001))
+    app = aq.App("precision", {}, {"mean": aq.Output()}, function, aq.FixedBucket(1001))
     with pytest.raises(ValueError, match="microsecond precision"):
         app.to_dict()
     # Native engine calculations retain their nanosecond contract.
-    aq.App("native", [], {"mean": aq.Output()}, aq.Native.mean("mean"), aq.FixedBucket(1001)).to_dict()
+    aq.App("native", {}, {"mean": aq.Output()}, aq.Native.mean("mean"), aq.FixedBucket(1001)).to_dict()
 
 
 def test_engine_bookkeeping_is_private_to_the_wire_schema():
@@ -175,6 +179,7 @@ def test_pandas_annotation_selects_arrow_columns_without_copying_value_buffers()
         assert frame["time"].iloc[0] == AT
         assert frame["value"].iloc[1] is pd.NA
         assert frame["text"].iloc[1] == "Fault"
+        assert list(frame["input"]) == ["raw", "raw"] and "role" not in frame
         assert frame["value"].array.__arrow_array__().chunk(0).buffers()[1].address == value_buffer
         assert "sample_key" not in frame and "quality" not in frame
         assert context["output_time"] == AT

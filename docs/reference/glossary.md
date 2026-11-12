@@ -106,5 +106,7 @@ See the [experiment reference](experiments.md) for the interface and read format
 | driver | a class the server runs on a schedule to ingest data | `PollingIngestDriver` |
 | tick | one scheduled run of a driver | `interval = 10.0` |
 | app | a declaration: inputs selected from the graph, a function and a window; Escapement runs it | `aq.App` |
+| input name | the key of one of an app's inputs; the function's frame labels each row with it in the `input` column, and `ReplacementOutput(of=...)` names an input by it | `inputs={"raw": selection}` |
+| replacement output | an output that continues the measurement an input selects, so reads and consumers of that measurement find it | `aq.ReplacementOutput()` |
 | graph store | the embedded Oxigraph store holding the model and the ontologies | `data_dir/.oxigraph` |
 | engine store | where Escapement keeps observations, derived values and history | DuckDB file (default) or `postgres://` URL |

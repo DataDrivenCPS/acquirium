@@ -58,8 +58,9 @@ def run(client):
     first = client.wait(receipt)["epoch"]
 
     filter3 = client.query().entity(uri="urn:turbidity:filter-3", alias="filter3")
+    # A normal read returns the clean stream; view="raw" returns the analyser's samples.
+    clean = client.query().measurement(alias="clean", uri="urn:turbidity:filter-3-turbidity")
     raw = client.query().measurement(alias="raw", uri="urn:turbidity:filter-3-turbidity")
-    clean = filter3.measurement(alias="clean", app="turbidity-clean")
     alarm = filter3.measurement(alias="alarm", app="turbidity-alarm")
 
     def show(label):

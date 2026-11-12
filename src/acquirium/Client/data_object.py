@@ -549,9 +549,11 @@ class DataObject:
 
         # Keep one logical measurement per node and entity context. Prefer
         # the base point's label and units when both it and a stage matched.
-        from acquirium.replacements import resolve
+        from acquirium.replacements import resolve, units
         plan = query.client.engine_snapshot()["plan"]
         bases = resolve(plan, [b.ref_uri for b in bindings], view="raw")
+        heads = resolve(plan, [b.ref_uri for b in bindings], view="current")
+        stage_units = units(plan)
         logical = {}
         for binding in sorted(bindings, key=lambda b: b.ref_uri != bases[b.ref_uri]):
             ref = binding.ref_uri if binding.view == "stored" else bases[binding.ref_uri]
@@ -565,7 +567,12 @@ class DataObject:
                 merged[key].entity_contexts.extend(binding.entity_contexts)
             else:
                 merged[key] = binding
-        bindings = list(merged.values())
+        # A current read returns the final stage's values, in that stage's unit.
+        bindings = [
+            replace(b, property_unit=stage_units[heads[b.ref_uri]], ref_unit=stage_units[heads[b.ref_uri]])
+            if b.view == "current" and heads.get(b.ref_uri) in stage_units else b
+            for b in merged.values()
+        ]
 
         return cls(
             _bindings=bindings,
