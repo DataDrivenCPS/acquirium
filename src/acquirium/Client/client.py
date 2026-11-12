@@ -1,5 +1,5 @@
 from typing import Optional, Iterator, Iterable, Any, Callable, Mapping, TYPE_CHECKING
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import re
 import requests
@@ -22,6 +22,7 @@ from acquirium.Client.explore.attributes import ATTR_NS, RESOLVE_MIN_SCORE
 from acquirium.Client.metadata import plan_write, update_text
 from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
 from acquirium.Storage.values import normalize_value_kind
+from acquirium.internals.resampling import as_utc, format_every, normalize_agg, parse_every
 from rdflib import Graph, URIRef, Literal
 from rdflib.namespace import NamespaceManager, RDF, RDFS
 import logging
@@ -307,6 +308,49 @@ class AcquiriumClient:
                 logger.error(f"Error reading Arrow IPC stream: {e}")
                 return pl.DataFrame()
             
+
+    def timeseries_resampled_df(
+        self,
+        uri: str,
+        *,
+        every: "str | timedelta | int | float",
+        agg: str = "mean",
+        origin: datetime | None = None,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        limit: Optional[int] = None,
+        order: Order = "asc",
+        timeout: float = 60.0,
+    ) -> pl.DataFrame:
+        """One row per ``every``-wide bucket of a stream's numeric values,
+        reduced with ``agg`` on the server (``GET /timeseries_resampled``).
+
+        ``every`` is a ``timedelta``, seconds, or a string like ``"10s"``,
+        ``"5m"``, ``"1h"``; ``agg`` one of
+        :data:`acquirium.internals.resampling.AGGREGATES`. Buckets start at
+        ``origin + k * every`` (``origin`` defaults to the UNIX epoch) and are
+        labelled by their start; a bucket with no numeric row is left out.
+        Same ``[ts, value, uri]`` frame as :meth:`timeseries_df`.
+        """
+        url = f"{self.base_url}/timeseries_resampled"
+        params = {
+            "uri": uri,
+            "every": format_every(parse_every(every)),
+            "agg": normalize_agg(agg),
+            "origin": as_utc(origin).isoformat() if origin is not None else None,
+            "start": start,
+            "end": end,
+            "limit": limit,
+            "order": order,
+        }
+        headers = {"Accept": "application/vnd.apache.arrow.stream"}
+
+        with self._http.get(url, params=params, headers=headers, stream=True, timeout=timeout) as r:
+            _raise_for_status(r)
+            reader = ipc.RecordBatchStreamReader(r.raw)
+            tables = [pl.from_arrow(batch) for batch in reader]
+            r.raw.read()  # drain, as in timeseries_df()
+            return pl.concat(tables) if tables else pl.DataFrame()
 
     def timeseries_batches(
         self,

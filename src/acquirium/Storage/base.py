@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Protocol, runtime_checkable
 
@@ -70,6 +70,19 @@ class TimeseriesStore(Protocol):
         order: Order = "asc",
         batch_size: int = 50_000,
         value_mode: str = "default",
+    ) -> Iterator[pa.RecordBatch]: ...
+    def timeseries_resampled(
+        self,
+        ref_uri: str,
+        *,
+        every: timedelta,
+        agg: str,
+        origin: datetime,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int | None = None,
+        order: Order = "asc",
+        batch_size: int = 50_000,
     ) -> Iterator[pa.RecordBatch]: ...
     def timeseries_info(self, ref_uri: str) -> TimeseriesInfo: ...
     def timeseries_info_batch(self, ref_uris: list[str]) -> dict[str, TimeseriesInfo]: ...

@@ -313,6 +313,9 @@ See the [data tutorial](../tutorials/data.md).
 | `units() -> dict[str, list[str \| None]]` | The distinct unit URIs of each alias's points; `metadata()` has the unit per point. |
 | `convert_to(to_unit, *, from_unit=None, alias=None) -> DataObject` | A new object with values converted to `to_unit`, each point from its own unit; `from_unit=` for points with no unit, `alias=` to convert one alias. |
 | `by(entity_alias) -> Iterator[tuple[str, DataObject]]` | A sub-object per entity. |
+| `resample(every, agg="mean", *, origin=None, label="left") -> DataObject` | A new lazy object with one value per `every`-wide bucket per stream, reduced with `agg` (`mean`, `min`, `max`, `sum`, `count`, `first`, `last`, `median`) by the store; buckets start at `origin + k * every` (epoch by default), `label="center"` names a bucket by its middle. Empty buckets are left out. |
+| `align(every=None, *, agg="mean", fill=None, origin=None, label="left") -> DataObject` | `resample()` plus every bucket of the shared grid for every stream; `fill` is `None`, `"ffill"`, `"interpolate"` or a number. `every=None` infers the step from the stream statistics. |
+| `resampling` | Property: the `Resampling` spec (`every`, `agg`, `origin`, `label`, `align`, `fill`) or `None` for raw readings. |
 | `latest(alias=None, *, streams=None) -> pl.DataFrame` | The newest reading per point, from its own one-row-per-stream fetch within the object's window; all bindings as `[data_alias, point_uri, time, value]` without an alias. `streams=` as in `dataframe()`. |
 | `is_empty() -> bool` | Whether any rows exist. Until the values are fetched it asks the server which streams have any row (ignoring the window), without counting them, or reads the statistics if they are loaded. |
 | `stream_info(alias=None) -> pl.DataFrame` | One row per stream: `stream` (its number in this object, for `streams=`), `alias`, `point_uri`, `ref_uri`, `source_id`, `ref_name`. |
@@ -390,6 +393,7 @@ and are listed once above.
 | `resolve_storage_keys(uris: list[str]) -> dict[str, str]` | Map point URIs to the canonical ref URIs used by timeseries APIs; canonical ref URIs pass through. |
 | `timeseries_df(uri, start=None, end=None, limit=None, order="asc", timeout=60.0, *, value_mode="default") -> pl.DataFrame` | All rows of one stream by `ref_uri`. |
 | `timeseries_batches(uri, start=None, end=None, limit=None, order="asc", *, value_mode="default", timeout=60.0) -> Iterator[pl.DataFrame]` | The same, one frame per Arrow record batch. |
+| `timeseries_resampled_df(uri, *, every, agg="mean", origin=None, start=None, end=None, limit=None, order="asc", timeout=60.0) -> pl.DataFrame` | One row per `every`-wide bucket of a stream's numeric values, reduced with `agg` on the server (`GET /timeseries_resampled`); same `[ts, value, uri]` frame as `timeseries_df`. |
 | `timeseries_info_batch(uris: list[str]) -> dict` | `row_count`, `earliest`, `latest` for several streams in one request. |
 
 ### Logbook

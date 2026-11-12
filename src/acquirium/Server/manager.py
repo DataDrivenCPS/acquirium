@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import os
 import logging
@@ -615,6 +615,40 @@ class Manager:
             order=order,
             batch_size=batch_size,
             value_mode=value_mode,
+        )
+
+    def timeseries_resampled_batch(
+        self,
+        uri: str,
+        *,
+        every: timedelta,
+        agg: str,
+        origin: datetime,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int | None = None,
+        order: Order = "asc",
+        batch_size: int = 50_000,
+    ):
+        """One row per ``every``-wide bucket of a stream's numeric values,
+        reduced with ``agg`` by the store; see
+        ``TimeseriesStore.timeseries_resampled``.
+        """
+        storage_key = self.timeseries_store.resolve_storage_key(uri)
+        logger.debug(
+            "timeseries_resampled_batch uri=%s storage_key=%s every=%s agg=%s start=%s end=%s limit=%s",
+            uri, storage_key, every, agg, start, end, limit,
+        )
+        return self.timeseries_store.timeseries_resampled(
+            ref_uri=storage_key,
+            every=every,
+            agg=agg,
+            origin=origin,
+            start=start,
+            end=end,
+            limit=limit,
+            order=order,
+            batch_size=batch_size,
         )
 
     def timeseries_info_batch(self, uris: list[str]) -> dict:

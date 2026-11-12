@@ -34,7 +34,7 @@ never exposed. The ``timeseries_streams`` view joins the string back in, so
 """
 
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 import threading
@@ -60,6 +60,7 @@ from acquirium.Storage.values import (
     typed_value_series,
 )
 from acquirium.internals._log import timed_debug
+from acquirium.internals.resampling import normalize_agg
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,19 @@ TIMESERIES_STREAMS_VIEW = "timeseries_streams"
 SYSTEM_STATE_TABLE = "system_state"
 BINDING_PROGRESS_TABLE = "binding_progress"
 
+
+
+# SQL for each resampling aggregate over a bucket's numeric values.
+_RESAMPLE_AGG_SQL = {
+    "mean": "avg(numeric_value)",
+    "min": "min(numeric_value)",
+    "max": "max(numeric_value)",
+    "sum": "sum(numeric_value)",
+    "count": "count(numeric_value)",
+    "first": "first(numeric_value ORDER BY ts)",
+    "last": "last(numeric_value ORDER BY ts)",
+    "median": "median(numeric_value)",
+}
 
 
 class DuckDBStore:
@@ -610,6 +624,81 @@ class DuckDBStore:
             conn.close()
             logger.debug("timeseries: ref_uri=%s rows=%d (batch_size=%d)", ref_uri, rows, batch_size)
 
+
+    def timeseries_resampled(
+        self,
+        ref_uri: str,
+        *,
+        every: timedelta,
+        agg: str,
+        origin: datetime,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int | None = None,
+        order: Order = "asc",
+        batch_size: int = 50_000,
+    ) -> Iterator[pa.RecordBatch]:
+        """Yield one row per ``every``-wide bucket of a stream's numeric values,
+        reduced with ``agg``, as RecordBatches of ``[ts, value, uri]``.
+
+        A bucket starts at ``origin + k * every`` and holds the rows with
+        ``bucket <= ts < bucket + every``; ``ts`` is the bucket start. Only
+        rows with a numeric value count, and a bucket with none is left out,
+        so the result is a grid with holes, not a filled grid. ``start`` and
+        ``end`` bound the rows, so a bucket straddling a bound is reduced
+        from the rows inside it. ``limit`` keeps the first buckets in
+        ``order``. ``value`` is ``float64``, or ``int64`` for ``count``.
+        """
+        agg = normalize_agg(agg)
+        if every <= timedelta(0):
+            raise ValueError(f"every must be a positive duration, got {every!r}")
+
+        # One connection per generator, as in timeseries().
+        conn = self._connect()
+        rows = 0
+        try:
+            with timed_debug(
+                logger, "timeseries_resampled ref_uri=%s every=%s agg=%s start=%s end=%s limit=%s",
+                ref_uri, every, agg, start, end, limit,
+            ):
+                ref_id_row = conn.execute(
+                    f"SELECT ref_id FROM {REF_IDS_TABLE} WHERE ref_uri = ?", [ref_uri]
+                ).fetchone()
+                if ref_id_row is None:
+                    return
+
+                clauses = ["ref_id = ?", "NOT deleted", "numeric_value IS NOT NULL"]
+                params: list[Any] = [every, self._to_utc_naive(origin), ref_id_row[0]]
+                if start:
+                    clauses.append("ts >= ?")
+                    params.append(self._to_utc_naive(start))
+                if end:
+                    clauses.append("ts <= ?")
+                    params.append(self._to_utc_naive(end))
+                where = " AND ".join(clauses)
+                order_sql = "ASC" if order == "asc" else "DESC"
+                limit_sql = f" LIMIT {int(limit)}" if limit else ""
+
+                query = f"""
+                    SELECT
+                        time_bucket(?, ts, ?::TIMESTAMP) AS bucket,
+                        {_RESAMPLE_AGG_SQL[agg]} AS value
+                    FROM {TIMESERIES_TABLE}
+                    WHERE {where}
+                    GROUP BY bucket
+                    ORDER BY bucket {order_sql}{limit_sql}
+                """
+                reader = conn.execute(query, params).to_arrow_reader(batch_size)
+            value_type = pa.int64() if agg == "count" else pa.float64()
+            for batch in reader:
+                rows += batch.num_rows
+                ts_col = pc.assume_timezone(batch.column("bucket"), timezone="UTC")
+                val_col = batch.column("value").cast(value_type)
+                uri_col = pa.array([ref_uri] * len(batch), type=pa.string())
+                yield pa.record_batch([ts_col, val_col, uri_col], names=["ts", "value", "uri"])
+        finally:
+            conn.close()
+            logger.debug("timeseries_resampled: ref_uri=%s buckets=%d", ref_uri, rows)
 
     def timeseries_info(self, ref_uri: str) -> TimeseriesInfo:
         with self._own_conn() as conn, timed_debug(logger, "timeseries_info ref_uri=%s", ref_uri):
