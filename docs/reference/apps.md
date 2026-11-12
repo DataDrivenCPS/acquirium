@@ -142,8 +142,8 @@ The [calculation guide](../how-to/write-soft-sensors.md#python-functions) walks 
 For diagrams connecting stream groups, windows, timestamps, and function calls,
 see [Soft sensor inputs](../explanation/soft-sensor-inputs.md).
 
-The Polars input frame has `role`, `stream`, `time`, `sample_key`,
-`value`, `text`, `quality`, and JSON `context` columns. Each reading has either a
+The Polars input frame has `role`, `stream`, `time`,
+`value`, `text`, and JSON `context` columns. Each reading has either a
 numeric `value` or `text`. Selected graph columns are strings in the row context.
 
 `time` is the input sample's timestamp, with type `Datetime("us", "UTC")`.
@@ -154,6 +154,10 @@ The function's context describes the calculation. `output_time` is its output
 timestamp; `window_start` and `window_end` bound the window. `parameters`
 holds the group key and configured parameter values, and `operator` holds its declaration,
 including `operator["window"]`.
+
+`context["operator"]["outputs"]` maps each declared output name to its full
+stream URI for the current group. The function returns dataframes under those
+output names; Acquirium routes them to the corresponding URIs.
 
 Context timestamps are timezone-aware Python datetimes. Function timestamps
 and window declarations must align to microseconds; finer values are rejected
@@ -183,15 +187,15 @@ in order:
 | Column | Type |
 | --- | --- |
 | `time` | `Datetime("us", "UTC")` |
-| `sample_key` | `Int64` |
 | `value` | `Float64` |
 | `text` | `String` |
-| `quality` | `UInt32` |
 
 Numeric results set `value` and leave `text` null; numeric functions may also
-omit the `text` column. Use finite numbers and sample key zero.
-`acquirium.functions.emit(context, value, quality=0)`
-builds a row at the window timestamp; a `None` value produces an empty frame.
+omit the `text` column. Use finite numbers.
+`acquirium.functions.emit(context, value)`
+returns a one-row dataframe at `context["output_time"]`; a `None` value produces
+an empty dataframe. The helper constructs the function's return value.
+Acquirium stores the results after the function returns.
 `empty()` also builds an empty frame. An empty result removes the previous
 result for that window. Return the complete result, including unchanged rows.
 
@@ -216,7 +220,7 @@ def bucket_mean(frame, context):
     return {"mean": emit_windows(means)}
 ```
 
-`emit_windows` accepts `output_time`, `value`, and optional `quality` columns.
+`emit_windows` accepts `output_time` and `value` or `text` columns.
 Omitting a window removes its old result. A row at an undeclared window timestamp
 fails the computation. Switching batch mode recalculates the app's history. The
 [bulk-ingest example](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/bulk_ingest) compares both modes.

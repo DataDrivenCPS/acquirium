@@ -214,7 +214,7 @@ A2  10:00:10  24                              │
 not included: tank B's readings, or A1's reading at 10:01:10
 ```
 
-The input frame has eight columns. Four are shown below. `time` contains
+The input frame has six columns. Four are shown below. `time` contains
 each reading's sample timestamp as a UTC datetime with microsecond precision.
 Stream URIs are abbreviated. Sort by time if the calculation requires ordered readings.
 
@@ -230,8 +230,8 @@ The last row is the new reading; the other three were already stored.
 `stream` identifies the probe's stream. `role` contains the selection's name,
 `"temperature"`. Filter these columns to select particular inputs.
 
-The remaining columns are `sample_key`, `text`, `quality`, and `context`.
-Here, `text` is null, and `sample_key` and `quality` are zero. Each row's
+The remaining columns are `text` and `context`.
+Here, `text` is null. Each row's
 `context` contains JSON metadata from the selection, including its tank.
 
 ### Function context

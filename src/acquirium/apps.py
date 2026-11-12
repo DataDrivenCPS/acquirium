@@ -360,7 +360,7 @@ class Apps:
         if function["kind"] != "python":
             return function
         code = (
-            "# Acquirium function interface: UTC datetimes, microsecond precision.\n"
+            "# Acquirium function interface v3: UTC datetimes, microsecond precision.\n"
             "from acquirium.functions import _function_module\n"
             f"__getattr__ = _function_module({function['path']!r}, {function['sha256']!r})\n"
         ).encode()

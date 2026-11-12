@@ -20,10 +20,6 @@ THRESHOLDS_NTU = {
     "urn:bulk/loc-3": 0.3,
 }
 
-# Quality flag on gap-filled values.
-INTERPOLATED = 1
-
-
 def snap_to_minute(frame, context):
     """Average the raw readings in one 1-minute bucket."""
     if frame.is_empty():
@@ -53,7 +49,7 @@ def fill_gaps(frame, context):
         return {"turbidity": empty()}
 
     value = v0 + (v1 - v0) * (t - t0) / (t1 - t0)
-    return {"turbidity": emit(context, value, quality=INTERPOLATED)}
+    return {"turbidity": emit(context, value)}
 
 
 def plant_turbidity(frame, context):

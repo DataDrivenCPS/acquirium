@@ -124,7 +124,7 @@ def expected_values(records):
             else:
                 raw[probe].update(values)
     result = {
-        (str(compute_ref_uri(SOURCE, probe)), timestamp, 0): value
+        (str(compute_ref_uri(SOURCE, probe)), timestamp): value
         for probe, readings in raw.items()
         for timestamp, value in readings.items()
     }
@@ -136,12 +136,12 @@ def expected_values(records):
     hottest = {}
     for (group, timestamp), values in buckets.items():
         value = mean(values)
-        result[output_reference(MEAN, group, "mean"), timestamp, 0] = value
+        result[output_reference(MEAN, group, "mean"), timestamp] = value
         hottest[timestamp] = max(value, hottest.get(timestamp, -math.inf))
     for timestamp, value in hottest.items():
-        result[output_reference(HOTTEST, PLANT, "hottest"), timestamp, 0] = value
+        result[output_reference(HOTTEST, PLANT, "hottest"), timestamp] = value
         if value > 27:
-            result[output_reference(ALARM, PLANT, "alarm"), timestamp, 0] = value
+            result[output_reference(ALARM, PLANT, "alarm"), timestamp] = value
     return result
 
 
@@ -166,7 +166,7 @@ def verify(client, driver, consumer):
         rows = dict(zip(frame["ts"].cast(pl.Int64), frame["value"]))
         wanted = {
             timestamp: value
-            for (stream, timestamp, _), value in expected.items()
+            for (stream, timestamp), value in expected.items()
             if stream == reference
         }
         if rows.keys() != wanted.keys() or any(

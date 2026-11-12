@@ -28,4 +28,4 @@ def load(path, default):
 
 def key(row):
     slot = row["key"]
-    return slot["stream"], slot["time"], slot["sample"]
+    return slot["stream"], slot["time"]

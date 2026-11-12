@@ -25,9 +25,8 @@ page["changes"][0]
  'ordinal': 0,
  'weight': 1,
  'row': {'key': {'stream': 'urn:acquirium#7cf58971-2f06-503c-83b5-6da39e9177b9',
-                 'time': 1794330610909771000,
-                 'sample': 0},
-         'data': {'value': 0.0, 'quality': 0},
+                 'time': 1794330610909771000},
+         'data': {'value': 0.0},
          'revision': 2}}
 ```
 

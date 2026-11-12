@@ -208,7 +208,14 @@ class Core:
         rows = [row for row in rows if row["epoch"] <= frontier]
         more = len(rows) > limit
         complete = rows[limit]["epoch"] - 1 if more else frontier
-        page = rows[:limit]
+        page = []
+        for change in rows[:limit]:
+            row = dict(change["row"])
+            if row["key"].get("sample", 0) != 0:
+                raise ValueError("Acquirium supports one reading per stream and timestamp")
+            row["key"] = {key: value for key, value in row["key"].items() if key != "sample"}
+            row["data"] = {key: value for key, value in row["data"].items() if key != "quality"}
+            page.append({**change, "row": row})
         cursor = {"epoch": epoch, "ordinal": ordinal}
         if page:
             cursor = {key: page[-1][key] for key in ("epoch", "ordinal")}
@@ -265,7 +272,7 @@ class Core:
                 if not rows.num_rows:
                     break
                 if pc.any(pc.not_equal(rows["sample_key"], 0)).as_py():
-                    raise ValueError("Acquirium streams require sample_key=0")
+                    raise ValueError("Acquirium supports one reading per stream and timestamp")
                 selected = _selected(rows, mode, stream)
                 if selected.num_rows:
                     yielded = True

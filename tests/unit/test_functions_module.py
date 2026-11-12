@@ -20,14 +20,14 @@ def test_emit_and_empty_have_utc_datetime_schema():
     assert f.emit({"output_time": AT}, "high")["text"].item() == "high"
 
 
-def test_batch_outputs_keep_dates_and_quality():
+def test_batch_outputs_keep_dates_and_values():
     times = [AT, AT + timedelta(microseconds=1)]
     result = f.emit_windows(pl.DataFrame({
-        "output_time": times, "value": [12, 13], "quality": [0, 1],
+        "output_time": times, "value": [12, 13],
     }))
     assert result.schema == f.SCHEMA
     assert result["time"].to_list() == times
-    assert result["quality"].to_list() == [0, 1]
+    assert result["value"].to_list() == [12, 13]
 
 
 def test_context_timestamps_and_durations_are_datetimes_and_timedeltas():
@@ -56,13 +56,17 @@ def test_context_timestamps_and_durations_are_datetimes_and_timedeltas():
 
 
 def test_sequential_helpers_use_datetime_rows_and_periods():
-    row = {"event_time_ns": NS, "sample_key": 0, "value": 12., "text": None, "quality": 0}
+    row = {"event_time_ns": NS, "sample_key": 0, "value": 12., "text": None, "quality": 7}
     context = f._public_context({
         "window_ns": NS + 1000,
         "previous": {"window_ns": NS, "rows": [{"role": "raw", "stream": "urn:raw", **row}],
                      "outputs": {"mean": [row]}},
     })
     assert context["previous"]["output_time"] == AT
+    assert "sample_key" not in context["previous"]["rows"][0]
+    assert "sample_key" not in context["previous"]["outputs"]["mean"][0]
+    assert "quality" not in context["previous"]["rows"][0]
+    assert "quality" not in context["previous"]["outputs"]["mean"][0]
     assert f.previous_rows(context)["time"].item() == AT
     assert f.previous_outputs(context, "mean")["time"].item() == AT
     assert f.previous_value(context, "mean") == 12
@@ -122,3 +126,28 @@ def test_function_window_precision_is_validated_before_deployment():
         app.to_dict()
     # Native engine calculations retain their nanosecond contract.
     aq.App("native", [], {"mean": aq.Output()}, aq.Native.mean("mean"), aq.FixedBucket(1001)).to_dict()
+
+
+def test_engine_bookkeeping_is_private_to_the_wire_schema():
+    native = pl.DataFrame({
+        "event_time_ns": [NS], "sample_key": [0], "value": [12.],
+        "text": pl.Series([None], dtype=pl.String),
+        "quality": pl.Series([7], dtype=pl.UInt32),
+    })
+    public = f._public_frame(native)
+    assert "sample_key" not in public.columns
+    assert "quality" not in public.columns
+    assert public["value"].item() == 12
+    result = f.emit({"output_time": AT}, 12)
+    assert result.columns == ["time", "value", "text"]
+    wire = f._engine_frame(result)
+    assert wire["quality"].item() == 0
+    assert wire["sample_key"].item() == 0
+    with pytest.raises(TypeError, match="quality"):
+        f.emit({"output_time": AT}, 12, quality=1)
+    with pytest.raises(ValueError, match="unexpected soft sensor output columns"):
+        f._engine_frame(result.with_columns(pl.lit(1).alias("quality")))
+    with pytest.raises(ValueError, match="unexpected soft sensor output columns"):
+        f._engine_frame(result.with_columns(pl.lit(1).alias("sample_key")))
+    with pytest.raises(ValueError, match="one reading per stream and timestamp"):
+        f._public_frame(native.with_columns(pl.lit(1).alias("sample_key")))

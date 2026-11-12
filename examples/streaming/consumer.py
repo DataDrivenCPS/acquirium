@@ -17,6 +17,10 @@ class ChangeConsumer:
                 "changes": 0,
             },
         )
+        # Normalize checkpoints written before the public feed dropped these fields.
+        for row in self.state["rows"]:
+            row["key"].pop("sample", None)
+            row["data"].pop("quality", None)
         self.cursor = dict(self.state["cursor"])
         self.pending = []
 

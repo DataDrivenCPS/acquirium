@@ -55,6 +55,8 @@ def test_signed_feed_pages_split_updates_and_keep_complete_epoch_frontiers(tmp_p
                 break
         assert [row["weight"] for row in rows] == [1, 1, -1, 1, -1]
         assert [row["row"]["data"]["value"] for row in rows] == [20, 30, 20, 40, 30]
+        assert all(set(row["row"]["data"]) == {"value"} for row in rows)
+        assert all(set(row["row"]["key"]) == {"stream", "time"} for row in rows)
         assert len({(row["epoch"], row["ordinal"]) for row in rows}) == 5
         assert complete == core.engine.snapshot().epoch
         empty = core.changes(**cursor)
@@ -89,6 +91,35 @@ def test_page_excludes_publications_after_its_captured_frontier(tmp_path):
         assert core.changes(**page["cursor"])["changes"][0]["row"]["key"]["time"] == 2
     finally:
         core.close()
+
+
+def test_consumer_resumes_checkpoints_with_old_native_fields(tmp_path):
+    import json
+
+    from examples.streaming.consumer import ChangeConsumer
+
+    checkpoint = tmp_path / "sink.json"
+    old = {
+        "key": {"stream": "urn:probe", "time": 1000, "sample": 0},
+        "data": {"value": 20., "quality": 0}, "revision": 1,
+    }
+    checkpoint.write_text(json.dumps({
+        "cursor": {"epoch": 1, "ordinal": 0}, "complete_through": 1,
+        "rows": [old], "changes": 1,
+    }))
+    public = {
+        "key": {"stream": "urn:probe", "time": 1000},
+        "data": {"value": 20.}, "revision": 1,
+    }
+    page = {
+        "changes": [{"epoch": 2, "ordinal": 0, "weight": -1, "row": public}],
+        "cursor": {"epoch": 2, "ordinal": 0}, "complete_through": 2, "has_more": False,
+    }
+    consumer = ChangeConsumer(SimpleNamespace(changes=lambda **kwargs: page), checkpoint)
+    assert consumer.values() == {("urn:probe", 1000): 20.}
+    consumer.poll()
+    assert consumer.values() == {}
+    assert json.loads(checkpoint.read_text())["cursor"] == page["cursor"]
 
 
 def test_feed_rejects_invalid_bounds_and_future_cursors(tmp_path):

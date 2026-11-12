@@ -24,10 +24,8 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _TIME = pl.Datetime("us", "UTC")
 SCHEMA = {
     "time": _TIME,
-    "sample_key": pl.Int64,
     "value": pl.Float64,
     "text": pl.String,
-    "quality": pl.UInt32,
 }
 
 
@@ -35,20 +33,22 @@ def empty() -> pl.DataFrame:
     """An empty output frame; removes the previous result for this window.
 
     >>> empty().shape
-    (0, 5)
+    (0, 3)
     """
     return pl.DataFrame(schema=SCHEMA)
 
 
-def emit(context, value, *, quality=0) -> pl.DataFrame:
-    """One result at ``context['output_time']``, or an empty frame for None.
+def emit(context, value) -> pl.DataFrame:
+    """Construct a one-row dataframe at ``context['output_time']``.
 
-    The output's ``time`` column has type ``Datetime('us', 'UTC')``.
+    A None value produces an empty dataframe. The function returns this frame
+    under its declared output name; Acquirium stores the returned results.
+    The ``time`` column has type ``Datetime('us', 'UTC')``.
 
     >>> at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     >>> result = emit({"output_time": at}, 12.0)
     >>> result.shape
-    (1, 5)
+    (1, 3)
     >>> result["time"].item() == at
     True
     """
@@ -58,10 +58,8 @@ def emit(context, value, *, quality=0) -> pl.DataFrame:
     text = value if isinstance(value, str) else None
     return pl.DataFrame({
         "time": [context["output_time"]],
-        "sample_key": [0],
         "value": [None if text is not None else float(value)],
         "text": [text],
-        "quality": [quality],
     }, schema=SCHEMA)
 
 
@@ -69,7 +67,7 @@ def emit_windows(frame: pl.DataFrame) -> pl.DataFrame:
     """Batch results from ``output_time`` and ``value`` or ``text`` columns.
 
     Each input row produces one output row, with ``output_time`` renamed to
-    ``time``. Optional ``quality`` defaults to zero and ``sample_key`` is zero.
+    ``time``.
 
     >>> at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     >>> rows = pl.DataFrame({"output_time": [at, at + timedelta(minutes=1)], "value": [2., 3.]})
@@ -79,10 +77,8 @@ def emit_windows(frame: pl.DataFrame) -> pl.DataFrame:
     _check_time_column(frame["output_time"])
     return frame.select(
         pl.col("output_time").alias("time"),
-        pl.lit(0).alias("sample_key"),
         pl.col("value") if "value" in frame.columns else pl.lit(None).alias("value"),
         pl.col("text") if "text" in frame.columns else pl.lit(None).alias("text"),
-        pl.col("quality") if "quality" in frame.columns else pl.lit(0).alias("quality"),
     ).cast(SCHEMA)
 
 
@@ -151,6 +147,8 @@ def _datetime(ns, *, boundary=False):
 
 
 def _public_frame(frame):
+    if "sample_key" in frame.columns and (frame["sample_key"] != 0).any():
+        raise ValueError("Acquirium supports one reading per stream and timestamp")
     names = {"event_time_ns": "time", "window_ns": "output_time"}
     expressions = []
     for name, target in names.items():
@@ -158,13 +156,16 @@ def _public_frame(frame):
             if (frame[name] % 1000 != 0).any():
                 raise ValueError("soft sensor timestamps must have microsecond precision")
             expressions.append((pl.col(name) // 1000).cast(_TIME).alias(name))
-    return frame.with_columns(expressions).rename({
+    return frame.with_columns(expressions).drop("sample_key", "quality", strict=False).rename({
         name: target for name, target in names.items() if name in frame.columns
     })
 
 
 def _public_record(row):
     result = dict(row)
+    if result.pop("sample_key", 0) != 0:
+        raise ValueError("Acquirium supports one reading per stream and timestamp")
+    result.pop("quality", None)
     result["time"] = _datetime(result.pop("event_time_ns"))
     return result
 
@@ -234,12 +235,18 @@ def _public_input(item):
 
 
 def _engine_frame(frame):
+    unexpected = set(frame.columns) - SCHEMA.keys()
+    if unexpected:
+        raise ValueError(f"unexpected soft sensor output columns: {sorted(unexpected)}")
     _check_time_column(frame["time"])
     us = frame["time"].dt.epoch("us")
     if ((us < -(2**63 // 1000)) | (us > (2**63 - 1) // 1000)).any():
         raise ValueError("output timestamp is outside the engine's supported range")
     return frame.with_columns(
-        (pl.col("time").dt.epoch("us") * 1000).alias("event_time_ns")
+        (pl.col("time").dt.epoch("us") * 1000).alias("event_time_ns"),
+        # Required by the engine wire schema; never exposed to calculations.
+        pl.lit(0, pl.Int64).alias("sample_key"),
+        pl.lit(0, pl.UInt32).alias("quality"),
     ).drop("time")
 
 

@@ -99,7 +99,6 @@ def verify(engine, raw, units):
     actual_rows = snapshot.readings()
     actual = {reference: {} for reference in expected}
     for row in actual_rows:
-        assert row.sample_key == 0 and row.quality == 0
         actual[row.stream][row.event_time_ns] = row.value
     for reference, wanted in expected.items():
         got = actual[reference]

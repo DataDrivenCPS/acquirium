@@ -47,8 +47,8 @@ Corrections replace old pressure readings; deletes remove old conductivity
 readings and retract predictions. A final correction and deletion guarantee
 those paths even in tiny runs. An independent scalar oracle uses 128 basis
 functions, with neither the worker module nor its NumPy implementation, to
-recompute every current prediction. Verification also checks every raw reading,
-timestamp, sample key, and quality flag. Reports are written only after success.
+recompute every current prediction. Verification also checks every raw reading
+and timestamp. Reports are written only after success.
 
 Each new output directory contains the model, DuckDB file, source journal,
 environment and exact native source identity, completed epoch reports, full

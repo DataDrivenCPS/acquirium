@@ -82,10 +82,8 @@ with long strings shortened:
 | `role` | `"wave"` |
 | `stream` | `"urn:acquirium#7cf58971-2f06-503c-83b5-6da39e9177b9"` |
 | `time` | `2026-11-08 17:46:11.875366 UTC` |
-| `sample_key` | `0` |
 | `value` | `0.7071067811865475` |
 | `text` | `null` |
-| `quality` | `0` |
 | `context` | `'{"ext0":"urn:acquirium#…","extname0":"signal",…}'` |
 
 `value` holds the reading. `time` holds its sample timestamp as a UTC datetime
@@ -95,31 +93,77 @@ column contains metadata for the input stream as a JSON string.
 ### Function context
 
 The second argument, `context`, is a dictionary describing the function call.
-Acquirium provides the result's timestamp in `context["output_time"]`. For the
-reading above:
+`output_time` is the result's timestamp. `operator` contains the app declaration,
+including an `outputs` mapping from output names to stream URIs. This app will
+declare an output named `"high"`. For the reading above:
 
-| Field in `context` | Value | Meaning |
-| --- | --- | --- |
-| `output_time` | `2026-11-08 17:46:11.875366 UTC` | Output timestamp, as a timezone-aware Python datetime. |
+- **Output timestamp:** `context["output_time"]`
+
+  - A timezone-aware Python datetime for the result.
+  - Value: `2026-11-08 17:46:11.875366 UTC`.
+
+- **Output streams:** `context["operator"]["outputs"]`
+
+  - Maps each declared output name to its stream URI.
+  - Here, `"high"` maps to `urn:acquirium#ad846115-4174-570b-af13-e01751c17bd6`.
+
+- **Group key:** `context["parameters"]["group"]`
+
+  - A tuple identifying the group. Here the group is one input stream.
+  - Value: `("urn:acquirium#7cf58971-2f06-503c-83b5-6da39e9177b9",)`.
 
 This app processes each sample timestamp separately, so `output_time` equals
 the input reading's `time`.
 
+The name `"high"` identifies an output within the app. Each selected input
+stream gets its own `"high"` stream with a distinct URI.
+
+Context also contains the window boundaries, `window_start` and `window_end`,
+and any configured settings in `parameters`. The
+[function context explanation](../explanation/soft-sensor-inputs.md#function-context)
+and [app reference](../reference/apps.md#python-functions) describe the other fields.
+
 ## Function outputs
 
-The function returns a dictionary with one dataframe per output. We will call
-our single output `"high"`.
+An app declares named outputs. This example will declare one output, `"high"`.
+The function must return a dictionary mapping each declared name to a Polars
+dataframe of results.
 
-Two helpers build those dataframes. `emit(context, value)` makes a one-row
-frame holding `value` at the timestamp in `context`. `empty()` makes a frame
-with no rows. Returning `empty()` matters more than it looks: if the input
-reading is later deleted or corrected below 0.5, an empty result clears
-whatever the app wrote at that timestamp before.
+Each row contains a result's timestamp and value. For the reading above, the
+`"high"` dataframe should contain:
 
-So the function is:
+| time | value | text |
+| --- | ---: | --- |
+| 2026-11-08 17:46:11.875366 UTC | 0.7071067811865475 | null |
+
+`time` is the output timestamp from `context["output_time"]`. A numeric result
+goes in `value`; `text` is null. The complete
+[output schema](../reference/apps.md#python-functions) lists the column types.
+
+### Single-reading helper
+
+When a function computes one reading, `emit(context, value)` is a convenience
+function for constructing this one-row dataframe. It fills `time` from
+`context["output_time"]` and supplies the other columns shown above.
+
+The function returns that dataframe under the `"high"` key. Acquirium uses
+that key to find the destination URI in `context["operator"]["outputs"]` and
+stores the returned rows there.
+
+### Empty output
+
+`empty()` constructs a dataframe with the same columns and types, but no rows.
+Return it for `"high"` when there should be no reading at this output timestamp.
+If an earlier call produced a reading there, Acquirium removes it. This handles
+deletions and corrections to 0.5 or below.
+
+### Threshold function
+
+The threshold function chooses between a one-row dataframe and an empty one:
 
 ```python
 from acquirium.functions import emit, empty
+
 
 def threshold(frame, context):
     if frame.is_empty():
@@ -127,8 +171,10 @@ def threshold(frame, context):
 
     value = frame["value"][0]
     if value > 0.5:
+        # Build one result row at context["output_time"].
         result = emit(context, value)
     else:
+        # No result should remain at this timestamp.
         result = empty()
 
     return {"high": result}
@@ -158,8 +204,8 @@ app = aq.App(
 )
 ```
 
-The input is the query you already ran, and the output's name, `"high"`,
-matches the key the function returns. `Pointwise()` asks for one call per
+The app declares `"high"` in `outputs`. The function returns its dataframe
+under that same key. `Pointwise()` asks for one call per
 timestamp. Larger windows, such as a minute of readings at a time, are the
 subject of the [turbidity tutorial](turbidity.md).
 

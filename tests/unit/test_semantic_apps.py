@@ -304,7 +304,7 @@ def test_failed_activation_remains_durable_and_can_be_retried(system, tmp_path):
         )
     )
     module = tmp_path / "calculation.py"
-    source = 'def calculate(frame, context):\n    return {"mean": frame.select("time", "sample_key", "value", "quality")}\n'
+    source = 'def calculate(frame, context):\n    return {"mean": frame.select("time", "value")}\n'
     module.write_text(source)
     declaration = mean("artifact-app", ref)
     declaration = App(
@@ -415,7 +415,7 @@ def test_closing_after_a_failed_function_keeps_pending_writes(tmp_path, caplog):
         "def calculate(frame, context):\n"
         f"    if pathlib.Path({str(flag)!r}).exists():\n"
         '        raise RuntimeError("sensor offline")\n'
-        '    return {"mean": frame.select("time", "sample_key", "value", "quality")}\n'
+        '    return {"mean": frame.select("time", "value")}\n'
     )
     declaration = mean("halted-app", ref)
     declaration = App(

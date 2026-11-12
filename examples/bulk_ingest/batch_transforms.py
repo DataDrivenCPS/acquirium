@@ -19,7 +19,6 @@ THRESHOLDS_NTU = {
     "urn:bulk/loc-2": 0.5,
     "urn:bulk/loc-3": 0.3,
 }
-INTERPOLATED = 1
 
 
 def snap_to_minute(frame, context):
@@ -53,7 +52,6 @@ def fill_gaps(frame, context):
         .when(short_gap)
         .then(interpolated)
         .alias("value"),
-        pl.when(pl.col("exact").is_not_null()).then(0).otherwise(INTERPOLATED).alias("quality"),
     ).drop_nulls("value")
     return {"turbidity": emit_windows(result)}
 
