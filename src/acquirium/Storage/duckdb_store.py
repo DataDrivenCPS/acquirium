@@ -549,31 +549,15 @@ class DuckDBStore:
                 order_sql = "ASC" if order == "asc" else "DESC"
                 limit_sql = f" LIMIT {int(limit)}" if limit else ""
 
-                select = f"""
+                query = f"""
                     SELECT
                         ts,
                         numeric_value,
                         text_value
                     FROM {TIMESERIES_TABLE}
                     WHERE {where}
+                    ORDER BY ts {order_sql}{limit_sql}
                 """
-                if (start or end) and not limit:
-                    # Sorting the table scan directly lets DuckDB split the
-                    # sort into many range-partitioned scans when it
-                    # overestimates the row count, and each of those checks
-                    # every row group's zonemap: a fixed cost per read that
-                    # grows with the table, whatever the window. Sorting a
-                    # materialized CTE of the filtered rows avoids that.
-                    # A LIMIT read must stay a top-N over the scan, and an
-                    # unbounded read would only be copied once more.
-                    query = f"""
-                        WITH filtered AS MATERIALIZED ({select})
-                        SELECT ts, numeric_value, text_value
-                        FROM filtered
-                        ORDER BY ts {order_sql}
-                    """
-                else:
-                    query = f"{select} ORDER BY ts {order_sql}{limit_sql}"
 
                 value_kind = self._stream_value_kind(conn, ref_uri)
                 # Resolve the value column once for the whole read so every

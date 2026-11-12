@@ -300,10 +300,8 @@ def test_timeseries_limit(store):
 
 @pytest.mark.unit
 def test_timeseries_windowed_and_limited_reads_agree(store):
-    """A read takes one of two SQL shapes depending on window and limit.
-
-    Every combination must return what filtering and sorting the stored rows
-    in Python returns, so the two shapes cannot drift apart.
+    """Every combination of window, limit and order must return what filtering
+    and sorting the stored rows in Python returns.
     """
     uri = "urn:test:duck:ts_shapes"
     days = [9, 3, 17, 1, 12, 6, 20, 14, 4, 11]
