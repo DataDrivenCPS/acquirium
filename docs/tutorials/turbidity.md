@@ -102,9 +102,16 @@ Each row has either a numeric `value` or `text`. The fault code arrives with
 `value` null and its code in `text`.
 
 The function's `context["output_time"]` is the minute being cleaned, 00:05.
-`context["parameters"]["group"]` is `("urn:turbidity:filter-3",)`: the app
-groups readings by location, so Filter 3's readings never mix with another
-location's.
+`context["parameters"]` describes the location:
+
+```python
+{"group": ("urn:turbidity:filter-3",), "threshold": 1.0}
+```
+
+`group` identifies Filter 3: the app groups readings by location, so Filter 3's
+readings never mix with another location's. `threshold` is how far, in NTU,
+Filter 3's readings may sit from the median before they count as spikes. The
+app declaration gives each location its own.
 
 The cleaning function below declares `frame: pd.DataFrame`, so Acquirium
 provides a pandas dataframe with Arrow-backed columns. Its timestamps remain
@@ -123,9 +130,6 @@ import polars as pl
 
 from acquirium.functions import emit
 
-# A reading this far from the median of the readings around it is a spike.
-SPIKE_NTU = 1.0
-
 
 def clean(frame: pd.DataFrame, context):
     """One clean turbidity value per minute, from the raw readings around it."""
@@ -134,8 +138,9 @@ def clean(frame: pd.DataFrame, context):
     # Fault codes arrive as text, with no numeric value.
     readings = frame.dropna(subset=["value"])
     # A spike, such as a bubble past the sensor, sits far from the median.
+    threshold = context["parameters"]["threshold"]
     median = readings["value"].median()
-    readings = readings[(readings["value"] - median).abs() <= SPIKE_NTU]
+    readings = readings[(readings["value"] - median).abs() <= threshold]
     if readings.empty:
         return {"turbidity": emit(context, None)}
 
@@ -150,8 +155,9 @@ def clean(frame: pd.DataFrame, context):
 1. **Faults.** Rows without a numeric value are dropped. At 00:05 that
    leaves one reading, 0.75 NTU.
 2. **Spikes.** The median of ten minutes of readings ignores a few odd ones.
-   A reading more than 1 NTU from it is dropped. At 00:22 the median is
-   0.75 NTU, so 9.9 goes and 0.15 stays.
+   A reading farther from it than the location's `threshold` is dropped. At
+   00:22 Filter 3's median is 0.75 NTU and its threshold is 1 NTU, so 9.9 goes
+   and 0.15 stays.
 3. **Minute averages.** The remaining readings are averaged within each
    minute. `resample("1min", on="time")` groups readings by their timestamp,
    so 00:02:00 and 00:02:30 make one average at 00:02.
@@ -176,6 +182,14 @@ TURBIDITY = "http://qudt.org/vocab/quantitykind/Turbidity"
 MINUTE = 60 * 1_000_000_000
 CALCULATIONS = Path("examples/turbidity/calculations.py")
 
+# How far a reading may sit from the median around it before it counts as a spike.
+SPIKES = {
+    "urn:turbidity:filter-1": {"threshold": 1.0},
+    "urn:turbidity:filter-2": {"threshold": 1.0},
+    "urn:turbidity:filter-3": {"threshold": 1.0},
+    "urn:turbidity:combined": {"threshold": 0.5},
+}
+
 raw = (
     client.query()
     .measurement(alias="raw", quantity_kind=TURBIDITY)
@@ -184,7 +198,8 @@ raw = (
 clean = aq.App(
     name="turbidity-clean",
     inputs=[aq.Selection.from_query(
-        raw, alias="raw", group="location", exclude_app="turbidity-clean"
+        raw, alias="raw", group="location", exclude_app="turbidity-clean",
+        parameters=SPIKES,
     )],
     outputs={"turbidity": aq.Output(unit=NTU, quantity_kind=TURBIDITY, on_group=True)},
     function=aq.PythonFunction.from_file(CALCULATIONS, "clean"),
@@ -194,8 +209,15 @@ clean = aq.App(
 
 The query finds every turbidity measurement and the location it belongs to.
 `group="location"` makes one group per location, so the app runs separately
-for each one and needs no list of streams. A fifth analyser added to the model
-would be cleaned too.
+for each one and needs no list of streams.
+
+`parameters` gives each location its settings, keyed by the location's URI.
+The combined effluent normally reads well under 0.3 NTU, so a smaller jump
+there is already suspect, and its spike threshold is 0.5 NTU instead of 1.
+One function serves every location, and changing one location's value
+recalculates only that location's history. Only the listed locations are
+cleaned: a fifth analyser needs an entry here too, and deployment warns about
+locations the query finds but `SPIKES` leaves out.
 
 The output is declared with `on_group=True`, which attaches the clean stream to
 its location as another turbidity measurement. That makes it easy to find, but
@@ -212,7 +234,8 @@ arrives.
 
 ### Group parameters
 
-Each location has its own limit and its own idea of "long enough":
+The alarm's settings are group parameters too. Each location has its own
+limit and its own idea of "long enough":
 
 ```python
 LIMITS = {
@@ -223,15 +246,14 @@ LIMITS = {
 }
 ```
 
-These are parameters of each group, keyed by location, and the alarm function
-reads them from its context. For Filter 3, `context["parameters"]` is:
+For Filter 3, the alarm function's `context["parameters"]` is:
 
 ```python
 {"group": ("urn:turbidity:filter-3",), "limit_ntu": 0.5, "sustained_minutes": 15}
 ```
 
-One function serves every location. Changing one location's values
-recalculates only that location's history.
+Each app sees only its own selection's parameters: the alarm has no
+`threshold`, and the cleaner has no `limit_ntu`.
 
 ### Alarm function
 

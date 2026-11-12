@@ -21,7 +21,8 @@ def raw(rows):
 
 
 def cleaned(frame, minute):
-    result = clean(frame, {"output_time": START + minute * MINUTE})["turbidity"]
+    context = {"output_time": START + minute * MINUTE, "parameters": {"threshold": 1.0}}
+    result = clean(frame, context)["turbidity"]
     return result["value"].to_list()
 
 

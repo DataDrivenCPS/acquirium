@@ -8,8 +8,8 @@ names use letters, digits, underscores, dots, and hyphens. See
 
 ## Input selections
 
-`Selection.from_query(query, alias=..., group=None)` turns a query into an app
-input. `alias` identifies the measurement and becomes its input role. Without a
+`Selection.from_query(query, alias=..., group=None, parameters=None)` turns a
+query into an app input. `alias` identifies the measurement and becomes its input role. Without a
 `group`, each matched stream gets its own calculation. With an entity alias as
 `group`, all streams for that entity feed one calculation.
 

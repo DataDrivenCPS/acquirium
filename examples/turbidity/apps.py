@@ -10,6 +10,14 @@ NTU = "http://qudt.org/vocab/unit/NTU"
 TURBIDITY = "http://qudt.org/vocab/quantitykind/Turbidity"
 MINUTE = 60 * 1_000_000_000
 
+# How far a reading may sit from the median around it before it counts as a spike.
+SPIKES = {
+    "urn:turbidity:filter-1": {"threshold": 1.0},
+    "urn:turbidity:filter-2": {"threshold": 1.0},
+    "urn:turbidity:filter-3": {"threshold": 1.0},
+    "urn:turbidity:combined": {"threshold": 0.5},
+}
+
 # Each location's limit, and how long turbidity must stay above it.
 LIMITS = {
     "urn:turbidity:filter-1": {"limit_ntu": 0.5, "sustained_minutes": 15},
@@ -28,7 +36,8 @@ def declarations(client):
     clean = aq.App(
         name="turbidity-clean",
         inputs=[aq.Selection.from_query(
-            raw, alias="raw", group="location", exclude_app="turbidity-clean"
+            raw, alias="raw", group="location", exclude_app="turbidity-clean",
+            parameters=SPIKES,
         )],
         outputs={"turbidity": aq.Output(unit=NTU, quantity_kind=TURBIDITY, on_group=True)},
         function=aq.PythonFunction.from_file(CALCULATIONS, "clean"),

@@ -7,9 +7,6 @@ import polars as pl
 
 from acquirium.functions import emit
 
-# A reading this far from the median of the readings around it is a spike.
-SPIKE_NTU = 1.0
-
 
 def clean(frame: pd.DataFrame, context):
     """One clean turbidity value per minute, from the raw readings around it."""
@@ -18,8 +15,9 @@ def clean(frame: pd.DataFrame, context):
     # Fault codes arrive as text, with no numeric value.
     readings = frame.dropna(subset=["value"])
     # A spike, such as a bubble past the sensor, sits far from the median.
+    threshold = context["parameters"]["threshold"]
     median = readings["value"].median()
-    readings = readings[(readings["value"] - median).abs() <= SPIKE_NTU]
+    readings = readings[(readings["value"] - median).abs() <= threshold]
     if readings.empty:
         return {"turbidity": emit(context, None)}
 

@@ -120,8 +120,13 @@ class Selection:
         group: str | None = None,
         target_unit: str | None = None,
         exclude_app: str | None = None,
+        parameters: Mapping[str, Mapping[str, Any]] | None = None,
     ):
-        """Freeze the query DSL as SPARQL; resolve its inputs again on graph edits."""
+        """Freeze the query DSL as SPARQL; resolve its inputs again on graph edits.
+
+        ``parameters`` maps groups to values the function reads from
+        ``context["parameters"]``, as for ``outputs_of``.
+        """
         node = query.query_graph.resolve_alias(alias)
         if node is None or node not in query.query_graph.data_nodes:
             raise ValueError(f"{alias!r} must name a measurement alias")
@@ -137,6 +142,7 @@ class Selection:
             point_unit=f"unit{node}",
             target_unit=target_unit,
             exclude_app=exclude_app,
+            parameters=parameters,
         )
 
 
