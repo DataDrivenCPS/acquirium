@@ -549,13 +549,22 @@ class DuckDBStore:
                 order_sql = "ASC" if order == "asc" else "DESC"
                 limit_sql = f" LIMIT {int(limit)}" if limit else ""
 
+                # Filter in a materialized CTE and sort its result. Sorting the
+                # table scan directly lets DuckDB split the sort into many
+                # range-partitioned scans when it overestimates the row count,
+                # and each of those checks every row group's zonemap: a fixed
+                # cost per read that grows with the table, whatever the window.
                 query = f"""
-                    SELECT
-                        ts,
-                        numeric_value,
-                        text_value
-                    FROM {TIMESERIES_TABLE}
-                    WHERE {where}
+                    WITH filtered AS MATERIALIZED (
+                        SELECT
+                            ts,
+                            numeric_value,
+                            text_value
+                        FROM {TIMESERIES_TABLE}
+                        WHERE {where}
+                    )
+                    SELECT ts, numeric_value, text_value
+                    FROM filtered
                     ORDER BY ts {order_sql}{limit_sql}
                 """
 
