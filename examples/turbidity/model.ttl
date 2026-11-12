@@ -1,0 +1,21 @@
+@prefix s223: <http://data.ashrae.org/standard223#> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix qk: <http://qudt.org/vocab/quantitykind/> .
+@prefix unit: <http://qudt.org/vocab/unit/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix plant: <urn:turbidity:> .
+
+# Four sampling locations, each with one turbidity property.
+plant:filter-1 rdfs:label "Filter 1" ; s223:hasProperty plant:filter-1-turbidity .
+plant:filter-2 rdfs:label "Filter 2" ; s223:hasProperty plant:filter-2-turbidity .
+plant:filter-3 rdfs:label "Filter 3" ; s223:hasProperty plant:filter-3-turbidity .
+plant:combined rdfs:label "Combined effluent" ; s223:hasProperty plant:combined-turbidity .
+
+plant:filter-1-turbidity a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qk:Turbidity ; qudt:hasUnit unit:NTU .
+plant:filter-2-turbidity a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qk:Turbidity ; qudt:hasUnit unit:NTU .
+plant:filter-3-turbidity a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qk:Turbidity ; qudt:hasUnit unit:NTU .
+plant:combined-turbidity a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind qk:Turbidity ; qudt:hasUnit unit:NTU .

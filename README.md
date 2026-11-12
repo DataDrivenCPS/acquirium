@@ -55,8 +55,8 @@ corrections update the results, including those of downstream apps.
 
 Start with [Soft sensor app](docs/tutorials/first-app.md): generate a sine wave
 with a driver and write a Python threshold function. The
-[Turbidity alarm pipeline](docs/tutorials/turbidity.md) tutorial covers averaging,
-gap filling, and a sustained high interval. The turbidity demo starts its own
+[Turbidity alarm pipeline](docs/tutorials/turbidity.md) tutorial cleans faults,
+spikes, and gaps from turbidity readings, then raises a sustained alarm. The turbidity demo starts its own
 temporary server and checks its results.
 
 To build your own, see [Soft sensor calculations](docs/how-to/write-soft-sensors.md).

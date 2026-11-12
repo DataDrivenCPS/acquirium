@@ -1,4 +1,4 @@
-"""Follow a gap and a late correction through the turbidity alarm chain.
+"""Follow faults, spikes, a gap, and a late correction through the turbidity alarm.
 
     uv run --locked python -m examples.turbidity.run
 """
@@ -10,62 +10,80 @@ from pathlib import Path
 import polars as pl
 
 import acquirium as aq
-from examples.bulk_ingest.chain import NTU, SOFT_SENSORS, SOURCE, TURBIDITY
+from examples.turbidity.apps import NTU, SOURCE, TURBIDITY, declarations
 
 START = aq.to_timestamp("2026-01-01T00:00:00 UTC")
 MINUTE = timedelta(minutes=1)
+LOCATIONS = {"filter-1": 0.15, "filter-2": 0.12, "filter-3": 0.2, "combined": 0.1}
+
+
+def readings(location, normal):
+    """Twenty-five minutes of readings, two a minute."""
+    rows = []
+    for minute in range(25):
+        t = START + minute * MINUTE
+        if location != "filter-3":
+            rows += [(t, round(normal - 0.05, 2)), (t + MINUTE / 2, round(normal + 0.05, 2))]
+            continue
+        if minute == 10:
+            continue  # Filter 3's readings for 00:10 are missing.
+        level = 0.8 if 2 <= minute <= 20 else normal
+        second = round(level + 0.05, 2)
+        if minute == 5:
+            second = "Fault"  # The analyser reports a fault instead of a reading.
+        if minute == 22:
+            second = 9.9  # A bubble passes the sensor.
+        rows += [(t, round(level - 0.05, 2)), (t + MINUTE / 2, second)]
+    return rows
 
 
 def run(client):
-    # Four sampling locations, each with a turbidity point in the plant model.
-    model = Path(__file__).resolve().parents[1] / "bulk_ingest" / "model.ttl"
-    client.insert_graph_file(model, source_id="turbidity-layout")
+    client.insert_graph_file(Path(__file__).with_name("model.ttl"), source_id="turbidity-plant")
+    client.register_datasource(SOURCE)
     client.register_streams([{
         "source_id": SOURCE,
-        "ref_name": f"turbidity-{i}",
-        "point_uri": f"urn:bulk/loc-{i}-turbidity",
+        "ref_name": location,
+        "point_uri": f"urn:turbidity:{location}-turbidity",
         "unit": NTU,
         "quantity_kind": TURBIDITY,
         "value_kind": "numeric",
-    } for i in range(4)])
-    for app in SOFT_SENSORS:
+    } for location in LOCATIONS])
+    for app in declarations(client):
         client.deploy_app(app)
 
-    # Twenty-five minutes of readings, two a minute. Filter 3 (location 2) runs
-    # at 0.8 NTU from 00:02 to 00:20, and its readings for 00:10 are missing.
-    streams = {}
-    for i, normal in enumerate((1.5, 1.0, 0.2, 0.1)):
-        readings = []
-        for minute in range(25):
-            if i == 2 and minute == 10:
-                continue
-            value = 0.8 if i == 2 and 2 <= minute <= 20 else normal
-            t = START + minute * MINUTE
-            readings += [(t, value - 0.05), (t + MINUTE / 2, value + 0.05)]
-        streams[f"turbidity-{i}"] = readings
-    receipt = client.insert_timeseries_batch(SOURCE, streams)["receipts"][0]
+    receipt = client.insert_timeseries_batch(SOURCE, {
+        location: readings(location, normal) for location, normal in LOCATIONS.items()
+    })["receipts"][0]
     first = client.wait(receipt)["epoch"]
 
-    filter3 = client.query().entity(uri="urn:bulk/loc-2", alias="filter3")
-    filled = filter3.measurement(alias="filled", app="bulk-turbidity-fill")
-    alarm = filter3.measurement(alias="alarm", app="bulk-turbidity-sustained")
-    count = client.query().measurement(alias="count", app="bulk-plant-turbidity-alarms")
+    filter3 = client.query().entity(uri="urn:turbidity:filter-3", alias="filter3")
+    raw = client.query().measurement(alias="raw", uri="urn:turbidity:filter-3-turbidity")
+    clean = filter3.measurement(alias="clean", app="turbidity-clean")
+    alarm = filter3.measurement(alias="alarm", app="turbidity-alarm")
 
-    at_gap = filled.dataframe().filter(pl.col("time") == START + 10 * MINUTE)
+    def show(label):
+        table = (
+            raw.dataframe(value_mode="coalesce")
+            .group_by(pl.col("time").dt.truncate("1m"))
+            .agg(pl.col("raw").sort_by("time").str.join(", "))
+            .join(clean.dataframe(), on="time", how="full", coalesce=True)
+            .join(alarm.dataframe(), on="time", how="left")
+            .sort("time")
+        )
+        print(label)
+        with pl.Config(tbl_rows=-1, fmt_str_lengths=40):
+            print(table)
+
+    show("Filter 3")
     alarm_on = alarm.dataframe().filter(pl.col("alarm") == 1)["time"]
-    print(f"Filled value at 00:10: {at_gap['filled'][0]:.2f} NTU")
     print(f"Sustained alarm on: {alarm_on.min():%H:%M} to {alarm_on.max():%H:%M}")
-    print(f"Locations in sustained alarm, at most: {count.dataframe()['count'].max():.0f}")
 
     # The missing readings arrive late. They show a brief dip below the limit.
     late = [(START + 10 * MINUTE, 0.15), (START + 10.5 * MINUTE, 0.25)]
-    receipt = client.insert_timeseries(SOURCE, "turbidity-2", late)["receipts"][0]
+    receipt = client.insert_timeseries(SOURCE, "filter-3", late)["receipts"][0]
     client.wait(receipt)
-
-    at_gap = filled.dataframe().filter(pl.col("time") == START + 10 * MINUTE)
-    print(f"After the late readings, 00:10 is {at_gap['filled'][0]:.2f} NTU")
+    show("Filter 3 after the late readings")
     print(f"Sustained alarm, at most: {alarm.dataframe()['alarm'].max():.0f}")
-    print(f"Locations in sustained alarm, at most: {count.dataframe()['count'].max():.0f}")
 
     # The snapshot taken before the correction still holds the original alarm.
     stream = alarm.data().stream_info()["ref_uri"][0]

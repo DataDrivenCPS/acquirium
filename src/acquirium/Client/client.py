@@ -1010,7 +1010,7 @@ class AcquiriumClient:
         return response.json()
 
     def retry_engine(self):
-        """Resume accepted work after repairing a failed function/environment."""
+        """Request another attempt for failed soft sensors after repairing the cause."""
         response = self._http.post(f"{self.base_url}/engine/retry")
         _raise_for_status(response)
         return response.json()

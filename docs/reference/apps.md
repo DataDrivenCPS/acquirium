@@ -142,11 +142,45 @@ The [calculation guide](../how-to/write-soft-sensors.md#python-functions) walks 
 For diagrams connecting stream groups, windows, timestamps, and function calls,
 see [Soft sensor inputs](../explanation/soft-sensor-inputs.md).
 
-The Polars input frame has `role`, `stream`, `time`,
+### Dataframe type
+
+The first parameter's annotation selects the input dataframe:
+
+- `frame: pandas.DataFrame`: pandas 2.x, with Arrow-backed columns.
+- `frame: polars.DataFrame`: Polars.
+- No annotation: Polars.
+
+Imports such as `import pandas as pd`, aliases, string annotations, and
+`from __future__ import annotations` work. Acquirium resolves the annotation
+once when a worker loads the function. Other frame annotations are rejected.
+Deployment syntax stays the same.
+
+pandas inputs use `table.to_pandas(types_mapper=pd.ArrowDtype)`. Numeric, text,
+and timestamp columns retain Arrow storage and nulls. Numeric nulls appear as
+`pd.NA`; timestamps have dtype `timestamp[us, tz=UTC][pyarrow]`. Context
+timestamps remain Python datetimes. pandas operations may allocate new buffers
+or convert individual columns; Arrow-backed input does not guarantee that
+every pandas operation is zero-copy.
+
+During a calculation, `emit`, `empty`, `previous_rows`, and `previous_outputs`
+use the selected library. pandas missing scalar values passed to `emit` produce
+an empty result. `emit_windows` accepts either library and returns that same
+kind of dataframe. Outside a calculation, helpers default to Polars.
+
+An app may return pandas or Polars dataframes, including different types on
+different output ports. Return timestamps in a `time` column; use
+`reset_index()` when a pandas result has a time index. Apps using different
+libraries can feed each other. The [turbidity tutorial](../tutorials/turbidity.md#cleaning-steps)
+uses a pandas cleaner followed by a Polars alarm.
+
+### Inputs and outputs
+
+The input frame has `role`, `stream`, `time`,
 `value`, `text`, and JSON `context` columns. Each reading has either a
 numeric `value` or `text`. Selected graph columns are strings in the row context.
 
-`time` is the input sample's timestamp, with type `Datetime("us", "UTC")`.
+`time` is the input sample's timestamp, in UTC microseconds. In Polars its
+type is `Datetime("us", "UTC")`; in pandas it is an Arrow timestamp column.
 It is the timestamp supplied when the sample was inserted. `stream` identifies
 the input stream.
 
@@ -182,7 +216,8 @@ input's `span_start` and `span_end` describe the part of the window it
 covers, as a half-open span.
 
 Return a mapping with every declared port. Each port's frame has these columns
-in order:
+in order. The types below are Polars types; pandas frames use the equivalent
+Arrow types or compatible numeric and timezone-aware datetime types.
 
 | Column | Type |
 | --- | --- |
@@ -276,9 +311,11 @@ stays reserved. For operating steps and failure recovery, see
 
 ### Deployment files
 
-Paths name files on the server. Keep each released calculation at an immutable
-path: its digest is verified before execution, so an in-place edit causes a
-mismatch. Keep earlier files available for accepted work and recovery.
+Paths name files on the server at deployment. `PythonFunction.from_file` hashes
+the file; deployment checks the hash and retains a copy under it. The running
+app uses that copy, so the source file can be edited or removed afterwards.
+To deploy an edit, rebuild the declaration and redeploy; the path can stay the
+same. Identical file content keeps the same calculation version.
 
 The worker copies the calculation file into a temporary directory. Helpers
 must be in that file or installed packages; adjacent files and paths relative
@@ -292,9 +329,30 @@ results. Changing a dependency alone does not trigger history recalculation.
 Drain accepted work before changing a shared environment, preserve earlier
 releases for recovery, and deploy a newly versioned calculation.
 
-Complete any work spawned by a function before returning. A failed function
-pauses publication for all apps. `retry_engine()` reprocesses the waiting
-requests in order. Deployments within one epoch resolve to the last, and the
-first epoch after a failure extends through the newest waiting deployment, so a
-corrected deployment replaces the failed one wherever it was accepted.
+Complete any work spawned by a function before returning.
+
+### Failure status
+
+Function failures are isolated to an operator and its downstream consumers.
+Their last successful values remain queryable. Other groups and apps continue
+updating. `inspect_app(name)["app"]` includes:
+
+- `status`: `active`, `failed` for an evaluation error, or `blocked` for a failed
+  upstream operator. `pending` means the desired plan has not activated.
+- `stale`: whether any operator in the app is failed or blocked.
+- `failures`: a map keyed by operator ID. Each entry contains `error` (on the
+  failed calculation), `blocked_by` (failed operator IDs), and `since_epoch`
+  (the first epoch whose inputs were not successfully processed).
+
+`engine_status()["engine"]["failures"]` and `engine_snapshot()["failures"]`
+expose the full operator failure map.
+Publication of a receipt does not mean all derived streams are current.
+Failure status survives restart. A corrected deployment, changed input, or
+`retry_engine()` requests another attempt. Recovery recomputes the affected
+branch from current inputs, including missed deletions, before clearing its
+failure status. A database commit failure still stops publication globally.
+
+Branches share an epoch commit. A slow function can delay publication until it
+finishes or times out.
+
 Worker-pool settings and limits are in [server configuration](server-config.md).

@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
 
+import pandas as pd
 import polars as pl
+import pyarrow as pa
 import pytest
 
 from acquirium import functions as f
@@ -151,3 +153,148 @@ def test_engine_bookkeeping_is_private_to_the_wire_schema():
         f._engine_frame(result.with_columns(pl.lit(1).alias("sample_key")))
     with pytest.raises(ValueError, match="one reading per stream and timestamp"):
         f._public_frame(native.with_columns(pl.lit(1).alias("sample_key")))
+
+
+def native_frame():
+    return pl.DataFrame({
+        "role": ["raw", "raw"], "stream": ["urn:raw", "urn:raw"],
+        "event_time_ns": [NS, NS + 1000], "sample_key": [0, 0],
+        "value": [12., None], "text": [None, "Fault"], "quality": [0, 0],
+        "context": ["{}", "{}"],
+    })
+
+
+def test_pandas_annotation_selects_arrow_columns_without_copying_value_buffers():
+    source = native_frame()
+    value_buffer = source["value"].to_arrow().buffers()[1].address
+
+    def calculate(frame: pd.DataFrame, context):
+        assert isinstance(frame, pd.DataFrame)
+        assert all(isinstance(dtype, pd.ArrowDtype) for dtype in frame.dtypes)
+        assert frame["time"].dtype.pyarrow_dtype == pa.timestamp("us", "UTC")
+        assert frame["time"].iloc[0] == AT
+        assert frame["value"].iloc[1] is pd.NA
+        assert frame["text"].iloc[1] == "Fault"
+        assert frame["value"].array.__arrow_array__().chunk(0).buffers()[1].address == value_buffer
+        assert "sample_key" not in frame and "quality" not in frame
+        assert context["output_time"] == AT
+        result = f.emit(context, frame["value"].mean())
+        assert isinstance(result, pd.DataFrame)
+        assert all(isinstance(dtype, pd.ArrowDtype) for dtype in result.dtypes)
+        assert isinstance(f.empty(), pd.DataFrame)
+        return {"mean": result}
+
+    result = f._datetime_function(calculate)(source, {"window_ns": NS})["mean"]
+    assert result["event_time_ns"].to_list() == [NS]
+    assert result["value"].to_list() == [12.]
+    # The choice applies only during that call, including when a worker changes apps.
+    assert isinstance(f.empty(), pl.DataFrame)
+
+
+@pytest.mark.parametrize("annotation", [None, pl.DataFrame])
+def test_polars_remains_the_default_and_can_be_selected_explicitly(annotation):
+    def calculate(frame, context):
+        assert isinstance(frame, pl.DataFrame)
+        assert isinstance(f.emit(context, 1), pl.DataFrame)
+        return {"out": f.empty()}
+
+    if annotation is not None:
+        calculate.__annotations__["frame"] = annotation
+    assert f._datetime_function(calculate)(native_frame(), {"window_ns": NS})["out"].is_empty()
+
+
+def test_postponed_and_aliased_annotations_are_resolved_per_entrypoint(tmp_path):
+    source = (
+        "from __future__ import annotations\n"
+        "from pandas import DataFrame as PandasFrame\n"
+        "import polars as pl\n"
+        "from acquirium.functions import emit\n"
+        "def pandas_call(frame: 'PandasFrame', context) -> 'UnrelatedForwardReference':\n"
+        "    assert isinstance(frame, PandasFrame)\n"
+        "    return {'out': emit(context, frame['value'].mean())}\n"
+        "def polars_call(frame: pl.DataFrame, context):\n"
+        "    assert isinstance(frame, pl.DataFrame)\n"
+        "    return {'out': emit(context, frame['value'].mean())}\n"
+    )
+    path = tmp_path / "calculations.py"
+    path.write_text(source)
+    module = f._function_module(str(path), f.artifact_digest(source.encode()))
+    for name in ("pandas_call", "polars_call", "pandas_call"):
+        output = module(name)(native_frame(), {"window_ns": NS})["out"]
+        assert output["value"].item() == 12.
+
+
+@pytest.mark.parametrize("annotation", [pd.Series, "MissingFrameType", pd.DataFrame | pl.DataFrame])
+def test_ambiguous_or_unresolved_frame_annotations_raise_clear_errors(annotation):
+    def calculate(frame, context):
+        raise AssertionError("invalid annotations must be rejected before a call")
+
+    calculate.__annotations__["frame"] = annotation
+    with pytest.raises(TypeError, match="frame annotation|annotate frame"):
+        f._datetime_function(calculate)
+
+
+def test_a_failed_pandas_call_cannot_change_the_next_calls_helpers():
+    def calculate(frame: pd.DataFrame, context):
+        assert isinstance(f.empty(), pd.DataFrame)
+        raise RuntimeError("test failure")
+
+    with pytest.raises(RuntimeError, match="test failure"):
+        f._datetime_function(calculate)(native_frame(), {"window_ns": NS})
+    assert isinstance(f.empty(), pl.DataFrame)
+
+
+@pytest.mark.parametrize("missing", [pd.NA, float("nan"), None])
+def test_pandas_missing_scalar_results_produce_empty_outputs(missing):
+    def calculate(frame: pd.DataFrame, context):
+        return {"out": f.emit(context, missing)}
+
+    assert f._datetime_function(calculate)(native_frame(), {"window_ns": NS})["out"].is_empty()
+
+
+def test_pandas_batch_columns_and_manual_results_keep_their_timestamps():
+    def calculate(frame: pd.DataFrame, context):
+        assert frame["output_time"].dtype.pyarrow_dtype == pa.timestamp("us", "UTC")
+        means = frame.groupby("output_time", as_index=False)["value"].mean()
+        result = f.emit_windows(means)
+        assert isinstance(result, pd.DataFrame)
+        return {"out": result}
+
+    source = native_frame().with_columns(pl.lit(NS).alias("window_ns"))
+    result = f._datetime_function(calculate)(source, {"windows": [{"window_ns": NS}]})["out"]
+    assert result["event_time_ns"].to_list() == [NS]
+    assert result["value"].to_list() == [12.]
+
+
+def test_pandas_sequential_helpers_keep_arrow_types_and_python_context_dates():
+    def calculate(frame: pd.DataFrame, context):
+        rows = f.previous_rows(context)
+        outputs = f.previous_outputs(context, "out")
+        assert isinstance(rows, pd.DataFrame) and isinstance(outputs, pd.DataFrame)
+        assert rows["time"].dtype.pyarrow_dtype == pa.timestamp("us", "UTC")
+        assert context["previous"]["output_time"] == AT
+        assert f.previous_value(context, "out") == 5.
+        assert isinstance(f.previous_rows({}), pd.DataFrame)
+        return {"out": f.emit(context, f.previous_value(context, "out") + frame["value"].sum())}
+
+    row = {"event_time_ns": NS, "sample_key": 0, "value": 5., "text": None, "quality": 0}
+    result = f._datetime_function(calculate)(native_frame(), {
+        "window_ns": NS + 1000,
+        "previous": {"window_ns": NS, "rows": [{"role": "raw", "stream": "urn:raw", **row}],
+                     "outputs": {"out": [row]}},
+    })["out"]
+    assert result["event_time_ns"].item() == NS + 1000
+    assert result["value"].item() == 17.
+
+
+def test_returned_pandas_frames_use_the_same_validation_as_polars():
+    valid = f.emit({"output_time": AT}, 12).to_pandas(use_pyarrow_extension_array=True)
+    assert f._engine_frame(valid)["event_time_ns"].item() == NS
+    with pytest.raises(ValueError, match="unexpected soft sensor output columns"):
+        f._engine_frame(valid.assign(quality=1))
+    with pytest.raises(ValueError, match="reset_index"):
+        f._engine_frame(valid.set_index("time"))
+    with pytest.raises(TypeError, match="timezone-aware"):
+        f._engine_frame(pd.DataFrame({"time": [AT.replace(tzinfo=None)], "value": [1.]}))
+    with pytest.raises(ValueError, match="microsecond precision"):
+        f._engine_frame(pd.DataFrame({"time": [pd.Timestamp(AT) + pd.Timedelta(1, "ns")], "value": [1.]}))

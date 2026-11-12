@@ -355,15 +355,8 @@ class Apps:
         finally:
             os.close(descriptor)
 
-    def _group_function(self, function):
-        """Adapt Python context without changing the declared calculation file."""
-        if function["kind"] != "python":
-            return function
-        code = (
-            "# Acquirium function interface v3: UTC datetimes, microsecond precision.\n"
-            "from acquirium.functions import _function_module\n"
-            f"__getattr__ = _function_module({function['path']!r}, {function['sha256']!r})\n"
-        ).encode()
+    def _artifact(self, code):
+        """Durably retain immutable module bytes under their content hash."""
         digest = artifact_digest(code)
         directory = self.path.parent / "app-functions"
         directory.mkdir(exist_ok=True)
@@ -380,7 +373,37 @@ class Apps:
                 os.fsync(descriptor)
             finally:
                 os.close(descriptor)
-        return {**function, "path": str(path.resolve()), "sha256": digest}
+        return path.resolve(), digest
+
+    def _group_function(self, function):
+        """Snapshot the pinned source and adapt its public calculation interface."""
+        if function["kind"] != "python":
+            return function
+        digest = function["sha256"]
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise ValueError("Python functions require a SHA-256 content hash")
+        source = self.path.parent / "app-functions" / f"{digest}.py"
+        if source.exists():
+            if artifact_digest(source.read_bytes()) != digest:
+                raise ValueError("cached Python calculation content hash mismatch")
+        else:
+            try:
+                code = Path(function["path"]).read_bytes()
+            except OSError as error:
+                raise ValueError(f"cannot read Python calculation {function['path']!r}: {error}") from error
+            if artifact_digest(code) != digest:
+                raise ValueError(
+                    "Python calculation changed since PythonFunction.from_file(); "
+                    "rebuild its declaration before deploying"
+                )
+            source, _ = self._artifact(code)
+        code = (
+            "# Acquirium function interface v3: UTC datetimes, microsecond precision.\n"
+            "from acquirium.functions import _function_module\n"
+            f"__getattr__ = _function_module({str(source.resolve())!r}, {digest!r})\n"
+        ).encode()
+        path, wrapper_digest = self._artifact(code)
+        return {**function, "path": str(path), "sha256": wrapper_digest}
 
     def recover(self):
         with self.lock:
@@ -760,18 +783,31 @@ class Apps:
     def inspect(self, name):
         with self.lock:
             definition = self.state["apps"][name]
-            plan = self.core.engine.snapshot().plan
+            snapshot = self.core.engine.snapshot()
+            plan = snapshot.plan
             operators = [
                 item
                 for item in (plan or {}).get("operators", [])
                 if app_of(item["id"]) == name
             ]
             report = self.report.get(name, {"matches": {}, "skipped": {}})
+            failures = {
+                operator: failure
+                for operator, failure in snapshot.failures.items()
+                if app_of(operator) == name
+            }
+            status = self._deployment_status(plan, "active")
+            if failures and status["status"] == "active":
+                errors = [failure["error"] for failure in failures.values() if failure["error"]]
+                status["status"] = "failed" if errors else "blocked"
+                status["error"] = "\n".join(dict.fromkeys(errors)) or None
             return {
                 "name": name,
                 "definition": definition,
                 "operators": operators,
-                **self._deployment_status(plan, "active"),
+                **status,
+                "stale": bool(failures),
+                "failures": failures,
                 "graph_revision": self.state.get("graph_revision"),
                 "matches": report["matches"],
                 "warnings": _warnings(report),

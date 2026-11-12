@@ -5,23 +5,31 @@ build those frames for a function called once per window, and ``emit_windows``
 for a batch function. A sequential function reads its earlier results with
 ``previous_value``, ``previous_outputs`` and ``previous_rows``, and
 ``same_period`` says whether a period boundary lies between the previous window
-and this one. ``SCHEMA`` gives the columns of every output frame.
+and this one. ``SCHEMA`` gives the Polars output schema.
 
-Frame timestamps use ``time: Datetime('us', 'UTC')``. Context timestamps are
+Annotate the first parameter with ``pandas.DataFrame`` for Arrow-backed pandas
+or ``polars.DataFrame`` for Polars. Unannotated functions receive Polars.
+Helpers follow the selected library while a calculation runs.
+
+Frame timestamps use UTC microseconds. Context timestamps are
 timezone-aware Python datetimes, and durations are timedeltas. Batch frames
 also carry ``output_time`` to identify each row's result window.
 """
 
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from functools import cache, wraps
+import inspect
 from pathlib import Path
 from types import ModuleType
+from typing import get_type_hints
 
 from escapement import artifact_digest
 import polars as pl
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _TIME = pl.Datetime("us", "UTC")
+_FRAME_LIBRARY = ContextVar("acquirium_frame_library", default="polars")
 SCHEMA = {
     "time": _TIME,
     "value": pl.Float64,
@@ -29,21 +37,68 @@ SCHEMA = {
 }
 
 
-def empty() -> pl.DataFrame:
+@cache
+def _pandas():
+    # Polars calculations do not need to import pandas into their worker.
+    import pandas as pd
+    return pd
+
+
+def _as_library(frame, library=None):
+    if (library or _FRAME_LIBRARY.get()) == "pandas":
+        # Keep Arrow buffers and nullable types; do not materialize NumPy arrays.
+        return frame.to_arrow().to_pandas(types_mapper=_pandas().ArrowDtype)
+    return frame
+
+
+def _as_polars(frame):
+    if isinstance(frame, pl.DataFrame):
+        return frame
+    if isinstance(frame, _pandas().DataFrame):
+        return pl.from_pandas(frame, include_index=False)
+    raise TypeError("soft sensor outputs must be pandas or Polars DataFrames")
+
+
+def _frame_library(function):
+    """Resolve only the frame annotation, once when an entrypoint is loaded."""
+    target = inspect.unwrap(function)
+    parameters = list(inspect.signature(target).parameters.values())
+    annotation = parameters[0].annotation if parameters else inspect.Signature.empty
+    if annotation is inspect.Signature.empty:
+        return "polars"
+
+    # A small annotation holder resolves aliases and postponed annotations
+    # without evaluating unrelated context or return annotations.
+    def hint():
+        pass
+    hint.__annotations__ = {"frame": annotation}
+    try:
+        annotation = get_type_hints(hint, globalns=getattr(target, "__globals__", {}))["frame"]
+    except (NameError, TypeError, SyntaxError) as error:
+        raise TypeError(f"cannot resolve frame annotation for {function.__name__}: {error}") from error
+    if annotation is pl.DataFrame:
+        return "polars"
+    if annotation is _pandas().DataFrame:
+        return "pandas"
+    raise TypeError("annotate frame with pandas.DataFrame or polars.DataFrame, or leave it unannotated")
+
+
+def empty():
     """An empty output frame; removes the previous result for this window.
 
     >>> empty().shape
     (0, 3)
     """
-    return pl.DataFrame(schema=SCHEMA)
+    return _as_library(pl.DataFrame(schema=SCHEMA))
 
 
-def emit(context, value) -> pl.DataFrame:
+def emit(context, value):
     """Construct a one-row dataframe at ``context['output_time']``.
 
     A None value produces an empty dataframe. The function returns this frame
     under its declared output name; Acquirium stores the returned results.
-    The ``time`` column has type ``Datetime('us', 'UTC')``.
+    During a calculation the frame uses its selected library, with UTC
+    microsecond timestamps. pandas missing values also produce an empty frame.
 
     >>> at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     >>> result = emit({"output_time": at}, 12.0)
@@ -52,18 +107,18 @@ def emit(context, value) -> pl.DataFrame:
     >>> result["time"].item() == at
     True
     """
-    if value is None:
+    if value is None or (_FRAME_LIBRARY.get() == "pandas" and _pandas().isna(value)):
         return empty()
     _check_datetime(context["output_time"])
     text = value if isinstance(value, str) else None
-    return pl.DataFrame({
+    return _as_library(pl.DataFrame({
         "time": [context["output_time"]],
         "value": [None if text is not None else float(value)],
         "text": [text],
-    }, schema=SCHEMA)
+    }, schema=SCHEMA))
 
 
-def emit_windows(frame: pl.DataFrame) -> pl.DataFrame:
+def emit_windows(frame):
     """Batch results from ``output_time`` and ``value`` or ``text`` columns.
 
     Each input row produces one output row, with ``output_time`` renamed to
@@ -74,19 +129,21 @@ def emit_windows(frame: pl.DataFrame) -> pl.DataFrame:
     >>> emit_windows(rows).select("time", "value").shape
     (2, 2)
     """
+    library = "polars" if isinstance(frame, pl.DataFrame) else "pandas"
+    frame = _as_polars(frame)
     _check_time_column(frame["output_time"])
-    return frame.select(
+    return _as_library(frame.select(
         pl.col("output_time").alias("time"),
         pl.col("value") if "value" in frame.columns else pl.lit(None).alias("value"),
         pl.col("text") if "text" in frame.columns else pl.lit(None).alias("text"),
-    ).cast(SCHEMA)
+    ).cast(SCHEMA), library)
 
 
-def previous_outputs(context, port) -> pl.DataFrame:
+def previous_outputs(context, port):
     """The previous window's output rows on ``port``, with the output schema."""
     previous = context.get("previous")
     rows = previous["outputs"].get(port, []) if previous else []
-    return pl.DataFrame(rows, schema=SCHEMA) if rows else empty()
+    return _as_library(pl.DataFrame(rows, schema=SCHEMA)) if rows else empty()
 
 
 def previous_value(context, port, default=None):
@@ -99,12 +156,12 @@ def previous_value(context, port, default=None):
     return row["text"] if row["value"] is None else row["value"]
 
 
-def previous_rows(context) -> pl.DataFrame:
+def previous_rows(context):
     """The previous window's input readings, with a UTC datetime ``time`` column."""
     previous = context.get("previous")
     rows = previous["rows"] if previous else []
     schema = {"role": pl.String, "stream": pl.String, **SCHEMA}
-    return pl.DataFrame(rows, schema=schema)
+    return _as_library(pl.DataFrame(rows, schema=schema))
 
 
 def same_period(context, width: timedelta, origin: datetime = _EPOCH) -> bool:
@@ -235,6 +292,9 @@ def _public_input(item):
 
 
 def _engine_frame(frame):
+    frame = _as_polars(frame)
+    if "time" not in frame.columns:
+        raise ValueError("return a 'time' column; use reset_index() on a pandas time index")
     unexpected = set(frame.columns) - SCHEMA.keys()
     if unexpected:
         raise ValueError(f"unexpected soft sensor output columns: {sorted(unexpected)}")
@@ -252,10 +312,16 @@ def _engine_frame(frame):
 
 def _datetime_function(function):
     """Adapt an Acquirium calculation to the engine's private wire schema."""
+    library = _frame_library(function)
+
     @wraps(function)
     def call(frame, context):
-        outputs = function(_public_frame(frame), _public_context(context))
-        return {port: _engine_frame(output) for port, output in outputs.items()}
+        token = _FRAME_LIBRARY.set(library)
+        try:
+            outputs = function(_as_library(_public_frame(frame), library), _public_context(context))
+            return {port: _engine_frame(output) for port, output in outputs.items()}
+        finally:
+            _FRAME_LIBRARY.reset(token)
 
     return call
 

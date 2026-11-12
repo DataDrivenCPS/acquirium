@@ -120,9 +120,9 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 | `insert_timeseries_arrow(source_id, table: pa.Table, *, request_id=None, wait=30, timeout=60, retry_for=60) -> dict` | Insert `(ts, ref_name, value)` Arrow data with timezone-aware timestamps. Reuse request ID and payload on retry. |
 | `delete_timeseries(source_id, ref_name, timestamps, *, request_id=None, wait=30, timeout=60, retry_for=60) -> dict` | Explicitly delete observations; returns one receipt directly. |
 | `wait(receipt, *, timeout=30) -> dict` | Wait for an accepted receipt sequence to publish, then return a snapshot token. Raises for paused or timed-out pending work. |
-| `engine_status() -> dict` | Accepted/applied progress, backlog, processor state, and paused error. |
-| `engine_snapshot() -> dict` | Capture the committed epoch, applied frontier, and active complete plan. |
-| `retry_engine() -> dict` | Resume the accepted prefix after repairing its failed artifact/environment. |
+| `engine_status() -> dict` | Accepted/applied progress, backlog, processor state, and per-operator failures. |
+| `engine_snapshot() -> dict` | Capture the committed epoch, applied frontier, active plan, and failures. |
+| `retry_engine() -> dict` | Request another attempt for failed soft sensors after repairing their code or environment. |
 | `changes(*, epoch=0, ordinal=0, limit=1000, timeout=30) -> dict` | Page committed signed changes after an exclusive cursor; use `complete_through` before exposing partial epochs. |
 
 ### Apps

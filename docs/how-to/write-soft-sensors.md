@@ -132,6 +132,12 @@ that is its start; for a rolling window, it is the grid point being calculated.
 Neither field describes when the server received the data. This spread
 function only needs the values, so it leaves timestamp handling to `emit`.
 
+An unannotated function receives Polars. Annotate its first parameter with
+`pd.DataFrame` to receive Arrow-backed pandas 2.x, or `pl.DataFrame` to select
+Polars explicitly. The function still takes `(frame, context)` and returns a
+dataframe for each output. See the [dataframe type reference](../reference/apps.md#dataframe-type)
+and the [pandas cleaning example](../tutorials/turbidity.md#cleaning-steps).
+
 Because it is an ordinary function, you can try it before deploying anything:
 
 ```python
@@ -314,7 +320,7 @@ def spread(frame, context):
     return {"spread": emit_windows(spreads)}
 ```
 
-Save it at a new path and pass
+Save this version as `spread_batch.py` and pass
 `aq.PythonFunction.from_file(Path("spread_batch.py"), "spread", batch=True)`.
 The results are the same. The
 [bulk-ingest example](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/bulk_ingest)
@@ -329,7 +335,7 @@ its own settings without a copy of the calculation. The selection's
 with `aq.Parameter`, as in `aq.Native.threshold("alarm", above=aq.Parameter("limit"))`,
 and a Python function reads it from `context["parameters"]`. The
 [turbidity tutorial](../tutorials/turbidity.md#sustained-turbidity-threshold)
-uses this to give each filter its own alarm duration, and changing one
+uses this to give each filter its own limit and alarm duration, and changing one
 filter's value recomputes only that filter's history.
 
 ## Related examples and references

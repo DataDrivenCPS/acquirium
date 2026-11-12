@@ -2,8 +2,7 @@
 title: App deployment and recovery
 ---
 
-Deploying an app can mean recomputing months of history, and a function that
-fails stops every app until it is fixed. This guide shows how to see what a
+Deploying an app can mean recomputing months of history. This guide shows how to see what a
 deployment will do before you make it, how to check on an app afterwards, how
 to change its code, and how to recover when a calculation fails. The examples
 continue from [calculating a derived stream](write-soft-sensors.md), on the
@@ -65,16 +64,14 @@ acquirium app inspect high-wave --json
 
 ## Calculation updates
 
-Save the new version of a function at a new path, build the app with that path,
-and deploy it. `spread_batch.py` in the calculation guide was deployed this way.
-Acquirium recomputes the app's history with the new code, and a preview first
-shows how much that is.
+Edit the function file, rebuild the app with `aq.PythonFunction.from_file(...)`,
+and deploy it again. The path can stay the same. Acquirium identifies the code
+by its content hash and saves a copy when you deploy. Editing or removing the
+original file does not change a running app.
 
-Editing a deployed file in place does not work. Acquirium records the file's
-digest when the app is deployed, and refuses to run a file that no longer
-matches; [how derived streams stay current](../explanation/apps.md#function-repeatability)
-explains why. Keep the old file where it is until the change has gone through,
-because work accepted under the old deployment may still need it.
+Changed code creates a new calculation version and recomputes the app's history.
+A preview shows how much work that involves. Redeploying identical code keeps
+the same version, even if its source path changes.
 
 ## Recovery from a failed calculation
 
@@ -102,14 +99,14 @@ ratio_app = aq.App(
 client.deploy_app(ratio_app)["app"]["status"]
 ```
 ```text
-'pending'
+'failed'
 ```
 
-The very first reading is zero, so the app never gets going. The engine
+The very first reading is zero, so the calculation fails. App inspection
 reports why:
 
 ```python
-print(client.engine_status()["error"])
+print(client.inspect_app("wave-ratio")["app"]["error"])
 ```
 ```text
 execution failed: Python function failed: Traceback (most recent call last):
@@ -120,14 +117,16 @@ execution failed: Python function failed: Traceback (most recent call last):
 ZeroDivisionError: float division by zero
 ```
 
-The failure stops publication for every app, not only this one. The driver's
-writes are still accepted and stored, but `wave-spread` and `wave-smooth` stop
-updating, and readers keep seeing the last good snapshot.
-[How derived streams stay current](../explanation/apps.md#published-snapshots-and-failure-recovery)
-explains why one failure holds back the rest.
+Acquirium keeps this app's last successful results and marks it `failed`, with
+`stale=True`. Apps that consume its outputs keep their results and become
+`blocked`. Their `failures` entries identify the failed upstream operators in
+`blocked_by`. A first execution that fails has no earlier results to retain.
 
-To recover, save a corrected version at a new path, `ratio_v2.py`, as for any
-change of code:
+Raw readings and unrelated apps continue updating. A published receipt confirms
+that the write was committed; check app status to see whether a calculation is
+current.
+
+To recover, edit `ratio.py`:
 
 ```python
 from acquirium.functions import emit
@@ -140,18 +139,17 @@ def ratio(frame, context):
     return {"ratio": emit(context, 1 / value)}
 ```
 
-Deploy it, and tell the engine to try again:
+Rebuild the declaration and deploy it:
 
 ```python
 fixed_app = aq.App(
     name="wave-ratio",
     inputs=[aq.Selection.from_query(wave, alias="wave")],
     outputs={"ratio": aq.Output()},
-    function=aq.PythonFunction.from_file(Path("ratio_v2.py"), "ratio"),
+    function=aq.PythonFunction.from_file(Path("ratio.py"), "ratio"),
     window=aq.Pointwise(),
 )
 client.deploy_app(fixed_app)
-client.retry_engine()
 ```
 
 A moment later the app is running:
@@ -163,13 +161,14 @@ client.inspect_app("wave-ratio")["app"]["status"]
 'active'
 ```
 
-The retry works through the waiting writes in order, under the newest
-deployment, and the other apps catch up. It reaches the fix however many writes
-arrived while the engine was paused.
+Acquirium recomputes the failed branch from current inputs, including corrections
+and deletions received while it was blocked. Recovered results and downstream
+updates become visible together. Their failure status clears.
 
-When the cause is outside the code, such as a missing package or a deleted
-calculation file, fix that and call `client.retry_engine()` alone. Keep each
-calculation file until the work that needs it has gone through.
+When the cause is outside the code, such as a missing package, fix that and call
+`client.retry_engine()`. This requests another attempt without requiring a new
+reading. A change to a failed operator's inputs also triggers another attempt.
+Failure status and retained results survive a server restart.
 
 ## App removal
 

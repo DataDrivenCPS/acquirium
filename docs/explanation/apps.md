@@ -28,9 +28,9 @@ results at later timestamps.
 
 Those revised results are inputs to any app downstream, and the same rule
 applies there. In the [turbidity tutorial](../tutorials/turbidity.md), two late
-readings change one minute's average, which changes one gap-filled value, which
-changes every window of the sustained alarm whose fifteen minutes include it,
-which changes the plant-wide count. Nothing else is recomputed.
+readings change one minute of the clean stream, which changes every window of
+the sustained alarm whose fifteen minutes include it. Nothing else is
+recomputed.
 
 This is also why apps cannot choose arbitrary output timestamps or run on a
 clock. If an app could emit whenever it liked, there would be no way to know
@@ -64,28 +64,38 @@ input: the current time, a file that may have changed, a live web service, a
 global variable left over from an earlier call. Everything a function needs
 arrives in its frame and its context.
 
-The same reasoning applies to the code itself. Acquirium records a digest of the
-calculation file when the app is deployed. If the file changed underneath it,
-old and new results would silently come from different code. So a change of
-code is a change of deployment: you put the new version at a new path, deploy
-it, and Acquirium recomputes the app's history with it.
+The same reasoning applies to the code itself. Acquirium saves a copy of the
+calculation file under its content hash when you deploy. Editing the original
+file leaves the running calculation unchanged. To use the edit, rebuild its
+`PythonFunction.from_file(...)` declaration and deploy the app again. Acquirium
+recomputes history with the new code. The source path can stay the same.
 
 ## Published snapshots and failure recovery
 
-A correction to a source reading and every derived change it causes become
-visible together, in one published snapshot called an epoch. A reader sees
-either the state before the correction or the state after it, never a
-half-updated chain where the average has changed and the alarm has not.
+A correction to a source reading and the derived changes successfully computed
+from it become visible together, in one published snapshot called an epoch.
+For a healthy chain, the average and its alarm update together.
 
 Earlier snapshots stay readable. That is what lets you look at an alarm as it
 was when someone acted on it, even after later data withdrew it.
 
-If a function fails, nothing from that epoch is published, and the engine
-pauses. The write that triggered it is safely stored, but readers keep seeing
-the previous snapshot until the cause is fixed and the work resumes; see
+If a function fails, Acquirium retains its last successful outputs. Its
+downstream consumers also retain their outputs and do not execute against stale
+inputs. Raw readings and independent branches continue updating.
+
+App inspection reports `failed` for a calculation error and `blocked` for its
+downstream consumers, with `stale=True` and per-operator failure details. Thus an
+epoch can contain results of different freshness. Publication of a write does
+not promise that every app is current.
+
+After a corrected deployment or an explicit retry, Acquirium recomputes the
+affected branch from current inputs. It includes changes received while the
+branch was blocked and clears the failure status on success. The retained
+values and failure status survive restart. See
 [recovering from a failed calculation](../how-to/check-deploy-apps.md#recovery-from-a-failed-calculation).
-The pause affects every app, not just the one that failed, because publishing
-the others would break the guarantee that each snapshot is consistent.
+
+A failure to commit the database still stops publication: no part of an epoch
+can become visible without a successful transaction.
 
 [Escapement core](escapement-core.md) describes how the engine implements all
 this: how deployments become plans, how epochs commit, and what happens on

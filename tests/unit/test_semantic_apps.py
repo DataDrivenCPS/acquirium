@@ -290,8 +290,9 @@ def test_text_on_a_numeric_stream_is_kept_and_legacy_declarations_are_rejected(s
     assert response.status_code == 400
 
 
-def test_failed_activation_remains_durable_and_can_be_retried(system, tmp_path):
+def test_failed_activation_is_isolated_and_can_be_retried(system, tmp_path):
     from escapement import PythonFunction
+    import time
 
     manager, http, client = system
     ref = register(system, "artifact")
@@ -304,7 +305,15 @@ def test_failed_activation_remains_durable_and_can_be_retried(system, tmp_path):
         )
     )
     module = tmp_path / "calculation.py"
-    source = 'def calculate(frame, context):\n    return {"mean": frame.select("time", "value")}\n'
+    flag = tmp_path / "fail"
+    flag.touch()
+    source = (
+        "from pathlib import Path\n"
+        "def calculate(frame, context):\n"
+        f"    if Path({str(flag)!r}).exists():\n"
+        '        raise RuntimeError("sensor offline")\n'
+        '    return {"mean": frame.select("time", "value")}\n'
+    )
     module.write_text(source)
     declaration = mean("artifact-app", ref)
     declaration = App(
@@ -313,26 +322,95 @@ def test_failed_activation_remains_durable_and_can_be_retried(system, tmp_path):
         declaration.outputs,
         PythonFunction.from_file(module, "calculate"),
     )
-    module.unlink()
     response = http.put(f"/apps/{declaration.name}", json=declaration.to_dict())
     assert response.status_code == 200, response.text
-    assert manager.core.processor.status()["error"]
+    assert response.json()["app"]["status"] == "failed"
+    assert manager.core.processor.status()["error"] is None
+    assert "sensor offline" in manager.apps.inspect(declaration.name)["error"]
     saved = __import__("json").loads((manager.data_dir / "apps.json").read_text())
     assert declaration.name in saved["apps"]
-    assert saved["plan"]["id"] != manager.core.engine.snapshot().plan["id"]
+    assert saved["plan"]["id"] == manager.core.engine.snapshot().plan["id"]
     accepted = manager.core.engine.status()["accepted"]
     manager.apps.refresh()
     assert manager.core.engine.status()["accepted"] == accepted
-    module.write_text(source)
+    flag.unlink()
+    module.unlink()  # Deployment retained the source; retry needs no original file.
+    epoch = manager.core.engine.status()["epoch"]
     manager.core.processor.retry()
-    receipt = manager.core.activate(saved["activation_id"], saved["plan"])
-    snapshot = manager.core.wait(receipt)
+    deadline = time.monotonic() + 10
+    while manager.core.engine.status()["epoch"] == epoch:
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+    snapshot = manager.core.engine.snapshot()
     assert (
         snapshot.value(output_reference(declaration.name, "urn:tank", "mean"), 4444000)
         == 12
     )
     assert manager.apps.inspect(declaration.name)["error"] is None
     manager.remove_app(declaration.name)
+
+
+def test_python_source_is_cached_by_content_and_updates_at_the_same_path(system, tmp_path):
+    from escapement import PythonFunction
+
+    manager, http, client = system
+    ref = register(system, "content-hash")
+    module = tmp_path / "calculation.py"
+    source = ('def calculate(frame, context):\n'
+              '    return {"mean": frame.select("time", (frame["value"] * 2).alias("value"))}\n')
+    module.write_text(source)
+    base = mean("content-hash-app", ref)
+
+    def app(path=module):
+        return App(base.name, base.inputs, base.outputs, PythonFunction.from_file(path, "calculate"))
+
+    def write(value, request_id):
+        receipt = manager.insert_timeseries(source_id="content-hash", ref_name="temperature",
+            rows=[(1000, value)], request_id=request_id)
+        return manager.core.wait(receipt)
+
+    manager.deploy_app(app())
+    original = manager.apps.inspect(base.name)["operators"][0]
+    output = output_reference(base.name, "urn:tank", "mean")
+    assert write(10, "initial").value(output, 1000) == 20
+    declaration = app()
+    module.write_text(source.replace("* 2", "* 3"))
+    # Editing a file cannot change the active deployment.
+    assert write(20, "old-code").value(output, 1000) == 40
+    manager.deploy_app(app())
+    updated = manager.apps.inspect(base.name)["operators"][0]
+    assert updated["version"] != original["version"]
+    assert manager.core.engine.snapshot().value(output, 1000) == 60
+    same_content = tmp_path / "same.py"
+    same_content.write_bytes(module.read_bytes())
+    manager.deploy_app(app(same_content))
+    assert manager.apps.inspect(base.name)["operators"][0]["version"] == updated["version"]
+    # An older descriptor still identifies its stored bytes, even after editing.
+    manager.deploy_app(declaration)
+    assert manager.core.engine.snapshot().value(output, 1000) == 40
+    module.unlink()
+    same_content.unlink()
+    assert write(30, "removed-file").value(output, 1000) == 60
+    manager.remove_app(base.name)
+
+
+def test_missing_or_changed_unretained_source_is_rejected_before_deployment(system, tmp_path):
+    from escapement import PythonFunction
+
+    manager, http, client = system
+    module = tmp_path / "missing.py"
+    module.write_text('def unique_unretained_function(frame, context):\n    return {}\n')
+    base = mean("missing-source-app", register(system, "missing-source"))
+    declaration = App(base.name, base.inputs, base.outputs, PythonFunction.from_file(module, "unique_unretained_function"))
+    module.write_text("# edited after declaration\n")
+    response = http.put(f"/apps/{base.name}", json=declaration.to_dict())
+    assert response.status_code == 400
+    assert "changed since" in response.text
+    module.unlink()
+    response = http.put(f"/apps/{base.name}", json=declaration.to_dict())
+    assert response.status_code == 400
+    assert "cannot read" in response.text
+    assert base.name not in manager.apps.state["apps"]
 
 
 def test_invalid_cycle_keeps_the_previous_plan_and_manifest(system):
@@ -402,9 +480,10 @@ def test_restart_reconciles_desired_plan_and_retains_history(tmp_path):
         manager.close()
 
 
-def test_closing_after_a_failed_function_keeps_pending_writes(tmp_path, caplog):
+def test_restart_preserves_failure_status_and_retries_without_new_writes(tmp_path, caplog):
     import logging
-    from escapement import ExecutionError, PythonFunction
+    import time
+    from escapement import PythonFunction
 
     ref = str(compute_ref_uri("halted", "temperature"))
     output = output_reference("halted-app", "urn:tank", "mean")
@@ -444,25 +523,32 @@ def test_closing_after_a_failed_function_keeps_pending_writes(tmp_path, caplog):
         flag.touch()
         write(manager, 2000, 20)
         last = write(manager, 3000, 30)
-        with pytest.raises(ExecutionError):
-            manager.core.wait(last, timeout=10)
-        assert manager.core.processor.status()["error"]
-        assert manager.core.engine.status()["pending_requests"] == 2
+        snapshot = manager.core.wait(last, timeout=10)
+        assert snapshot.value(output, 1000) == 10
+        assert snapshot.value(output, 2000) is None
+        assert snapshot.value(ref, 3000) == 30
+        assert manager.apps.inspect(declaration.name)["status"] == "failed"
+        assert manager.core.processor.status()["error"] is None
+        assert manager.core.engine.status()["pending_requests"] == 0
     finally:
-        # Stopping cannot drain a failed processor. The failure is logged and
-        # the rest still closes, or the reopen below could not take the stores.
         caplog.clear()
         with caplog.at_level(logging.ERROR, logger="acquirium.manager"):
             manager.close()
-    assert [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR] == [
-        "Manager.close: failed to close Escapement"
-    ]
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
 
     flag.unlink()
+    module.unlink()
     manager = Manager(data_dir=tmp_path / "data", exact_only=True)
     try:
         manager.recover_apps()
-        snapshot = manager.core.wait(last)
+        assert manager.apps.inspect(declaration.name)["status"] == "failed"
+        # Neither retry nor restart needs the original calculation file.
+        manager.core.processor.retry()
+        deadline = time.monotonic() + 10
+        while manager.apps.inspect(declaration.name)["status"] != "active":
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        snapshot = manager.core.engine.snapshot()
         assert [snapshot.value(output, time) for time in (1000, 2000, 3000)] == [10, 20, 30]
         assert manager.core.engine.status()["pending_requests"] == 0
     finally:
@@ -815,6 +901,72 @@ def test_group_parameter_cannot_override_selected_group(system):
     declaration.inputs[0] = Selection(query, parameters={"urn:tank": {"group": "urn:other"}})
     with pytest.raises(ValueError, match="parameter 'group' is reserved"):
         manager.deploy_app(declaration)
+
+
+@pytest.mark.parametrize("mode", ["default", "batch", "sequential"])
+def test_arrow_pandas_and_polars_functions_share_a_pipeline(system, tmp_path, mode):
+    import acquirium as aq
+
+    manager, _, client = system
+    source = f"pandas-{mode}"
+    ref = register(system, source)
+    manager.core.wait(manager.insert_timeseries(
+        source_id=source, ref_name="temperature", rows=[(1000, 10), (2000, 20)],
+        request_id="initial",
+    ))
+    module = tmp_path / "calculations.py"
+    module.write_text(
+        "from __future__ import annotations\n"
+        "import pandas as pd\n"
+        "import polars as pl\n"
+        "from acquirium.functions import emit, empty, emit_windows, previous_value\n"
+        "def pandas_sum(frame: pd.DataFrame, context):\n"
+        "    assert isinstance(frame, pd.DataFrame)\n"
+        "    assert all(isinstance(dtype, pd.ArrowDtype) for dtype in frame.dtypes)\n"
+        "    if frame.empty:\n"
+        "        return {'mean': empty()}\n"
+        "    if 'windows' in context:\n"
+        "        means = frame.groupby('output_time', as_index=False)['value'].sum()\n"
+        "        result = emit_windows(means)\n"
+        "    else:\n"
+        "        value = frame['value'].sum()\n"
+        f"        if {mode == 'sequential'!r}:\n"
+        "            value += previous_value(context, 'mean', 0)\n"
+        "        result = emit(context, value)\n"
+        "    assert isinstance(result, pd.DataFrame)\n"
+        "    return {'mean': result}\n"
+        "def polars_double(frame: pl.DataFrame, context):\n"
+        "    assert isinstance(frame, pl.DataFrame)\n"
+        "    result = emit(context, frame['value'][0] * 2 if frame.height else None)\n"
+        "    assert isinstance(result, pl.DataFrame)\n"
+        "    return {'double': result}\n"
+    )
+    first = App(source, mean(source, ref).inputs, {"mean": Output()},
+                aq.PythonFunction.from_file(module, "pandas_sum", batch=mode == "batch", sequential=mode == "sequential"))
+    second = App(f"{source}-double", [Selection.outputs_of(first, "mean", role="clean")],
+                 {"double": Output()}, aq.PythonFunction.from_file(module, "polars_double"))
+    try:
+        assert client.deploy_app(first)["app"]["status"] == "active"
+        assert client.deploy_app(second)["app"]["status"] == "active"
+        out = output_reference(second.name, "urn:tank", "double")
+        snapshot = manager.core.engine.snapshot()
+        assert [snapshot.value(out, t) for t in (1000, 2000)] == (
+            [20, 60] if mode == "sequential" else [20, 40])
+        receipt = manager.insert_timeseries(source_id=source, ref_name="temperature",
+            rows=[(1000, 5)], request_id="corrected")
+        snapshot = manager.core.wait(receipt)
+        assert [snapshot.value(out, t) for t in (1000, 2000)] == (
+            [10, 50] if mode == "sequential" else [10, 40])
+        snapshot = manager.core.wait(manager.core.clear(source, "deleted", [ref]))
+        assert snapshot.value(out, 1000) is None
+        assert snapshot.value(out, 2000) is None
+        assert client.inspect_app(first.name)["app"]["status"] == "active"
+        assert client.inspect_app(second.name)["app"]["status"] == "active"
+    finally:
+        if second.name in manager.apps.state["apps"]:
+            manager.remove_app(second.name)
+        if first.name in manager.apps.state["apps"]:
+            manager.remove_app(first.name)
 
 
 def test_as_of_selections_read_the_latest_reading_of_a_slower_stream(system, tmp_path):

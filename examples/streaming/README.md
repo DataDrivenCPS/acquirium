@@ -78,7 +78,7 @@ The example records files under the workload directory:
 
 An unavailable server is retried with the same request for up to `--timeout`
 seconds without progress. Capacity rejection uses HTTP 503 and `Retry-After`.
-A paused native function or a nonretryable HTTP error stops the run visibly.
+A failed soft sensor or a nonretryable HTTP error stops this benchmark run visibly.
 Repair the artifact/environment and retry the processor before resuming. Ctrl-C
 stops generation, retries any last unacknowledged request, drains publication and
 consumption, verifies the final result, then shuts down the owned server.

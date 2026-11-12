@@ -378,7 +378,7 @@ class Acquirium:
         return self.client.engine_snapshot()
 
     def retry_engine(self):
-        """Resume the paused native processor after repairing its failure."""
+        """Retry failed soft sensors after repairing their code or environment."""
         return self.client.retry_engine()
 
     def changes(self, *, epoch=0, ordinal=0, limit=1000, timeout=30):

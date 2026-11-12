@@ -1,7 +1,7 @@
 # Bulk ingest through a soft-sensor chain
 
 Measures how a chain of soft sensors keeps up with a large CSV backfill. For a
-small walkthrough of the calculations, start with the
+smaller walkthrough of turbidity cleaning and alarms, start with the
 [turbidity alarm tutorial](../../docs/tutorials/turbidity.md).
 
 Run from the repository root, using a **new** output directory:

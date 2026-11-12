@@ -73,8 +73,12 @@ two arguments, `frame` and `context`.
 
 ### Input dataframe
 
-`frame` is a Polars dataframe of input readings. Our app looks at one reading
-at a time, so each call gets one row. Here is such a row, turned on its side,
+This function leaves `frame` unannotated, so it receives a Polars dataframe.
+Annotating it with `pd.DataFrame` selects Arrow-backed pandas instead; see the
+[dataframe type reference](../reference/apps.md#dataframe-type).
+
+Our app looks at one reading at a time, so each call gets one row.
+Here is such a row, turned on its side,
 with long strings shortened:
 
 | Column | Value |
@@ -126,8 +130,8 @@ and [app reference](../reference/apps.md#python-functions) describe the other fi
 ## Function outputs
 
 An app declares named outputs. This example will declare one output, `"high"`.
-The function must return a dictionary mapping each declared name to a Polars
-dataframe of results.
+The function must return a dictionary mapping each declared name to a dataframe
+of results. This example uses Polars.
 
 Each row contains a result's timestamp and value. For the reading above, the
 `"high"` dataframe should contain:
@@ -206,8 +210,8 @@ app = aq.App(
 
 The app declares `"high"` in `outputs`. The function returns its dataframe
 under that same key. `Pointwise()` asks for one call per
-timestamp. Larger windows, such as a minute of readings at a time, are the
-subject of the [turbidity tutorial](turbidity.md).
+timestamp. Windows that span several minutes of readings are the subject
+of the [turbidity tutorial](turbidity.md).
 
 The server runs the function, so the path must exist on the server. Here the
 server and your session share a filesystem.
@@ -237,11 +241,12 @@ stored, and it will keep computing them as the driver adds more. Run the query
 again in a few seconds and there are more rows. The derived stream is an
 ordinary stream: you query it like any other.
 
-To change the calculation, save the new version of the function at a new path
-and deploy the app again with that path. Acquirium recomputes the stored
+To change the calculation, edit the file, rebuild the `PythonFunction.from_file(...)`
+declaration, and deploy the app again. Acquirium recomputes the stored
 history with the new code; [changing the code](../how-to/check-deploy-apps.md#calculation-updates)
-explains why the path must change. To deploy the app every time the server
+explains how the content hash identifies each version. To deploy the app every time the server
 starts, list it under `[[apps]]` in the [server configuration](../reference/server-config.md#drivers-and-apps).
 
-The [Turbidity alarm pipeline](turbidity.md) tutorial follows a chain of apps
-and shows how a late reading changes downstream results.
+The [Turbidity alarm pipeline](turbidity.md) tutorial cleans readings in one
+app and alarms on the result in another, and shows how a late reading changes
+both.

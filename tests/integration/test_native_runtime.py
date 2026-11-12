@@ -67,8 +67,8 @@ def test_sine_wave_driver_and_python_threshold(tmp_path, deployment):
         _, remaining = check_outputs(epoch)
         assert timestamp not in remaining["time"].to_list()
 
-        # Deploy changed code from a new path, preserving the first version.
-        revised = tmp_path / "sine_threshold_v2.py"
+        # Redeployment snapshots the edited bytes at the same source path.
+        revised = tmp_path / "sine_threshold.py"
         revised.write_text((tmp_path / "sine_threshold.py").read_text().replace(
             "value > 0.5", "value > 1.1"
         ))

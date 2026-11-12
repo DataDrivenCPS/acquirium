@@ -224,6 +224,8 @@ def run(
                 status = client.engine_status()
                 if status["error"]:
                     raise RuntimeError(f"native processor paused: {status['error']}")
+                if status["engine"]["failures"]:
+                    raise RuntimeError(f"soft sensor failures: {status['engine']['failures']}")
                 peak_backlog = max(peak_backlog, status["engine"]["pending_requests"])
                 peak_rss = max(peak_rss, status["process"]["peak_rss_bytes"] or 0)
                 driver.observe(status, loop.consumer.state["complete_through"])

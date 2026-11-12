@@ -59,16 +59,18 @@ atomically. The engine records the accepted and active plans, and a restart
 reconciles the two. A plan ID names its content; each activation has its own
 retry identity, so returning to an earlier plan activates it again.
 
-A function that fails publishes nothing from its epoch and pauses the
-processor for every app; [how derived streams stay current](apps.md#published-snapshots-and-failure-recovery)
-explains why, and [deploy and inspect apps](../how-to/check-deploy-apps.md#recovery-from-a-failed-calculation)
-how to resume.
+A failed function retains its last successful outputs. Its downstream operators
+are blocked, while source data and independent branches continue publishing.
+Failure status is committed with the values and survives restart.
+[How derived streams stay current](apps.md#published-snapshots-and-failure-recovery)
+describes freshness and recovery; [app deployment and recovery](../how-to/check-deploy-apps.md#recovery-from-a-failed-calculation)
+shows how to retry.
 
 Shutdown waits up to `drain_timeout` seconds for pending writes to publish.
 Escapement cannot interrupt a running function, so one still running at the
 deadline is left to the process's exit. Writes that were accepted but not
-published stay in the inbox and are processed at the next start, as they are
-after a failed function or a crash.
+published stay in the inbox and are processed at the next start after a crash
+or a database failure.
 
 Graph writes and epochs are separate transactions. App inspection reports the
 graph revision a plan was compiled against; nothing promises an atomic graph

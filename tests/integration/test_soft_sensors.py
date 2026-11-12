@@ -2,6 +2,7 @@
 
 import json
 import os
+import time
 from collections import defaultdict
 from statistics import mean
 
@@ -151,7 +152,6 @@ def test_semantic_python_chain_matches_full_recomputation_and_restart(tmp_path):
         client.deploy_app(declarations(threshold=22, module=module)[-1])
         assert_outputs(client, recompute(observations, membership, threshold=22))
         # New pinned calculation bytes create new versions and rebuild history.
-        module = tmp_path / "calculations-v2.py"
         module.write_text(
             source.replace(
                 'value = frame["value"].max()',
@@ -269,7 +269,7 @@ def test_rolling_app_repairs_overlapping_windows_through_restart(tmp_path):
 
 
 @pytest.mark.integration
-def test_native_warm_worker_failure_is_atomic_and_retryable(tmp_path, monkeypatch):
+def test_native_warm_worker_failure_is_isolated_and_retryable(tmp_path, monkeypatch):
     # Test-only dependency instrumentation records module initialization and
     # injects a runtime failure into an already-warm worker. Production functions
     # keep dependencies immutable and do not read external failure flags.
@@ -336,18 +336,20 @@ def test_native_warm_worker_failure_is_atomic_and_retryable(tmp_path, monkeypatc
             SOURCE, "a2", [(2 * SECOND, 20)], request_id="blocked"
         )
         receipt = response["receipts"][0]
-        assert receipt["accepted"] and not receipt["published"]
+        assert receipt["accepted"] and receipt["published"]
         status = client.engine_status()
-        assert "test dependency unavailable" in status["error"]
-        assert status["python_workers"]["resident"] == 0
-        assert status["engine"]["accepted"] > status["engine"]["applied"]
-        assert client.engine_snapshot()["epoch"] == snapshot["epoch"]
+        assert status["error"] is None
+        assert any("test dependency unavailable" in (f["error"] or "")
+                   for f in status["engine"]["failures"].values())
+        assert status["engine"]["accepted"] == status["engine"]["applied"]
+        assert client.engine_snapshot()["epoch"] > snapshot["epoch"]
         assert_outputs(client, recompute(original, membership))
         raw_reference = str(compute_ref_uri(SOURCE, "a2"))
-        assert client.client.timeseries_df(raw_reference)["value"].to_list() == [40]
-        with pytest.raises(RuntimeError, match="blocked"):
-            client.wait(receipt)
-        # Redelivery has the same receipt; it cannot publish the failed prefix.
+        assert client.client.timeseries_df(raw_reference)["value"].to_list() == [20]
+        assert client.inspect_app(MEAN)["app"]["status"] == "failed"
+        assert client.inspect_app(ALARM)["app"]["status"] == "blocked"
+        client.wait(receipt)
+        # Redelivery has the same receipt and does not rerun a failed function.
         again = client.insert_timeseries(
             SOURCE, "a2", [(2 * SECOND, 20)], request_id="blocked"
         )
@@ -355,7 +357,10 @@ def test_native_warm_worker_failure_is_atomic_and_retryable(tmp_path, monkeypatc
 
         failure.unlink()
         client.retry_engine()
-        client.wait(receipt)
+        deadline = time.monotonic() + 30
+        while client.engine_status()["engine"]["failures"]:
+            assert time.monotonic() < deadline, "soft sensor recovery timed out"
+            time.sleep(0.05)
         original["a2"][2 * SECOND] = 20
         assert_outputs(client, recompute(original, membership))
         assert client.client.timeseries_df(raw_reference)["value"].to_list() == [20]

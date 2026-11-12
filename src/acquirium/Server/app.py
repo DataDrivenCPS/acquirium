@@ -858,7 +858,8 @@ def engine_status():
 @app.get("/engine/snapshot")
 def engine_snapshot():
     snapshot = app.state.manager.core.engine.snapshot()
-    return {"epoch": snapshot.epoch, "applied": snapshot.applied, "plan": snapshot.plan}
+    return {"epoch": snapshot.epoch, "applied": snapshot.applied, "plan": snapshot.plan,
+            "failures": snapshot.failures}
 
 
 @app.post("/engine/retry")
