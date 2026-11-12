@@ -68,7 +68,7 @@ All ready operator jobs already hold leases, and their groups run serially.
 Queue age alone would miss this saturation. A later controller must also account
 for active jobs, group demand, native backlog, and available DAG parallelism.
 
-## Recycling, persistence, and a narrow operator
+## Worker recycling, restart, and single-operator execution
 
 The `recycle` run uses two workers, a 25-job recycling limit, three-second phases
 at 2/40/2 requests/second, and one drained engine restart after the burst.

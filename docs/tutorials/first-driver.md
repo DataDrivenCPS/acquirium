@@ -1,5 +1,5 @@
 ---
-title: Your first driver
+title: File ingestion driver
 ---
 
 Plant data lives in many places: CSV exports from a SCADA system, an MQTT
@@ -13,7 +13,7 @@ In this tutorial we write a driver for the most common source of all, a folder
 of CSV files. The [next tutorial](driver-with-a-plant-model.md) attaches the
 same data to a plant model.
 
-## The source
+## Source files
 
 An RO skid exports one file a day into a folder. Each file looks like this:
 
@@ -28,7 +28,7 @@ Three details matter. The file is *wide*, with one column per signal and one
 row per timestamp. The timestamp is split across a `Date` and a `Time` column,
 in US order. And a missing value is written as `NaN`.
 
-## Ingest it without writing code
+## Built-in tabular driver
 
 Acquirium ships a `CSVIngestDriver` that already knows how to watch a folder,
 read new rows and parse timestamps. Describe the file in `acquirium.toml` and
@@ -62,7 +62,7 @@ The rows are stored, but the server knows nothing about what they mean. To use
 `Feed Flow`, you need to know that it is a volume flow rate in gallons per
 minute. Saying so takes a few lines of code.
 
-## Say what each column measures
+## Column units and quantity kinds
 
 Create `ro_skid_driver.py` next to the config, subclass the built-in driver,
 and point `spec` at your class: `spec = "ro_skid_driver.py:ROSkidDriver"`. The
@@ -100,7 +100,7 @@ Now the streams can be found by what they measure, not just by name:
 acq.query().measurement(alias="p", quantity_kind="pressure").dataframe().tail(3)
 ```
 
-## Handle the source's quirks
+## Source data preprocessing
 
 Real exports drift. Suppose the skid started adding a free-text `Comment`
 column halfway through the year. The driver calls `prepare_frame()` on each
@@ -119,7 +119,7 @@ That is the whole driver: two hooks, and no other code. `acquirium driver list`
 shows it as `running`. If it shows `failed:`, the error is in the
 `acquirium.driver.ROSkidDriver` log.
 
-## What the driver does for you
+## File progress and retry behavior
 
 On every pass the driver lists the folder and reads each file from where it
 left off, so a file that grows is read a few rows at a time and a file already
@@ -127,7 +127,7 @@ read costs nothing. It saves its position only after the rows are stored. If an
 insert fails, the next pass sends the same rows again. A file it cannot read is
 logged and skipped, without holding up the others.
 
-## What is still missing
+## Measurement points in the plant model
 
 Every column is stored, described by its unit and quantity kind, and findable
 by what it measures. What the data lacks is a place in the plant. Nothing says

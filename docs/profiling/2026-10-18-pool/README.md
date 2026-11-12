@@ -106,7 +106,7 @@ resident bound, and groups within an operator run serially. Module digests and
 interpreter paths identify reuse. For dependency versioning and explicit
 sequential state, see the [app interface](../../reference/apps.md).
 
-## Reproduce and inspect
+## Reproduction and inspection
 
 ```sh
 uv sync --locked --extra mqtt

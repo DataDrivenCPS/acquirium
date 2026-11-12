@@ -52,7 +52,7 @@ rejects both with HTTP 409.
 counted once. Sample and ledger sizes estimate stored values. A run selection
 reports zero `studies` and `variables`.
 
-## Declaring variables
+## Variable declarations
 
 Inputs and outputs support the same seven value types. The role describes how
 the calculation uses a value; the type selects its storage.
@@ -166,7 +166,7 @@ read_at=None)` supports advanced explicitly keyed declarations: a keyed reader
 returns a mapping from key tuples to numeric values. The declaration's `keys`
 determines the expected shape. Ordinary single-stream readers return numbers.
 
-See [Record a whole model](../how-to/record-a-whole-model.md) for a runnable
+See [Recording complete models](../how-to/record-a-whole-model.md) for a runnable
 example of explicit declarations, `sample()`, and `record_values()`.
 
 ### Keyed time series
@@ -310,7 +310,7 @@ Other values and non-finite floats are rejected. Declare files and time series
 explicitly. `run.output[label]` returns the Study's variable handle; it does
 not read that run's recorded value. The mapping iterates over labels.
 
-## Finding variables and runs
+## Variable and run queries
 
 | Operation | Variables | Experiments |
 |---|---|---|
@@ -348,7 +348,7 @@ high_flow_runs = study.experiments.where(ac.attr.settings.flow_m3_per_hour >= 10
 Expressions support comparisons and `&`, `|`, and `~`. The older
 `where(metadata={...})` run filter remains available for exact-match compatibility.
 
-## Reading recorded data
+## Recorded data
 
 `.frame()` lists declarations, runs, or recordings. `.dataframe()` fetches
 time-series samples.
@@ -576,11 +576,12 @@ can be queried, but is not converted back.
 |---|---|
 | `ac.point(uri)` | Wrap a property URI as a `Point` for declarations |
 | `ac.resolve(text, kind=None, min_score=0.6)` | Resolve an ontology concept to a `Point` |
-| `aq.timestamp(value)` | Parse or normalize a datetime to UTC |
+| `aq.to_timestamp(value)` | Parse or normalize a scalar timestamp to a timezone-aware UTC datetime; see [timestamp conversion](client-api.md#timestamp-conversion) |
+| `aq.timestamp(value)` | Compatibility name for scalar `aq.to_timestamp(value)` |
 | `aq.register_value_handler(cls, handler)` | Record instances of `cls` as `handler(value)` |
 
 `ac.resolve()` searches vocabulary concepts. Find deployment property instances
-with [plant queries](../how-to/record-experiments.md#connect-a-time-series-result-to-the-facility),
+with [plant queries](../how-to/record-experiments.md#time-series-outputs-and-plant-properties),
 then pass their URIs as `observed`.
 
 The server assigns each observation a run-local sequence and UTC `recorded_at`
@@ -640,5 +641,5 @@ The HTTP API calls a Study a `template`. `template_id`, `variable_id`, and
 | `POST` | `/experiments/clear` | Delete every Study; requires `{"confirm": true}` |
 | `POST` | `/experiments/usage` | Count and size by optional `template_id` or `run_ids` |
 
-See [Record experiments](../how-to/record-experiments.md) for examples and
+See [Experiment recording](../how-to/record-experiments.md) for examples and
 [Experiments](../explanation/experiments.md) for storage and run behavior.

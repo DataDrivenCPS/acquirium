@@ -14,7 +14,7 @@ from acquirium.Client.explore import Not
 acq = Acquirium(server_url="127.0.0.1", server_port=8000)
 ```
 
-## How salty is the brine we discharge, compared to the seawater we take in?
+## Intake and discharge salinity
 
 **How to phrase it.**
 The question is about two measurements, not two pieces of equipment: a salt
@@ -66,7 +66,7 @@ df.with_columns(
 
 The brine is about 1.7 times as salty as the intake.
 
-## What is the pressure drop across the RO?
+## Reverse osmosis pressure drop
 
 **How to phrase it.**
 This time the equipment is the anchor: the pressures we want are the ones
@@ -114,7 +114,7 @@ Note that `p.data().units()` returns `{'p': None}`: these pressure points
 carry no unit in the model (the values are pascals), which is the last
 question in this cookbook.
 
-## What is the RO recovery?
+## Reverse osmosis recovery
 
 Recovery is permeate flow over feed flow.
 
@@ -169,7 +169,7 @@ rec.dataframe().with_columns(recovery=pl.col("permeate") / pl.col("feed")).tail(
 
 Recovery is around 43 %.
 
-## What is downstream of the cartridge filter, and what is measured there?
+## Equipment and measurements downstream of a cartridge filter
 
 **How to phrase it.**
 First find the filter.
@@ -236,7 +236,7 @@ The filter feeds the two high-pressure pumps and the pressure exchanger, and
 the first thing measured after it is the connection to the splitter: TOC,
 temperature, mass flows and pressure.
 
-## Which pump feeds each pressure reading on a pipe?
+## Upstream pumps for pipe pressure measurements
 
 **How to phrase it.**
 Start from the readings, not the pumps.
@@ -256,7 +256,7 @@ To keep only the pipe readings, add `.context("pipe", frm="p")` before the
 upstream step, or `where(target="p", ...)` with an attribute that
 distinguishes them.
 
-## Which measurement points carry no unit?
+## Measurement points without units
 
 **How to phrase it.**
 This is a question about the model rather than the plant.

@@ -7,7 +7,7 @@ source's readings. Their units can differ: a pressure point may use pascals
 while its instrument reports psi. Acquirium records both and converts values
 when they are read. Units use QUDT URIs; labels and symbols are resolved to them.
 
-## Where a unit lives
+## Point units and storage units
 
 A unit can be recorded in two places, and they mean different things.
 
@@ -30,7 +30,7 @@ for it.
 
 `where(unit=...)` and `include("unit")` use the unit annotated on the point.
 
-## How a unit gets recorded
+## Unit registration
 
 A unit reaches the graph through stream registration: `self.declare(...,
 unit=...)` in a driver, or `register_streams()` directly.
@@ -53,7 +53,7 @@ Every other field (`quantity_kind`, `medium`, `substance`, `data_source`)
 raises on a conflict, because there is no equivalent of a conversion for them.
 See the [lifecycle guide](stream-lifecycle.md).
 
-## What convertible means
+## Unit compatibility
 
 Two units are compatible when their QUDT dimension vectors are equal.
 This is the reliable check: it accepts pairs that share a physical dimension
@@ -85,7 +85,7 @@ A conversion you asked for with `convert_to()` is different: if it cannot be
 applied when the values are fetched, the fetch raises `ValueError` rather
 than returning values in the wrong unit.
 
-## Converting on request
+## Explicit conversion
 
 `convert_to(to_unit)` returns a new `DataObject` with the values converted and
 `units()` updated; the original is not modified.
@@ -103,7 +103,7 @@ When no candidate is convertible, `convert_to()` raises with both candidate
 lists in the message.
 The [data tutorial](../tutorials/data.md#units) shows the calls.
 
-## The arithmetic
+## Conversion formula
 
 QUDT expresses every unit as a multiplier and an offset against the base unit
 of its dimension.

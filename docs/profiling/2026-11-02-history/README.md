@@ -30,7 +30,7 @@ million readings. Memory is above the process's footprint before the engine
 opened, and its peak stayed within 15 MiB of the final figure. Before packing,
 the same loads held 349, 971, 2,604 and 4,547 MiB.
 
-## What it costs
+## Memory, storage, and restart costs
 
 - **A row costs about 66 bytes, loaded or written.** From 16M to 32M rows,
   memory after a load grew by 67 bytes a row and after a reopen by 65. Before
@@ -59,7 +59,7 @@ the same loads held 349, 971, 2,604 and 4,547 MiB.
   [bulk ingest](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/bulk_ingest) and
   [model workload](../2026-10-18-model/README.md) measurements.
 
-## Wide plans
+## Performance with 10,000 operators
 
 With 10,000 streams and a mean of each, so 10,000 operators, `e663c44`
 loaded 4M readings in 193 s, a tenth of the rate above, and took 37 s to
@@ -87,7 +87,7 @@ touches. The log took 131 MiB for 4M readings, against 697 MiB before.
 The change does not slow the narrow loads above: alternating the two builds,
 4M readings into 100 streams loaded in 17.6–18.2 s with either.
 
-## The envelope today
+## Measured operating limits
 
 Server memory is about 0.5 GiB, plus 66 bytes per row, plus up to 0.8 GiB
 while 100 streams ingest. Derived rows count as rows. For example:
@@ -105,7 +105,7 @@ readings a year, about 33 GiB.
 
 Plans of 10,000 operators fit, at about half the ingest rate of narrow ones.
 
-## Not yet measured
+## Unmeasured workloads
 
 - Sustained ingest against publication latency, and the rate at which the
   inbox stops draining.

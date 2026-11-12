@@ -1,4 +1,4 @@
-# Start Acquirium from a script
+# Acquirium in Python scripts
 
 `aq.init()` starts a local Acquirium server and returns a client connected to
 it. It loads `acquirium.toml` from the current directory when present, or uses
@@ -39,7 +39,7 @@ the configured server port or an automatically chosen port if omitted or zero.
 The client uses the same HTTP API as a client connected to a separately managed
 server. `ac.address` gives the server URL.
 
-## Share a runtime between scripts
+## Runtime sharing between scripts
 
 Two scripts calling `aq.init(data_dir="./analysis-data")` connect to the same
 server, provided the paths resolve to the same directory. A startup lock

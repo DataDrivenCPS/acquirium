@@ -1,4 +1,4 @@
-# Follow a turbidity alarm
+# Turbidity alarm pipeline
 
 ```sh
 uv run --locked python -m examples.turbidity.run

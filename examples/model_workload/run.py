@@ -30,6 +30,8 @@ from escapement import (
 
 ROLES = ("temperature", "conductivity", "flow", "pressure")
 SCALES = (40.0, 1000.0, 100.0, 10.0)
+# Each synthetic tick is one microsecond in the data timeline.
+TICK_NS = 1000
 
 
 def stream(unit, role):
@@ -61,7 +63,7 @@ def mutations(tick, units):
     changes = [
         (
             stream(unit, role),
-            tick,
+            tick * TICK_NS,
             scale * (0.25 + (tick * 7 + unit * 11 + index) % 50 / 100),
         )
         for unit in range(units)
@@ -69,9 +71,9 @@ def mutations(tick, units):
     ]
     # Old event times exercise replacement and output retraction during streaming.
     if tick >= 13 and tick % 13 == 0:
-        changes.append((stream(0, "pressure"), tick - 5, 8.0))
+        changes.append((stream(0, "pressure"), (tick - 5) * TICK_NS, 8.0))
     if tick >= 17 and tick % 17 == 0:
-        changes.append((stream(0, "conductivity"), tick - 3, None))
+        changes.append((stream(0, "conductivity"), (tick - 3) * TICK_NS, None))
     return changes
 
 
@@ -153,6 +155,10 @@ def run_case(
         .with_name("model.py")
         .read_text()
         .replace("COPIES = 2048", f"COPIES = {copies}")
+        # This harness uses Engine directly. App deployment normally supplies
+        # this adapter between datetime calculation frames and engine records.
+        + "\nfrom acquirium.functions import _datetime_function\n"
+        + "predict = _datetime_function(predict)\n"
     )
     function = PythonFunction.from_file(model, "predict")
     plan = Plan(

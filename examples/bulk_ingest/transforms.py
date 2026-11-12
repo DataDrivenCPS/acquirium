@@ -1,16 +1,16 @@
 """Turbidity soft-sensor calculations; this self-contained file is pinned by its digest.
 
 Each function receives one window's input readings as a polars frame and
-returns one output row stamped at ``context["window_ns"]``, or an empty frame.
+returns one output row stamped at ``context["output_time"]``, or an empty frame.
 """
+
+from datetime import timedelta
 
 import json
 
 import polars as pl
 
 from acquirium.functions import emit, empty
-
-MINUTE_NS = 60 * 1_000_000_000
 
 # High-turbidity thresholds in NTU per location.
 THRESHOLDS_NTU = {
@@ -34,21 +34,21 @@ def snap_to_minute(frame, context):
 def fill_gaps(frame, context):
     """Keep the snapped value at this minute, or interpolate across a gap
     shorter than the app's rolling window looks back."""
-    t = context["window_ns"]
-    max_gap = context["operator"]["window"]["lookback_ns"]
-    readings = frame.sort("event_time_ns")
+    t = context["output_time"]
+    max_gap = context["operator"]["window"]["lookback"]
+    readings = frame.sort("time")
 
-    exact = readings.filter(pl.col("event_time_ns") == t)
+    exact = readings.filter(pl.col("time") == t)
     if not exact.is_empty():
         return {"turbidity": emit(context, exact["value"][0])}
 
-    before = readings.filter(pl.col("event_time_ns") < t).tail(1)
-    after = readings.filter(pl.col("event_time_ns") > t).head(1)
+    before = readings.filter(pl.col("time") < t).tail(1)
+    after = readings.filter(pl.col("time") > t).head(1)
     if before.is_empty() or after.is_empty():
         return {"turbidity": empty()}
 
-    t0, v0 = before["event_time_ns"][0], before["value"][0]
-    t1, v1 = after["event_time_ns"][0], after["value"][0]
+    t0, v0 = before["time"][0], before["value"][0]
+    t1, v1 = after["time"][0], after["value"][0]
     if t1 - t0 >= max_gap:
         return {"turbidity": empty()}
 
@@ -81,13 +81,13 @@ def high_turbidity(frame, context):
 
 def sustained_high_turbidity(frame, context):
     """1 when the high alarm was on for every minute of the last `sustained_minutes`."""
-    t = context["window_ns"]
+    t = context["output_time"]
     # Only report at minutes that have an alarm value, so output stops with the data.
-    if frame.filter(pl.col("event_time_ns") == t).is_empty():
+    if frame.filter(pl.col("time") == t).is_empty():
         return {"alarm": empty()}
     # Set per location by the app's `parameters`.
     minutes = context["parameters"]["sustained_minutes"]
-    span = frame.filter(pl.col("event_time_ns") >= t - minutes * MINUTE_NS)
+    span = frame.filter(pl.col("time") >= t - timedelta(minutes=minutes))
     # Both ends are included, so N minutes holds N + 1 samples.
     every_minute_high = span.height == minutes + 1 and span["value"].min() == 1
     return {"alarm": emit(context, 1 if every_minute_high else 0)}

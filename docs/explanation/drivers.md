@@ -70,5 +70,5 @@ Accepted writes wait in the inbox, but while the drivers are down a broker
 has to queue what arrives, and its own limits decide how much it keeps. See
 [broker settings](../reference/drivers.md#broker-settings).
 
-Start with [your first driver](../tutorials/first-driver.md) to write one.
+Start with [File ingestion driver](../tutorials/first-driver.md) to write one.
 The [driver reference](../reference/drivers.md) lists hooks and configuration.

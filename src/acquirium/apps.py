@@ -18,6 +18,7 @@ from threading import RLock
 from typing import Any, Mapping
 
 from escapement import (
+    artifact_digest,
     FixedBucket,
     Input,
     Native,
@@ -208,6 +209,7 @@ class App:
             )
         if not isinstance(self.window, (Pointwise, FixedBucket, Rolling)):
             raise ValueError("only pointwise, fixed-bucket and rolling windows are supported")
+        function = _function_dict(self.function)
         if any(not key for key in self.outputs):
             raise ValueError("output port names must be nonempty")
         if any(type(spec.on_group) is not bool for spec in self.outputs.values()):
@@ -232,11 +234,16 @@ class App:
                     _json(dict(values))
                 except (TypeError, ValueError) as error:
                     raise ValueError("parameter values must be JSON") from error
+        if function.get("kind") == "python":
+            sizes = [value for key, value in self.window.to_dict().items() if key.endswith("_ns")]
+            sizes.extend(selection.as_of for selection in self.inputs if selection.as_of is not None)
+            if any(type(value) is int and value % 1000 for value in sizes):
+                raise ValueError("Python soft sensor windows and as-of ages must have microsecond precision")
         return dict(
             name=self.name,
             inputs=[_selection_dict(item) for item in self.inputs],
             outputs={key: asdict(value) for key, value in self.outputs.items()},
-            function=_function_dict(self.function),
+            function=function,
             window=self.window.to_dict(),
         )
 
@@ -348,6 +355,33 @@ class Apps:
         finally:
             os.close(descriptor)
 
+    def _group_function(self, function):
+        """Adapt Python context without changing the declared calculation file."""
+        if function["kind"] != "python":
+            return function
+        code = (
+            "# Acquirium function interface: UTC datetimes, microsecond precision.\n"
+            "from acquirium.functions import _function_module\n"
+            f"__getattr__ = _function_module({function['path']!r}, {function['sha256']!r})\n"
+        ).encode()
+        digest = artifact_digest(code)
+        directory = self.path.parent / "app-functions"
+        directory.mkdir(exist_ok=True)
+        path = directory / f"{digest}.py"
+        if not path.exists() or path.read_bytes() != code:
+            temporary = path.with_suffix(".tmp")
+            with temporary.open("wb") as handle:
+                handle.write(code)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+            descriptor = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        return {**function, "path": str(path.resolve()), "sha256": digest}
+
     def recover(self):
         with self.lock:
             plan = self.state.get("plan")
@@ -453,21 +487,28 @@ class Apps:
                     )
                     matches[name][selection.role] += 1
             rdf = Graph()
+            function_template = self._group_function(declaration["function"])
             for group, inputs in sorted(groups.items()):
+                group_parameters = dict(parameters.get(group, {}))
+                # JSON stores the key as an array; Python calls receive a tuple.
+                group_key = [group]
+                if group_parameters.setdefault("group", group_key) != group_key:
+                    raise ValueError(
+                        f"app {name!r} parameter 'group' is reserved for the group key {group!r}"
+                    )
                 outputs = {
                     port: output_reference(name, group, port)
                     for port in sorted(app.outputs)
                 }
                 function = _bind_parameters(
-                    declaration["function"], parameters.get(group, {}), name, group
+                    function_template, group_parameters, name, group
                 )
                 definition = dict(
                     function=function,
                     window=declaration["window"],
                     outputs=outputs,
+                    parameters=group_parameters,
                 )
-                if group in parameters:
-                    definition["parameters"] = parameters[group]
                 if as_of:
                     definition["as_of"] = as_of
                 operator = Operator(
@@ -477,7 +518,7 @@ class Apps:
                     outputs=outputs,
                     window=app.window,
                     function=function,
-                    parameters=parameters.get(group, {}),
+                    parameters=group_parameters,
                     as_of=as_of,
                 )
                 operators.append(operator.to_dict())

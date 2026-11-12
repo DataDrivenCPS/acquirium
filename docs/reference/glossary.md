@@ -23,7 +23,7 @@ This is a reference for the vocabulary of the other guides.
 | Turtle | the text format RDF is written in (`.ttl` files, graph inserts) | `model.ttl` |
 | SPARQL | the query language for RDF graphs; every `Query` compiles to it | `q.to_sparql()` |
 
-## The plant model
+## Plant model
 
 | term | meaning | example |
 |---|---|---|
@@ -99,7 +99,7 @@ two.
 Experiment metadata uses the shared attribute registry and `.where()` syntax.
 See the [experiment reference](experiments.md) for the interface and read formats.
 
-## The platform
+## Acquirium components
 
 | term | meaning | example |
 |---|---|---|

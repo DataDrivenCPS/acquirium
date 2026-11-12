@@ -1,8 +1,8 @@
 ---
-title: A driver against an existing plant model
+title: Drivers and existing plant models
 ---
 
-[Your first driver](first-driver.md) ingested the RO skid's CSV files with no
+[File ingestion driver](first-driver.md) ingested the RO skid's CSV files with no
 plant model, so each column landed on a placeholder point of its own. Now
 suppose the plant already has a model that describes the skid: its inlets and
 outlets, and the sensors on them. Connecting the driver to that model is a
@@ -11,7 +11,7 @@ small change in code, and it changes what you can ask of the data.
 This tutorial uses the seawater-RO model, loaded as
 [loading a plant model](../how-to/load-a-plant-model.md) describes.
 
-## Find the points the model already has
+## Existing measurement points
 
 The model's points carry URIs, and the driver will refer to them. Before writing
 any code, ask the server which points the RO has and what it already says about
@@ -47,7 +47,7 @@ pressure. The fourth, `Permeate TDS`, does not, because the model has no TDS
 concentration point on the RO. That is normal. Models are rarely complete, and
 the driver has to cope.
 
-## Declare against those points
+## Stream declarations with point URIs
 
 The driver is the same class as before. `declare()` now gets a `point_uri`
 naming a point in the model. The `wbs:` prefix stands for `urn:swro/`:
@@ -77,7 +77,7 @@ config does not change.
 Copy URIs exactly. A typo does not fail; it creates a new point that nothing in
 the model refers to.
 
-## The model checks what you declare
+## Declaration validation
 
 When the point already exists, registering a stream compares what you declare
 with what the model says:
@@ -98,11 +98,11 @@ in psi. Suppose the model recorded that point in pascals. Declaring
 `unit="psi"` is not a contradiction, since the two convert. The raw rows are
 stored in psi, and reads convert them to the model's pascals, so nobody
 querying the point needs to know the skid's preference. A unit that does not
-convert, such as celsius on a pressure point, raises. [Units](../explanation/units.md#how-a-unit-gets-recorded)
+convert, such as celsius on a pressure point, raises. [Units](../explanation/units.md#unit-registration)
 has the rules. The model as shipped records no unit for this point at all, so
 declaring psi simply writes it onto the point.
 
-## Check that the data arrived
+## Stored reading queries
 
 The test of a binding is whether a query that starts from equipment reaches the
 data:
@@ -123,7 +123,7 @@ name and its URI ends in `__point`, so it is easy to spot in that query's
 output. Fix the URI and restart the driver. Rows already written stay on the
 placeholder; re-declaring does not move them.
 
-## Moving from one version to the other
+## Migration from placeholder points
 
 If you already ran the first driver, switching to this one strands nothing. A
 stream's identity comes from its source and column name, `ro-skid` and

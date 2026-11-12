@@ -819,7 +819,7 @@ def _(mo):
 
     `usage()` counts runs, recordings, samples, and files, with their sizes.
     Delete runs you no longer need with `.delete()`; see
-    [Record experiments](../how-to/record-experiments.md#check-storage-and-delete-runs).
+    [Record experiments](../how-to/record-experiments.md#storage-inspection-and-run-deletion).
     """)
     return
 

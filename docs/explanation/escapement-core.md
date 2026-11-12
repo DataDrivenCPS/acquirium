@@ -60,8 +60,8 @@ reconciles the two. A plan ID names its content; each activation has its own
 retry identity, so returning to an earlier plan activates it again.
 
 A function that fails publishes nothing from its epoch and pauses the
-processor for every app; [how derived streams stay current](apps.md#readers-see-a-consistent-snapshot)
-explains why, and [deploy and inspect apps](../how-to/check-deploy-apps.md#recover-from-a-failed-calculation)
+processor for every app; [how derived streams stay current](apps.md#published-snapshots-and-failure-recovery)
+explains why, and [deploy and inspect apps](../how-to/check-deploy-apps.md#recovery-from-a-failed-calculation)
 how to resume.
 
 Shutdown waits up to `drain_timeout` seconds for pending writes to publish.

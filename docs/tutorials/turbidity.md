@@ -1,5 +1,5 @@
 ---
-title: Follow a turbidity alarm
+title: Turbidity alarm pipeline
 ---
 
 A filter's effluent turbidity rises above its limit. One high reading might be
@@ -9,7 +9,7 @@ at a stretch of time, cope with gaps in the data, and change its mind when
 better data arrives.
 
 This tutorial builds that alarm from a chain of small apps, each doing one
-thing. It continues from [your first app](first-app.md). The apps come from the
+thing. It continues from [Soft sensor app](first-app.md). The apps come from the
 [bulk-ingest example](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/bulk_ingest/chain.py),
 and a short script feeds them twenty-five minutes of readings so that we can
 follow every result:
@@ -22,7 +22,7 @@ The script starts a temporary server, loads the data, prints what the alarm
 does, and shuts down. It takes seconds, not twenty-five minutes, because every
 reading carries the time it was taken.
 
-## The plant and its readings
+## Plant and sample readings
 
 The plant has four sampling locations, among them Filter 3 and the combined
 effluent. Each has a turbidity point in the
@@ -31,7 +31,7 @@ and the script registers one stream per point. The analysers report twice a
 minute. Filter 3 runs at 0.8 NTU from 00:02 to 00:20, above its 0.5 NTU limit,
 and its readings for minute 00:10 are missing.
 
-## Average each minute
+## Minute averages
 
 Two readings a minute, at whatever second the analyser chose, are awkward to
 compare. The first app averages them onto a one-minute grid:
@@ -62,7 +62,7 @@ def snap_to_minute(frame, context):
 The result carries the bucket's start time: readings at 00:02:00 and 00:02:30
 make one value at 00:02.
 
-## Fill the gap
+## Gap interpolation
 
 Filter 3 has no average for 00:10, and a missing minute in the middle of a
 high stretch would break the alarm. The next app fills short gaps by drawing a
@@ -89,7 +89,7 @@ leaves gaps of two hours or more empty.
 Here both neighbours are 0.80 NTU, so the filled value at 00:10 is 0.80. Note
 what looking ahead implies: an estimate can change when later data arrives.
 
-## Wait for a sustained excursion
+## Sustained turbidity threshold
 
 Two more apps turn turbidity into an alarm. The first compares each minute with
 the location's limit and writes 1 for high or 0 for normal. The second looks
@@ -120,12 +120,14 @@ the function reads from `context["parameters"]`. One function serves every
 location:
 
 ```python
+from datetime import timedelta
+
 def sustained_high_turbidity(frame, context):
-    t = context["window_ns"]
-    if frame.filter(pl.col("event_time_ns") == t).is_empty():
+    t = context["output_time"]
+    if frame.filter(pl.col("time") == t).is_empty():
         return {"alarm": empty()}
     minutes = context["parameters"]["sustained_minutes"]
-    span = frame.filter(pl.col("event_time_ns") >= t - minutes * MINUTE_NS)
+    span = frame.filter(pl.col("time") >= t - timedelta(minutes=minutes))
     every_minute_high = span.height == minutes + 1 and span["value"].min() == 1
     return {"alarm": emit(context, 1 if every_minute_high else 0)}
 ```
@@ -134,7 +136,7 @@ Fifteen minutes on a one-minute grid is sixteen samples, counting both ends.
 Filter 3 has been high since 00:02, so its alarm comes on at 00:17 and stays on
 until the excursion ends at 00:20.
 
-## Count alarms across the plant
+## Plant-wide alarm count
 
 The last app is the first to combine locations. `combine=True` puts every
 location's alarm into a single calculation, and since each alarm is 0 or 1,
@@ -161,7 +163,7 @@ alarm = filter3.measurement(alias="alarm", app="bulk-turbidity-sustained")
 alarm.dataframe()
 ```
 
-## When the missing readings arrive
+## Late readings and alarm recalculation
 
 Now the readings for 00:10 turn up late, as data from the field often does.
 They are 0.15 and 0.25 NTU: Filter 3 briefly dipped below its limit.

@@ -40,7 +40,7 @@ compute derived streams from readings and update them when a reading arrives
 late or is corrected. [Server internals](explanation/server-internals.md)
 shows the parts of the server and where each one keeps its data.
 
-## How these docs are organised
+## Documentation structure
 
 [Tutorials](tutorials/_index.md) are the place to start. They build on each
 other, from starting a server and querying a simulated plant to writing

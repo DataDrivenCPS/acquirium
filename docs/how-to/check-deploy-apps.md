@@ -1,5 +1,5 @@
 ---
-title: Deploy, change and repair apps
+title: App deployment and recovery
 ---
 
 Deploying an app can mean recomputing months of history, and a function that
@@ -9,7 +9,7 @@ to change its code, and how to recover when a calculation fails. The examples
 continue from [calculating a derived stream](write-soft-sensors.md), on the
 sine-wave server.
 
-## Preview a deployment
+## Deployment preview
 
 Before switching `wave-spread` from ten-second buckets to a rolling window, ask
 what the change would do:
@@ -33,13 +33,13 @@ year of history.
 
 The preview does not run your function, so it cannot tell you whether the
 function works. Try the function on a small frame first, as the
-[calculation guide](write-soft-sensors.md#write-your-own-function) does.
+[calculation guide](write-soft-sensors.md#python-functions) does.
 
 Check `preview["app"]["warnings"]` as well. A selection that matches no streams
 is allowed, because the driver may not have registered them yet, but more often
 it means the query is narrower than you meant.
 
-## Deploy and check the state
+## Deployment and status
 
 ```python
 client.deploy_app(app)
@@ -63,7 +63,7 @@ acquirium app deploy examples/transformation/threshold_app.py:high_wave
 acquirium app inspect high-wave --json
 ```
 
-## Change the code
+## Calculation updates
 
 Save the new version of a function at a new path, build the app with that path,
 and deploy it. `spread_batch.py` in the calculation guide was deployed this way.
@@ -72,11 +72,11 @@ shows how much that is.
 
 Editing a deployed file in place does not work. Acquirium records the file's
 digest when the app is deployed, and refuses to run a file that no longer
-matches; [how derived streams stay current](../explanation/apps.md#functions-must-be-repeatable)
+matches; [how derived streams stay current](../explanation/apps.md#function-repeatability)
 explains why. Keep the old file where it is until the change has gone through,
 because work accepted under the old deployment may still need it.
 
-## Recover from a failed calculation
+## Recovery from a failed calculation
 
 Here is a function with a bug, saved as `ratio.py`. It divides by each
 reading, and the sine wave passes through zero:
@@ -123,7 +123,7 @@ ZeroDivisionError: float division by zero
 The failure stops publication for every app, not only this one. The driver's
 writes are still accepted and stored, but `wave-spread` and `wave-smooth` stop
 updating, and readers keep seeing the last good snapshot.
-[How derived streams stay current](../explanation/apps.md#readers-see-a-consistent-snapshot)
+[How derived streams stay current](../explanation/apps.md#published-snapshots-and-failure-recovery)
 explains why one failure holds back the rest.
 
 To recover, save a corrected version at a new path, `ratio_v2.py`, as for any
@@ -171,7 +171,7 @@ When the cause is outside the code, such as a missing package or a deleted
 calculation file, fix that and call `client.retry_engine()` alone. Keep each
 calculation file until the work that needs it has gone through.
 
-## Remove an app
+## App removal
 
 `client.remove_app(name)` removes an app and its current results. Earlier
 snapshots keep their history. Remove any apps that read its outputs first; the

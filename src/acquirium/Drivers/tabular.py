@@ -10,12 +10,26 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime
+from typing import overload
 
 import polars as pl
 
 logger = logging.getLogger("acquirium.tabular")
 
 
+@overload
+def to_timestamp(
+    date_or_timestamp: str | datetime,
+    time: None = None,
+    *,
+    date_format: str | None = None,
+    timezone: str = "UTC",
+    day_first: bool = False,
+) -> datetime: ...
+
+
+@overload
 def to_timestamp(
     date_or_timestamp: pl.Series,
     time: pl.Series | None = None,
@@ -23,10 +37,26 @@ def to_timestamp(
     date_format: str | None = None,
     timezone: str = "UTC",
     day_first: bool = False,
-) -> pl.Series:
-    """Convert one timestamp column, or separate date/time columns, to UTC.
+) -> pl.Series: ...
 
-    Native Date/Datetime values, ISO/RFC3339 text, common delimited date/time
+
+def to_timestamp(
+    date_or_timestamp: str | datetime | pl.Series,
+    time: pl.Series | None = None,
+    *,
+    date_format: str | None = None,
+    timezone: str = "UTC",
+    day_first: bool = False,
+) -> datetime | pl.Series:
+    """Convert a timestamp or timestamp column to UTC.
+
+    A string or Python datetime returns a timezone-aware UTC datetime.
+    RFC 3339 and ISO 8601 strings, including ``Z`` and numeric offsets, are
+    accepted, as is a trailing `` UTC``. Invalid or ambiguous scalar values
+    raise ValueError. Python datetimes have microsecond precision.
+
+    A Polars Series returns a Series: invalid or ambiguous entries become null.
+    Native Date/Datetime columns, ISO/RFC3339 text, common delimited date/time
     forms, and integer Unix epochs are accepted. ``date_format`` overrides the
     string heuristics. Naive values are interpreted in ``timezone`` and the
     result is always UTC. Set ``day_first`` to prefer day/month ordering when a
@@ -34,9 +64,43 @@ def to_timestamp(
 
     Passing ``time`` joins a common split date/clock representation before
     parsing. This is deliberately a plain data conversion helper: it does not
-    know about driver configuration or stream registration.
+    know about driver configuration or stream registration. ``time`` is only
+    available with Series inputs.
+
+    Examples
+    --------
+    >>> to_timestamp("2026-01-01T10:00:40 UTC").isoformat()
+    '2026-01-01T10:00:40+00:00'
+    >>> to_timestamp("2026-01-01T03:00:40-07:00").isoformat()
+    '2026-01-01T10:00:40+00:00'
+
+    For a column, the shape is preserved: two input strings produce two UTC
+    datetimes in a Series with the same name.
+
+    >>> samples = pl.Series("sample_time", ["2026-01-01T10:00:00Z", "2026-01-01T10:01:00Z"])
+    >>> to_timestamp(samples).dt.strftime("%H:%M %Z").to_list()
+    ['10:00 UTC', '10:01 UTC']
     """
-    col = date_or_timestamp
+    scalar = isinstance(date_or_timestamp, (str, datetime))
+    if scalar:
+        if time is not None:
+            raise TypeError("separate date/time columns require Polars Series inputs")
+        value = date_or_timestamp
+        if isinstance(value, str) and date_format is None:
+            from dateutil.parser import isoparse
+
+            # Use the existing experiment parser for ISO forms such as week
+            # dates and compact timestamps; exports still use the heuristics below.
+            text = re.sub(r"(?i)\s+UTC$", "Z", value.strip())
+            try:
+                value = isoparse(text)
+            except ValueError:
+                value = text
+        col = pl.Series("timestamp", [value])
+    elif isinstance(date_or_timestamp, pl.Series):
+        col = date_or_timestamp
+    else:
+        raise TypeError("to_timestamp expects a string, datetime, or Polars Series")
     if time is not None:
         col = pl.DataFrame({
             "__date": date_or_timestamp,
@@ -81,10 +145,17 @@ def to_timestamp(
 
     tz = getattr(col.dtype, "time_zone", None)
     if tz is None:
-        return col.dt.replace_time_zone(
+        result = col.dt.replace_time_zone(
             timezone, ambiguous="null", non_existent="null"
         ).dt.convert_time_zone("UTC")
-    return col if tz == "UTC" else col.dt.convert_time_zone("UTC")
+    else:
+        result = col if tz == "UTC" else col.dt.convert_time_zone("UTC")
+    if scalar:
+        timestamp = result.item()
+        if timestamp is None:
+            raise ValueError(f"invalid or ambiguous timestamp {date_or_timestamp!r}")
+        return timestamp
+    return result
 
 
 def to_observations(
@@ -225,6 +296,9 @@ def _parse_timestamp_text(
 ) -> pl.Series:
     if date_format is not None:
         return col.str.to_datetime(format=date_format, strict=False)
+
+    # The readable UTC suffix means the same thing as ISO's Z designator.
+    col = col.str.strip_chars().str.replace(r"(?i)\s+UTC$", "Z")
 
     # Polars' automatic parser is fast and handles ISO/RFC3339, including
     # offsets. It raises when it cannot infer a format, at which point we try

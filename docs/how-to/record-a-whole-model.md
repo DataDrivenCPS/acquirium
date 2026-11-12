@@ -1,4 +1,4 @@
-# Record a whole model
+# Recording complete models
 
 An adapter declares experiment variables and binds functions that read their
 values. Choose scalar, text, JSON, table, or time series explicitly. The Pyomo
@@ -10,7 +10,7 @@ and records three scenarios. It includes a scalar model state sampled through
 time and a component explicitly indexed by model time.
 
 ```python
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from tempfile import TemporaryDirectory
 
 import acquirium as aq
@@ -24,7 +24,7 @@ model.cost = pyo.Var(initialize=0)
 model.pressure = pyo.Var(initialize=0, units=pyo.units.Pa)
 model.flow = pyo.Var(model.pump, model.time, initialize=0, units=pyo.units.L / pyo.units.s)
 model.capacity = pyo.Param(model.pump, initialize={"pump1": 10, "pump2": 20})
-start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+start = aq.to_timestamp("2026-01-01T00:00:00 UTC")
 configuration = {"solver options": {"notes": [None, {}, []]}, "scenario.names": ["demo"]}
 annotations = {"experiment notes": {"a.b": [None, {}, [], {"": "arbitrary string keys"}]}}
 
@@ -149,5 +149,5 @@ batch leaves no new samples or observations. Graph delivery retries from the
 outbox after commit; HTTP retries can still append another observation.
 
 Hand declarations use the same user metadata namespace and semantic properties.
-See the [declaration conversion table](../reference/experiments.md#declaring-variables)
+See the [declaration conversion table](../reference/experiments.md#variable-declarations)
 and [storage boundary and recovery](../reference/storage-migrations.md).

@@ -1,12 +1,12 @@
 ---
-title: Debugging queries for an unexpected result
+title: Query troubleshooting
 ---
 
-## When a query returns nothing or more/less than you expect
+## Empty or unexpected results
 
 An empty or unexpected result is usually one of five things.
 
-### 1. The text resolved to the wrong concept
+### Incorrect text resolution
 
 In this case, the query runs without errors, but the result might look unexpected.
 The text matcher finds the closest match it can, for classes, predicates and attribute values alike.
@@ -26,7 +26,7 @@ Here the top match is the right one, but the runners-up are close.
 A slightly different phrasing can land on another membrane class, and the query would still run.
 If the top candidate is not what you meant, rephrase the text or pass the URI directly.
 
-### 2. The focus is on the wrong node
+### Incorrect query focus
 
 `related()` and `measurement()` without `frm=`, and `where()` without `target=`, all act on the node the pointer is on.
 After a `related()` the pointer is the new entity, so
@@ -58,7 +58,7 @@ ValueError: attribute 'process' does not apply to data node 'pump_data'
 ValueError: include: attribute 'unit' does not apply to entity node 'pump'
 ```
 
-### 3. Nothing was within reach
+### Traversal depth limits
 
 `related()` stops at `max_depth` (3 by default, 1 for predicate lists).
 Raise the `max_depth` value, or pass `max_depth=0` for an unbounded walk.
@@ -84,7 +84,7 @@ shape: (1, 2)                                    # max_depth=0
 └────────────┴──────────────────────────┘
 ```
 
-### 4. `required=True` removed the rows
+### Rows excluded by required attributes
 
 An attribute that is missing from the data drops every row that lacks it.
 Take `required=` off and look for nulls in the column.
@@ -131,7 +131,7 @@ shape: (11, 3)                                   # include("unit")
 Four rows came back: the three pressures and the temperature, the RO points
 that carry no unit.
 
-### 5. The points are on connection points you excluded
+### Excluded connection points
 
 `include_connection_points=False` keeps only directly-owned points, which for
 most equipment is very few.
@@ -153,7 +153,7 @@ shape: (1, 2)
 Only the membrane area is owned by the RO itself; every pressure, flow and
 temperature sits on a connection point.
 
-### 6. `context()` followed the wrong relation
+### Incorrect context relation
 
 `context()` defaults to `via="entity"`, the entity a point hangs off.
 For a point on a pipe that entity is the connection, so

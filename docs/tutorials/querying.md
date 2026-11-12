@@ -10,7 +10,7 @@ graph queries by hand. Acquirium's query builder lets you describe what you
 are looking for one step at a time, and the server works out how to find it.
 
 This tutorial uses the WaterTAP seawater-RO plant. Start its server as the
-[getting started](getting-started.md) page describes, and connect:
+[Installation and startup](getting-started.md) page describes, and connect:
 
 ```python
 from acquirium import Acquirium
@@ -18,7 +18,7 @@ from acquirium import Acquirium
 acq = Acquirium(server_url="127.0.0.1", server_port=8000)
 ```
 
-## Find the equipment
+## Equipment selection
 
 Start by asking for every pump:
 
@@ -65,7 +65,7 @@ to the node:
 ro = acq.query().entity(uri="wbs:RO", alias="ro")
 ```
 
-## Follow the connections
+## Plant connection traversal
 
 Equipment is rarely interesting alone. `related()` steps from the current node
 to its neighbours. Here is the nearest tank to each pump:
@@ -119,7 +119,7 @@ valves near the tanks. To branch from an earlier node instead, name it with
 
 `refocus("pump")` does the same for every step that follows, not just one.
 
-## Reach the measurements
+## Measurement selection
 
 Sensors are what connect the model to data. `measurement()` adds the
 measurement points of the current node. Here are the pressures on the RO:
@@ -153,7 +153,7 @@ from each point to the equipment it is about:
  .metadata())
 ```
 
-## Filter and choose columns
+## Filters and result columns
 
 The keyword arguments you have been passing are filters, and `where()` applies
 the same filters as a separate step. `Not()` excludes a value. Here are the
@@ -185,7 +185,7 @@ this model, the three pressures and the temperature have none. Pass
 `required=True` to keep only the rows that have one, or use `drop()` to hide a
 node that is there only to constrain the match.
 
-## Get the values
+## Reading retrieval
 
 So far every answer has been about the model. Change the terminal method and
 the same pattern returns the readings:
@@ -208,7 +208,7 @@ You never named a stream or a tag. You described the readings by what they
 measure and where, and that description keeps working when someone adds a
 fourth pressure sensor to the RO.
 
-[Working with data](data.md) picks up from here: layouts, units, and splitting
+[Data retrieval and formats](data.md) picks up from here: layouts, units, and splitting
 a result by equipment. The [query cookbook](query-cookbook.md) answers common
-plant questions with these steps, and [the query model](../explanation/query-model.md)
+plant questions with these steps, and [Query model](../explanation/query-model.md)
 explains how a pattern becomes a graph query.

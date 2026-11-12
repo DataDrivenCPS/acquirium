@@ -1,6 +1,9 @@
 ---
-title: How derived streams stay current
+title: Derived stream updates
 ---
+
+For an illustrated introduction to grouping, time windows, and the dataframe a
+function receives, see [Soft sensor inputs](soft-sensor-inputs.md).
 
 Most derived data in a treatment plant is computed once and then quietly goes
 stale. Someone exports a month of turbidity, averages it in a spreadsheet, and
@@ -13,7 +16,7 @@ is the one-minute mean of those readings*. Acquirium's job is to keep that
 relationship true as the inputs change, including when they change in the
 past.
 
-## A change touches only what depends on it
+## Recalculation after input changes
 
 When a reading arrives or is corrected, recomputing everything would be
 correct but wasteful. The app's window says exactly which results a reading can
@@ -33,7 +36,7 @@ This is also why apps cannot choose arbitrary output timestamps or run on a
 clock. If an app could emit whenever it liked, there would be no way to know
 which of its results a given reading had influenced.
 
-## Groups give results a stable identity
+## Group identity and membership
 
 The input selection decides which streams feed a calculation. Grouped by tank,
 a selection produces one calculation per tank, each with its own output stream.
@@ -52,7 +55,7 @@ right answer when the model was wrong. It is the wrong answer when the probe
 really moved on a particular date, and Acquirium has no way yet to record a
 move that takes effect only from a point in time.
 
-## Functions must be repeatable
+## Function repeatability
 
 Because a correction can reach back weeks, an app's function may run again on
 old data at any time, and it must produce the same result for the same inputs.
@@ -67,7 +70,7 @@ old and new results would silently come from different code. So a change of
 code is a change of deployment: you put the new version at a new path, deploy
 it, and Acquirium recomputes the app's history with it.
 
-## Readers see a consistent snapshot
+## Published snapshots and failure recovery
 
 A correction to a source reading and every derived change it causes become
 visible together, in one published snapshot called an epoch. A reader sees
@@ -80,7 +83,7 @@ was when someone acted on it, even after later data withdrew it.
 If a function fails, nothing from that epoch is published, and the engine
 pauses. The write that triggered it is safely stored, but readers keep seeing
 the previous snapshot until the cause is fixed and the work resumes; see
-[recovering from a failed calculation](../how-to/check-deploy-apps.md#recover-from-a-failed-calculation).
+[recovering from a failed calculation](../how-to/check-deploy-apps.md#recovery-from-a-failed-calculation).
 The pause affects every app, not just the one that failed, because publishing
 the others would break the guarantee that each snapshot is consistent.
 

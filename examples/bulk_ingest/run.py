@@ -25,7 +25,8 @@ import acquirium as aq
 from acquirium.apps import output_reference
 
 from .chain import MAX_GAP, SOFT_SENSORS, SOURCE, SUSTAINED_MINUTES
-from .transforms import MINUTE_NS, THRESHOLDS_NTU
+from .chain import MINUTE as MINUTE_NS
+from .transforms import THRESHOLDS_NTU
 
 DIRECTORY = Path(__file__).resolve().parent
 START = datetime(2024, 12, 1, tzinfo=timezone.utc)

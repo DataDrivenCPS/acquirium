@@ -1,11 +1,11 @@
 ---
-title: Run the server
+title: Server startup
 ---
 
 This is a guide to running and configuring the acquirium server: the config
 file, storage backends, ontologies, and the HTTP API.
 
-## The server command
+## Server command
 
 ```bash
 acquirium server --config acquirium.toml

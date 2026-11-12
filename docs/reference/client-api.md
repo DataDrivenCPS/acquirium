@@ -1,5 +1,5 @@
 ---
-title: Acquirium Client API
+title: Acquirium client API
 ---
 
 This is the reference for the Python client: every public method, with its
@@ -27,6 +27,45 @@ managed remote server. This does not start or stop that server. Every
 `acquirium.shutdown()` disconnects and stops only a server this process started.
 It also runs at normal interpreter exit. See
 [local runtime](../how-to/local-runtime.md) for ownership, options, and cleanup.
+
+## Timestamp conversion
+
+`aq.to_timestamp(value, *, date_format=None, timezone="UTC", day_first=False)`
+converts a string or Python datetime to a timezone-aware UTC datetime. It is
+available without starting a server:
+
+```python
+import acquirium as aq
+
+sample_time = aq.to_timestamp("2026-01-01T10:00:40 UTC")
+print(sample_time.isoformat())  # 2026-01-01T10:00:40+00:00
+```
+
+| Input | UTC result |
+| --- | --- |
+| `"2026-01-01T10:00:40 UTC"` | 10:00:40 on January 1 |
+| `"2026-01-01T10:00:40Z"` (RFC 3339) | The same instant |
+| `"2026-01-01T03:00:40-07:00"` (numeric offset) | The same instant |
+| `"20260101T100040Z"` (compact ISO 8601) | The same instant |
+| `"2026-01-01T10:00:40.123456Z"` | 10:00:40.123456 on January 1 |
+| `"2026-01-01"` | Midnight on January 1 |
+
+Timezone-less strings and datetimes are interpreted in `timezone`, which
+defaults to UTC. An explicit offset takes precedence. For a local source time,
+write `aq.to_timestamp("2026-01-01T03:00:40", timezone="America/Denver")`.
+The result is 10:00:40 UTC. Invalid timestamps and ambiguous or nonexistent
+local times raise `ValueError`; supplying an explicit offset resolves a
+daylight-saving ambiguity.
+
+Python datetime results have microsecond precision; finer fractional digits
+are truncated. For source-specific exports, `date_format` specifies the format,
+and `day_first=True` prefers day/month ordering for ambiguous delimited dates.
+The existing `aq.timestamp(value)` name uses the same scalar conversion.
+
+Passing a Polars Series keeps the existing column interface: the result is a
+UTC Series with the same name and row count, and invalid entries become null.
+Series also accept a second `time` column, for split date/time exports, and
+integer Unix epochs. See the [tabular helpers](drivers.md#fileingestdriver).
 
 ## Acquirium
 
@@ -124,7 +163,7 @@ and metadata rules.
 usable.
 Terminals execute it.
 See the [querying tutorial](../tutorials/querying.md) and
-[the query model](../explanation/query-model.md).
+[Query model](../explanation/query-model.md).
 
 ### Verbs
 
@@ -266,7 +305,7 @@ Metadata lives as long as the node it describes: after a `replace=True`
 graph insert or a SPARQL update, the server removes metadata whose subject
 no longer appears in any other graph. A URI value is not checked; it may
 point anywhere.
-See [Attach metadata to a node](../how-to/attach-metadata.md).
+See [Node metadata](../how-to/attach-metadata.md).
 
 ### Helpers
 
@@ -313,7 +352,7 @@ See the [data tutorial](../tutorials/data.md).
 | `bindings` | Property: read-only binding metadata per stream, with its statistics. |
 | `refresh_stats() -> None` | Forget the cached stream statistics and which streams have rows, so the next read asks the server again; the sub-objects of the same `data()` call see the refresh too. |
 
-### Parameters shared by data() and dataframe()
+### Shared data() and dataframe() parameters
 
 | parameter | meaning |
 |---|---|

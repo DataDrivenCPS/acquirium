@@ -1,5 +1,5 @@
 ---
-title: Resolve text to URIs
+title: Text resolution to URIs
 ---
 
 This is a guide to how acquirium turns free text into ontology URIs: the
@@ -84,7 +84,7 @@ offsets when both URIs are already known.
 `DataObject.convert_to()` is built on these calls; see the
 [data guide](../tutorials/data.md#units).
 
-## Tuning
+## Text matching settings
 
 - `min_score` sets the floor below which `resolve()` returns nothing.
   Raise it when wrong matches slip through; lower it when valid text comes

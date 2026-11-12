@@ -1,5 +1,5 @@
 ---
-title: Your first app
+title: Soft sensor app
 ---
 
 Raw readings are rarely the end of the story. Operators want hourly averages,
@@ -11,7 +11,7 @@ and when a reading is corrected, the output is corrected too.
 We start as small as possible: a driver that generates a sine wave, and an app
 that keeps the values above 0.5. No plant model is needed.
 
-## Start the input stream
+## Sine-wave input stream
 
 From the repository root, with the development environment installed:
 
@@ -66,12 +66,14 @@ Your timestamps will differ. The values follow the wave: 0, 0.707, 1, 0.707,
 0, −0.707, −1, −0.707, and round again. Of each eight, three are above 0.5, and
 those are the ones we want to keep, with their original timestamps.
 
-## What the function sees
+## Function inputs
 
 An app's calculation is an ordinary Python function. Acquirium calls it with
 two arguments, `frame` and `context`.
 
-`frame` is a polars dataframe of input readings. Our app looks at one reading
+### Input dataframe
+
+`frame` is a Polars dataframe of input readings. Our app looks at one reading
 at a time, so each call gets one row. Here is such a row, turned on its side,
 with long strings shortened:
 
@@ -79,21 +81,31 @@ with long strings shortened:
 | --- | --- |
 | `role` | `"wave"` |
 | `stream` | `"urn:acquirium#7cf58971-2f06-503c-83b5-6da39e9177b9"` |
-| `event_time_ns` | `1794159971875366000` |
+| `time` | `2026-11-08 17:46:11.875366 UTC` |
 | `sample_key` | `0` |
 | `value` | `0.7071067811865475` |
 | `text` | `null` |
 | `quality` | `0` |
 | `context` | `'{"ext0":"urn:acquirium#…","extname0":"signal",…}'` |
 
-The number we care about is in `value`. The other columns say which stream the
-reading came from and when it was taken.
+`value` holds the reading. `time` holds its sample timestamp as a UTC datetime
+with microsecond precision. The dataframe's `context`
+column contains metadata for the input stream as a JSON string.
 
-`context` is a dictionary that describes the calculation itself. The field that
-matters here is `window_ns`, the timestamp the result belongs to. For a
-one-reading calculation, it is the reading's own timestamp.
+### Function context
 
-## What the function returns
+The second argument, `context`, is a dictionary describing the function call.
+Acquirium provides the result's timestamp in `context["output_time"]`. For the
+reading above:
+
+| Field in `context` | Value | Meaning |
+| --- | --- | --- |
+| `output_time` | `2026-11-08 17:46:11.875366 UTC` | Output timestamp, as a timezone-aware Python datetime. |
+
+This app processes each sample timestamp separately, so `output_time` equals
+the input reading's `time`.
+
+## Function outputs
 
 The function returns a dictionary with one dataframe per output. We will call
 our single output `"high"`.
@@ -126,7 +138,7 @@ The example keeps it in `examples/transformation/sine_threshold.py`. It needs
 no access to the server and no knowledge of where the data came from, which
 makes it easy to test on its own.
 
-## Connect the function to the stream
+## App declaration
 
 The app declaration says which readings go in, which outputs come out, which
 function to run, and how to slice the input into calls:
@@ -154,7 +166,7 @@ subject of the [turbidity tutorial](turbidity.md).
 The server runs the function, so the path must exist on the server. Here the
 server and your session share a filesystem.
 
-## Deploy it
+## Deployment and output queries
 
 ```python
 client.deploy_app(app)
@@ -181,9 +193,9 @@ ordinary stream: you query it like any other.
 
 To change the calculation, save the new version of the function at a new path
 and deploy the app again with that path. Acquirium recomputes the stored
-history with the new code; [changing the code](../how-to/check-deploy-apps.md#change-the-code)
+history with the new code; [changing the code](../how-to/check-deploy-apps.md#calculation-updates)
 explains why the path must change. To deploy the app every time the server
 starts, list it under `[[apps]]` in the [server configuration](../reference/server-config.md#drivers-and-apps).
 
-Next, [follow a turbidity alarm](turbidity.md) through a chain of apps, and see
-what happens downstream when a late reading arrives.
+The [Turbidity alarm pipeline](turbidity.md) tutorial follows a chain of apps
+and shows how a late reading changes downstream results.

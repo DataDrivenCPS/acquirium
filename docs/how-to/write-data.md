@@ -1,5 +1,5 @@
 ---
-title: Inserting data
+title: Direct data insertion
 ---
 
 Most data enters acquirium through drivers, covered in the [first driver tutorial](../tutorials/first-driver.md).
@@ -7,7 +7,7 @@ Drivers can pull data from any source, and once registered, acquirium manages ru
 Use this only if you want to build your own data ingestion pipeline.
 This might be useful for backfills, one-off imports and tests.
 
-## Writing data
+## Stream registration and reading insertion
 
 The client can write timeseries data directly.
 
@@ -40,7 +40,7 @@ like everywhere else.
 An optional `metadata` key takes the same value map `insert_metadata()`
 takes, written on the point together with the stream: each key becomes a
 queryable attribute of the point.
-See [Attach metadata to a node](attach-metadata.md).
+See [Node metadata](attach-metadata.md).
 
 When `point_uri` names a point the graph already has, the metadata you pass
 is checked against it.
@@ -62,13 +62,19 @@ response body: stream urn:acquirium#a98759dd-... is not registered
 Then insert rows as `(timestamp, value)` pairs:
 
 ```python
-from datetime import datetime, timezone
+import acquirium as aq
 
-rows = [(datetime(2026, 8, 8, 10, 0, tzinfo=timezone.utc), 412.0),
-        (datetime(2026, 8, 8, 10, 5, tzinfo=timezone.utc), 415.3)]
+rows = [(aq.to_timestamp("2026-08-08T10:00:00 UTC"), 412.0),
+        (aq.to_timestamp("2026-08-08T10:05:00 UTC"), 415.3)]
 
 acq.insert_timeseries("lab-import", "effluent-tds", rows)
 ```
+
+`aq.to_timestamp` returns a timezone-aware UTC datetime. It accepts RFC 3339
+and ISO 8601 strings such as `"2026-08-08T10:00:00Z"`, numeric timezone offsets,
+and the readable ` UTC` suffix. A timezone-less value defaults to UTC; use
+`timezone="America/Denver"` for local source times. See
+[timestamp conversion](../reference/client-api.md#timestamp-conversion).
 
 For several streams at once, `insert_timeseries_batch(source_id, {ref_name:
 rows, ...})` chunks the upload automatically.
@@ -86,5 +92,5 @@ Values may be numbers or text. Each is stored as the stream's `value_kind`; see
 To remove readings, delete them by timestamp:
 
 ```python
-acq.delete_timeseries("lab-import", "effluent-tds", [datetime(2026, 8, 8, 10, 0, tzinfo=timezone.utc)])
+acq.delete_timeseries("lab-import", "effluent-tds", [aq.to_timestamp("2026-08-08T10:00:00 UTC")])
 ```

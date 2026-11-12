@@ -1,5 +1,5 @@
 ---
-title: How graph changes reach queries
+title: Graph updates and queries
 ---
 
 A plant model, driver registrations, app outputs, and experiment metadata all
@@ -43,7 +43,7 @@ The asserted source graphs and ontologies are persistent. The inferred query
 view is rebuilt from them. Validation uses the asserted data and resolved
 shapes directly; see [load and validate a model](../how-to/load-a-plant-model.md).
 
-## When derived data is refreshed
+## Inference refresh and query freshness
 
 A graph write schedules inference. Queries normally read the last complete
 view while the rebuild runs. They see a complete view throughout, although it

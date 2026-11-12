@@ -39,7 +39,7 @@ When reading, `value_mode` decides which readings you get.
 d = q.data(value_mode="numeric")
 ```
 
-## In apps
+## Values in apps
 
 Native functions (`mean`, `max`, `threshold`, and so on) read only the numbers
 in their input; text readings do not take part. A Python function's frame has

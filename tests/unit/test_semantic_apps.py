@@ -299,12 +299,12 @@ def test_failed_activation_remains_durable_and_can_be_retried(system, tmp_path):
         manager.insert_timeseries(
             source_id="artifact",
             ref_name="temperature",
-            rows=[(4444, 12)],
+            rows=[(4444000, 12)],
             request_id="one",
         )
     )
     module = tmp_path / "calculation.py"
-    source = 'def calculate(frame, context):\n    return {"mean": frame.select("event_time_ns", "sample_key", "value", "quality")}\n'
+    source = 'def calculate(frame, context):\n    return {"mean": frame.select("time", "sample_key", "value", "quality")}\n'
     module.write_text(source)
     declaration = mean("artifact-app", ref)
     declaration = App(
@@ -328,7 +328,7 @@ def test_failed_activation_remains_durable_and_can_be_retried(system, tmp_path):
     receipt = manager.core.activate(saved["activation_id"], saved["plan"])
     snapshot = manager.core.wait(receipt)
     assert (
-        snapshot.value(output_reference(declaration.name, "urn:tank", "mean"), 4444)
+        snapshot.value(output_reference(declaration.name, "urn:tank", "mean"), 4444000)
         == 12
     )
     assert manager.apps.inspect(declaration.name)["error"] is None
@@ -415,7 +415,7 @@ def test_closing_after_a_failed_function_keeps_pending_writes(tmp_path, caplog):
         "def calculate(frame, context):\n"
         f"    if pathlib.Path({str(flag)!r}).exists():\n"
         '        raise RuntimeError("sensor offline")\n'
-        '    return {"mean": frame.select("event_time_ns", "sample_key", "value", "quality")}\n'
+        '    return {"mean": frame.select("time", "sample_key", "value", "quality")}\n'
     )
     declaration = mean("halted-app", ref)
     declaration = App(
@@ -440,10 +440,10 @@ def test_closing_after_a_failed_function_keeps_pending_writes(tmp_path, caplog):
             source_id="halted",
         )
         manager.deploy_app(declaration)
-        manager.core.wait(write(manager, 1, 10))
+        manager.core.wait(write(manager, 1000, 10))
         flag.touch()
-        write(manager, 2, 20)
-        last = write(manager, 3, 30)
+        write(manager, 2000, 20)
+        last = write(manager, 3000, 30)
         with pytest.raises(ExecutionError):
             manager.core.wait(last, timeout=10)
         assert manager.core.processor.status()["error"]
@@ -463,7 +463,7 @@ def test_closing_after_a_failed_function_keeps_pending_writes(tmp_path, caplog):
     try:
         manager.recover_apps()
         snapshot = manager.core.wait(last)
-        assert [snapshot.value(output, time) for time in (1, 2, 3)] == [10, 20, 30]
+        assert [snapshot.value(output, time) for time in (1000, 2000, 3000)] == [10, 20, 30]
         assert manager.core.engine.status()["pending_requests"] == 0
     finally:
         manager.close()
@@ -517,12 +517,12 @@ def test_frozen_unit_factors_execute_in_native_python_worker(system):
         manager.insert_timeseries(
             source_id="units",
             ref_name="temperature",
-            rows=[(2222, 68)],
+            rows=[(2222000, 68)],
             request_id="one",
         )
     )
     assert snapshot.value(
-        output_reference(declaration.name, "urn:tank", "temperature"), 2222
+        output_reference(declaration.name, "urn:tank", "temperature"), 2222000
     ) == pytest.approx(20)
 
 
@@ -708,13 +708,14 @@ def test_selection_parameters_become_operator_parameters_for_listed_groups(syste
 
     state = client.deploy_app(thresholds("parameters-listed", {"urn:tank": {"threshold": 3.5}}))["app"]
     operator, = state["operators"]
-    assert operator["parameters"] == {"threshold": 3.5} and not state["warnings"]
+    assert operator["parameters"] == {"group": ["urn:tank"], "threshold": 3.5}
+    assert not state["warnings"]
     context, = [item["context"] for item in operator["inputs"]]
     assert "threshold" not in context
     # A parameter is part of the operator's definition, so a new value is a new version.
     state = client.deploy_app(thresholds("parameters-listed", {"urn:tank": {"threshold": 4}}))["app"]
     changed, = state["operators"]
-    assert changed["parameters"] == {"threshold": 4}
+    assert changed["parameters"] == {"group": ["urn:tank"], "threshold": 4}
     assert changed["version"] != operator["version"]
 
     state = client.deploy_app(thresholds("parameters-other", {"urn:elsewhere": {"threshold": 1}}))["app"]
@@ -744,9 +745,10 @@ def test_python_functions_read_typed_parameters_and_the_window(system, tmp_path)
     )
     module = tmp_path / "scaled.py"
     module.write_text(
-        "from escapement import emit\n"
+        "from acquirium.functions import emit\n"
         "def scaled(frame, context):\n"
         "    assert context['operator']['window'] == {'kind': 'pointwise'}\n"
+        "    assert context['parameters']['group'] == ('urn:tank',)\n"
         "    return {'mean': emit(context, frame['value'][0] * context['parameters']['scale'])}\n"
     )
     template = mean("typed-parameters", ref)
@@ -761,6 +763,60 @@ def test_python_functions_read_typed_parameters_and_the_window(system, tmp_path)
     manager.remove_app(declaration.name)
 
 
+@pytest.mark.parametrize("mode", ["default", "batch", "sequential"])
+@pytest.mark.parametrize("grouping", ["tank", "stream", None])
+def test_python_context_includes_group_key_without_configured_parameters(system, tmp_path, mode, grouping):
+    from escapement import PythonFunction
+
+    manager, _, client = system
+    source = f"group-context-{mode}-{grouping or 'combined'}"
+    ref = register(system, source)
+    manager.core.wait(manager.insert_timeseries(
+        source_id=source, ref_name="temperature", rows=[(1000, 20), (2000, 22)],
+        request_id=source,
+    ))
+    module = tmp_path / "identity.py"
+    module.write_text(
+        "import polars as pl\n"
+        "from acquirium.functions import emit, emit_windows\n"
+        "def identify(frame, context):\n"
+        "    key = context['parameters']['group']\n"
+        "    assert isinstance(key, tuple)\n"
+        "    group, = key\n"
+        "    assert {key: group}[key] == group\n"
+        "    if 'windows' in context:\n"
+        "        times = [window['output_time'] for window in context['windows']]\n"
+        "        return {'identity': emit_windows(pl.DataFrame({'output_time': times, 'text': [group] * len(times)}))}\n"
+        "    return {'identity': emit(context, group)}\n"
+    )
+    selection = Selection(
+        f"SELECT ?stream ?tank WHERE {{ BIND(<{ref}> AS ?stream) BIND(<urn:tank> AS ?tank) }}",
+        group=grouping,
+    )
+    declaration = App(
+        source, [selection], {"identity": Output(value_kind="text")},
+        PythonFunction.from_file(module, "identify", batch=mode == "batch", sequential=mode == "sequential"),
+    )
+    state = client.deploy_app(declaration)["app"]
+    assert state["error"] is None, state
+    expected = {"tank": "urn:tank", "stream": ref, None: source}[grouping]
+    output = output_reference(source, expected, "identity")
+    snapshot = manager.core.engine.snapshot()
+    assert snapshot.value(output, 1000) == expected
+    assert snapshot.value(output, 2000) == expected
+    manager.remove_app(source)
+
+
+def test_group_parameter_cannot_override_selected_group(system):
+    manager, _, client = system
+    ref = register(system, "reserved-group-parameter")
+    declaration = mean("reserved-group-parameter", ref)
+    query = declaration.inputs[0].query
+    declaration.inputs[0] = Selection(query, parameters={"urn:tank": {"group": "urn:other"}})
+    with pytest.raises(ValueError, match="parameter 'group' is reserved"):
+        manager.deploy_app(declaration)
+
+
 def test_as_of_selections_read_the_latest_reading_of_a_slower_stream(system, tmp_path):
     from escapement import PythonFunction
 
@@ -770,7 +826,7 @@ def test_as_of_selections_read_the_latest_reading_of_a_slower_stream(system, tmp
     module = tmp_path / "calibrated.py"
     module.write_text(
         "import polars as pl\n"
-        "from escapement import emit, empty\n"
+        "from acquirium.functions import emit, empty\n"
         "def calibrated(frame, context):\n"
         "    x = frame.filter(pl.col('role') == 'x')['value']\n"
         "    gain = frame.filter(pl.col('role') == 'gain')['value']\n"

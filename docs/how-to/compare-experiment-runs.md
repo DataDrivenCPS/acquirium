@@ -2,7 +2,7 @@
 
 Read a Study's scalar results as one row per run, then compute formulas from
 them with Polars. Formulas are ordinary Python: nothing is saved unless you
-record it. See [Record experiments](record-experiments.md) for recording runs.
+record it. See [Experiment recording](record-experiments.md) for recording runs.
 
 ## Read one row per run
 
@@ -92,4 +92,4 @@ The recorded value then appears as its own `scalars()` column in later reads.
 `scalars()` reads scalar variables only. Read text, JSON, file, and table
 results through observations, for example
 `succeeded.observations(variable).frame()`, and time-series samples with
-`.dataframe()`. See [Record experiments](record-experiments.md#read-saved-scalar-results).
+`.dataframe()`. See [Record experiments](record-experiments.md#scalar-result-queries).

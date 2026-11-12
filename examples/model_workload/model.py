@@ -5,7 +5,8 @@ adjustable. This is a load fixture, not a trained water-quality model.
 """
 
 import numpy as np
-import polars as pl
+
+from acquirium.functions import emit, empty
 
 COPIES = 2048
 index = np.arange(128)
@@ -22,20 +23,15 @@ WEIGHT_SUM = WEIGHTS.sum()
 ROLES = ("temperature", "conductivity", "flow", "pressure")
 SCALES = np.array([40.0, 1000.0, 100.0, 10.0])
 SCALES.setflags(write=False)
-SCHEMA = {
-    "event_time_ns": pl.Int64,
-    "sample_key": pl.Int64,
-    "value": pl.Float64,
-    "quality": pl.UInt32,
-}
 
 
 def predict(frame, context):
+    """Predict from the four input roles and emit at the context's output time."""
     values = dict(frame.select("role", "value").iter_rows())
-    rows = []
-    if all(role in values for role in ROLES):
-        point = np.array([values[role] for role in ROLES]) / SCALES
-        distance = np.square(CENTERS - point).sum(axis=1)
-        prediction = 50.0 + 100.0 * (np.exp(-distance) * WEIGHTS).sum() / WEIGHT_SUM
-        rows.append((context["window_ns"], 0, float(prediction), 0))
-    return {"prediction": pl.DataFrame(rows, schema=SCHEMA, orient="row")}
+    if not all(role in values for role in ROLES):
+        return {"prediction": empty()}
+
+    point = np.array([values[role] for role in ROLES]) / SCALES
+    distance = np.square(CENTERS - point).sum(axis=1)
+    prediction = 50.0 + 100.0 * (np.exp(-distance) * WEIGHTS).sum() / WEIGHT_SUM
+    return {"prediction": emit(context, float(prediction))}

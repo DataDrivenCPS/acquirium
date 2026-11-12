@@ -4,7 +4,7 @@ title: App interface
 
 An `aq.App` declares inputs, named output ports, a function, and a window. App
 names use letters, digits, underscores, dots, and hyphens. See
-[your first app](../tutorials/first-app.md) for a complete example.
+[Soft sensor app](../tutorials/first-app.md) for a complete example.
 
 ## Input selections
 
@@ -51,6 +51,16 @@ warnings. The function reads the values from `context["parameters"]`. A changed
 parameter recalculates that group's history. Two selections giving the same
 group conflicting values for a parameter fail deployment.
 
+Acquirium always includes the selected group key as
+`context["parameters"]["group"]`, including when no settings are configured.
+In Python this key is always a tuple. Grouping by tank gives `(tank_uri,)`;
+grouping by stream gives `(stream_reference_uri,)`;
+`Selection(..., group=None)` gives `(app_name,)`. These keys have one item
+because a selection currently groups by one column. JSON deployment responses
+represent the tuple as an array. The keys in the selection's `parameters`
+mapping remain group ID strings. The name `group` is reserved and cannot be
+configured to a different value.
+
 ## Outputs
 
 `Output(unit=None, quantity_kind=None, label=None, on_group=False)` describes a
@@ -64,11 +74,13 @@ the entity it describes, alongside its source measurements.
 Output references depend on app name, group, and port. Changing the group's
 membership keeps that identity. Derived source IDs are reserved as
 `derived:<app-name>`. Membership applies to the whole stored history; see
-[how derived streams stay current](../explanation/apps.md).
+[Derived stream updates](../explanation/apps.md).
 
 ## Windows
 
-All window sizes and integer timestamps use UTC nanoseconds.
+Window declarations use integer nanoseconds for durations and origin timestamps.
+In a Python function's context, durations are `datetime.timedelta` values and
+timestamps are timezone-aware UTC `datetime` values.
 
 `Pointwise()` supplies readings at one timestamp and emits there. It is the
 default. Asynchronous streams are not automatically forward-filled.
@@ -102,7 +114,7 @@ function=aq.Native.threshold("alarm", above=aq.Parameter("limit"))
 ```
 
 Deployment fails when a group lacks the required parameter. For a complete
-average-and-threshold example, see [calculate a derived stream](../how-to/write-soft-sensors.md).
+average-and-threshold example, see [Soft sensor calculations](../how-to/write-soft-sensors.md).
 
 ### Totals and integrals
 
@@ -125,19 +137,44 @@ a total because their windows overlap.
 
 `PythonFunction.from_file(path, entrypoint, batch=False, sequential=False)` pins
 a function's file content. The entrypoint has signature `function(frame, context)`.
-The [calculation guide](../how-to/write-soft-sensors.md#write-your-own-function) walks through one.
+The [calculation guide](../how-to/write-soft-sensors.md#python-functions) walks through one.
 
-The Polars input frame has `role`, `stream`, `event_time_ns`, `sample_key`,
+For diagrams connecting stream groups, windows, timestamps, and function calls,
+see [Soft sensor inputs](../explanation/soft-sensor-inputs.md).
+
+The Polars input frame has `role`, `stream`, `time`, `sample_key`,
 `value`, `text`, `quality`, and JSON `context` columns. Each reading has either a
 numeric `value` or `text`. Selected graph columns are strings in the row context.
 
-The function's context describes the calculation. `window_ns` is its output
-timestamp; `window_start_ns` and `window_end_ns` bound the window. `parameters`
-holds the group's parameter values, and `operator` holds its declaration,
+`time` is the input sample's timestamp, with type `Datetime("us", "UTC")`.
+It is the timestamp supplied when the sample was inserted. `stream` identifies
+the input stream.
+
+The function's context describes the calculation. `output_time` is its output
+timestamp; `window_start` and `window_end` bound the window. `parameters`
+holds the group key and configured parameter values, and `operator` holds its declaration,
 including `operator["window"]`.
 
+Context timestamps are timezone-aware Python datetimes. Function timestamps
+and window declarations must align to microseconds; finer values are rejected
+without rounding. All context window bounds are half-open: start included,
+end excluded. For a pointwise window, the end is one microsecond after its
+timestamp. For a rolling window, it is one microsecond after the last included
+timestamp.
+
+Within `operator["window"]`, `width`, `lookback`, `lookahead`, and `step` are
+timedeltas; `origin` is a UTC datetime. Input validity and span bounds are UTC
+datetimes, with `None` for an unbounded validity interval. As-of ages in
+`operator["as_of"]` are timedeltas. The app declaration and deployment reports
+retain the engine's integer representation.
+
+For `Pointwise()`, `output_time` is the input timestamp. For `Rolling()`, it is
+the output's grid point, and the frame can contain samples before or after
+that point, as allowed by the declared window. `emit(context, value)` uses
+`output_time` as the result's timestamp.
+
 Context also lists the declared inputs, including those with no readings. Each
-input's `span_start_ns` and `span_end_ns` describe the part of the window it
+input's `span_start` and `span_end` describe the part of the window it
 covers, as a half-open span.
 
 Return a mapping with every declared port. Each port's frame has these columns
@@ -145,7 +182,7 @@ in order:
 
 | Column | Type |
 | --- | --- |
-| `event_time_ns` | `Int64` |
+| `time` | `Datetime("us", "UTC")` |
 | `sample_key` | `Int64` |
 | `value` | `Float64` |
 | `text` | `String` |
@@ -166,7 +203,7 @@ not persistent calculation state.
 ### Batch functions
 
 With `batch=True`, one call receives every affected window. The frame gains a
-`window_ns: Int64` column, and `context["windows"]` lists their contexts,
+`output_time` UTC datetime column, and `context["windows"]` lists their contexts,
 including empty windows. A reading shared by overlapping windows appears once
 per window.
 
@@ -175,11 +212,11 @@ import polars as pl
 from acquirium.functions import emit_windows
 
 def bucket_mean(frame, context):
-    means = frame.group_by("window_ns").agg(pl.col("value").mean())
+    means = frame.group_by("output_time").agg(pl.col("value").mean())
     return {"mean": emit_windows(means)}
 ```
 
-`emit_windows` accepts `window_ns`, `value`, and optional `quality` columns.
+`emit_windows` accepts `output_time`, `value`, and optional `quality` columns.
 Omitting a window removes its old result. A row at an undeclared window timestamp
 fails the computation. Switching batch mode recalculates the app's history. The
 [bulk-ingest example](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/bulk_ingest) compares both modes.
@@ -188,12 +225,13 @@ fails the computation. Switching batch mode recalculates the app's history. The
 
 With `sequential=True`, the function runs in time order, once per window.
 `context["previous"]` holds the latest earlier window that wrote outputs: its
-`window_ns`, input `rows`, and `outputs` by port. It is absent for the first
+`output_time`, input `rows`, and `outputs` by port. It is absent for the first
 window. Outputs carry the state, so return every value needed by the next window.
 
 `acquirium.functions.previous_value(context, port, default)` reads an earlier output.
-`acquirium.functions.same_period(context, width_ns)` helps restart state at period
-boundaries. A repair continues until state and outputs stop changing.
+`acquirium.functions.same_period(context, width)` takes a positive
+`datetime.timedelta` and helps restart state at period boundaries. A repair
+continues until state and outputs stop changing.
 `batch=True` does not apply to sequential functions. The
 [membrane-monitoring example](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/membrane_monitoring)
 uses this interface for drift detection and parameter estimation.
@@ -202,7 +240,7 @@ uses this interface for drift detection and parameter estimation.
 
 `Selection(..., as_of=max_age_ns)` reads each selected stream's latest reading
 at or before the window timestamp, no older than the maximum age. It retains
-that reading's own `event_time_ns`. `outputs_of` accepts the same argument.
+that reading's own `time`. `outputs_of` accepts the same argument.
 
 An as-of role creates no windows; other inputs determine when to calculate.
 A correction repairs the windows that read the value, up to its next reading or

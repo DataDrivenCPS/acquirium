@@ -1,12 +1,12 @@
 ---
-title: The query model
+title: Query model
 ---
 
 A `Query` describes a pattern in the plant model: a pump, a tank connected to
 it, or measurements on either one. The server finds the places where that
 pattern matches. The [querying tutorial](../tutorials/querying.md) shows the calls.
 
-## Build a pattern
+## Query patterns
 
 `acq.query()` starts an empty query. Each verb returns a new query, so you can
 keep a partial pattern and extend it in different directions. Call `metadata()`
@@ -19,7 +19,7 @@ RDF stores it as a separate relationship. Generic traversal follows plant
 topology; class hierarchies and external references have their own roles in
 matching and data access.
 
-## Free text and what it resolves to
+## Free-text resolution
 
 Every place that takes a class, a predicate or an attribute value also takes
 free text.
@@ -48,7 +48,7 @@ instance labels.
 `entity("pump")` resolves the *class* `Pump`; it will not find the item named "pump-1" in the plant by
 its label.
 
-## How Queries are executed
+## Query execution
 
 The Acquirium `Query` object converts its content to an optimized SPARQL query (or queries) and runs that in the graph database embedded in the server.
 Completely removing this step and executing `Query` objects on the graph database directly is our current research area.
@@ -61,7 +61,7 @@ It is the surest way to see what a chain actually asks for, and to check that a 
 
 Traversal queries (i.e. finding the *nearest* related equipment or measurement point) are executed at both the Python level and the SPARQL level:
 
-### How traversal runs
+### Traversal execution
 
 SPARQL handles multi-hop wildcard traversal poorly: every hop multiplies joins, and an unbounded path can stall the store.
 Acquirium therefore resolves these steps client side.
@@ -75,7 +75,7 @@ A source stops at the first place that returns a row.
 Layer results are cached until the graph changes, so repeating a query is cheap.
 You can always inspect what will run with `.to_sparql()`.
 
-### Hidden Predicates
+### Hidden predicates
 
 We use [s223](https://open223.info/) to model the connections in WaTr graphs.
 However, s223 graphs contain some predicates that are not useful or meaningful for our querying.
@@ -115,7 +115,7 @@ an explicit request.
 Measurement edges are exempt too, which is why `measurement()` still reaches
 points through `hasProperty` and `hasConnectionPoint`.
 
-### The step patterns behind direction=
+### Upstream and downstream traversal
 
 `direction="upstream"` and `"downstream"` are shorthand for four fixed step
 patterns each, exported as constants:
@@ -142,7 +142,7 @@ q.related("pump", via=UPSTREAM_EQUIPMENT, nearest=True)
 The module docstring of `acquirium.Client.explore.directions` documents
 every step.
 
-### The relations behind context()
+### Context relations
 
 `context()` is the reverse of `measurement()`: from a measurement it adds the
 entity the measurement is about.
@@ -176,7 +176,7 @@ predicate for one hop, so a model that attaches points with a predicate
 other than `hasProperty` is reached by `measurement()` but not by
 `context()` until that predicate is added to the relation.
 
-## Miscellaneous
+## Measurement aliases and query dependencies
 
 `measurement(frm=...)` also accepts a list of aliases, attaching one
 measurement node per named entity.

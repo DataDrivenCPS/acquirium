@@ -1,8 +1,8 @@
 ---
-title: Explore a model
+title: Model exploration
 ---
 
-## Building a query step by step
+## Query construction
 
 A `Query` is immutable and lazy, so you can build it the way you build a
 dataframe pipeline: keep a partial query in a variable, look at what it
@@ -110,7 +110,7 @@ you are not sure what to filter on, `where()`, and `data()` last.
 Note that repeating `metadata()` on a partial query costs one graph query and
 no data transfer, so checking often is cheap.
 
-## Exploring what is there
+## Model inspection
 
 In a new plant, the hard part is knowing what to ask for.
 `options()` and `facets()` answer that: they report the attribute values that

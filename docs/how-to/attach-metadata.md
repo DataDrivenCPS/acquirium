@@ -1,5 +1,5 @@
 ---
-title: Attach metadata to a node
+title: Node metadata
 ---
 
 Any node of the plant model, a piece of equipment or a measurement point,
@@ -21,11 +21,11 @@ and source fields explicit and store all user JSON under `metadata`, whether
 created by hand or through a model adapter. For example, a variable declared
 with `metadata={"category": "simulation"}` is queried as `metadata.category`.
 Units remain available as `variable.unit` and the query attribute `unit`.
-See [experiment declarations](../reference/experiments.md#declaring-variables).
+See [experiment declarations](../reference/experiments.md#variable-declarations).
 Create them through the [experiment interface](record-experiments.md), which
 creates their nodes and handles their lifecycle.
 
-## Attach values
+## Metadata insertion
 
 ```python
 from datetime import date
@@ -88,7 +88,7 @@ acq.insert_metadata("swro:P1", {"last cleaned": "x"})
 ValueError: invalid metadata key 'last cleaned': letters, digits, underscore and hyphen, starting with a letter or underscore
 ```
 
-## Query them
+## Metadata queries
 
 The new attributes show up in `acq.attr`, which is bound to your server:
 
@@ -243,7 +243,7 @@ pts.where(id="ex:a").metadata()                      # the node ex:a
 pts.where(id="pump-7").metadata()                    # the node ex:b
 ```
 
-## Know the schema before you run
+## Metadata schema inspection
 
 `schema()` returns the polars schema `metadata()` will produce, computed
 from what the graph holds for each attribute, without running the query:
@@ -264,7 +264,7 @@ A column no matched node has a value for is still typed, from the values
 other nodes hold under that key, so the schema does not change with the
 filter.
 
-## When values do not agree
+## Conflicting metadata values
 
 Nothing stops two nodes from holding different kinds of value under one
 key: `year` as the integer `2019` here and the string `"2019"` there, or
@@ -333,7 +333,7 @@ FacetSummary('pump')
 Note that a `Query` caches what it has fetched.
 After a write, build a new query to see the change.
 
-## Change and remove values
+## Metadata updates and removal
 
 Writing a key replaces the node's previous value for it, including every
 leaf under a nested key.
@@ -379,7 +379,7 @@ shape: (1, 2)
 └──────────┴───────┘
 ```
 
-## Write to every node a query matches
+## Metadata insertion on query matches
 
 `Query.insert_metadata()` runs the pattern and writes the same map on every
 node matched at the current pointer, or at `of=alias`:
@@ -396,7 +396,7 @@ node matched at the current pointer, or at `of=alias`:
 This is the form for bulk annotation: match the nodes with the query
 vocabulary you already use, then tag them in one update.
 
-## Annotate a stream at registration
+## Stream metadata at registration
 
 `register_streams()` takes the same map under a `metadata` key and writes it
 on the point right after the stream, with the same update as
@@ -450,7 +450,7 @@ point with two units; a later shape validation reports it.
 `register_streams()` checks such conflicts for the fields it takes at top
 level and raises.
 
-## What the server stores
+## Metadata storage
 
 Every value is a triple on the node itself, in the reserved `metadata`
 source graph.

@@ -76,7 +76,7 @@ The SCADA system must:
 §64669.85(b): SCADA must auto-discontinue delivery within the flow-path travel time if
 pathogen log-reduction or the §64669.50(n) TOC critical limit is exceeded.
 
-## Summary: distinct TOC alarm/response conditions to implement
+## TOC alarm and response conditions
 
 | # | Trigger | Threshold | Duration | Required response |
 |---|---|---|---|---|

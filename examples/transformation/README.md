@@ -1,4 +1,4 @@
-# A sine-wave driver and a Python threshold
+# Sine-wave driver and Python threshold
 
 Start the driver from the repository root:
 
@@ -21,7 +21,7 @@ client.query().measurement(app="high-wave").dataframe().tail(3)
 The driver generates one reading per second. The Python function keeps values
 above 0.5. Stop the server with Ctrl-C; data is retained under `.data/`.
 
-Follow [your first app](../../docs/tutorials/first-app.md) to write the function
+Follow [Soft sensor app](../../docs/tutorials/first-app.md) to write the function
 and build its declaration. [publish.py](publish.py) is the polling driver;
 [sine_threshold.py](sine_threshold.py) is the calculation;
 [threshold_app.py](threshold_app.py) packages its declaration for deployment.

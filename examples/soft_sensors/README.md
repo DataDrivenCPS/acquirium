@@ -1,4 +1,4 @@
-# Group temperatures by tank
+# Temperature summaries by tank
 
 ```sh
 uv run --locked python -m examples.soft_sensors.run

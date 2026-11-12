@@ -1,4 +1,4 @@
-# Record experiments
+# Experiment recording
 
 Record a script's inputs, outputs, and events as an Experiment. For a runnable
 example, see [Your first experiment](../tutorials/first-experiment.py).
@@ -6,9 +6,9 @@ example, see [Your first experiment](../tutorials/first-experiment.py).
 Declare variables, record a run, then select saved runs and read their results.
 The [API reference](../reference/experiments.md) groups the available methods by task.
 For model components bound to reader functions, see
-[Record a whole model](record-a-whole-model.md), including the Pyomo adapter.
+[Recording complete models](record-a-whole-model.md), including the Pyomo adapter.
 
-## Wrap an analysis in an experiment
+## Study and run setup
 
 Start Acquirium with `aq.init()`, then declare the values you want to record.
 `aq.init()` starts a local server for the script, or connects to one with
@@ -72,7 +72,7 @@ object under `metadata`, preserving arbitrary keys, nulls, and empty containers.
 Semantic fields such as units have explicit variable properties. Values passed to `.json().record()` or a log's
 `record()` remain data, including their nulls and empty containers.
 
-## Choose what to record
+## Variable types
 
 Use `record(value)` for every variable type:
 
@@ -95,7 +95,7 @@ records `12.5`, and an array inside a JSON value becomes a list. A scalar
 records only finite numbers and booleans, and text only strings; other values
 raise before anything is sent. See the
 [reference](../reference/experiments.md#recording) for the conversion rules,
-and [Record your own types](#record-your-own-types) for other classes.
+and [Record your own types](#custom-value-handlers) for other classes.
 
 A table handle saves a table as a Parquet file, and reads it back as Polars:
 
@@ -128,7 +128,7 @@ recorded copy unchanged.
 Use `record()` throughout your script. The
 [reference](../reference/experiments.md#recording) lists the type-specific alternatives.
 
-## Record your own types
+## Custom value handlers
 
 Recording raises `TypeError` for a class it cannot convert to JSON. Register a
 handler that turns your class into a JSON value:
@@ -165,7 +165,7 @@ the saved JSON, not an instance of your class.
 The variable's type still applies. A handler that returns a number can record
 to a scalar; one that returns a dictionary needs a JSON or log variable.
 
-## Save objects to restore later
+## Object storage and restoration
 
 To keep an object you will load back but never search inside, such as a
 model's full state, declare an object variable with a codec. The codec turns
@@ -197,7 +197,7 @@ defines over a pickle when you can: a pickle runs code when it loads, and
 usually loads only with the library versions that wrote it. See the
 [reference](../reference/experiments.md#object-variables-and-codecs).
 
-## Record progress and event times
+## Progress logs and event timestamps
 
 Each call adds an observation. Record progress and intermediate results as they
 occur:
@@ -213,7 +213,7 @@ The server assigns a UTC receipt time and sequence number. Use `occurred_at`
 to record when an event happened:
 
 ```python
-event_time = aq.timestamp("2026-08-01T12:00:00Z")
+event_time = aq.to_timestamp("2026-08-01T12:00:00Z")
 solver_log.record(
     {"event": "converged"},
     occurred_at=event_time,
@@ -224,7 +224,7 @@ experiment.finish()
 `occurred_at` applies to JSON, text, scalar, and log records. Time-series rows
 carry their own timestamps, and file records use the server's receipt time.
 
-## Add an output while exploring
+## Output declarations during a run
 
 You can declare an output after a run starts:
 
@@ -257,7 +257,7 @@ New labels infer a unitless scalar for numbers, text for strings, and JSON for
 booleans, lists, dictionaries, and `None`. Declare files and time series
 explicitly. Use declared handles in reusable code.
 
-## Reuse a Study in another session
+## Study reuse across sessions
 
 `define(name)` reopens an existing Study or creates it. `get(name)` requires
 an existing Study. Both load its saved declarations:
@@ -300,7 +300,7 @@ timeseries_variables = historical.variables.where(kind="timeseries")
 timeseries_table = timeseries_variables.frame()
 ```
 
-## Find runs and variables by metadata
+## Run and variable metadata queries
 
 Filter saved runs with the same `.where()` syntax used by plant queries:
 
@@ -332,7 +332,7 @@ cost_variable_table = cost_variables.frame()
 Filters stay within the selected Study. Unit filters match equivalent spellings:
 `unit="kW"` also matches a variable declared with `unit="KiloW"`.
 
-## Read saved scalar results
+## Scalar result queries
 
 Choose the runs first, then the variable. A recording table has one row per
 `record()` call, including the value and receipt time:
@@ -356,7 +356,7 @@ baseline_scalars = baseline_runs.scalars(metadata=["scenario"])
 [Compare runs with formulas](compare-experiment-runs.md) shows how to compute
 and rank from this table.
 
-## Inspect saved metadata
+## Recorded metadata
 
 Use `.query()` when you want to choose metadata columns:
 
@@ -380,7 +380,7 @@ semantic units as URIs and nested values as typed structs or lists. An object's
 [reference](../reference/experiments.md#saved-objects-and-metadata-tables) for the
 read formats and [metadata rules](../reference/experiments.md#metadata-rules).
 
-## Connect a time-series result to the facility
+## Time-series outputs and plant properties
 
 Set `observed` to the URI of the plant property the values describe. To find
 that URI, query the plant model. This query lists the properties of the RO
@@ -504,11 +504,11 @@ compared = run_samples.join_asof(
 ).rename({"value": "run", "flow": "site"})
 ```
 
-See [Load a plant model](load-a-plant-model.md) and
-[A driver against an existing plant model](../tutorials/driver-with-a-plant-model.md)
+See [Plant model loading](load-a-plant-model.md) and
+[Drivers and existing plant models](../tutorials/driver-with-a-plant-model.md)
 for ways to find the available properties.
 
-## Refer to stored input data
+## Stored time-series inputs
 
 When an Experiment uses a stream that is already in Acquirium, record a range
 of it:
@@ -555,7 +555,7 @@ experiment.finish()
 A run whose stream another run uses this way cannot be deleted on its own;
 delete the two together.
 
-## Tag an existing live stream
+## Live stream annotations
 
 Use `annotate_stream()` to associate an existing stream interval with a run.
 Set both bounds for past data, or omit the end for an ongoing trial. Find the
@@ -570,7 +570,7 @@ experiment = study.start(metadata={"digester": "A"})
 saved_run_id = experiment.run_id
 
 # Associate the existing stream with this trial from its start time onward.
-trial_start = aq.timestamp("2026-08-01T00:00:00Z")
+trial_start = aq.to_timestamp("2026-08-01T00:00:00Z")
 annotation = experiment.annotate_stream(
     stream_ref_uri,
     start=trial_start,
@@ -585,8 +585,8 @@ Pass `end=` to add a closed interval, including after the Experiment finishes.
 Find annotations across Studies by stream and overlapping time window:
 
 ```python
-search_start = aq.timestamp("2026-08-05T00:00:00Z")
-search_end = aq.timestamp("2026-08-06T00:00:00Z")
+search_start = aq.to_timestamp("2026-08-05T00:00:00Z")
+search_end = aq.to_timestamp("2026-08-06T00:00:00Z")
 matches = ac.study.stream_annotations(
     ref_uri=stream_ref_uri,
     start=search_start,
@@ -615,7 +615,7 @@ When the trial ends, retrieve its annotation, close the interval, and finish:
 ```python
 trial_annotations = experiment.stream_annotations()
 annotation = trial_annotations[0]
-trial_end = aq.timestamp("2026-08-12T18:00:00Z")
+trial_end = aq.to_timestamp("2026-08-12T18:00:00Z")
 annotation.close(trial_end)
 experiment.finish()
 ```
@@ -623,7 +623,7 @@ experiment.finish()
 `resume()` requires a running trial. Use separate Study objects for concurrent
 runs.
 
-## Check storage and delete runs
+## Storage inspection and run deletion
 
 `usage()` counts what experiments store and estimates its size in bytes:
 

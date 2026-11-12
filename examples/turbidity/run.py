@@ -4,7 +4,7 @@
 """
 
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from pathlib import Path
 
 import polars as pl
@@ -12,7 +12,7 @@ import polars as pl
 import acquirium as aq
 from examples.bulk_ingest.chain import NTU, SOFT_SENSORS, SOURCE, TURBIDITY
 
-START = datetime(2026, 1, 1, tzinfo=timezone.utc)
+START = aq.to_timestamp("2026-01-01T00:00:00 UTC")
 MINUTE = timedelta(minutes=1)
 
 

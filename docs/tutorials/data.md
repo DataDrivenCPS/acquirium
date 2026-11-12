@@ -1,5 +1,5 @@
 ---
-title: Working with data
+title: Data retrieval and formats
 ---
 
 The [querying tutorial](querying.md) ended with a frame of readings. This one
@@ -13,7 +13,7 @@ from acquirium import Acquirium
 acq = Acquirium(server_url="127.0.0.1", server_port=8000)
 ```
 
-## Look before you fetch
+## Lazy data retrieval
 
 A query can match dozens of points, each with months of readings. Fetching all
 of that by accident is easy and slow, so `data()` returns a lazy object that
@@ -37,7 +37,7 @@ keeps them on the object, so later calls reuse them.
 `Query.dataframe()`, which the querying tutorial used, is the same thing in
 one step: `q.dataframe()` returns what `q.data().dataframe()` does.
 
-## Wide or narrow
+## Wide and narrow dataframe formats
 
 By default a frame is **wide**: a `time` column, then one column per point,
 with readings lined up by timestamp. That is the shape you want for plotting
@@ -95,7 +95,7 @@ such as a flow to a temperature, also raises.
 [Units](../explanation/units.md) describes where units are recorded and which
 pairs convert.
 
-## Split the result
+## Result partitioning
 
 A query that matched several pumps returns one object for all of them. Often
 you want to work through them one at a time, perhaps to fit a model per pump.

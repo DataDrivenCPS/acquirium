@@ -1,5 +1,5 @@
 ---
-title: The data stream lifecycle
+title: Data stream lifecycle
 ---
 
 A stream is identified by its `source_id` and a source-local `ref_name`.

@@ -1,5 +1,5 @@
 ---
-title: Calculate a derived stream
+title: Soft sensor calculations
 ---
 
 An app keeps one stream computed from others: an average, an alarm, an estimate
@@ -8,7 +8,7 @@ Acquirium has built in, then moves to functions of your own, and covers the
 choices you make along the way: the window, state carried between results,
 speed, and settings that differ between groups.
 
-It uses the sine-wave server from [your first app](../tutorials/first-app.md).
+It uses the sine-wave server from [Soft sensor app](../tutorials/first-app.md).
 Start it if it is not running, and connect:
 
 ```python
@@ -21,7 +21,7 @@ client = aq.Acquirium(server_url="127.0.0.1", server_port=8000)
 wave = client.query().measurement(alias="wave", uri="urn:example:sine-wave")
 ```
 
-## Average with a built-in calculation
+## Built-in mean function
 
 Averages, sums, minimums, maximums, counts and thresholds need no Python. The
 engine computes them itself, which is faster and leaves no calculation file to
@@ -63,7 +63,7 @@ wave's first reading, which was zero.
 Each stream the query matches gets its own mean. In a plant, the same app over a
 query for every turbidity sensor would give one averaged stream per sensor.
 
-## Feed one app into another
+## App output selection
 
 A second app can read the first one's output:
 
@@ -99,7 +99,7 @@ as the volume pumped from a flow rate. The
 [app reference](../reference/apps.md#built-in-functions) lists every built-in
 function.
 
-## Write your own function
+## Python functions
 
 When no built-in fits, an app can call a Python function. We will compute the
 wave's *spread*: the gap between its highest and lowest reading over a stretch
@@ -110,18 +110,27 @@ from acquirium.functions import emit
 
 
 def spread(frame, context):
+    # Ignore missing values before finding the range within this window.
     values = frame["value"].drop_nulls()
     if values.is_empty():
         value = None
     else:
         value = values.max() - values.min()
+    # emit() uses this window's output timestamp; None clears any old result.
     return {"spread": emit(context, value)}
 ```
 
-As in [your first app](../tutorials/first-app.md#what-the-function-sees), the
+As in [your first app](../tutorials/first-app.md#function-inputs), the
 function receives readings in `frame` and returns one result for each output.
 `emit()` stamps the value at the timestamp in `context`. Given `None`, it writes
 nothing, and clears anything written at that timestamp before.
+
+The input column `time` holds each sample's timestamp as a UTC datetime.
+The context's
+`output_time` is the output timestamp chosen by the window. For a fixed bucket,
+that is its start; for a rolling window, it is the grid point being calculated.
+Neither field describes when the server received the data. This spread
+function only needs the values, so it leaves timestamp handling to `emit`.
 
 Because it is an ordinary function, you can try it before deploying anything:
 
@@ -129,7 +138,8 @@ Because it is an ordinary function, you can try it before deploying anything:
 import polars as pl
 from spread import spread
 
-spread(pl.DataFrame({"value": [0.0, 1.0, -1.0]}), {"window_ns": 0})["spread"]["value"]
+context = {"output_time": aq.to_timestamp("2026-01-01T00:00:00 UTC")}
+spread(pl.DataFrame({"value": [0.0, 1.0, -1.0]}), context)["spread"]["value"]
 ```
 ```text
 shape: (1,)
@@ -178,7 +188,7 @@ for each. A bucket holds a whole cycle, from −1 up to 1 and back, so its sprea
 is 2. The last bucket has only just started: it holds one reading so far, so its
 spread is 0, and it will grow as the bucket fills.
 
-## Change the window
+## Window types
 
 The window decides which readings each call sees. Replace the fixed bucket with
 a rolling window that looks back four seconds, every two seconds:
@@ -220,7 +230,7 @@ needs readings from both sides, as gap filling does. A wider window costs more:
 each result reads more history, and a late or corrected reading revisits every
 window that covers it.
 
-## Carry state from one reading to the next
+## Sequential functions
 
 Some calculations need their own previous result, such as a filter or a running
 estimate. Save this smoothing filter as `smooth.py`:
@@ -231,6 +241,7 @@ from acquirium.functions import emit, previous_value
 
 def smooth(frame, context):
     reading = frame["value"][0]
+    # Start at the first reading; later calls use the preceding output.
     earlier = previous_value(context, "smooth", reading)
     return {"smooth": emit(context, 0.8 * earlier + 0.2 * reading)}
 ```
@@ -282,12 +293,12 @@ carries over. A global variable would not work: when an old reading is
 corrected, Acquirium reruns from that point forward, and a variable would hold
 whatever the last call happened to leave in it.
 
-## Make it faster
+## Batch functions
 
 By default the function is called once per window. That is fine for a live
 stream, but a backfill or a correction can touch thousands of windows at once,
 and then the cost of each call dominates. With `batch=True`, one call receives
-every affected window together, with a `window_ns` column saying which window
+every affected window together, with an `output_time` column saying which window
 each reading belongs to:
 
 ```python
@@ -296,7 +307,8 @@ from acquirium.functions import emit_windows
 
 
 def spread(frame, context):
-    spreads = frame.group_by("window_ns").agg(
+    # A batch contains several windows; calculate each window's range separately.
+    spreads = frame.group_by("output_time").agg(
         (pl.col("value").max() - pl.col("value").min()).alias("value")
     )
     return {"spread": emit_windows(spreads)}
@@ -309,21 +321,26 @@ The results are the same. The
 runs a chain of apps both ways on a month of plant data: 7.6 seconds in batch
 against 47 seconds one window at a time.
 
-## Give each group its own settings
+## Group parameters
 
 When one app serves several groups, such as one per filter, each group can have
 its own settings without a copy of the calculation. The selection's
 `parameters` gives each group its values. A built-in calculation refers to one
 with `aq.Parameter`, as in `aq.Native.threshold("alarm", above=aq.Parameter("limit"))`,
 and a Python function reads it from `context["parameters"]`. The
-[turbidity tutorial](../tutorials/turbidity.md#wait-for-a-sustained-excursion)
+[turbidity tutorial](../tutorials/turbidity.md#sustained-turbidity-threshold)
 uses this to give each filter its own alarm duration, and changing one
 filter's value recomputes only that filter's history.
 
-## Next
+## Related examples and references
+
+For complete examples with small input and output tables, see
+[Data cleaning with multiple apps](chain-cleaning-apps.md),
+[Data cleaning with multiple outputs](clean-data-with-multiple-outputs.md), and
+[Soft sensor parameters](parameterize-soft-sensors.md).
 
 To see what a change will recompute before you make it, to update a
 function's code, or to recover from a function that fails, see
-[deploy, change and repair apps](check-deploy-apps.md). The
+[App deployment and recovery](check-deploy-apps.md). The
 [app reference](../reference/apps.md#python-functions) describes every column
 of the frame and every field of the context.

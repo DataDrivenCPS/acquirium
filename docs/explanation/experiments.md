@@ -5,7 +5,7 @@ title: Experiments
 A Study describes what an experiment records. Each Experiment is one run of
 that Study, with its own inputs, results, events, status, and errors.
 
-## The four objects
+## Studies, variables, experiments, and observations
 
 - **Study:** the shared declarations for a set of runs.
 - **Variable:** a named input, output, or log, with a storage type and metadata.
@@ -22,7 +22,7 @@ scalar is always a finite number or boolean, and text is always a string. The
 server checks this too, for clients that bypass the Python API. Common
 scientific values such as NumPy numbers and arrays, tuples, and dates are
 converted to JSON before they are checked. You can
-[register a handler](../how-to/record-experiments.md#record-your-own-types)
+[register a handler](../how-to/record-experiments.md#custom-value-handlers)
 to convert your own classes the same way.
 
 Runs reuse the same declarations so their results can be compared. Reusing a
@@ -33,7 +33,7 @@ One variable can have several observations in a run. A time-series output
 recorded in three batches has three observation records. Each record identifies
 the stream and interval for that batch.
 
-## Finding and reading results
+## Result queries
 
 Studies, variables, runs, and stream annotations also have graph nodes created
 by the recording API. Their metadata uses the same registry, URI resolution,
@@ -70,7 +70,7 @@ metadata keeps its existing paths.
 Graph metadata tables display resolved units as URIs and use a common struct
 schema across rows. A field missing from one row appears as null in that table.
 
-## Handles follow the active run
+## Variable handles and active runs
 
 A variable's `record()` method writes to its Study object's active run.
 You can pass variable handles to functions without passing a run ID.
@@ -133,7 +133,7 @@ references read the current samples, including later corrections and data that
 arrives after the run. To keep a fixed copy of a range, record its rows,
 `interval.dataframe()`; they are stored under the run's own source.
 
-## Deleting runs
+## Run deletion
 
 Runs cannot be changed after they end, but they can be deleted. Deleting a run
 removes everything it recorded: its observations, its stream annotations, the
@@ -220,5 +220,5 @@ A combined query across variable, run, and stream metadata is not yet defined.
 Recording every WaterTAP variable in large sweeps still needs a performance
 evaluation.
 
-See [Record experiments](../how-to/record-experiments.md) for examples and the
+See [Experiment recording](../how-to/record-experiments.md) for examples and the
 [Experiment reference](../reference/experiments.md) for the API.

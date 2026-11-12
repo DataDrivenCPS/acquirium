@@ -1,5 +1,5 @@
 ---
-title: Load a plant model
+title: Plant model loading
 ---
 
 A fresh server starts empty: it knows the ontologies, but nothing about your
@@ -7,10 +7,10 @@ plant. This guide loads the semantic model (the equipment, the piping, the
 points and their meaning) so queries have something to match against.
 
 Do this once per deployment, before pointing any driver at the server.
-Writing timeseries into that model is [inserting data](write-data.md); having a
-driver contribute its own fragment is [your first driver](../tutorials/first-driver.md).
+Writing timeseries into that model is [Direct data insertion](write-data.md); having a
+driver contribute its own fragment is [File ingestion driver](../tutorials/first-driver.md).
 
-## The model file
+## Model file
 
 A plant model is an RDF document, normally Turtle, describing the plant with
 the ASHRAE 223 and NAWI water ontologies. The seawater-ro model shipped with
@@ -41,7 +41,7 @@ class hierarchy into the query view, and that hierarchy is why
 Give every instance a stable URI. Those URIs are what drivers bind their
 streams to, so renaming one later orphans its data.
 
-## Load it
+## Model insertion
 
 ```python
 from acquirium import Acquirium
@@ -58,7 +58,7 @@ The format is taken from the file extension; pass `format=` (`turtle`, `n3`,
 `xml`, `trig`, `nquads`) when the extension does not say. `insert_graph()`
 takes the RDF as a string instead, for a model you built in memory.
 
-### source_id decides who owns it
+### Source ownership
 
 `source_id` is required on every graph write, and it is an ownership
 boundary. The reserved `plant` source is the shared model that everything else
@@ -70,7 +70,7 @@ Use `plant` for the model that describes the physical plant. Use a source ID
 for RDF that belongs to one component, such as a driver contributing the
 points it happens to produce.
 
-### replace= decides whether you are adding or replacing
+### Append and replacement modes
 
 **`replace` defaults to `True` on `insert_graph_file()` and
 `insert_graph()`**, which clears the `plant` graph before inserting. That is
@@ -85,7 +85,7 @@ acq.insert_graph_file("plant-b.ttl", source_id="plant", replace=False)  # append
 Either way the blast radius is one owner's graph. `replace=True` on a driver's
 source never touches the plant model, and vice versa.
 
-## Check that it landed
+## Loaded model inspection
 
 The call returns nothing on success and raises on a parse or validation
 failure, so the first check is that it returned at all. Then ask the server
@@ -133,9 +133,9 @@ acq.graph_status()     # {'source_version': 23, 'published_version': 23,
 A write makes the derived query cache stale, and the server rebuilds it in the
 background. `is_current: False` with `rebuild_in_progress: True` means
 inference is still running and queries are answering from the previous
-complete version; see [the graph backend](../explanation/graph-backend.md#when-derived-data-is-refreshed).
+complete version; see [the graph backend](../explanation/graph-backend.md#inference-refresh-and-query-freshness).
 
-## Validate it against the shapes
+## Shape validation
 
 `validate_graph()` runs the ontologies' SHACL shapes over everything loaded:
 
@@ -182,7 +182,7 @@ Prefer one insert over a loop of small ones. Every `insert_graph` request
 waits for a fresh inferred view so stream registrations can be synced against
 it, so twenty small inserts pay for twenty inference passes.
 
-## Updating a model that is already loaded
+## Model updates
 
 Reload the whole file with the default `replace=True`. It is the same call as
 the first load, and it is scoped to the `plant` graph, so driver and app

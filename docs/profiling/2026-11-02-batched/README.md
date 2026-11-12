@@ -31,7 +31,7 @@ published. Earlier figures are from the
 [earlier measurements](../2026-11-02-sustained/README.md); 1,000-reading
 requests from four senders were not measured there.
 
-## What it shows
+## Findings
 
 - **Requests in one call cost a quarter as much each.** A call of eight
   1,000-reading requests spent 16 ms in `ingest`, 2 ms a request against 8 ms
@@ -69,7 +69,7 @@ requests from four senders were not measured there.
   against 32–51 ms for single requests up to 50,000, since an epoch of 8,000
   readings takes about 50 ms.
 
-## The envelope today
+## Measured throughput limits
 
 Through the engine, 100 streams with a mean of each sustain:
 - 200,000 readings a second from one sender in calls of eight requests of
@@ -85,7 +85,7 @@ The next limit is how long epochs hold the store. Keeping accepted requests in
 memory, so that an epoch need not read them back from the inbox and parse
 them, would shorten that.
 
-## Through the server
+## HTTP server throughput
 
 Acquirium's core used to hold a lock of its own around `ingest`, so server
 requests never shared a commit. It now only orders submissions against
@@ -116,7 +116,7 @@ shared a commit in step, so four senders were slower without the lock. The
 server now binds a TCP socket. The public `acquirium server` command was not
 affected.
 
-## Not yet measured
+## Unmeasured workloads
 
 - Sustained, paced ingest through the HTTP server and drivers.
 - The PostgreSQL store, whose commits cross the network.

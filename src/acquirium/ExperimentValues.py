@@ -98,10 +98,10 @@ def check_kind(kind: str, value: Any, *, label: str = "variable") -> None:
 
 
 def timestamp(value: datetime | str) -> datetime:
-    """Parse an ISO timestamp, treating a timezone-less value as UTC."""
-    from dateutil import parser
-    parsed = parser.isoparse(value) if isinstance(value, str) else value
-    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    """Compatibility name for scalar ``acquirium.to_timestamp`` conversion."""
+    from acquirium.Drivers.tabular import to_timestamp
+
+    return to_timestamp(value)
 
 
 def parquet(value: Any) -> bytes:

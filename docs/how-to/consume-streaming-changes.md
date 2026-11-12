@@ -1,5 +1,5 @@
 ---
-title: Consume committed streaming changes
+title: Streaming change feed
 ---
 
 Sooner or later, data has to leave Acquirium. An alarm should page an operator,
@@ -14,7 +14,7 @@ alarm from [calculating a derived stream](write-soft-sensors.md) is raised or
 cleared. The finished program is
 [`examples/streaming/alarm_webhook.py`](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/streaming/alarm_webhook.py).
 
-## Read a page of changes
+## Change pages and cursors
 
 ```python
 page = client.changes(epoch=0, ordinal=0, limit=3)
@@ -46,7 +46,7 @@ The feed is pull-based: you poll it, and a page holds at most 10,000 changes.
 Cursors survive a server restart, but belong to one server's data and mean
 nothing on another.
 
-## What one epoch contains
+## Epoch contents
 
 Changes are published in *epochs*, and one epoch holds a source change together
 with everything it caused. Here is one epoch from the sine-wave server, with the
@@ -71,7 +71,7 @@ The `time` is when a reading was taken, and the `epoch` is when the change was
 published. The two are unrelated: a correction to last month's data arrives in
 today's epoch.
 
-## Find the alarm's stream
+## Alarm stream selection
 
 The feed names streams by their identifiers. Ask a query for the one behind the
 alarm:
@@ -83,7 +83,7 @@ stream = alarm.data().stream_info()["ref_uri"][0]
 
 The consumer reads every change in the feed and skips those for other streams.
 
-## Look at whole epochs
+## Complete epoch buffering
 
 A retraction on its own means the alarm was withdrawn. A retraction followed by
 an insertion at the same timestamp means only its value changed, and the alarm
@@ -122,7 +122,7 @@ for (epoch, alarm_time), changes in touched.items():
         continue  # retracted and inserted again: the alarm's value was revised
 ```
 
-## Post the alarm
+## Webhook delivery
 
 For each event, post to the webhook:
 
@@ -164,13 +164,13 @@ That is the consumer working correctly: it reports what the published results
 say, and those results change as data arrives. An alarm that should page
 someone needs a calculation that does not change its mind so easily, such as the
 sustained alarm in the
-[turbidity tutorial](../tutorials/turbidity.md#wait-for-a-sustained-excursion).
+[turbidity tutorial](../tutorials/turbidity.md#sustained-turbidity-threshold).
 Even then, a late reading can withdraw an alarm that has already gone out, as
-the same tutorial [shows](../tutorials/turbidity.md#when-the-missing-readings-arrive),
+the same tutorial [shows](../tutorials/turbidity.md#late-readings-and-alarm-recalculation),
 so the receiver should expect `cleared` events for alarms it has already
 announced.
 
-## Remember where you got to
+## Cursor persistence and restart
 
 A consumer that stops must resume without missing an alarm. After handling a
 page, it saves the position of the last change it handled:

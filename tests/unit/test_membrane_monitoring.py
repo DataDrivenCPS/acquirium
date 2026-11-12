@@ -51,7 +51,7 @@ def recompute(observations):
     expected = {}
     for skid in SKIDS:
         conductivity = sorted(observations[name(skid, "conductivity")].items())
-        tau = SMOOTHING[skid]["tau_ns"]
+        tau = (SMOOTHING[skid]["tau_seconds"] * 1_000_000_000)
         smoothed, last = {}, None
         for time, value in conductivity:
             if last is not None:

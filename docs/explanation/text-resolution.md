@@ -2,7 +2,7 @@
 title: Text resolution
 ---
 
-## How matching works
+## Text matching
 
 Each text is matched in two stages.
 The first stage is an exact lookup on known labels and symbols.
@@ -14,7 +14,7 @@ This is how `"ro membrane"` resolves to `ReverseOsmosisMembrane`.
 The indexes are built from the ontologies at server startup: one over the
 water and s223 vocabularies, one over QUDT.
 Instance data is not indexed; see the note in the
-[querying guide](query-model.md#free-text-and-what-it-resolves-to).
+[querying guide](query-model.md#free-text-resolution).
 
 Semantic matching returns the closest candidate above `min_score` (0.5 by
 default).

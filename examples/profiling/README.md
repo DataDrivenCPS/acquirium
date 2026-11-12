@@ -1,4 +1,4 @@
-# Profile soft-sensor execution
+# Soft sensor execution profiling
 
 See the [fresh-process measurements](../../docs/profiling/2026-10-18/README.md)
 and [worker settings](../../docs/reference/server-config.md).
@@ -32,7 +32,7 @@ HTTP, graph compilation, producer journaling, and consumer checkpointing are
 excluded. Use the [streaming workload](../streaming/README.md) to measure the whole
 application. Production engine code and production workers are unchanged.
 
-## What is measured
+## Measurement scope and scenarios
 
 Each worker-count/scenario pair has an uninstrumented control and an instrumented
 run. Each case's engine owner runs in a fresh Python process and a temporary native database.
@@ -62,7 +62,7 @@ requests, peak operator concurrency, and per-operator wall time. Separate proces
 baselines measure a fresh interpreter's complete lifetime with `pass` and with
 Polars/PyArrow imports; those are not startup-only timings.
 
-## Actual worker instrumentation
+## Worker instrumentation
 
 Escapement's public `Engine(python=...)` option points at a diagnostic interpreter
 launcher. The launcher receives the **actual embedded worker script** extracted

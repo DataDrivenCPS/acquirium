@@ -5,7 +5,7 @@ title: Driver reference
 This is the reference for authoring and configuring drivers: the class
 hierarchy, every hook and helper with its signature, the persistent state
 API, the configuration keys, the built-in drivers and the CLI.
-For a worked example see [your first driver](../tutorials/first-driver.md);
+For a worked example see [File ingestion driver](../tutorials/first-driver.md);
 for why drivers exist see [drivers](../explanation/drivers.md).
 
 ## Runtime
@@ -128,7 +128,7 @@ The file is named after `driver_id`, or derived from `spec` when unset.
 
 ## IngestDriver
 
-### Declaring streams
+### Stream declarations
 
 ```python
 declare(ref_name: str, *, source_id: str | None = None, value_kind: str | None = None,
@@ -151,7 +151,7 @@ Declaring is idempotent: an identical repeat is a no-op, a changed declaration
 for an existing pair raises.
 Declarations are written to the graph just before the next insert.
 When `point_uri` exists in the graph, the declared metadata is checked against
-it; see [units](../explanation/units.md#how-a-unit-gets-recorded) and the
+it; see [units](../explanation/units.md#unit-registration) and the
 [lifecycle guide](../explanation/stream-lifecycle.md).
 Without `point_uri`, a placeholder point `<ref_uri>__point` labelled
 with its `ref_name` is minted.
@@ -161,7 +161,7 @@ with its `ref_name` is minted.
 | `is_declared(ref_name, *, source_id=None) -> bool` | whether this driver has declared the pair |
 | `register_declared(observations: pl.DataFrame \| None = None) -> None` | write pending declarations now, inferring value kinds from `observations`; the platform calls this before every insert |
 
-### Reporting observations
+### Observation reporting
 
 | method | meaning |
 |---|---|
@@ -240,6 +240,11 @@ to_observations(df: pl.DataFrame, *, time_col=None, date_col=None, clock_col=Non
 to_timestamp(date_or_timestamp: pl.Series, time: pl.Series | None = None, *,
              date_format=None, timezone="UTC", day_first=False) -> pl.Series
 ```
+
+The same public helper accepts a single string or datetime and returns a UTC
+datetime, for example `aq.to_timestamp("2026-01-01T10:00:40 UTC")`. Series
+conversion still preserves the column's shape and returns null for invalid
+entries. See [timestamp conversion](client-api.md#timestamp-conversion).
 
 ## Configuration
 

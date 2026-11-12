@@ -21,7 +21,7 @@ and its records need a fresh data directory.
 `recreate=True` erases the configured data directory and experiment ledger.
 Use it only when those records can be discarded.
 
-## Back up and restore
+## Backup and restore
 
 Stop the server, then back up the graph, experiment ledger, and Escapement store
 together. Include any configured paths or databases outside `data_dir`.
@@ -36,7 +36,7 @@ resumes for streams belonging to deleted runs. The
 [experiment storage explanation](../explanation/experiments.md#storage) describes
 the recording and deletion order.
 
-## Adding a ledger upgrade
+## Ledger upgrade implementation
 
 Append a `Migration` in `src/acquirium/Storage/migrations.py` with the next
 consecutive version and a descriptive name. Keep applied versions unchanged.

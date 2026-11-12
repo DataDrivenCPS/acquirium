@@ -1,5 +1,5 @@
 ---
-title: Getting started
+title: Installation and startup
 ---
 
 Acquirium runs as a server. Drivers feed it readings from the plant, and your
@@ -13,7 +13,7 @@ pip install acquirium          # extras add drivers: acquirium[mqtt], [xlsx], [w
 There are two ways to get a server running. Which one you want depends on how
 long it needs to live.
 
-## A server for one script
+## Server in a Python script
 
 When you are exploring in a notebook, let the client start a server for you:
 
@@ -31,7 +31,7 @@ starts a server in the background, and returns a client connected to it.
 does the server. [Starting from a script](../how-to/local-runtime.md) explains
 how several scripts can share one server.
 
-## A server that keeps running
+## Standalone server
 
 Drivers that poll a SCADA export overnight, or a plant model that several
 people query, need a server that outlives any one script. Start it from the
@@ -57,7 +57,7 @@ first start downloads it and builds an index, and later starts reuse the
 cache. [Text resolution](../reference/server-config.md#text-resolution) covers
 the setting.
 
-## Where to go next
+## Related tutorials
 
 A new server is empty. It has no plant model and no streams, so the tutorials
 fill it in one of two ways.
@@ -68,5 +68,5 @@ and a steady supply of readings. Start it by following the
 [WaterTAP deployment guide](https://github.com/DataDrivenCPS/acquirium/blob/main/deployments/WATERTAP/readme.md).
 
 To begin with your own data instead, start with
-[your first driver](first-driver.md), which reads a folder of CSV files and
+[File ingestion driver](first-driver.md), which reads a folder of CSV files and
 needs no plant model at all.

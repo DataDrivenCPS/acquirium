@@ -18,6 +18,10 @@ interpreter, libraries, shared pages, and temporary inference arrays add RSS.
 functions deliberately supply load, rather than model accuracy. This fixture is
 not a trained water-quality model.
 
+The calculation uses the public soft sensor interface: UTC datetime readings
+in `time` and `emit(context, value)` for output at `context["output_time"]`.
+The native benchmark runner supplies the same datetime adapter as app deployment.
+
 Compare `--pool-size 1`, `2`, and `4` in separate sequential runs. Native operator
 concurrency stays at `--units` (default four), so this measures the resident pool
 limit without changing DAG width. A job still processes its affected timestamp

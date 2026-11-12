@@ -15,7 +15,7 @@ from acquirium.functions import emit, empty, previous_value
 
 
 def smoothed(frame, context):
-    """Exponentially weighted mean with time constant ``tau_ns``, weighted by
+    """Exponentially weighted mean with time constant ``tau_seconds``, weighted by
     the time since the previous reading."""
     values = frame["value"].drop_nulls()
     if values.is_empty():
@@ -23,8 +23,8 @@ def smoothed(frame, context):
     value = values.mean()
     previous = context.get("previous")
     if previous is not None:
-        elapsed = context["window_ns"] - previous["window_ns"]
-        weight = math.exp(-elapsed / context["parameters"]["tau_ns"])
+        elapsed = context["output_time"] - previous["output_time"]
+        weight = math.exp(-elapsed.total_seconds() / context["parameters"]["tau_seconds"])
         value = weight * previous_value(context, "smoothed") + (1 - weight) * value
     return {"smoothed": emit(context, value)}
 

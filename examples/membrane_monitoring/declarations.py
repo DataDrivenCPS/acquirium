@@ -25,7 +25,7 @@ PREFIX acq: <urn:acquirium#>
 # allowance and alarm limit (uS/cm), and the permeability fit's forgetting
 # factor per hourly window and starting estimate (L/m2/h/bar). The estimate
 # trails a steady decline by about forgetting / (1 - forgetting) windows.
-SMOOTHING = {skid: {"tau_ns": 30 * MINUTE} for skid in SKIDS}
+SMOOTHING = {skid: {"tau_seconds": 30 * 60} for skid in SKIDS}
 DRIFT_LIMITS = {
     "urn:membrane:skid-1": {"target": 50.0, "slack": 2.0, "limit": 40.0},
     "urn:membrane:skid-2": {"target": 60.0, "slack": 2.0, "limit": 40.0},

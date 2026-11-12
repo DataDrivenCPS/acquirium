@@ -40,7 +40,7 @@ the same after loading 16M readings of history
 | 200,000 | 201,631 | 151 | 328 | 368 | 1.9 | 93 | 17.9 | sustained | 162 | 374 |
 | 250,000 | 227,211 | 216 | 441 | 525 | 3.3 | 143 | 24.3 | admission-limited | | |
 
-## What it shows
+## Findings
 
 - **The engine kept up at every rate it was offered.** No case left a
   backlog: what remained when a rate ended published within 0.18 s. Each ramp
@@ -70,7 +70,7 @@ the same after loading 16M readings of history
   published with p50 3–14 ms higher. Two runs without history differed by
   2–6 ms.
 
-## The envelope today
+## Measured throughput limits
 
 Through the engine, 100 streams with a mean of each sustain about 50,000
 readings a second in requests of 1,000, and 200,000 in requests of 10,000,
@@ -87,7 +87,7 @@ commit. [Batched admission](../2026-11-02-batched/README.md) does the first.
 It also found that generating requests was slow for a reason of its own:
 `Mutation.put` raised and discarded an exception for every number.
 
-## Not yet measured
+## Unmeasured workloads
 
 - Sustained ingest through the HTTP server and drivers.
 - Python functions and plans of thousands of operators under sustained ingest.

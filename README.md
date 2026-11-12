@@ -53,13 +53,13 @@ pending if a computation fails.
 An app turns selected source streams into derived streams. New readings and
 corrections update the results, including those of downstream apps.
 
-Start with [your first app](docs/tutorials/first-app.md): generate a sine wave
-with a driver and write a Python threshold function. Next,
-[follow a turbidity alarm](docs/tutorials/turbidity.md) through averaging, gap
-filling, and a sustained high interval. The turbidity demo starts its own
+Start with [Soft sensor app](docs/tutorials/first-app.md): generate a sine wave
+with a driver and write a Python threshold function. The
+[Turbidity alarm pipeline](docs/tutorials/turbidity.md) tutorial covers averaging,
+gap filling, and a sustained high interval. The turbidity demo starts its own
 temporary server and checks its results.
 
-To build your own, see [calculate a derived stream](docs/how-to/write-soft-sensors.md).
+To build your own, see [Soft sensor calculations](docs/how-to/write-soft-sensors.md).
 The [app reference](docs/reference/apps.md) covers the interface options.
 
 ## Documentation and tests
@@ -68,7 +68,7 @@ Start with [the documentation index](docs/_index.md),
 [semantic queries](docs/tutorials/querying.md), and
 [the HTTP API](docs/reference/http-api.md).
 To record experiments, see [your first experiment](docs/tutorials/first-experiment.py),
-[record experiments](docs/how-to/record-experiments.md), and the
+[Experiment recording](docs/how-to/record-experiments.md), and the
 [experiment reference](docs/reference/experiments.md).
 
 ```sh

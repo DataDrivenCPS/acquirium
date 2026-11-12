@@ -23,7 +23,12 @@ chapters:
   - file: how-to/resolve-text.md
   - file: how-to/write-data.md
   - file: how-to/consume-streaming-changes.md
-  - file: how-to/write-soft-sensors.md
+  - file: how-to/soft-sensor-examples.md
+    sections:
+    - file: how-to/write-soft-sensors.md
+    - file: how-to/chain-cleaning-apps.md
+    - file: how-to/clean-data-with-multiple-outputs.md
+    - file: how-to/parameterize-soft-sensors.md
   - file: how-to/check-deploy-apps.md
   - file: how-to/record-experiments.md
   - file: how-to/record-a-whole-model.md
@@ -46,6 +51,7 @@ chapters:
   - file: explanation/units.md
   - file: explanation/drivers.md
   - file: explanation/stream-lifecycle.md
+  - file: explanation/soft-sensor-inputs.md
   - file: explanation/apps.md
   - file: explanation/experiments.md
   - file: explanation/server-internals.md

@@ -68,7 +68,7 @@ def mean_stream(tank):
     return f"urn:profile:tank:{tank}:mean"
 
 
-def plan(tanks):
+def plan(tanks, functions=FUNCTIONS):
     factors = {
         "from_multiplier": "1",
         "from_offset": "273.15",
@@ -84,7 +84,7 @@ def plan(tanks):
             ],
             outputs={"mean": mean_stream(tank)},
             window=FixedBucket(WIDTH),
-            function=PythonFunction.from_file(FUNCTIONS, "tank_mean"),
+            function=PythonFunction.from_file(functions, "tank_mean"),
         )
         for tank in range(tanks)
     ]
@@ -95,14 +95,14 @@ def plan(tanks):
                 inputs=[Input(mean_stream(tank), "mean") for tank in range(tanks)],
                 outputs={"hottest": "urn:profile:hottest"},
                 window=Pointwise(),
-                function=PythonFunction.from_file(FUNCTIONS, "hottest_tank"),
+                function=PythonFunction.from_file(functions, "hottest_tank"),
             ),
             Operator(
                 id="alarm",
                 inputs=[Input("urn:profile:hottest", "hottest")],
                 outputs={"alarm": "urn:profile:alarm"},
                 window=Pointwise(),
-                function=PythonFunction.from_file(FUNCTIONS, "high_temperature"),
+                function=PythonFunction.from_file(functions, "high_temperature"),
                 parameters={"threshold": 27.0},
             ),
         ]
@@ -155,6 +155,17 @@ def run_case(config):
         launcher.chmod(0o755)
         options["python"] = str(launcher)
     raw = {}
+    # Engine is used directly here; install Acquirium's datetime boundary.
+    functions = directory / "calculations.py"
+    functions.write_text(
+        FUNCTIONS.read_text()
+        + "\nfrom acquirium.functions import _datetime_function\n"
+        + "\n".join(
+            f"{name} = _datetime_function({name})"
+            for name in ("tank_mean", "hottest_tank", "high_temperature")
+        )
+        + "\n"
+    )
 
     def accept(engine, request, values):
         for reference, stamp, value in values:
@@ -168,12 +179,12 @@ def run_case(config):
         tempfile.TemporaryDirectory(prefix="acquirium-profile-db-") as database,
         Engine(Path(database) / "state.duckdb", **options) as engine,
     ):
-        engine.activate("activate", plan(scenario["tanks"]))
+        engine.activate("activate", plan(scenario["tanks"], functions))
         engine.step()
         seed = [
             (
                 stream(tank, probe),
-                bucket * WIDTH + sample,
+                bucket * WIDTH + sample * 1000,
                 30.0 + tank * 3 + probe + sample % 7 * 0.1 + bucket * 0.01,
             )
             for tank in range(scenario["tanks"])

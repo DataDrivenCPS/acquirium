@@ -9,7 +9,7 @@ NAME = "temperature-normalization"
 
 def normalize(frame, context):
     factor = lambda key: pl.col("context").str.json_path_match(f"$.{key}").cast(pl.Float64)
-    return {"temperature": frame.select("event_time_ns", "sample_key",
+    return {"temperature": frame.select("time", "sample_key",
         (((pl.col("value") + factor("from_offset")) * factor("from_multiplier")
           / factor("to_multiplier")) - factor("to_offset")).alias("value"), "quality")}
 
