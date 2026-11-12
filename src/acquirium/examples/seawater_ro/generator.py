@@ -84,14 +84,14 @@ def generate(
     *,
     step: timedelta = DEFAULT_STEP,
     seed: int = 42,
-) -> pl.DataFrame:
+) -> dict[str, list[tuple[datetime, float]]]:
     """Plant data from ``start`` up to, not including, ``end``.
 
-    Returns the narrow layout ``insert_timeseries_arrow`` takes: one row per
-    step and model point, with the columns ``ts`` (UTC), ``ref_name`` (the
-    point's local name) and ``value`` (in the point's unit). Rows are ordered
-    by time. Naive datetimes are read as UTC. The default is the year 2025 in
-    10 minute steps.
+    Returns what ``insert_timeseries_batch`` takes: a dict with one entry per
+    model point. The key is the point's local name and the value is a list of
+    ``(timestamp, value)`` pairs in time order, with UTC timestamps and
+    values in the point's unit. Naive datetimes are read as UTC. The default
+    is the year 2025 in 10 minute steps.
     """
     start, end = _utc(start), _utc(end)
     if step <= timedelta(0):
@@ -160,8 +160,5 @@ def generate(
     for name, value in CONSTANTS.items():
         columns[name] = np.full(len(micros), value)
 
-    wide = pl.DataFrame(columns).insert_column(
-        0, pl.Series("ts", micros, dtype=pl.Datetime("us", "UTC"))
-    )
-    narrow = wide.unpivot(index="ts", variable_name="ref_name", value_name="value")
-    return narrow.sort("ts", maintain_order=True)
+    timestamps = pl.Series(micros, dtype=pl.Datetime("us", "UTC")).to_list()
+    return {name: list(zip(timestamps, values.tolist())) for name, values in columns.items()}

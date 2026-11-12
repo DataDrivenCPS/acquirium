@@ -10,52 +10,55 @@ S223 = Namespace("http://data.ashrae.org/standard223#")
 
 
 @pytest.fixture(scope="module")
-def narrow() -> pl.DataFrame:
+def data() -> dict:
     return seawater_ro.generate()
 
 
 @pytest.fixture(scope="module")
-def year(narrow) -> pl.DataFrame:
+def year(data) -> pl.DataFrame:
     """The default year with one column per point."""
-    return narrow.pivot(on="ref_name", index="ts", values="value")
+    first = next(iter(data.values()))
+    columns = {"ts": [ts for ts, _ in first]}
+    columns.update({name: [value for _, value in rows] for name, rows in data.items()})
+    return pl.DataFrame(columns)
 
 
-def test_narrow_layout_for_insert_timeseries_arrow(narrow):
-    assert narrow.schema == {
-        "ts": pl.Datetime("us", "UTC"),
-        "ref_name": pl.String,
-        "value": pl.Float64,
-    }
-    assert narrow["ts"].is_sorted()
+def test_layout_for_insert_timeseries_batch(data):
+    name, rows = next(iter(data.items()))
+    assert isinstance(name, str)
+    ts, value = rows[0]
+    assert ts == datetime(2025, 1, 1, tzinfo=timezone.utc) and ts.utcoffset() == timedelta(0)
+    assert isinstance(value, float)
+    assert all(a[0] < b[0] for a, b in zip(rows, rows[1:]))
 
 
-def test_default_is_2025_in_ten_minute_steps(narrow, year):
-    assert narrow.height == 365 * 144 * 32
-    assert year.height == 365 * 144
-    assert year["ts"][0] == datetime(2025, 1, 1, tzinfo=timezone.utc)
-    assert year["ts"][-1] == datetime(2025, 12, 31, 23, 50, tzinfo=timezone.utc)
+def test_default_is_2025_in_ten_minute_steps(data):
+    assert all(len(rows) == 365 * 144 for rows in data.values())
+    rows = next(iter(data.values()))
+    assert rows[-1][0] == datetime(2025, 12, 31, 23, 50, tzinfo=timezone.utc)
 
 
-def test_one_stream_per_model_point(narrow):
+def test_one_stream_per_model_point(data):
     graph = Graph().parse(seawater_ro.model_path)
     points = {str(o).removeprefix("urn:swro/") for o in graph.objects(None, S223.hasProperty)}
-    assert set(narrow["ref_name"].unique()) == points
+    assert set(data) == points
 
 
-def test_same_call_gives_same_frame(narrow):
-    assert seawater_ro.generate().equals(narrow)
+def test_same_call_gives_same_data(data):
+    assert seawater_ro.generate() == data
 
 
-def test_seed_changes_the_noise(narrow):
-    assert not seawater_ro.generate(seed=7)["value"].equals(narrow["value"])
+def test_seed_changes_the_noise(data):
+    name = "intake-in-flow-rate-m3s"
+    assert seawater_ro.generate(seed=7)[name] != data[name]
 
 
-def test_a_window_matches_the_same_rows_of_the_year(narrow):
+def test_a_window_matches_the_same_rows_of_the_year(data):
     start = datetime(2025, 6, 10, tzinfo=timezone.utc)
     end = start + timedelta(days=2)
     window = seawater_ro.generate(start, end)
-    expected = narrow.filter((pl.col("ts") >= start) & (pl.col("ts") < end))
-    assert window.equals(expected)
+    for name, rows in data.items():
+        assert window[name] == [row for row in rows if start <= row[0] < end]
 
 
 def test_naive_datetimes_are_utc():
@@ -63,18 +66,17 @@ def test_naive_datetimes_are_utc():
     aware = seawater_ro.generate(
         datetime(2025, 3, 1, tzinfo=timezone.utc), datetime(2025, 3, 2, tzinfo=timezone.utc)
     )
-    assert naive.equals(aware)
+    assert naive == aware
 
 
 def test_empty_window():
     start = datetime(2025, 3, 1)
-    assert seawater_ro.generate(start, start).height == 0
+    assert all(rows == [] for rows in seawater_ro.generate(start, start).values())
 
 
-def test_values_are_finite_and_positive(narrow):
-    assert narrow["value"].null_count() == 0
-    assert narrow["value"].is_finite().all()
-    assert narrow["value"].min() > 0
+def test_values_are_finite_and_positive(year):
+    values = year.drop("ts")
+    assert all(values[c].is_finite().all() and values[c].min() > 0 for c in values.columns)
 
 
 def test_ro_mass_balance(year):
