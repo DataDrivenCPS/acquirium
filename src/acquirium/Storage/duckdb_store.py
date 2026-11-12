@@ -213,8 +213,9 @@ class DuckDBStore:
                 -- materializer.  It is deliberately independent from the
                 -- per-stream publication protocol above.
                 last_revision BIGINT NOT NULL DEFAULT 0,
-                CHECK (numeric_value IS NULL OR text_value IS NULL),
-                UNIQUE (ref_id, ts)
+                -- No UNIQUE (ref_id, ts): _insert_frame keeps one row per key
+                -- by deleting colliding rows before it inserts.
+                CHECK (numeric_value IS NULL OR text_value IS NULL)
             )
             """,
         ]
@@ -320,8 +321,7 @@ class DuckDBStore:
         """Physically replace a stream and record its latest reset atomically."""
         with self._lock, self._write_conn() as conn:
             revision = RevisionPublisher(self).reset(conn, [ref_uri])
-            self._insert_frame(conn, frame, revision)
-        return frame.height
+            return self._insert_frame(conn, frame, revision)
 
     def bulk_insert_polars(self, df: pl.DataFrame) -> int:
         """Bulk-insert a Polars DataFrame with canonical or split value columns.
@@ -332,20 +332,19 @@ class DuckDBStore:
             logger.debug("bulk_insert_polars: empty DataFrame, skipping")
             return 0
         in_rows = len(df)
-        with timed_debug(logger, "bulk_insert_polars prepare/dedupe rows=%d", in_rows):
+        with timed_debug(logger, "bulk_insert_polars prepare rows=%d", in_rows):
             df = self._prepare_frame(df)
-        logger.debug("bulk_insert_polars: %d rows after dedupe (was %d)", len(df), in_rows)
-        with self._lock, timed_debug(logger, "bulk_insert_polars DELETE+INSERT rows=%d", len(df)), self._write_conn() as conn:
-            self._insert_frame(conn, df, self._next_revision(conn))
-        return len(df)
+        with self._lock, timed_debug(logger, "bulk_insert_polars DELETE+INSERT rows=%d", in_rows), self._write_conn() as conn:
+            written = self._insert_frame(conn, df, self._next_revision(conn))
+        logger.debug("bulk_insert_polars: %d rows after dedupe (was %d)", written, in_rows)
+        return written
 
     @staticmethod
     def _prepare_frame(df: pl.DataFrame) -> pl.DataFrame:
-        """Split value columns, normalise ts to naive UTC, dedupe on (ref_uri, ts)."""
-        df = prepare_value_columns(df).with_columns(
+        """Split value columns and normalise ts to naive UTC."""
+        return prepare_value_columns(df).with_columns(
             pl.col("ts").dt.convert_time_zone("UTC").dt.replace_time_zone(None)
         )
-        return df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
 
     @staticmethod
     def _next_revision(conn) -> int:
@@ -356,13 +355,23 @@ class DuckDBStore:
             f"UPDATE {SYSTEM_STATE_TABLE} SET current_revision = current_revision + 1 RETURNING current_revision"
         ).fetchone()[0])
 
-    @staticmethod
-    def _insert_frame(conn, df: pl.DataFrame, revision: int) -> None:
-        """Upsert a prepared frame on *conn*: delete colliding (ref, ts) rows, insert.
+    STAGING_TABLE = "_acquirium_staging_timeseries"
 
-        The frame carries ref_uri strings; ids are assigned for unseen uris and
-        the rows keyed by ref_id, all inside the caller's transaction.
+    @classmethod
+    def _insert_frame(cls, conn, df: pl.DataFrame, revision: int) -> int:
+        """Upsert a prepared frame on *conn* through a temporary staging table.
+
+        The frame carries ref_uri strings. Ids are assigned for unseen uris and
+        the rows staged by ref_id. Colliding (ref_id, ts) rows are then deleted
+        from the timeseries table and the staged rows inserted in
+        (ref_id, ts) order, all inside the caller's transaction.
+
+        The table has no unique constraint, so this is the only place that
+        keeps one row per (ref_id, ts). A key repeated within the frame keeps
+        its last row. Returns the number of rows written.
         """
+        df = df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
+        staging = cls.STAGING_TABLE
         conn.register("_acquirium_incoming_timeseries", df)
         try:
             conn.execute(
@@ -372,28 +381,38 @@ class DuckDBStore:
                 ON CONFLICT (ref_uri) DO NOTHING
                 """
             )
+            # OR REPLACE: a caller-scoped transaction can write more than once
+            # on the same connection, and a failed write leaves its table behind.
             conn.execute(
                 f"""
-                DELETE FROM {TIMESERIES_TABLE}
-                USING (
-                    SELECT r.ref_id, i.ts
-                    FROM _acquirium_incoming_timeseries AS i
-                    JOIN {REF_IDS_TABLE} AS r USING (ref_uri)
-                ) AS incoming
-                WHERE {TIMESERIES_TABLE}.ref_id = incoming.ref_id
-                  AND {TIMESERIES_TABLE}.ts = incoming.ts
-                """
-            )
-            conn.execute(
-                f"""
-                INSERT INTO {TIMESERIES_TABLE} (ref_id, ts, numeric_value, text_value, last_revision)
-                SELECT r.ref_id, i.ts, i.numeric_value, i.text_value, ?
+                CREATE OR REPLACE TEMP TABLE {staging} AS
+                SELECT r.ref_id, i.ts, i.numeric_value, i.text_value
                 FROM _acquirium_incoming_timeseries AS i
                 JOIN {REF_IDS_TABLE} AS r USING (ref_uri)
-                """, [revision]
+                """
             )
         finally:
             conn.unregister("_acquirium_incoming_timeseries")
+        conn.execute(
+            f"""
+            DELETE FROM {TIMESERIES_TABLE}
+            USING {staging} AS incoming
+            WHERE {TIMESERIES_TABLE}.ref_id = incoming.ref_id
+              AND {TIMESERIES_TABLE}.ts = incoming.ts
+            """
+        )
+        # DuckDB appends in the order given, so each write lands as a run
+        # sorted by stream and time.
+        conn.execute(
+            f"""
+            INSERT INTO {TIMESERIES_TABLE} (ref_id, ts, numeric_value, text_value, last_revision)
+            SELECT ref_id, ts, numeric_value, text_value, ?
+            FROM {staging}
+            ORDER BY ref_id, ts
+            """, [revision]
+        )
+        conn.execute(f"DROP TABLE {staging}")
+        return df.height
 
     # ---- stream reference registry ----
 
@@ -461,9 +480,9 @@ class DuckDBStore:
             return {}
         placeholders = ", ".join("?" * len(point_uris))
         with self._own_conn() as conn, timed_debug(logger, "resolve_storage_keys n=%d", len(point_uris)):
-            d = conn.execute(
+            d = conn.sql(
                 f"SELECT point_uri, ref_uri FROM {STREAMS_TABLE} WHERE point_uri IN ({placeholders})",
-                point_uris,
+                params=point_uris,
             ).to_arrow_table().to_pydict()
         registered = dict(zip(d["point_uri"], d["ref_uri"]))
         return {uri: registered.get(uri, uri) for uri in point_uris}
@@ -501,10 +520,12 @@ class DuckDBStore:
                 logger, "timeseries ref_uri=%s start=%s end=%s limit=%s order=%s mode=%s",
                 ref_uri, start, end, limit, order, mode,
             ):
-                ref_id_row = conn.execute(
-                    f"SELECT ref_id FROM {REF_IDS_TABLE} WHERE ref_uri = ?", [ref_uri]
-                ).fetchone()
-                if ref_id_row is None:
+                # fetchall(), not fetchone(): a partly read execute() result
+                # stays open, and DuckDB then refuses the relation below.
+                ref_id_rows = conn.execute(
+                    f"SELECT ref_id FROM {REF_IDS_TABLE} WHERE ref_uri = ? LIMIT 1", [ref_uri]
+                ).fetchall()
+                if not ref_id_rows:
                     # Never written to: no id, no rows.
                     return
 
@@ -512,7 +533,7 @@ class DuckDBStore:
                 # physically (its last_stream_version stays resolvable by a
                 # batch reader) but is invisible to this API.
                 clauses = ["ref_id = ?", "NOT deleted"]
-                params: list[Any] = [ref_id_row[0]]
+                params: list[Any] = [ref_id_rows[0][0]]
                 if start:
                     clauses.append("ts >= ?")
                     params.append(self._to_utc_naive(start))
@@ -557,14 +578,14 @@ class DuckDBStore:
                         has_numeric, has_text = conn.execute(
                             f"SELECT COUNT(numeric_value) > 0, COUNT(text_value) > 0 FROM {TIMESERIES_TABLE} WHERE {where}",
                             params,
-                        ).fetchone()
+                        ).fetchall()[0]
                         if has_numeric and has_text:
                             resolved = "coalesce"
                         else:
                             resolved = "numeric" if has_numeric else "text"
                 # Streamed, not materialized: batches are pulled as the caller
                 # consumes them, so an unbounded range need not fit in memory.
-                reader = conn.execute(query, params).to_arrow_reader(batch_size)
+                reader = conn.sql(query, params=params).to_arrow_reader(batch_size)
             for batch in reader:
                 rows += batch.num_rows
                 numeric_col = batch.column("numeric_value")
@@ -614,7 +635,7 @@ class DuckDBStore:
             return {}
         placeholders = ", ".join("?" * len(ref_uris))
         with self._own_conn() as conn, timed_debug(logger, "timeseries_info_batch n=%d", len(ref_uris)):
-            d = conn.execute(
+            d = conn.sql(
                 f"""
                 SELECT r.ref_uri,
                        COUNT(*)   AS row_count,
@@ -625,7 +646,7 @@ class DuckDBStore:
                 WHERE r.ref_uri IN ({placeholders}) AND NOT t.deleted
                 GROUP BY r.ref_uri
                 """,
-                ref_uris,
+                params=ref_uris,
             ).to_arrow_table().to_pydict()
         result: dict[str, TimeseriesInfo] = {}
         for uri, cnt, earliest_raw, latest_raw in zip(
@@ -729,7 +750,7 @@ class DuckDBStore:
         """
         try:
             with self._own_conn() as conn, timed_debug(logger, "query_logs point_uri=%s clauses=%d", point_uri, len(clauses)):
-                tbl = conn.execute(query, params).to_arrow_table()
+                tbl = conn.sql(query, params=params).to_arrow_table()
         except Exception as exc:
             logger.error("query_logs failed: %s", exc)
             return []
@@ -791,7 +812,7 @@ class DuckDBStore:
     def sql_query(self, query: str) -> dict[str, Any]:
         logger.debug("sql_query: %s", query.replace("\n", " ")[:200])
         with self._own_conn() as conn, timed_debug(logger, "sql_query"):
-            tbl = conn.execute(query).to_arrow_table()
+            tbl = conn.sql(query).to_arrow_table()
         d = tbl.to_pydict()
         cols = tbl.schema.names
         return {
@@ -856,8 +877,8 @@ class DuckDBStore:
     def _stream_value_kind(self, conn, ref_uri: str) -> str | None:
         """Look up a stream's value kind on *conn* — the caller's connection, so
         a streaming read can resolve it without opening a second connection."""
-        row = conn.execute(
-            f"SELECT value_kind FROM {STREAMS_TABLE} WHERE ref_uri = ?",
+        rows = conn.execute(
+            f"SELECT value_kind FROM {STREAMS_TABLE} WHERE ref_uri = ? LIMIT 1",
             [ref_uri],
-        ).fetchone()
-        return row[0] if row else None
+        ).fetchall()
+        return rows[0][0] if rows else None

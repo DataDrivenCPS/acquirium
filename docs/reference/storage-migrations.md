@@ -30,6 +30,11 @@ requires rebuilding that table inside the migration transaction. Existing
 samples and reference IDs are retained; allow space for the replacement table
 when upgrading a large database. Subsequent openings skip this migration.
 
+DuckDB timeseries schema version 2 removes the `UNIQUE (ref_id, ts)` constraint
+from `timeseries`. DuckDB cannot drop a constraint in place, so a table that
+still has it is rebuilt the same way. A table created without the constraint
+is left as is.
+
 Experiment schema version 2 moves variable, run, and annotation metadata to the
 graph. It first converts existing SQL snapshots and pinned resolutions into
 resolved outbox operations in the schema transaction, then removes the snapshot

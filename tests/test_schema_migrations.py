@@ -4,8 +4,13 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from acquirium.Storage.duckdb_store import DuckDBStore
-from acquirium.Storage.migrations import Migration, migrate
+from acquirium.Storage.migrations import DUCKDB_TIMESERIES_MIGRATIONS, TIMESERIES_MIGRATIONS, Migration, migrate
 from acquirium.Storage.timescale_store import TimescaleStore
+
+
+def timeseries_history(store):
+    migrations = DUCKDB_TIMESERIES_MIGRATIONS if isinstance(store, DuckDBStore) else TIMESERIES_MIGRATIONS
+    return [(migration.version, migration.name) for migration in migrations]
 
 
 def reopen(store, *, recreate=False):
@@ -42,8 +47,49 @@ def test_upgrade_integer_keyed_database_preserves_samples(materialization_store)
             with upgraded._own_conn() as conn:
                 assert conn.execute("SELECT numeric_value, deleted FROM timeseries ORDER BY ts LIMIT 1").fetchone() == (3., False)
                 assert conn.execute("SELECT count(*) FROM timeseries_streams").fetchone()[0] == attempt + 1
-                assert conn.execute("SELECT version, name FROM schema_migrations WHERE component='timeseries'").fetchall() == [(1, "publication_columns")]
+                assert conn.execute("SELECT version, name FROM schema_migrations WHERE component='timeseries' ORDER BY version").fetchall() == timeseries_history(store)
             upgraded.upsert_rows(ref, [(stamp + timedelta(hours=attempt + 1), 4. + attempt)], value_kind="numeric")
+            assert upgraded.timeseries_info(ref).row_count == attempt + 2
+        finally:
+            upgraded.close()
+
+
+def test_upgrade_drops_duckdb_timeseries_unique_constraint(tmp_path):
+    path = tmp_path / "unique.duckdb"
+    store = DuckDBStore(path)
+    stamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    ref = str(store.ensure_stream_ref(None, "source", "flow", value_kind="numeric"))
+    store.upsert_rows(ref, [(stamp, 3.)], value_kind="numeric")
+    constraints = ("SELECT count(*) FROM duckdb_constraints() "
+                   "WHERE table_name='timeseries' AND constraint_type='UNIQUE'")
+    # Reproduce schema version 1: the same table with UNIQUE (ref_id, ts).
+    with store._lock, store._own_conn() as conn:
+        conn.execute("DROP VIEW timeseries_streams")
+        conn.execute("""CREATE TABLE timeseries_v1 (
+            ref_id INTEGER NOT NULL, ts TIMESTAMP NOT NULL,
+            numeric_value DOUBLE, text_value VARCHAR,
+            deleted BOOLEAN NOT NULL DEFAULT FALSE,
+            last_stream_version BIGINT NOT NULL DEFAULT 0,
+            last_revision BIGINT NOT NULL DEFAULT 0,
+            CHECK (numeric_value IS NULL OR text_value IS NULL),
+            UNIQUE (ref_id, ts)
+        )""")
+        conn.execute("INSERT INTO timeseries_v1 SELECT * FROM timeseries")
+        conn.execute("DROP TABLE timeseries")
+        conn.execute("ALTER TABLE timeseries_v1 RENAME TO timeseries")
+        conn.execute("DELETE FROM schema_migrations WHERE component='timeseries' AND version=2")
+        assert conn.execute(constraints).fetchone()[0] == 1
+    store.close()
+    for attempt in range(2):
+        upgraded = DuckDBStore(path)
+        try:
+            with upgraded._own_conn() as conn:
+                assert conn.execute(constraints).fetchone()[0] == 0
+                assert conn.execute("SELECT numeric_value, last_revision > 0 FROM timeseries ORDER BY ts LIMIT 1").fetchone() == (5. if attempt else 3., True)
+                assert conn.execute("SELECT count(*) FROM timeseries_streams").fetchone()[0] == attempt + 1
+                assert conn.execute("SELECT count(*) FROM duckdb_indexes() WHERE index_name='idx_timeseries_last_revision'").fetchone()[0] == 1
+            # Rewriting an existing timestamp still leaves one row for it.
+            upgraded.upsert_rows(ref, [(stamp, 5.), (stamp + timedelta(hours=attempt + 1), 4.)], value_kind="numeric")
             assert upgraded.timeseries_info(ref).row_count == attempt + 2
         finally:
             upgraded.close()
@@ -56,7 +102,7 @@ def test_adopt_already_upgraded_unversioned_schema(materialization_store):
     adopted = reopen(store)
     try:
         with adopted._own_conn() as conn:
-            assert conn.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 1
+            assert conn.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == len(timeseries_history(store))
     finally:
         adopted.close()
 
@@ -88,6 +134,7 @@ def test_recreate_resets_migration_history(materialization_store):
     recreated = reopen(store, recreate=True)
     try:
         with recreated._own_conn() as conn:
-            assert conn.execute("SELECT component, version FROM schema_migrations").fetchall() == [("timeseries", 1)]
+            assert conn.execute("SELECT version, name FROM schema_migrations WHERE component='timeseries' ORDER BY version").fetchall() == timeseries_history(store)
+            assert conn.execute("SELECT count(*) FROM schema_migrations WHERE component='test'").fetchone()[0] == 0
     finally:
         recreated.close()
