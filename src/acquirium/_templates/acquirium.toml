@@ -1,0 +1,64 @@
+### acquirium.toml: starter configuration, written by `acquirium config init`.
+###
+### Start the server from this directory:
+###   acquirium server
+### or point at the file from anywhere:
+###   acquirium server --config path/to/acquirium.toml
+###
+### Relative paths in this file are resolved against the directory it is in.
+
+[server]
+### Address the server listens on. 127.0.0.1 accepts connections from this
+### machine only; use "0.0.0.0" to accept connections from other machines.
+
+host = "127.0.0.1"
+port = 8000
+
+### Everything the server stores lives under this directory: the graph store,
+### the DuckDB timeseries file and the embedding cache.
+
+data_dir = ".acquirium"
+
+### Where timeseries data is stored. "duckdb" is a local file under data_dir and
+### needs nothing else installed. 
+
+timeseries_backend = "duckdb"
+
+### For TimescaleDB, edit pg_dsn, comment the line above and uncomment the lines below:
+
+# timeseries_backend = "timescale"
+# pg_dsn = "postgresql://user:password@localhost:5432/acquirium"
+
+### How free text such as "pressure" or "psi" is matched to ontology terms.
+### true matches labels exactly and doesn't rely on an embedding model. 
+### false also matches by meaning, which downloads an embedding model the first time the server starts.
+
+exact_only = true
+
+### Set to true to delete all stored data every time the server starts.
+
+recreate = false
+
+[driver]
+### Defaults for every [[drivers]] entry below. An entry can override any of them.
+
+### Seconds between two polls of a driver.
+interval = 10.0
+
+### ---------------------------------------------------------------------------
+### Drivers started together with the server. Each entry needs a `spec`.
+### ---------------------------------------------------------------------------
+
+### CPU, memory, disk and network readings of this machine.
+[[drivers]]
+spec     = "acquirium.Drivers.BuiltInDrivers.system_metrics:SystemMetricsDriver"
+interval = 30.0
+
+### Ingest the CSV files that appear in a directory.
+# [[drivers]]
+# spec      = "acquirium.Drivers.BuiltInDrivers.csv_ingest:CSVIngestDriver"
+# source_id = "csv-files"
+# watch_dir = "./data"
+# glob      = "*.csv"
+# format    = "wide"        # "wide": one column per stream; "narrow": one row per reading
+# time_col  = "timestamp"   # optional; common names are found automatically

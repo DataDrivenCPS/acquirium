@@ -2,8 +2,6 @@
 title: The data stream lifecycle
 ---
 
-<!-- TODO: intro -->
-
 This is a guide to how a timeseries stream comes into existence, how its rows
 are stored, and how a query finds them again.
 It is background for driver authors and for anyone debugging ingestion; using
@@ -65,7 +63,7 @@ with its `ref_name` when none was given:
     a                        acq:VirtualPoint ;
     rdfs:label               "P1 outlet pressure" ;
     qudt:hasUnit             unit:PA ;
-    qudt:hasQuantityKind     qudtqk:Pressure ;
+    qudt:hasQuantityKind     quantitykind:Pressure ;
     ref:hasExternalReference <urn:acquirium#399ce39c-...> .
 ```
 

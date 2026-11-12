@@ -5,175 +5,181 @@
     {
       "text": "RO",
       "expected": [
-        "urn:nawi-water-ontology#Process-ReverseOsmosis"
+        "https://watermetadata.org/ontology/watr#Process-ReverseOsmosis"
       ]
     },
     {
       "text": "UF",
       "expected": [
-        "urn:nawi-water-ontology#Process-Ultrafiltration"
+        "https://watermetadata.org/ontology/watr#Process-Ultrafiltration"
       ]
     },
     {
       "text": "MF",
       "expected": [
-        "urn:nawi-water-ontology#Process-Microfiltration"
+        "https://watermetadata.org/ontology/watr#Process-Microfiltration"
       ]
     },
     {
       "text": "AOP",
       "expected": [
-        "urn:nawi-water-ontology#Process-AdvancedOxidation"
+        "https://watermetadata.org/ontology/watr#Process-AdvancedOxidation"
       ]
     },
     {
       "text": "GAC",
       "expected": [
-        "urn:nawi-water-ontology#Process-GranularActivatedCarbon"
+        "https://watermetadata.org/ontology/watr#Process-GACFiltration"
       ]
     },
     {
       "text": "BAF",
       "expected": [
-        "urn:nawi-water-ontology#Process-BiologicallyActiveFiltration"
+        "https://watermetadata.org/ontology/watr#Process-BiologicallyActiveFiltration"
       ]
     },
     {
       "text": "CCRO",
       "expected": [
-        "urn:nawi-water-ontology#Process-ClosedCircuitReverseOsmosis"
+        "https://watermetadata.org/ontology/watr#Process-ClosedCircuitReverseOsmosis"
       ]
     },
     {
       "text": "FRRO",
       "expected": [
-        "urn:nawi-water-ontology#Process-FeedReversalReverseOsmosis"
+        "https://watermetadata.org/ontology/watr#Process-FeedReversalReverseOsmosis"
       ]
     },
     {
       "text": "OARO",
       "expected": [
-        "urn:nawi-water-ontology#Process-OsmoticallyAssistedReverseOsmosis"
+        "https://watermetadata.org/ontology/watr#Process-OsmoticallyAssistedReverseOsmosis"
       ]
     },
     {
       "text": "MD",
       "expected": [
-        "urn:nawi-water-ontology#Process-MembraneDistillation"
+        "https://watermetadata.org/ontology/watr#Process-MembraneDistillation"
       ]
     },
     {
       "text": "EC",
       "expected": [
-        "urn:nawi-water-ontology#Process-Electrocoagulation"
+        "https://watermetadata.org/ontology/watr#Process-Electrocoagulation"
       ]
     },
     {
       "text": "EO",
       "expected": [
-        "urn:nawi-water-ontology#Process-Electrooxidation"
+        "https://watermetadata.org/ontology/watr#Process-Electrooxidation"
       ]
     },
     {
       "text": "EDC",
       "expected": [
-        "urn:nawi-water-ontology#Process-ElectroDialyticCrystallization"
+        "https://watermetadata.org/ontology/watr#Process-ElectroDialyticCrystallization"
       ]
     },
     {
       "text": "HDS",
       "expected": [
-        "urn:nawi-water-ontology#Process-HighDensitySludge"
+        "https://watermetadata.org/ontology/watr#Process-HighDensitySludge"
       ]
     },
     {
       "text": "MHI",
       "expected": [
-        "urn:nawi-water-ontology#Process-MultipleHearthIncineration"
+        "https://watermetadata.org/ontology/watr#Process-MultipleHearthIncineration"
       ]
     },
     {
       "text": "MLE",
       "expected": [
-        "urn:nawi-water-ontology#Process-MLE"
+        "https://watermetadata.org/ontology/watr#Process-MLE"
       ]
     },
     {
       "text": "UCT",
       "expected": [
-        "urn:nawi-water-ontology#Process-UCT"
+        "https://watermetadata.org/ontology/watr#Process-UCT"
       ]
     },
     {
       "text": "A2O",
       "expected": [
-        "urn:nawi-water-ontology#Process-A2O"
+        "https://watermetadata.org/ontology/watr#Process-A2O"
       ]
     },
     {
       "text": "A/O",
       "expected": [
-        "urn:nawi-water-ontology#Process-AO"
+        "https://watermetadata.org/ontology/watr#Process-AO"
       ]
     },
     {
       "text": "UV",
       "expected": [
-        "urn:nawi-water-ontology#Process-UVDisinfection"
+        "https://watermetadata.org/ontology/watr#Process-UVIrradiation"
       ]
     },
     {
       "text": "ED",
       "expected": [
-        "urn:nawi-water-ontology#Process-Electrodialysis"
+        "https://watermetadata.org/ontology/watr#Process-Electrodialysis"
       ]
     },
     {
       "text": "IX",
       "expected": [
-        "urn:nawi-water-ontology#Process-IonExchange"
+        "https://watermetadata.org/ontology/watr#Process-IonExchange"
       ]
     },
     {
       "text": "DAF",
       "expected": [
-        "urn:nawi-water-ontology#Process-Flotation"
+        "https://watermetadata.org/ontology/watr#Process-Flotation"
       ]
     },
     {
       "text": "CHP",
       "expected": [
-        "urn:nawi-water-ontology#Process-Cogeneration"
+        "https://watermetadata.org/ontology/watr#Process-Cogeneration"
       ]
     },
     {
       "text": "CIP",
       "expected": [
-        "urn:nawi-water-ontology#Process-Cleaning"
+        "https://watermetadata.org/ontology/watr#Process-Cleaning"
       ]
     },
     {
       "text": "RO process",
       "expected": [
-        "urn:nawi-water-ontology#Process-ReverseOsmosis"
+        "https://watermetadata.org/ontology/watr#Process-ReverseOsmosis"
       ]
     },
     {
       "text": "UF filtration",
       "expected": [
-        "urn:nawi-water-ontology#Process-Ultrafiltration"
+        "https://watermetadata.org/ontology/watr#Process-Ultrafiltration"
       ]
     },
     {
       "text": "UV treatment",
       "expected": [
-        "urn:nawi-water-ontology#Process-UVDisinfection"
+        "https://watermetadata.org/ontology/watr#Process-UVIrradiation"
       ]
     },
     {
       "text": "GAC adsorption",
       "expected": [
-        "urn:nawi-water-ontology#Process-GranularActivatedCarbon"
+        "https://watermetadata.org/ontology/watr#Process-GACFiltration"
+      ]
+    },
+    {
+      "text": "EBPR",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Process-EnhancedBiologicalPhosphorusRemoval"
       ]
     }
   ]

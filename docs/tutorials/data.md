@@ -2,8 +2,6 @@
 title: Working with data
 ---
 
-<!-- TODO: intro -->
-
 This is a guide to querying data (timeseries) with Acquirium.
 
 This tutorial uses data from the WaterTAP seawater-RO model, 
@@ -32,6 +30,13 @@ acq = Acquirium(server_url="127.0.0.1", server_port=8000)
 d = (acq.query().entity("Equipment")
      .measurement(alias="m", quantity_kind="mass flow rate")
      .data())
+d.total_rows     # asks the server for the count, fetches no values
+```
+```text
+55980
+```
+
+```python
 d
 ```
 ```text
@@ -41,7 +46,8 @@ DataObject(lazy, ~55980 rows, range=2026-08-05T16:28:39.137381+00:00 to 2026-08-
 **TODO:** measure the overhead and scalability of this feature
 
 The data object lets you check what the query would retrieve before fetching it.
-For instance, the `~55980` figure above is a real count from the server.
+`total_rows` and `time_range` ask the server for the row count and the time range of the matched streams.
+Note that printing the object does not contact the server: before one of them is read, it shows the number of matched streams in place of the row count and the range.
 
 Values are fetched (and cached) only when you call `.dataframe()`.
 
@@ -66,8 +72,9 @@ rows per stream, in `order` direction).
 `include_dependencies`, `cast_value` and `value_mode` act at fetch time, so
 they are set on `data()` (or on `Query.dataframe()`) and have no data-object
 counterpart.
-
-**TODO:** dataframe funcitons are not consistent with each other. make them consistent, or just remove one
+`streams=` exists only on the data object's `dataframe()`.
+It keeps the listed streams, which are identified by their number in the
+object's `stream_info()`, by ref URI or by a `Stream` handle.
 
 ## Shapes
 
@@ -169,7 +176,6 @@ shape: (2, 5)
 │ 2026-08-08 05:52:16.983763 UTC ┆ 7e6                       ┆ 101325.0                   ┆ 6.8105e6                             ┆ 304.016483 │
 └────────────────────────────────┴───────────────────────────┴────────────────────────────┴──────────────────────────────────────┴────────────┘
 ```
-**TODO:** Find a better way to create the schema from aliases
 
 Both `dataframe()` methods shorten the identifiers by default
 (`compact=True`): URIs are CURIEs and the narrow shape identifies a point by a
@@ -194,8 +200,6 @@ d.units()
 {'flow': ['http://qudt.org/vocab/unit/KiloGM-PER-SEC']}
 ```
 `convert_to()` returns a new data object by converting the values into a target unit.
-
-**TODO**: this method and its params should be renamed (something like: `.convert()`)
 
 ```python
 kg_per_min = d.convert_to("kg/min")
@@ -222,7 +226,7 @@ d2.convert_to("g/s", alias="flow")     # area stays in m²
 - A point with no unit in the graph will fail:
 
 ```text
-ValueError: No unit annotation found for alias 'p'. Provide from_unit explicitly.
+ValueError: No unit annotation found for point <...> (alias 'p'). Provide from_unit explicitly.
 ```
 
 Pass `from_unit=` when you know what the numbers are:
@@ -239,8 +243,6 @@ ValueError: convert_to: no convertible unit pair for
 ```
 
 ## Taking the result apart
-
-**TODO:** This is quite ugly, think of a better way:
 
 A query that matched several points and several entities comes back as one
 object. These four methods split it up.
@@ -291,21 +293,26 @@ urn:swro/P2 (5892, 2)
 
 This is useful for per-equipment work, like fitting a model per pump.
 
-`latest(alias)` returns the newest reading.
-
-**TODO:** I think latest also can be improved or removed
+`latest(alias)` returns the newest reading of each point of the alias.
+As with `d["alias"]`, a `point_uri` column is added when the alias covers more
+than one point.
 
 ```python
 d.latest("m")
 ```
 ```text
-shape: (1, 2)
-┌────────────────────────────────┬───────────────┐
-│ time                           ┆ value         │
-╞════════════════════════════════╪═══════════════╡
-│ 2026-08-08 06:43:10.129750 UTC ┆ 111093.849382 │
-└────────────────────────────────┴───────────────┘
+shape: (2, 3)
+┌────────────────────────────────┬───────────────┬──────────────────────────────┐
+│ time                           ┆ value         ┆ point_uri                    │
+╞════════════════════════════════╪═══════════════╪══════════════════════════════╡
+│ 2026-08-08 06:43:10.129750 UTC ┆ 1.0610e6      ┆ urn:swro/P1-mechanical-power │
+│ 2026-08-08 06:43:10.129750 UTC ┆ 111093.849382 ┆ urn:swro/P2-mechanical-power │
+└────────────────────────────────┴───────────────┴──────────────────────────────┘
 ```
 
-Note that `latest()` fetches the whole window and takes the last row.
-For a cheap latest value, query with `limit=1, order="desc"` instead.
+Without an alias, `latest()` reports every point of the object as
+`[data_alias, point_uri, time, value]`.
+
+Note that `latest()` does not fetch the whole window.
+It runs its own fetch of one row per stream, so it is cheap, and it returns
+the newest reading within the `start` and `end` the object was created with.

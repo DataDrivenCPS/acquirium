@@ -129,7 +129,7 @@ def test_register_stream_without_point_uri_and_ref_name_raises():
 _MG_L = "http://qudt.org/vocab/unit/MilliGM-PER-L"
 _G_L = "http://qudt.org/vocab/unit/GM-PER-L"
 _DEG_C = "http://qudt.org/vocab/unit/DEG_C"
-_WATER = "urn:nawi-water-ontology#Water"
+_WATER = "https://watermetadata.org/ontology/watr#Water"
 _MASS_CONC = "http://qudt.org/vocab/quantitykind/MassConcentration"
 _DENSITY = "http://qudt.org/vocab/quantitykind/Density"
 

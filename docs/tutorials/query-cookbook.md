@@ -2,8 +2,6 @@
 title: Query cookbook
 ---
 
-<!-- TODO: intro -->
-
 This tutorial shows how to write acquirum queries based on common questions a plant engineer may ask. 
 
 This tutorial uses data from the WaterTAP seawater-RO model, 
@@ -38,9 +36,9 @@ shape: (3, 2)
 ┌──────────────────────────────────────────┬─────────────────────┐
 │ salt                                     ┆ salt.medium         │
 ╞══════════════════════════════════════════╪═════════════════════╡
-│ wbs:PXR-brine-out-tds-concentration      ┆ nawi:Water-Brine    │
+│ wbs:PXR-brine-out-tds-concentration      ┆ watr:Water-Brine    │
 │ wbs:storage-tank-3-out-tds-concentration ┆ s223:Fluid-Water    │
-│ wbs:intake-in-tds-concentration          ┆ nawi:Water-Seawater │
+│ wbs:intake-in-tds-concentration          ┆ watr:Water-Seawater │
 └──────────────────────────────────────────┴─────────────────────┘
 ```
 
@@ -182,8 +180,8 @@ Recovery is around 43 %.
 **How to phrase it.**
 First find the filter.
 `entity("cartridge filter")` returns nothing here: the text resolves to
-`nawi:CartridgeFiltrationUnit`, but this plant types its filters as plain
-`nawi:Filter`.
+`watr:CartridgeFiltrationUnit`, but this plant types its filters as plain
+`watr:Filter`.
 `options("type")` on the equipment shows what classes the model actually
 uses, and `entity("filter")` finds three of them, one of which is the RO
 itself.
@@ -229,15 +227,15 @@ cf.related("equipment", direction="downstream").metadata()
 ```
 ```text
 shape: (5, 3)
-┌──────────────────────────┬─────────────────────────────────────────────────────┬──────────────────────────┐
-│ cf                       ┆ after                                               ┆ after.quantity_kind      │
-╞══════════════════════════╪═════════════════════════════════════════════════════╪══════════════════════════╡
-│ wbs:cartridge-filtration ┆ wbs:cartridge-filtration-out-toc-concentration      ┆ qudtqk:MassConcentration │
-│ wbs:cartridge-filtration ┆ wbs:conn-cartridge-filtration-to-S1-temperature     ┆ qudtqk:Temperature       │
-│ wbs:cartridge-filtration ┆ wbs:conn-cartridge-filtration-to-S1-flow-mass-tds   ┆ qudtqk:MassFlowRate      │
-│ wbs:cartridge-filtration ┆ wbs:conn-cartridge-filtration-to-S1-flow-mass-wate… ┆ qudtqk:MassFlowRate      │
-│ wbs:cartridge-filtration ┆ wbs:conn-cartridge-filtration-to-S1-pressure        ┆ qudtqk:Pressure          │
-└──────────────────────────┴─────────────────────────────────────────────────────┴──────────────────────────┘
+┌──────────────────────────┬─────────────────────────────────────────────────────┬────────────────────────────────┐
+│ cf                       ┆ after                                               ┆ after.quantity_kind            │
+╞══════════════════════════╪═════════════════════════════════════════════════════╪════════════════════════════════╡
+│ wbs:cartridge-filtration ┆ wbs:cartridge-filtration-out-toc-concentration      ┆ quantitykind:MassConcentration │
+│ wbs:cartridge-filtration ┆ wbs:conn-cartridge-filtration-to-S1-temperature     ┆ quantitykind:Temperature       │
+│ wbs:cartridge-filtration ┆ wbs:conn-cartridge-filtration-to-S1-flow-mass-tds   ┆ quantitykind:MassFlowRate      │
+│ wbs:cartridge-filtration ┆ wbs:conn-cartridge-filtration-to-S1-flow-mass-wate… ┆ quantitykind:MassFlowRate      │
+│ wbs:cartridge-filtration ┆ wbs:conn-cartridge-filtration-to-S1-pressure        ┆ quantitykind:Pressure          │
+└──────────────────────────┴─────────────────────────────────────────────────────┴────────────────────────────────┘
 ```
 
 The filter feeds the two high-pressure pumps and the pressure exchanger, and
@@ -279,20 +277,20 @@ m.metadata().filter(pl.col("m.unit").is_null()).select("m", "m.quantity_kind")
 ```
 ```text
 shape: (10, 2)
-┌───────────────────────────────────────────┬───────────────────────┐
-│ m                                         ┆ m.quantity_kind       │
-╞═══════════════════════════════════════════╪═══════════════════════╡
-│ wbs:P1-out-pressure                       ┆ qudtqk:Pressure       │
-│ wbs:intake-in-flow-rate                   ┆ qudtqk:VolumeFlowRate │
-│ wbs:RO-out-pressure                       ┆ qudtqk:Pressure       │
-│ wbs:RO-in-pressure                        ┆ qudtqk:Pressure       │
-│ wbs:conn-cartridge-filtration-to-S1-pres… ┆ qudtqk:Pressure       │
-│ wbs:storage-tank-3-out-flow-rate          ┆ qudtqk:VolumeFlowRate │
-│ wbs:conn-cartridge-filtration-to-S1-temp… ┆ qudtqk:Temperature    │
-│ wbs:PXR-brine-out-pressure                ┆ qudtqk:Pressure       │
-│ wbs:RO-out-retentate-pressure             ┆ qudtqk:Pressure       │
-│ wbs:RO-in-temperature                     ┆ qudtqk:Temperature    │
-└───────────────────────────────────────────┴───────────────────────┘
+┌───────────────────────────────────────────┬─────────────────────────────┐
+│ m                                         ┆ m.quantity_kind             │
+╞═══════════════════════════════════════════╪═════════════════════════════╡
+│ wbs:P1-out-pressure                       ┆ quantitykind:Pressure       │
+│ wbs:intake-in-flow-rate                   ┆ quantitykind:VolumeFlowRate │
+│ wbs:RO-out-pressure                       ┆ quantitykind:Pressure       │
+│ wbs:RO-in-pressure                        ┆ quantitykind:Pressure       │
+│ wbs:conn-cartridge-filtration-to-S1-pres… ┆ quantitykind:Pressure       │
+│ wbs:storage-tank-3-out-flow-rate          ┆ quantitykind:VolumeFlowRate │
+│ wbs:conn-cartridge-filtration-to-S1-temp… ┆ quantitykind:Temperature    │
+│ wbs:PXR-brine-out-pressure                ┆ quantitykind:Pressure       │
+│ wbs:RO-out-retentate-pressure             ┆ quantitykind:Pressure       │
+│ wbs:RO-in-temperature                     ┆ quantitykind:Temperature    │
+└───────────────────────────────────────────┴─────────────────────────────┘
 ```
 
 Ten of the 32 points have no unit: every pressure and temperature, and the

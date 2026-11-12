@@ -5,56 +5,56 @@
     {
       "text": "DO",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-DissolvedOxygen"
+        "https://watermetadata.org/ontology/watr#Constituent-DissolvedOxygen"
       ]
     },
     {
       "text": "TSS",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-SuspendedSolids"
+        "https://watermetadata.org/ontology/watr#Constituent-SuspendedSolids"
       ]
     },
     {
       "text": "SS",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-SuspendedSolids"
+        "https://watermetadata.org/ontology/watr#Constituent-SuspendedSolids"
       ]
     },
     {
       "text": "TOC",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-OrganicCarbon"
+        "https://watermetadata.org/ontology/watr#Constituent-OrganicCarbon"
       ]
     },
     {
       "text": "DOC",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-OrganicCarbon"
+        "https://watermetadata.org/ontology/watr#Constituent-OrganicCarbon"
       ]
     },
     {
       "text": "TIC",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-InorganicCarbon"
+        "https://watermetadata.org/ontology/watr#Constituent-InorganicCarbon"
       ]
     },
     {
       "text": "NH3",
       "expected": [
         "http://data.ashrae.org/standard223#Constituent-NH3",
-        "urn:nawi-water-ontology#Constituent-Ammonia"
+        "https://watermetadata.org/ontology/watr#Constituent-Ammonia"
       ]
     },
     {
       "text": "NO3",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Nitrate"
+        "https://watermetadata.org/ontology/watr#Constituent-Nitrate"
       ]
     },
     {
       "text": "NO2",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Nitrite",
+        "https://watermetadata.org/ontology/watr#Constituent-Nitrite",
         "http://data.ashrae.org/standard223#NOX-NO2"
       ]
     },
@@ -62,63 +62,63 @@
       "text": "NOx",
       "expected": [
         "http://data.ashrae.org/standard223#Constituent-NOX",
-        "urn:nawi-water-ontology#Constituent-NitrogenOxides"
+        "https://watermetadata.org/ontology/watr#Constituent-NitrogenOxides"
       ]
     },
     {
       "text": "H2O2",
       "expected": [
-        "urn:nawi-water-ontology#OxidizingAgent-HydrogenPeroxide"
+        "https://watermetadata.org/ontology/watr#OxidizingAgent-HydrogenPeroxide"
       ]
     },
     {
       "text": "H2SO4",
       "expected": [
-        "urn:nawi-water-ontology#pHAdjuster-SulfuricAcid"
+        "https://watermetadata.org/ontology/watr#pHAdjuster-SulfuricAcid"
       ]
     },
     {
       "text": "NaCl",
       "expected": [
-        "urn:nawi-water-ontology#Salt-NaCl"
+        "https://watermetadata.org/ontology/watr#Salt-NaCl"
       ]
     },
     {
       "text": "PAC",
       "expected": [
-        "urn:nawi-water-ontology#Coagulant-PolyaluminumChloride",
-        "urn:nawi-water-ontology#OdorControlAgent-ActivatedCarbon"
+        "https://watermetadata.org/ontology/watr#Coagulant-PolyaluminumChloride",
+        "https://watermetadata.org/ontology/watr#OdorControlAgent-ActivatedCarbon"
       ]
     },
     {
       "text": "PACl",
       "expected": [
-        "urn:nawi-water-ontology#Coagulant-PolyaluminumChloride"
+        "https://watermetadata.org/ontology/watr#Coagulant-PolyaluminumChloride"
       ]
     },
     {
       "text": "PAM",
       "expected": [
-        "urn:nawi-water-ontology#Flocculant-Polyacrylamide"
+        "https://watermetadata.org/ontology/watr#Flocculant-Polyacrylamide"
       ]
     },
     {
       "text": "FeCl3",
       "expected": [
-        "urn:nawi-water-ontology#Coagulant-FerricChloride"
+        "https://watermetadata.org/ontology/watr#Coagulant-FerricChloride"
       ]
     },
     {
       "text": "Cl2",
       "expected": [
-        "urn:nawi-water-ontology#Disinfectant-Chlorine"
+        "https://watermetadata.org/ontology/watr#Disinfectant-Chlorine"
       ]
     },
     {
       "text": "O3",
       "expected": [
         "http://data.ashrae.org/standard223#Constituent-O3",
-        "urn:nawi-water-ontology#Disinfectant-Ozone"
+        "https://watermetadata.org/ontology/watr#Disinfectant-Ozone"
       ]
     },
     {
@@ -149,6 +149,7 @@
     {
       "text": "VOC",
       "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-VolatileOrganicCompounds",
         "http://data.ashrae.org/standard223#Constituent-VolatileOrganicCompounds"
       ]
     },
@@ -161,25 +162,25 @@
     {
       "text": "HPO",
       "expected": [
-        "urn:nawi-water-ontology#HighPurityOxygen"
+        "https://watermetadata.org/ontology/watr#HighPurityOxygen"
       ]
     },
     {
       "text": "CN",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Cyanide"
+        "https://watermetadata.org/ontology/watr#Constituent-Cyanide"
       ]
     },
     {
       "text": "GAC",
       "expected": [
-        "urn:nawi-water-ontology#OdorControlAgent-ActivatedCarbon"
+        "https://watermetadata.org/ontology/watr#OdorControlAgent-ActivatedCarbon"
       ]
     },
     {
       "text": "Na2S",
       "expected": [
-        "urn:nawi-water-ontology#HeavyMetalRemovalAgent-SodiumSulfide"
+        "https://watermetadata.org/ontology/watr#HeavyMetalRemovalAgent-SodiumSulfide"
       ]
     },
     {
@@ -191,21 +192,21 @@
     {
       "text": "TDS",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Solids",
-        "urn:nawi-water-ontology#Constituent-Salt"
+        "https://watermetadata.org/ontology/watr#Constituent-Solids",
+        "https://watermetadata.org/ontology/watr#Constituent-Salt"
       ]
     },
     {
       "text": "NH3-N",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Ammonia",
+        "https://watermetadata.org/ontology/watr#Constituent-Ammonia",
         "http://data.ashrae.org/standard223#Constituent-NH3"
       ]
     },
     {
       "text": "NO3-N",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Nitrate"
+        "https://watermetadata.org/ontology/watr#Constituent-Nitrate"
       ]
     }
   ]
