@@ -6,6 +6,7 @@ execution, history, publication, and recovery of accepted computation.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 import functools
 from hashlib import sha256
@@ -34,6 +35,7 @@ from rdflib import Graph, Literal, RDF, RDFS, URIRef
 from rdflib.namespace import XSD
 
 from acquirium import replacements
+from acquirium.replacements import app_of
 from acquirium.internals.models import compute_ref_uri, looks_like_uri
 from acquirium.Storage.values import normalize_value_kind
 from acquirium.internals.internals_namespaces import (
@@ -454,11 +456,6 @@ def _operator_id(app: str, group: str) -> str:
     return f"{app}:{_digest(group)}"
 
 
-def app_of(operator_id: str) -> str:
-    """The app an operator ID belongs to."""
-    return operator_id.split(":", 1)[0]
-
-
 def totals_per_app(operators, keys) -> dict[str, dict[str, Any]]:
     """Per app, its operator count and the sum of each of ``keys`` over
     ``(operator ID, counters)`` pairs."""
@@ -665,7 +662,7 @@ class Apps:
                     groups.setdefault(str(group), []).append(
                         Input(str(stream), role, context=context)
                     )
-                    selected.setdefault((_operator_id(name, str(group)), role, str(stream)), selection)
+                    selected.setdefault((_operator_id(name, str(group)), role, str(stream)), (selection, conversion))
                     matches[name][role] += 1
             function_template = self._group_function(declaration["function"])
             for group, inputs in sorted(groups.items()):
@@ -696,36 +693,37 @@ class Apps:
                 operators.append(operator.to_dict())
                 ports.extend((name, group, port, reference, app.outputs[port])
                              for port, reference in outputs.items())
-        if any(spec.get("replaces") is not None for app in declarations.values() for spec in app["outputs"].values()):
+        if any(map(replacements.claimed_inputs, declarations.values())):
             streams = self._replacement_metadata(operators, declarations)
         else:
             streams = {}
         def rebind(operator, item, target, metadata):
             # Units and conversion factors describe the values the input reads.
-            selection = selected[(operator["id"], item["role"], item["stream"])]
+            selection, conversion = selected[(operator["id"], item["role"], item["stream"])]
             unit = metadata.get("unit")
             context = dict(item["context"])
             if unit:
                 for column in (selection.unit, selection.point_unit):
                     if column and column in context:
                         context[column] = unit
-                if selection.target_unit:
-                    context.update(self._conversions(selection.target_unit)(unit))
+                if conversion is not None:
+                    context.update(conversion(unit))
             return dict(item, stream=target, context=context)
 
         resolved = replacements.compile(
             operators, declarations, streams=streams, previous_plan=self.state.get("plan"),
             compatible=self._compatible_units, rebind=rebind,
         )
+        bound = Counter()
+        for operator in operators:
+            # Rebound inputs return to the canonical order Operator gave them.
+            operator["inputs"].sort(key=_json)
+            bound.update((app_of(operator["id"]), item["role"]) for item in operator["inputs"])
         # An input that follows replacements counts each identity once,
         # however many of its stages the query matched.
         for (name, role), view in replacements.input_views(declarations).items():
             if view != "stored":
-                matches[name][role] = sum(
-                    item["role"] == role
-                    for operator in operators if app_of(operator["id"]) == name
-                    for item in operator["inputs"]
-                )
+                matches[name][role] = bound[(name, role)]
         metadata = {name: Graph() for name in declarations}
         for name, group, port, reference, spec in ports:
             _output_metadata(metadata[name], name, group, port, reference, spec, resolved.get(reference))
@@ -756,11 +754,12 @@ class Apps:
         # in one batch, without inspecting unrelated registrations.
         streams, sources = {}, set()
         for operator in operators:
-            specs = declarations[app_of(operator["id"])]["outputs"]
+            declaration = declarations[app_of(operator["id"])]
+            claimed = replacements.claimed_inputs(declaration)
             for port, ref in operator["outputs"].items():
-                if specs[port].get("replaces") is None:
-                    streams[ref] = specs[port]
-            roles = {spec["replaces"] for spec in specs.values() if spec.get("replaces") is not None}
+                if port not in claimed:
+                    streams[ref] = declaration["outputs"][port]
+            roles = set(claimed.values())
             sources.update(item["stream"] for item in operator["inputs"] if item["role"] in roles)
         missing = sources - streams.keys()
         if not missing:

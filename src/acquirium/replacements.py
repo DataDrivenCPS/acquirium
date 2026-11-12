@@ -1,10 +1,24 @@
 """Replacement claims live in the plan; reads and inputs follow its stream links."""
 
-import json
-
 from acquirium.Storage.values import normalize_value_kind
 
 VIEWS = ("current", "raw", "stored")
+
+
+def app_of(operator_id: str) -> str:
+    """The app an operator ID belongs to."""
+    return operator_id.split(":", 1)[0]
+
+
+def claimed_inputs(declaration):
+    """Each replacement output of an app declaration, mapped to the input it replaces."""
+    return {port: spec["replaces"] for port, spec in declaration["outputs"].items()
+            if spec.get("replaces") is not None}
+
+
+def annotation(operator, key):
+    """One entry of the plan annotation that compile writes on an operator."""
+    return operator.get("parameters", {}).get("__acquirium", {}).get(key, {})
 
 
 def input_views(declarations):
@@ -17,8 +31,7 @@ def input_views(declarations):
     """
     views = {}
     for name, declaration in declarations.items():
-        claimed = {spec["replaces"] for spec in declaration["outputs"].values()
-                   if spec.get("replaces") is not None}
+        claimed = set(claimed_inputs(declaration).values())
         for item in declaration["inputs"]:
             role, view = item["input"], item.get("view")
             if role in claimed:
@@ -35,7 +48,7 @@ def input_views(declarations):
     return views
 
 
-def compile(operators, declarations, *, streams, previous_plan=None, compatible=None, rebind=None):
+def compile(operators, declarations, *, streams, rebind, previous_plan=None, compatible=None):
     """Bind replacement claims, inherit their metadata, and bind following inputs.
 
     ``streams`` maps each claimed source that is not itself a replacement to
@@ -48,20 +61,17 @@ def compile(operators, declarations, *, streams, previous_plan=None, compatible=
     outputs = {ref for op in operators for ref in op["outputs"].values()}
     removed = {
         op["outputs"][port] for op in (previous_plan or {}).get("operators", [])
-        for port in op.get("parameters", {}).get("__acquirium", {}).get("replaces", {})
+        for port in annotation(op, "replaces")
     } - outputs
     views = input_views(declarations)
     claims, sources = {}, {}
     for operator in operators:
-        name = operator["id"].split(":", 1)[0]
+        name = app_of(operator["id"])
         specs = declarations[name]["outputs"]
         for item in operator["inputs"]:
             if item["stream"] in removed and views[(name, item["role"])] == "stored":
                 raise ValueError(f"app {name!r} still uses removed output {item['stream']!r}; rebind its input")
-        for port, spec in specs.items():
-            role = spec.get("replaces")
-            if role is None:
-                continue
+        for port, role in claimed_inputs(declarations[name]).items():
             refs = {item["stream"] for item in operator["inputs"] if item["role"] == role}
             if len(refs) != 1:
                 raise ValueError(f"app {name!r} replacement input {role!r} must select exactly one stream per group")
@@ -71,7 +81,7 @@ def compile(operators, declarations, *, streams, previous_plan=None, compatible=
             if source in claims:
                 raise ValueError(f"stream {source!r} has competing replacements: {claims[source]} and {name}.{port}")
             claims[source] = f"{name}.{port}"
-            sources[operator["outputs"][port]] = (source, spec.get("unit"), name, port)
+            sources[operator["outputs"][port]] = (source, specs[port].get("unit"), name, port)
 
     resolved = {}
 
@@ -110,12 +120,7 @@ def compile(operators, declarations, *, streams, previous_plan=None, compatible=
             units = {port: resolved[operator["outputs"][port]]["unit"] for port in claimed
                      if resolved[operator["outputs"][port]]["unit"] is not None}
             operator["parameters"]["__acquirium"] = {"replaces": claimed, **({"units": units} if units else {})}
-    if rebind is not None:
-        moved = rebind
-
-        def rebind(operator, item, target):
-            return moved(operator, item, target, resolved.get(target) or streams.get(target) or {})
-    _follow(operators, views, removed, rebind)
+    _follow(operators, views, removed, rebind, {**streams, **resolved})
     return resolved
 
 
@@ -123,23 +128,24 @@ def units(plan):
     """The unit each replacement stage in ``plan`` reports, by stream."""
     result = {}
     for operator in (plan or {}).get("operators", []):
-        for port, unit in operator.get("parameters", {}).get("__acquirium", {}).get("units", {}).items():
+        for port, unit in annotation(operator, "units").items():
             result[operator["outputs"][port]] = unit
     return result
 
 
-def _follow(operators, views, removed, rebind=None):
+def _follow(operators, views, removed, rebind, metadata):
     """Bind ``current`` and ``raw`` inputs through the candidate plan's links.
 
     A query can match several stages of one identity, such as a source
     property and the replacement attached beside it; each resolves to the
-    same stream and binds once.
+    same stream and binds once. Rebound inputs keep their position; the
+    caller restores canonical order.
     """
     plan = {"operators": operators}
     refs = {item["stream"] for operator in operators for item in operator["inputs"]}
     targets = {view: resolve(plan, refs, view=view) for view in ("current", "raw")}
     for operator in operators:
-        name = operator["id"].split(":", 1)[0]
+        name = app_of(operator["id"])
         own = set(operator["outputs"].values())
         inputs, positions = [], {}
         for item in operator["inputs"]:
@@ -156,12 +162,7 @@ def _follow(operators, views, removed, rebind=None):
                     f"app {name!r} input {item['role']!r} follows its own output {target!r}; "
                     "select it with view='raw' or view='stored'"
                 )
-            if target == item["stream"]:
-                bound = item
-            elif rebind is not None:
-                bound = rebind(operator, item, target)
-            else:
-                bound = dict(item, stream=target)
+            bound = item if target == item["stream"] else rebind(operator, item, target, metadata.get(target, {}))
             key = (item["role"], target)
             if key not in positions:
                 positions[key] = len(inputs)
@@ -169,19 +170,17 @@ def _follow(operators, views, removed, rebind=None):
             elif item["stream"] == target:
                 # Prefer the row that selected this stage, so its context describes it.
                 inputs[positions[key]] = bound
-        operator["inputs"] = sorted(
-            inputs, key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":"), allow_nan=False)
-        )
+        operator["inputs"] = inputs
 
 
 def resolve(plan, refs, *, view="current"):
     """Map physical references to the chain head, base, or exact stored stage."""
-    if view not in {"current", "raw", "stored"}:
+    if view not in VIEWS:
         raise ValueError("view must be 'current', 'raw', or 'stored'")
     links = {}
     if view != "stored":
         for operator in (plan or {}).get("operators", []):
-            for port, source in operator.get("parameters", {}).get("__acquirium", {}).get("replaces", {}).items():
+            for port, source in annotation(operator, "replaces").items():
                 target = operator["outputs"][port]
                 key, value = (source, target) if view == "current" else (target, source)
                 if key in links and links[key] != value:

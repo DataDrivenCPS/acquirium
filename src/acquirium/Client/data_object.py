@@ -7,6 +7,7 @@ import polars as pl
 import warnings
 
 from acquirium.Client.streams import Stream
+from acquirium.replacements import VIEWS, resolve, units
 
 if TYPE_CHECKING:
     from acquirium.Client.explore.core import Query
@@ -501,7 +502,7 @@ class DataObject:
     ) -> DataObject:
         qg = query.query_graph
         _validate_cast_value(cast_value)
-        if view is not None and view not in {"current", "raw", "stored"}:
+        if view is not None and view not in VIEWS:
             raise ValueError("view must be 'current', 'raw', or 'stored'")
 
         if not getattr(qg, "data_nodes", None):
@@ -549,7 +550,6 @@ class DataObject:
 
         # Keep one logical measurement per node and entity context. Prefer
         # the base point's label and units when both it and a stage matched.
-        from acquirium.replacements import resolve, units
         plan = query.client.engine_snapshot()["plan"]
         bases = resolve(plan, [b.ref_uri for b in bindings], view="raw")
         heads = resolve(plan, [b.ref_uri for b in bindings], view="current")

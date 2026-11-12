@@ -42,6 +42,8 @@ from acquirium.Drivers.supervisor import DriverSupervisor
 
 
 log = logging.getLogger("acquirium.api")
+# A read view: the replacement chain head, its base, or the selected stage.
+View = Literal["current", "raw", "stored"]
 
 
 def _engine_http_error(error: Exception) -> HTTPException:
@@ -574,7 +576,7 @@ class InsertGraphRequest(BaseModel):
 
 class TimeseriesInfoRequest(BaseModel):
     uris: list[str]
-    view: Literal["current", "raw", "stored"] = "current"
+    view: View = "current"
     epoch: int | None = Field(default=None, ge=0)
 
 
@@ -1064,7 +1066,7 @@ def get_timeseries(
     start_ns: int | None = None,
     end_ns: int | None = None,
     after: int | None = None,
-    view: Literal["current", "raw", "stored"] = "current",
+    view: View = "current",
     ):
     if order not in ("asc", "desc"):
         raise ValueError("order must be 'asc' or 'desc'")

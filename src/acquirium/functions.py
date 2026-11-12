@@ -27,6 +27,8 @@ from typing import get_type_hints
 from escapement import artifact_digest
 import polars as pl
 
+from acquirium.replacements import annotation
+
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _TIME = pl.Datetime("us", "UTC")
 _FRAME_LIBRARY = ContextVar("acquirium_frame_library", default="polars")
@@ -226,9 +228,14 @@ def _public_record(row):
         raise ValueError("Acquirium supports one reading per stream and timestamp")
     result.pop("quality", None)
     result["time"] = _datetime(result.pop("event_time_ns"))
-    if "role" in result:
-        result["input"] = result.pop("role")
-    return result
+    return _input_name(result)
+
+
+def _input_name(record):
+    # The engine calls each input's name its role.
+    if "role" in record:
+        record["input"] = record.pop("role")
+    return record
 
 
 def _public_parameters(parameters):
@@ -286,9 +293,7 @@ def _public_context(context):
 
 
 def _public_input(item):
-    result = dict(item)
-    if "role" in result:
-        result["input"] = result.pop("role")
+    result = _input_name(dict(item))
     for name in ("valid_from", "valid_to"):
         if name in result:
             ns = result[name]
@@ -327,7 +332,7 @@ def _datetime_function(function):
         token = _FRAME_LIBRARY.set(library)
         try:
             outputs = function(_as_library(_public_frame(frame), library), _public_context(context))
-            replacements = context.get("operator", {}).get("parameters", {}).get("__acquirium", {}).get("replaces", {})
+            replacements = annotation(context.get("operator", {}), "replaces")
             result = {}
             for port, output in outputs.items():
                 wire = _engine_frame(output)
