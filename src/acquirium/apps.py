@@ -80,6 +80,10 @@ class Selection:
     # latest reading at or before the window's timestamp and no older, instead
     # of the readings in the window. Such a role creates no windows.
     as_of: int | None = None
+    # Which replacement stage each selected identity binds: "current" (the
+    # chain's final stage), "raw" (its original input), or "stored" (exactly
+    # the stream selected). Unset means "current", or "stored" for outputs_of.
+    view: str | None = None
 
     @classmethod
     def outputs_of(cls, app, port, *, role, combine=False, parameters=None, as_of=None):
@@ -122,11 +126,14 @@ class Selection:
         target_unit: str | None = None,
         exclude_app: str | None = None,
         parameters: Mapping[str, Mapping[str, Any]] | None = None,
+        view: str | None = None,
     ):
         """Freeze the query DSL as SPARQL; resolve its inputs again on graph edits.
 
         ``parameters`` maps groups to values the function reads from
-        ``context["parameters"]``, as for ``outputs_of``.
+        ``context["parameters"]``, as for ``outputs_of``. ``view`` chooses the
+        replacement stage each matched measurement binds; by default it is
+        the chain's final stage, as for a normal read.
         """
         node = query.query_graph.resolve_alias(alias)
         if node is None or node not in query.query_graph.data_nodes:
@@ -144,14 +151,16 @@ class Selection:
             target_unit=target_unit,
             exclude_app=exclude_app,
             parameters=parameters,
+            view=view,
         )
 
 
 def _selection_dict(selection):
     # Omitted when unset, so declarations saved before as-of roles keep their form.
     data = asdict(selection)
-    if data["as_of"] is None:
-        del data["as_of"]
+    for key in ("as_of", "view"):
+        if data[key] is None:
+            del data[key]
     return data
 
 
@@ -238,6 +247,8 @@ class App:
                 raise ValueError("as_of must be a positive number of nanoseconds")
             if ages.setdefault(selection.role, selection.as_of) != selection.as_of:
                 raise ValueError(f"input {selection.role!r} is read as of different ages")
+            if selection.view is not None and selection.view not in replacements.VIEWS:
+                raise ValueError("selection view must be 'current', 'raw', or 'stored'")
             for values in (selection.parameters or {}).values():
                 if not isinstance(values, Mapping) or any(
                     not isinstance(key, str) or not key for key in values
@@ -585,6 +596,20 @@ class Apps:
                     if spec.quantity_kind:
                         rdf.add((point, HAS_QUANTITY_KIND, URIRef(spec.quantity_kind)))
             metadata[name] = rdf
+        if any(spec.get("replaces") is not None for app in declarations.values() for spec in app["outputs"].values()):
+            streams = self._replacement_metadata(operators, declarations)
+        else:
+            streams = {}
+        replacements.compile(operators, declarations, streams=streams, previous_plan=self.state.get("plan"))
+        # A role that follows replacements counts each identity once, however
+        # many of its stages the query matched.
+        for (name, role), view in replacements.input_views(declarations).items():
+            if view != "stored":
+                matches[name][role] = sum(
+                    item["role"] == role
+                    for operator in operators if app_of(operator["id"]) == name
+                    for item in operator["inputs"]
+                )
         report = {
             name: {
                 "matches": matches[name],
@@ -592,11 +617,6 @@ class Apps:
             }
             for name in matches
         }
-        if any(spec.get("replaces") is not None for app in declarations.values() for spec in app["outputs"].values()):
-            streams = self._replacement_metadata(operators, declarations)
-        else:
-            streams = {}
-        replacements.compile(operators, declarations, streams=streams, previous_plan=self.state.get("plan"))
         for operator in operators:
             definition = {key: operator[key] for key in ("function", "window", "outputs", "parameters")}
             if operator.get("as_of"):

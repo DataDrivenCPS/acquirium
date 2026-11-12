@@ -15,8 +15,9 @@ The cleaner declares `frame: pd.DataFrame` and receives Arrow-backed pandas
 2.x. It uses resampling and linear interpolation. The alarm declares
 `frame: pl.DataFrame` and receives Polars. The cleaner returns its calculated
 series and declares `Output(replaces="raw", ...)`; normal measurement reads
-follow it. Use `view="raw"` to read the original samples. The alarm uses
-`emit` to return one reading per call.
+follow it. Use `view="raw"` to read the original samples. The alarm selects
+each location's turbidity measurement, so it binds the clean stream as the
+authoritative stage; it uses `emit` to return one reading per call.
 
 Filter 3 is high with a fault code, a missing minute, and a spike; the alarm
 fires. Late readings for the missing minute then clear the alarm, and the

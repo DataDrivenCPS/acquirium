@@ -45,8 +45,14 @@ so the chain has one final stage.
 
 Normal measurement reads select that final stage. `view="raw"` selects the
 original samples; `view="stored"` selects a particular physical stage. App
-queries remain specific to that app. Its input selections also stay physical:
-changing the read view does not change a function's dependencies.
+queries remain specific to that app.
+
+App inputs follow the same authority. An alarm that selects a filter's
+turbidity reads the final stage, so adding a stage moves the alarm to it and
+recalculates its history. The stage being replaced is the exception: a
+replacement binds exactly the stream it selects, which keeps each stage's
+place in the chain explicit. An app that needs the original samples or one
+particular stage asks for `view="raw"` or `view="stored"`.
 
 A replacement is a complete maintained result. A filtered reading stays absent;
 an empty result does not reveal the original value underneath. Each function

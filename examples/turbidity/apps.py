@@ -42,9 +42,18 @@ def declarations(client):
         function=aq.PythonFunction.from_file(CALCULATIONS, "clean"),
         window=aq.Rolling(lookback_ns=5 * MINUTE, step_ns=MINUTE, lookahead_ns=5 * MINUTE),
     )
+    # Every location's turbidity. The clean stream is the authoritative stage,
+    # so this binds it rather than the analyser readings.
+    turbidity = (
+        client.query()
+        .measurement(alias="turbidity", quantity_kind=TURBIDITY)
+        .context(alias="location")
+    )
     alarm = aq.App(
         name="turbidity-alarm",
-        inputs=[aq.Selection.outputs_of(clean, "turbidity", role="clean", parameters=LIMITS)],
+        inputs=[aq.Selection.from_query(
+            turbidity, alias="turbidity", group="location", parameters=LIMITS
+        )],
         outputs={"alarm": aq.Output(on_group=True)},
         function=aq.PythonFunction.from_file(CALCULATIONS, "alarm"),
         window=aq.Rolling(lookback_ns=15 * MINUTE, step_ns=MINUTE),

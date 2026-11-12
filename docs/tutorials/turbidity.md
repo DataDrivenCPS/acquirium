@@ -229,6 +229,10 @@ reads the clean stream. `query.dataframe(view="raw", value_mode="coalesce")`
 reads its original samples, including faults and spikes. Queries with `app="turbidity-clean"`
 read that app's stored output explicitly.
 
+Because this output replaces `raw`, that role binds exactly the analyser
+streams the query selects; following the replacement would lead the app back
+to its own output. Other apps' selections do follow it, as the alarm's does.
+
 `Rolling` gives each call five minutes of readings on either side of
 `output_time`, at one-minute steps. The spike check needs that context, and so
 does a gap fill, which needs an average after the gap as well as before it.
@@ -286,19 +290,37 @@ means a gap the cleaner could not fill, and the alarm does not count it as high.
 ### App declaration
 
 ```python
+turbidity = (
+    client.query()
+    .measurement(alias="turbidity", quantity_kind=TURBIDITY)
+    .context(alias="location")
+)
 alarm = aq.App(
     name="turbidity-alarm",
-    inputs=[aq.Selection.outputs_of(clean, "turbidity", role="clean", parameters=LIMITS)],
+    inputs=[aq.Selection.from_query(
+        turbidity, alias="turbidity", group="location", parameters=LIMITS
+    )],
     outputs={"alarm": aq.Output(on_group=True)},
     function=aq.PythonFunction.from_file(CALCULATIONS, "alarm"),
     window=aq.Rolling(lookback_ns=15 * MINUTE, step_ns=MINUTE),
 )
 ```
 
-The input is the cleaning app's output: `outputs_of(clean, "turbidity")` refers
-to its port by name, so there is no stream ID to copy, and each location's
-clean stream stays in its own group. The window looks back fifteen minutes, the
-longest duration in `LIMITS`, and does not look ahead.
+The alarm asks for each location's turbidity, without naming the cleaning
+app. The query matches both the analyser's measurement and the clean stream
+beside it, and both are one identity: the clean stream replaces the analyser
+readings, so it is the authoritative turbidity for that location. The alarm
+binds it once per location.
+
+A selection follows replacements to the end of the chain unless it says
+otherwise. If another app later replaces `turbidity-clean`, for example to
+correct for analyser drift, the alarm moves to that stage and recalculates its
+history. `view="raw"` would bind the analyser readings instead. To name one
+particular stage, select it with `Selection.outputs_of(clean, "turbidity", ...)`,
+which binds exactly that app's output.
+
+The window looks back fifteen minutes, the longest duration in `LIMITS`, and
+does not look ahead.
 
 ## Deployment and output queries
 
@@ -307,9 +329,10 @@ client.deploy_app(clean)
 client.deploy_app(alarm)
 ```
 
-Deploy the cleaning app first, so that its output port exists when the alarm
-selects it. The script then inserts the readings and reads both outputs for
-Filter 3, asking for the location and the app that produced each one:
+The order does not matter. An alarm deployed on its own would read the analyser
+readings; deploying the cleaner then moves it to the clean stream. The script
+then inserts the readings and reads both outputs for Filter 3, asking for the
+location and the app that produced each one:
 
 ```python
 filter3 = client.query().entity(uri="urn:turbidity:filter-3", alias="filter3")

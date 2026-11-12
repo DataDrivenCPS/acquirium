@@ -8,8 +8,8 @@ names use letters, digits, underscores, dots, and hyphens. See
 
 ## Input selections
 
-`Selection.from_query(query, alias=..., group=None, parameters=None)` turns a
-query into an app input. `alias` identifies the measurement and becomes its input role. Without a
+`Selection.from_query(query, alias=..., group=None, parameters=None, view=None)`
+turns a query into an app input. `alias` identifies the measurement and becomes its input role. Without a
 `group`, each matched stream gets its own calculation. With an entity alias as
 `group`, all streams for that entity feed one calculation.
 
@@ -113,14 +113,26 @@ client.stream(clean_ref).dataframe(view="stored")  # This particular stage.
 Queries restricted by `app` or an explicit `ref` use `stored` by default.
 Normal discovery collapses replacement stages into one logical measurement per
 query node and entity context. An explicit `view` overrides the query default.
-App input selections always bind physical streams; aliases do not rewrite
-`Selection.from_query` or `Selection.outputs_of` dependencies.
+App input selections take the same `view`, as `Selection(..., view=...)` or
+`Selection.from_query(..., view=...)`. Unset, a query selection binds
+`current`: each matched identity binds the chain's final stage, once per
+group, however many of its stages the query matched. `raw` binds the original
+input, and `stored` binds exactly the stream selected. `Selection.outputs_of`
+binds `stored`, because it names one stage. A role that an output `replaces`
+always binds the stream it selects, and rejects `view="current"` or `"raw"`;
+that is how chain stages are ordered. A role that would follow the chain to its
+own app's output is rejected.
+
+Adding a stage at the end of a chain rebinds every `current` selection of that
+identity and recalculates its history, as any other input change does.
+Removing the last stage rebinds them to the stage before it.
 
 The active plan chooses the final stage. If it fails, its last successful
 values remain visible with the app's stale status. A new stage that has never
 succeeded has no values. A successful empty result is authoritative too. Raw
 and earlier stages remain explicitly readable. Removing a middle stage
-requires rebinding its consumers; removing the last stage exposes its input.
+requires rebinding the stage that replaces it, and any `stored` selection of
+it; removing the last stage exposes its input.
 Historical reads resolve the chain from the plan active at their epoch.
 
 ## Windows

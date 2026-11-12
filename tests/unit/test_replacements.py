@@ -46,6 +46,29 @@ def test_declaration_roundtrip_and_reserved_parameters():
         replace(app, inputs=[selection("urn:raw", parameters={"__acquirium": {}})]).to_dict()
 
 
+def test_selection_views_roundtrip_and_default_by_selection_kind():
+    app = declaration("clean", "urn:raw", aq.Native.mean("out"))
+    assert "view" not in app.to_dict()["inputs"][0]
+    raw = replace(app, inputs=[replace(app.inputs[0], view="raw")])
+    assert aq.App.from_dict(raw.to_dict()).inputs[0].view == "raw"
+    with pytest.raises(ValueError, match="view"):
+        replace(app, inputs=[replace(app.inputs[0], view="typo")]).to_dict()
+    reader = aq.App("reader", [selection("urn:raw", role="turbidity")], {"out": aq.Output()},
+                    aq.Native.mean("out"))
+    stage = aq.Selection.outputs_of(app, "out", role="stage")
+    both = replace(reader, inputs=[*reader.inputs, stage])
+    declarations = {"clean": app.to_dict(), "reader": both.to_dict()}
+    assert replacements.input_views(declarations) == {
+        ("clean", "raw"): "stored", ("reader", "turbidity"): "current", ("reader", "stage"): "stored",
+    }
+    claimed = replace(app, inputs=[replace(app.inputs[0], view="current")])
+    with pytest.raises(ValueError, match="binds the stream it selects"):
+        replacements.input_views({"clean": claimed.to_dict()})
+    mixed = replace(reader, inputs=[*reader.inputs, replace(reader.inputs[0], view="raw")])
+    with pytest.raises(ValueError, match="different views"):
+        replacements.input_views({"reader": mixed.to_dict()})
+
+
 def test_plan_resolution_and_corrupt_cycles():
     plan = {"operators": [
         {"outputs": {"out": "urn:clean", "diagnostic": "urn:diagnostic"},
@@ -216,6 +239,70 @@ def test_chain_views_history_pagination_and_middle_removal(system):
     assert values(client, ref) == [2., 4.]
     with pytest.raises(ValueError, match="not been published"):
         manager.core.engine.plan_at(manager.core.engine.snapshot().epoch + 1)
+
+
+def reader(*refs, view=None, group="urn:replacement:tank"):
+    """An ordinary app whose one query matches several stages of one identity."""
+    rows = " ".join(f"<{ref}>" for ref in refs)
+    query = f"SELECT ?stream ?group WHERE {{ VALUES ?stream {{ {rows} }} BIND(<{group}> AS ?group) }}"
+    return aq.App("reader", [aq.Selection(query, role="turbidity", view=view)],
+                  {"out": aq.Output()}, aq.Native.mean("out"))
+
+
+def bound(manager, name):
+    return [item["stream"] for operator in manager.apps.inspect(name)["operators"]
+            for item in operator["inputs"]]
+
+
+def test_consumers_follow_the_chain_as_stages_are_added_and_removed(system):
+    manager, _, client, module, _, _, ref = system
+    put(system, [(0, 1.), (1_000, 2.)])
+    function = aq.PythonFunction.from_file(module, "double")
+    first = declaration("first", ref, function)
+    manager.deploy_app(first)
+    clean = output_reference("first", "urn:replacement:tank", "out")
+    second = declaration("second", clean, function)
+    manager.deploy_app(second)
+    head = output_reference("second", "urn:replacement:tank", "out")
+    # The query matches all three stages; the reader binds the identity once.
+    manager.deploy_app(reader(ref, clean, head))
+    assert bound(manager, "reader") == [head]
+    assert manager.apps.inspect("reader")["matches"] == {"turbidity": 1}
+    out = output_reference("reader", "urn:replacement:tank", "out")
+    assert values(client, out) == [4., 8.]
+    # Removing the final stage moves the reader back one stage.
+    manager.remove_app("second")
+    assert bound(manager, "reader") == [clean]
+    assert values(client, out) == [2., 4.]
+    # Adding it again moves the reader forward, and its history follows.
+    manager.deploy_app(second)
+    assert bound(manager, "reader") == [head]
+    assert values(client, out) == [4., 8.]
+    # Removing the middle stage still requires rebinding the stage that claims it.
+    with pytest.raises(ValueError, match="removed output"):
+        manager.remove_app("first")
+    manager.apps._install({"second": declaration("second", ref, function).to_dict(),
+                           "reader": reader(ref, clean, head).to_dict()})
+    assert bound(manager, "reader") == [head]
+    assert values(client, out) == [2., 4.]
+    # An explicit view binds the original samples or exactly the stream selected.
+    manager.deploy_app(reader(ref, head, view="raw"))
+    assert bound(manager, "reader") == [ref]
+    manager.deploy_app(reader(ref, view="stored"))
+    assert bound(manager, "reader") == [ref]
+    assert values(client, out) == [1., 2.]
+
+
+def test_a_replacing_app_cannot_follow_its_own_output(system):
+    manager, _, _, module, _, _, ref = system
+    first = declaration("first", ref, aq.PythonFunction.from_file(module, "double"))
+    follower = replace(first, inputs=[*first.inputs, selection(ref, role="reference")])
+    with pytest.raises(ValueError, match="follows its own output"):
+        manager.deploy_app(follower)
+    looking_back = replace(first, inputs=[*first.inputs, selection(ref, role="reference")])
+    looking_back = replace(looking_back, inputs=[
+        looking_back.inputs[0], replace(looking_back.inputs[1], view="raw")])
+    manager.deploy_app(looking_back)
 
 
 def test_competing_claims_metadata_and_group_cardinality(system):
