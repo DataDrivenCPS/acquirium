@@ -6,7 +6,9 @@ a reverse-osmosis stage with a pressure exchanger, and post-treatment.
 
 from pathlib import Path
 
+from acquirium.examples.seawater_ro.generator import generate
+
 model_path: Path = Path(__file__).parent / "model.ttl"
 """The plant model, a Turtle file."""
 
-__all__ = ["model_path"]
+__all__ = ["generate", "model_path"]
