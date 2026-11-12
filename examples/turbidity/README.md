@@ -13,8 +13,10 @@ turbidity stays above a location's limit for long enough. The functions are in
 
 The cleaner declares `frame: pd.DataFrame` and receives Arrow-backed pandas
 2.x. It uses resampling and linear interpolation. The alarm declares
-`frame: pl.DataFrame` and receives Polars. Both use the same context and output
-helpers.
+`frame: pl.DataFrame` and receives Polars. The cleaner returns its calculated
+series and declares `Output(replaces="raw", ...)`; normal measurement reads
+follow it. Use `view="raw"` to read the original samples. The alarm uses
+`emit` to return one reading per call.
 
 Filter 3 is high with a fault code, a missing minute, and a spike; the alarm
 fires. Late readings for the missing minute then clear the alarm, and the

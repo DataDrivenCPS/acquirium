@@ -357,6 +357,7 @@ class BindingInfo:
     point_label: str | None = None      # rdfs:label on the property (display name)
     source_id: str | None = None        # acq:sourceId on the ext reference (the datasource)
     ref_name: str | None = None         # acq:refName on the ext reference (the driver's stream name)
+    view: str = "current"
 
 
 def _graph_data_aliases(qg: QueryGraph | None) -> list[str]:
@@ -381,34 +382,40 @@ class _StreamStats:
 
     The root ``DataObject`` owns one and hands the same instance to the
     sub-objects ``by()`` and ``convert_to()`` derive, so whichever of them
-    reads a statistic first fetches the whole family's in one batch request
-    and the rest read from that snapshot. ``exists`` is the cheaper answer
+    reads a statistic first fetches the whole family's in batches per read view,
+    at one epoch, and the rest share those results. ``exists`` is the cheaper answer
     ``is_empty()`` needs, which streams have any row, cached the same way.
     ``refresh()`` forgets both.
     """
     client: AcquiriumClient | None
-    ref_uris: list[str]
-    info: dict[str, Any] | None = None
-    exists: set[str] | None = None
+    targets: list[tuple[str, str]]  # (physical/logical reference, read view)
+    info: dict[tuple[str, str], Any] | None = None
+    exists: set[tuple[str, str]] | None = None
 
-    def get(self) -> dict[str, Any]:
+    def _groups(self):
+        for view in sorted({view for _, view in self.targets}):
+            yield view, sorted({ref for ref, mode in self.targets if mode == view})
+
+    def get(self):
         if self.info is None:
-            self.info = (
-                self.client.timeseries_info_batch(list(self.ref_uris))
-                if self.ref_uris and self.client is not None else {}
-            )
+            self.info = {}
+            if self.client is not None:
+                epoch = self.client.engine_snapshot()["epoch"]
+                for view, refs in self._groups():
+                    info = self.client.timeseries_info_batch(refs, view=view, epoch=epoch)
+                    self.info.update({(ref, view): value for ref, value in info.items()})
         return self.info
 
-    def with_rows(self) -> set[str]:
-        """The ref URIs that have any row: from the statistics when they are
-        loaded, else one existence request covering every stream."""
+    def with_rows(self):
         if self.info is not None:
-            return {uri for uri, info in self.info.items() if info.row_count > 0}
+            return {target for target, info in self.info.items() if info.row_count > 0}
         if self.exists is None:
-            self.exists = (
-                self.client.timeseries_exists_batch(list(self.ref_uris))
-                if self.ref_uris and self.client is not None else set()
-            )
+            self.exists = set()
+            if self.client is not None:
+                epoch = self.client.engine_snapshot()["epoch"]
+                for view, refs in self._groups():
+                    found = self.client.timeseries_exists_batch(refs, view=view, epoch=epoch)
+                    self.exists.update((ref, view) for ref in found)
         return self.exists
 
     def refresh(self) -> None:
@@ -420,8 +427,8 @@ class _StreamStats:
 class DataObject:
     """Lazy, alias-driven structured access to sensor data.
 
-    On construction only SPARQL metadata is fetched. The per-stream
-    statistics (row count, time range) are fetched in one batch request the
+    Construction resolves SPARQL bindings and their measurement identities.
+    Per-stream statistics (row count, time range) are fetched in batches per view the
     first time ``total_rows``, ``time_range``, or ``bindings`` needs them;
     ``is_empty()`` (before materialization) asks only which streams have a
     row, a cheaper request. Each request covers every stream of the
@@ -490,9 +497,12 @@ class DataObject:
         include_dependencies: bool = True,
         cast_value: str | None = None,
         value_mode: str = "default",
+        view: str | None = None,
     ) -> DataObject:
         qg = query.query_graph
         _validate_cast_value(cast_value)
+        if view is not None and view not in {"current", "raw", "stored"}:
+            raise ValueError("view must be 'current', 'raw', or 'stored'")
 
         if not getattr(qg, "data_nodes", None):
             return cls._empty(qg, cast_value=cast_value, client=query.client)
@@ -530,7 +540,32 @@ class DataObject:
                 point_label=point_labels.get(key),
                 source_id=stream_ids.get(key, (None, None))[0],
                 ref_name=stream_ids.get(key, (None, None))[1],
+                view=view or ("stored" if (
+                    "app" in qg.data_nodes[nid].filters
+                    or qg.data_nodes[nid].refs is not None
+                    or any("app" in expr.attributes() for expr in qg.data_nodes[nid].exprs)
+                ) else "current"),
             ))
+
+        # Keep one logical measurement per node and entity context. Prefer
+        # the base point's label and units when both it and a stage matched.
+        from acquirium.replacements import resolve
+        plan = query.client.engine_snapshot()["plan"]
+        bases = resolve(plan, [b.ref_uri for b in bindings], view="raw")
+        logical = {}
+        for binding in sorted(bindings, key=lambda b: b.ref_uri != bases[b.ref_uri]):
+            ref = binding.ref_uri if binding.view == "stored" else bases[binding.ref_uri]
+            for context in binding.entity_contexts or [{}]:
+                key = (binding.nid, ref, binding.view, tuple(sorted(context.items())))
+                logical.setdefault(key, replace(binding, ref_uri=ref, entity_contexts=[context]))
+        merged = {}
+        for binding in logical.values():
+            key = (binding.nid, binding.point_uri, binding.ref_uri, binding.view)
+            if key in merged:
+                merged[key].entity_contexts.extend(binding.entity_contexts)
+            else:
+                merged[key] = binding
+        bindings = list(merged.values())
 
         return cls(
             _bindings=bindings,
@@ -547,7 +582,7 @@ class DataObject:
             },
             _tall=None,
             _materialized=False,
-            _stats=_StreamStats(query.client, sorted({b.ref_uri for b in bindings})),
+            _stats=_StreamStats(query.client, sorted({(b.ref_uri, b.view) for b in bindings})),
         )
 
     def _stats_bindings(self) -> list[BindingInfo]:
@@ -563,7 +598,7 @@ class DataObject:
         stats = self._shared_stats().get()
         filled: list[BindingInfo] = []
         for b in self._bindings:
-            info = stats.get(b.ref_uri)
+            info = stats.get((b.ref_uri, b.view))
             filled.append(replace(
                 b,
                 row_count=info.row_count if info else 0,
@@ -575,7 +610,7 @@ class DataObject:
     def _shared_stats(self) -> _StreamStats:
         """The statistics cache, made from this object's bindings if it has none."""
         if self._stats is None:
-            self._stats = _StreamStats(self._client, sorted({b.ref_uri for b in self._bindings}))
+            self._stats = _StreamStats(self._client, sorted({(b.ref_uri, b.view) for b in self._bindings}))
         return self._stats
 
     @property
@@ -700,10 +735,11 @@ class DataObject:
         # (a pump's measurement node and its connection point's, say) has one
         # binding per node; they share the fetched frame and differ only in
         # alias, point, unit and entity columns below.
-        fetched: dict[str, pl.DataFrame] = {}
+        fetched: dict[tuple[str, str], pl.DataFrame] = {}
         for binding in bindings:
-            if binding.ref_uri not in fetched:
-                fetched[binding.ref_uri] = self._client.timeseries_df(
+            key = (binding.ref_uri, binding.view)
+            if key not in fetched:
+                fetched[key] = self._client.timeseries_df(
                     binding.ref_uri,
                     start=start,
                     end=end,
@@ -711,11 +747,12 @@ class DataObject:
                     order=order,
                     value_mode=value_mode,
                     epoch=epoch,
+                    view=binding.view,
                 )
 
         frames: list[pl.DataFrame] = []
         for binding in bindings:
-            df = fetched[binding.ref_uri]
+            df = fetched[(binding.ref_uri, binding.view)]
             if df.is_empty():
                 continue
 
@@ -1308,7 +1345,7 @@ class DataObject:
         if not self._bindings:
             return True
         with_rows = self._shared_stats().with_rows()
-        return not any(b.ref_uri in with_rows for b in self._bindings)
+        return not any((b.ref_uri, b.view) in with_rows for b in self._bindings)
 
     # ------------------------------------------------------------------
     # Stats (fetched on first use, no materialization needed)

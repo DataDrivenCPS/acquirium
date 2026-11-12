@@ -1663,8 +1663,13 @@ class Query:
         include_dependencies: bool = True,
         cast_value: str | None = None,
         value_mode: str = "default",
+        view: str | None = None,
     ) -> "DataObject":
-        """Return a lazy DataObject with alias-driven access to the matched streams."""
+        """Return a lazy DataObject for the matched measurements.
+
+        ``view`` selects "current", "raw", or "stored". By default normal
+        discovery reads the final replacement; app/ref filters read that stage.
+        """
         from acquirium.Client.data_object import DataObject
         return DataObject._from_query(
             self,
@@ -1675,6 +1680,7 @@ class Query:
             include_dependencies=include_dependencies,
             cast_value=cast_value,
             value_mode=value_mode,
+            view=view,
         )
 
     def dataframe(
@@ -1688,6 +1694,7 @@ class Query:
         include_dependencies: bool = True,
         cast_value: str | None = None,
         value_mode: str = "default",
+        view: str | None = None,
         include_ref: bool = False,
         compact: bool = True,
     ) -> pl.DataFrame:
@@ -1710,6 +1717,7 @@ class Query:
             include_dependencies=include_dependencies,
             cast_value=cast_value,
             value_mode=value_mode,
+            view=view,
         ).dataframe(shape=shape, include_ref=include_ref, compact=compact)
 
     # ---------- display helpers ----------

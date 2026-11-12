@@ -589,7 +589,10 @@ class Manager:
         if self._refs_revision != self.graph_store.graph_status()["source_version"]:
             self._sync_stream_refs_from_graph()
 
-    def resolve_storage_keys(self, uris):
+    def resolve_storage_keys(self, uris, *, view="current", epoch=None):
+        """Resolve points and stream references against one published plan."""
+        from acquirium.replacements import resolve
+
         self._current_refs()
         result = {}
         for uri in uris:
@@ -597,30 +600,42 @@ class Manager:
             if len(refs) != 1:
                 raise ValueError(f"point {uri!r} has multiple references; select an explicit ref_uri")
             result[uri] = next(iter(refs))
-        return result
+        plan = (self.core.engine.snapshot().plan if epoch is None
+                else self.core.engine.plan_at(epoch))
+        resolved = resolve(plan, result.values(), view=view)
+        return {uri: resolved[ref] for uri, ref in result.items()}
 
     def timeseries_batch(self, uri, start=None, end=None, limit=None, order="asc",
-                         batch_size=10_000, value_mode="default", epoch=None, after=None):
-        """``after`` is a request sequence, such as a receipt's, that the read
-        must include; it waits until that request is published."""
-        stream = self.resolve_storage_keys([uri])[uri]
+                         batch_size=10_000, value_mode="default", epoch=None, after=None,
+                         view="current"):
+        """Read one view at one epoch; ``after`` waits for a published request."""
         if after is not None:
             self.core.wait(Receipt(after))
+            if epoch is not None and epoch < self.core.engine.epochs_of([after])[0]:
+                raise ValueError("epoch precedes the after receipt")
+        if epoch is None:
+            epoch = self.core.engine.snapshot().epoch
+        stream = self.resolve_storage_keys([uri], view=view, epoch=epoch)[uri]
         mode = normalize_value_mode(value_mode)
         if mode == "default":
-            # A stream reads as its declared kind; derived streams are numeric.
-            mode = self._stream_refs.get(stream, {}).get("value_kind", "numeric")
+            declared = stream
+            if declared not in self._stream_refs:
+                # A removed historical stage still has its original kind.
+                declared = self.resolve_storage_keys([stream], view="raw", epoch=epoch)[stream]
+            mode = self._stream_refs.get(declared, {}).get("value_kind", "numeric")
         return self.core.batches(stream, start=start, end=end, limit=limit, order=order,
                                  batch_size=batch_size, epoch=epoch, mode=mode)
 
-    def timeseries_info_batch(self, uris):
-        keys = self.resolve_storage_keys(uris)
-        info = self.core.info(set(keys.values()))
+    def timeseries_info_batch(self, uris, *, view="current", epoch=None):
+        snapshot = self.core.engine.snapshot()
+        epoch = snapshot.epoch if epoch is None else epoch
+        keys = self.resolve_storage_keys(uris, view=view, epoch=epoch)
+        info = self.core.info(set(keys.values()), snapshot=snapshot, epoch=epoch)
         return {uri: info[key] for uri, key in keys.items()}
 
-    def timeseries_exists_batch(self, uris: list[str]) -> list[str]:
+    def timeseries_exists_batch(self, uris: list[str], *, view="current", epoch=None) -> list[str]:
         """The stream or point URIs among ``uris`` that have any row."""
-        info = self.timeseries_info_batch(uris) if uris else {}
+        info = self.timeseries_info_batch(uris, view=view, epoch=epoch)
         return sorted(uri for uri, stats in info.items() if stats["row_count"])
 
     def register_datasource(self, source_id: str) -> str:

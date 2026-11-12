@@ -47,6 +47,7 @@ def run(client):
         "unit": NTU,
         "quantity_kind": TURBIDITY,
         "value_kind": "numeric",
+        "data_source": SOURCE,
     } for location in LOCATIONS])
     for app in declarations(client):
         client.deploy_app(app)
@@ -63,7 +64,7 @@ def run(client):
 
     def show(label):
         table = (
-            raw.dataframe(value_mode="coalesce")
+            raw.dataframe(value_mode="coalesce", view="raw")
             .group_by(pl.col("time").dt.truncate("1m"))
             .agg(pl.col("raw").sort_by("time").str.join(", "))
             .join(clean.dataframe(), on="time", how="full", coalesce=True)

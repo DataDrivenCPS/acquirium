@@ -278,12 +278,15 @@ class AcquiriumClient:
         epoch: int | None = None,
         end_ns: int | None = None,
         after: int | None = None,
+        view: str = "current",
     ) -> pl.DataFrame:
         """
         Fetch the full timeseries payload and return a single Polars DataFrame.
         Best for small to medium responses. Bounds are half-open; ``end_ns``
         gives the end in UTC nanoseconds instead of ``end``. ``after`` is a
         request sequence the read waits for and includes.
+        ``view`` selects the final replacement ("current"), original input
+        ("raw"), or exact physical stream ("stored") at the read's epoch.
         """
         url = f"{self.base_url}/timeseries"
         params = {
@@ -296,6 +299,7 @@ class AcquiriumClient:
             "value_mode": value_mode,
             "epoch": epoch,
             "after": after,
+            "view": view,
         }
         headers = {"Accept": "application/vnd.apache.arrow.stream"}
 
@@ -332,6 +336,8 @@ class AcquiriumClient:
         value_mode: str = "default",
         epoch: int | None = None,
         timeout: float = 60.0,
+        after: int | None = None,
+        view: str = "current",
     ) -> Iterator[pl.DataFrame]:
         """
         Stream an Arrow IPC response and yield Polars DataFrames per RecordBatch.
@@ -348,6 +354,8 @@ class AcquiriumClient:
             "order": order,
             "value_mode": value_mode,
             "epoch": epoch,
+            "view": view,
+            "after": after,
         }
         headers = {"Accept": "application/vnd.apache.arrow.stream"}
 
@@ -364,21 +372,21 @@ class AcquiriumClient:
             # Drain to EOF so the pooled connection is reused (see timeseries_df).
             r.raw.read()
 
-    def timeseries_info_batch(self, uris: list[str]) -> dict:
+    def timeseries_info_batch(self, uris: list[str], *, view="current", epoch=None) -> dict:
         """Fetch lightweight stats (row_count, earliest, latest) for multiple URIs in one request."""
         from acquirium.internals.models import TimeseriesInfo
         url = f"{self.base_url}/timeseries_info"
-        response = self._http.post(url, json={"uris": uris})
+        response = self._http.post(url, json={"uris": uris, "view": view, "epoch": epoch})
         _raise_for_status(response)
         data = response.json()
         return {uri: TimeseriesInfo.model_validate(info) for uri, info in data.items()}
 
-    def timeseries_exists_batch(self, uris: list[str]) -> set[str]:
+    def timeseries_exists_batch(self, uris: list[str], *, view="current", epoch=None) -> set[str]:
         """The URIs among ``uris`` that have at least one row, in one request.
 
         Cheaper than ``timeseries_info_batch``, which counts every row.
         """
-        response = self._http.post(f"{self.base_url}/timeseries_exists", json={"uris": uris})
+        response = self._http.post(f"{self.base_url}/timeseries_exists", json={"uris": uris, "view": view, "epoch": epoch})
         _raise_for_status(response)
         return set(response.json()["uris"])
 
@@ -741,16 +749,16 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
-    def resolve_storage_keys(self, uris: list[str]) -> dict[str, str]:
-        """Map each point URI to its canonical ref URI used by timeseries APIs.
+    def resolve_storage_keys(self, uris: list[str], *, view="current", epoch=None) -> dict[str, str]:
+        """Resolve points and streams to the requested replacement view.
 
-        An already-canonical ref URI passes through. The database may map the
-        returned URI to an internal integer key.
+        ``current`` selects the chain head, ``raw`` the base, and ``stored``
+        the requested stage. ``epoch`` selects a historical plan.
         """
         if not uris:
             return {}
         url = f"{self.base_url}/resolve_storage_keys"
-        response = self._http.post(url, json={"uris": uris})
+        response = self._http.post(url, json={"uris": uris, "view": view, "epoch": epoch})
         _raise_for_status(response)
         return response.json()
 

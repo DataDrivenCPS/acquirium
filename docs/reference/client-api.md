@@ -125,6 +125,13 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 | `retry_engine() -> dict` | Request another attempt for failed soft sensors after repairing their code or environment. |
 | `changes(*, epoch=0, ordinal=0, limit=1000, timeout=30) -> dict` | Page committed signed changes after an exclusive cursor; use `complete_through` before exposing partial epochs. |
 
+The same `view` choices apply to reads, counts, and existence checks
+(`timeseries_exists_batch(uris, *, view="current", epoch=None)`). Query terminals
+choose `current` for normal discovery and `stored` for app or explicit reference
+filters; `view` overrides that default. Normal discovery reports one logical
+measurement per query node and entity context. See
+[replacement outputs](apps.md#replacement-outputs).
+
 ### Apps
 
 | method | description |
@@ -200,8 +207,8 @@ only.
 | `metadata_objects(*, include_dependencies=True) -> list[dict]` | The rows of `metadata()` as Python dicts: each alias maps to `{"id": <saved id, else the URI>, "label": ..., <attributes as saved>}`. A dict is a dict, a list a list in written order whatever its elements (a list of dicts, a nested list), a plain value plain even when another node holds a list under the key; dates are `date`, URIs full URIs (only the table compacts to CURIEs), a cast applies under its key. Each object holds only what was saved on that node: absent keys, and struct fields other nodes introduced, are left out (the table keeps its shared schema). |
 | `schema() -> pl.Schema` | The schema `metadata()` will return, without running the query: node columns `String`, a measurement's `alias.label`, attribute columns typed from what the graph holds for each attribute (lists as `List`, parent keys as `Struct`, mixtures as `Object`, casts as their target). The one difference from `metadata().schema`: an `alias.label` column that is null on every row is dropped there. |
 | `metadata(*, include_internals=False, include_dependencies=True) -> pl.DataFrame` | The pattern matches, one column per node plus `alias.attr` and `alias.label` columns. Node columns are CURIE strings; attribute columns are typed from the graph (`Int64`, `Float64`, `Boolean`, `Date`, `Datetime`, `String`). A column mixing integers and floats is `Float64`; any other mixture is `pl.Object`, cells as written. A user attribute written as a list is one `pl.List` cell per node in written order (a scalar under the same key becomes a one-element list); built-ins with several values keep one row per value. |
-| `data(*, start=None, end=None, limit=None, order="asc", include_dependencies=True, cast_value=None, value_mode="default") -> DataObject` | A lazy `DataObject` over the matched streams. |
-| `dataframe(shape="wide", *, start=None, end=None, limit=None, order="asc", include_dependencies=True, cast_value=None, value_mode="default", include_ref=False, compact=True) -> pl.DataFrame` | `data(...).dataframe(...)` in one call. |
+| `data(*, start=None, end=None, limit=None, order="asc", include_dependencies=True, cast_value=None, value_mode="default", view=None) -> DataObject` | A lazy `DataObject` over the matched streams. |
+| `dataframe(shape="wide", *, start=None, end=None, limit=None, order="asc", include_dependencies=True, cast_value=None, value_mode="default", view=None, include_ref=False, compact=True) -> pl.DataFrame` | `data(...).dataframe(...)` in one call. |
 | `options(attr_name, *, of=None, include_dependencies=True) -> pl.DataFrame` | Distinct values of one attribute (a name or an `acq.attr` path) across the matches, with counts. Values are typed like `metadata()` columns; a date and the same text as a string are two values, in an `Object` column. |
 | `facets(*, of=None, include_dependencies=True) -> FacetSummary` | Value counts for every attribute `include("all")` would add to the node, user attributes included and printed with their column type (`<Int64>`, `<List(String)>`, `<Object>`), keys under one parent grouped below it, a list attribute once; prints compactly, indexes like a dict, `attrs()` lists the attributes. |
 | `resolved_nodes(*, alias=None, only_data_nodes=False, include_dependencies=True) -> list[str]` | The URIs the pattern currently matches. |
@@ -418,10 +425,10 @@ and are listed once above.
 | `insert_timeseries(*, source_id, ref_name, rows, request_id=None, wait=30, timeout=60, retry_for=60) -> dict` | Keyword-only form of the `Acquirium` method; the same bounded retry identity applies. |
 | `insert_timeseries_batch(source_id, streams, *, request_id=None, wait=30, timeout=60, retry_for=60) -> dict` | One atomic bounded request for several streams. |
 | `insert_timeseries_arrow(source_id, table, *, request_id=None, wait=30, timeout=60, retry_for=60) -> dict` | As on `Acquirium`. |
-| `resolve_storage_keys(uris: list[str]) -> dict[str, str]` | Map point URIs to the canonical ref URIs used by timeseries APIs; canonical ref URIs pass through. |
-| `timeseries_df(uri, start=None, end=None, limit=None, order="asc", timeout=60.0, *, value_mode="default", epoch=None) -> pl.DataFrame` | All rows of one stream by `ref_uri`; empty results preserve their schema. Pass one captured epoch for related reads. |
-| `timeseries_batches(uri, start=None, end=None, limit=None, order="asc", *, value_mode="default", epoch=None, timeout=60.0) -> Iterator[pl.DataFrame]` | The same, one frame per Arrow record batch. |
-| `timeseries_info_batch(uris: list[str]) -> dict` | `row_count`, `earliest`, `latest` for several streams in one request. |
+| `resolve_storage_keys(uris, *, view="current", epoch=None) -> dict[str, str]` | Resolve points or references to the chain head, base (`raw`), or exact stage (`stored`) at one epoch. |
+| `timeseries_df(uri, start=None, end=None, limit=None, order="asc", timeout=60.0, *, value_mode="default", epoch=None, end_ns=None, after=None, view="current") -> pl.DataFrame` | All rows of one stream by `ref_uri`; empty results preserve their schema. Pass one captured epoch for related reads. |
+| `timeseries_batches(uri, start=None, end=None, limit=None, order="asc", *, value_mode="default", epoch=None, timeout=60.0, after=None, view="current") -> Iterator[pl.DataFrame]` | The same, one frame per Arrow record batch. |
+| `timeseries_info_batch(uris, *, view="current", epoch=None) -> dict` | `row_count`, `earliest`, `latest` for several streams in one request. |
 
 ### Apps
 

@@ -574,6 +574,8 @@ class InsertGraphRequest(BaseModel):
 
 class TimeseriesInfoRequest(BaseModel):
     uris: list[str]
+    view: Literal["current", "raw", "stored"] = "current"
+    epoch: int | None = Field(default=None, ge=0)
 
 
 class RecordFieldSpec(BaseModel):
@@ -965,8 +967,8 @@ def register_datasource(req: RegisterDatasourceRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(e))
 
 
-class ResolveStorageKeysRequest(BaseModel):
-    uris: list[str]
+class ResolveStorageKeysRequest(TimeseriesInfoRequest):
+    pass
 
 
 @app.post("/resolve_storage_keys")
@@ -975,7 +977,7 @@ def resolve_storage_keys(req: ResolveStorageKeysRequest) -> dict[str, str]:
     to its canonical ref_uri. Callers do this before reading or subscribing;
     the database's internal integer ref_id is never exposed."""
     try:
-        return app.state.manager.resolve_storage_keys(req.uris)
+        return app.state.manager.resolve_storage_keys(req.uris, view=req.view, epoch=req.epoch)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1062,6 +1064,7 @@ def get_timeseries(
     start_ns: int | None = None,
     end_ns: int | None = None,
     after: int | None = None,
+    view: Literal["current", "raw", "stored"] = "current",
     ):
     if order not in ("asc", "desc"):
         raise ValueError("order must be 'asc' or 'desc'")
@@ -1072,6 +1075,7 @@ def get_timeseries(
         end=end_ns if end_ns is not None else end,
         epoch=epoch,
         after=after,
+        view=view,
         limit=limit,
         order=order,        # type: ignore[arg-type]
         batch_size=request.app.state.read_batch_size,
@@ -1108,13 +1112,13 @@ def get_timeseries(
 @app.post("/timeseries_info")
 @_engine_errors
 def timeseries_info(req: TimeseriesInfoRequest) -> dict[str, Any]:
-    return app.state.manager.timeseries_info_batch(req.uris)
+    return app.state.manager.timeseries_info_batch(req.uris, view=req.view, epoch=req.epoch)
 
 
 @app.post("/timeseries_exists")
 def timeseries_exists(req: TimeseriesInfoRequest) -> dict[str, Any]:
     try:
-        return {"uris": app.state.manager.timeseries_exists_batch(req.uris)}
+        return {"uris": app.state.manager.timeseries_exists_batch(req.uris, view=req.view, epoch=req.epoch)}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

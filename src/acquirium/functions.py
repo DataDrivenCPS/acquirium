@@ -227,6 +227,13 @@ def _public_record(row):
     return result
 
 
+def _public_parameters(parameters):
+    result = {key: value for key, value in parameters.items() if key != "__acquirium"}
+    if "group" in result:
+        result["group"] = tuple(result["group"])
+    return result
+
+
 def _public_context(context):
     result = dict(context)
     for old, new in (("window_ns", "output_time"),
@@ -248,9 +255,7 @@ def _public_context(context):
         }
         result["previous"] = previous
     if "parameters" in result:
-        result["parameters"] = dict(result["parameters"])
-        if "group" in result["parameters"]:
-            result["parameters"]["group"] = tuple(result["parameters"]["group"])
+        result["parameters"] = _public_parameters(result["parameters"])
     if "operator" in result:
         operator = dict(result["operator"])
         window = dict(operator["window"])
@@ -264,10 +269,7 @@ def _public_context(context):
         operator["window"] = window
         operator["inputs"] = [_public_input(item) for item in operator["inputs"]]
         if "parameters" in operator:
-            parameters = dict(operator["parameters"])
-            if "group" in parameters:
-                parameters["group"] = tuple(parameters["group"])
-            operator["parameters"] = parameters
+            operator["parameters"] = _public_parameters(operator["parameters"])
         if "as_of" in operator:
             if any(spec["max_age_ns"] % 1000 for spec in operator["as_of"].values()):
                 raise ValueError("soft sensor as-of ages must have microsecond precision")
@@ -319,7 +321,17 @@ def _datetime_function(function):
         token = _FRAME_LIBRARY.set(library)
         try:
             outputs = function(_as_library(_public_frame(frame), library), _public_context(context))
-            return {port: _engine_frame(output) for port, output in outputs.items()}
+            replacements = context.get("operator", {}).get("parameters", {}).get("__acquirium", {}).get("replaces", {})
+            result = {}
+            for port, output in outputs.items():
+                wire = _engine_frame(output)
+                if port in replacements:
+                    # The callback returns its calculated series. Each invocation
+                    # owns only the timestamps scheduled by its declared window.
+                    times = [window["window_ns"] for window in context.get("windows", [context])]
+                    wire = wire.filter(pl.col("event_time_ns").is_in(times))
+                result[port] = wire
+            return result
         finally:
             _FRAME_LIBRARY.reset(token)
 

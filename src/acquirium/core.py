@@ -251,9 +251,12 @@ class Core:
         if lo is not None and hi is not None and lo > hi:
             raise ValueError("start must not exceed end")
         # Capture before returning the iterator: all pages belong to one epoch.
-        snapshot = self.engine.snapshot() if epoch is None else None
-        if epoch is not None and not 0 <= epoch <= self.engine.status()["epoch"]:
-            raise ValueError("epoch is not published")
+        snapshot = self.engine.snapshot()
+        if epoch is not None:
+            if not 0 <= epoch <= snapshot.epoch:
+                raise ValueError("epoch is not published")
+            if epoch != snapshot.epoch:
+                snapshot = None
 
         def pages():
             nonlocal lo, hi
@@ -294,9 +297,9 @@ class Core:
 
         return pages()
 
-    def info(self, streams):
-        """Reading count and earliest and latest times per stream, from one
-        snapshot, without reading the rows."""
+    def info(self, streams, *, snapshot=None, epoch=None):
+        """Count and time bounds at one epoch. Current statistics use the
+        captured snapshot's index; historical statistics page through history."""
 
         def iso(value):
             if value is None:
@@ -308,10 +311,21 @@ class Core:
                 .item()
             )
 
-        snapshot = self.engine.snapshot()
+        snapshot = self.engine.snapshot() if snapshot is None else snapshot
         result = {}
         for stream in streams:
-            stats = snapshot.stats(stream) or {"count": 0, "first_ns": None, "last_ns": None}
+            if epoch is None or epoch == snapshot.epoch:
+                stats = snapshot.stats(stream) or {"count": 0, "first_ns": None, "last_ns": None}
+            else:
+                # Historical statistics share the existing paginated reader.
+                stats = {"count": 0, "first_ns": None, "last_ns": None}
+                for batch in self.batches(stream, epoch=epoch, mode="coalesce"):
+                    if batch.num_rows:
+                        times = batch["ts"].cast(pa.int64())
+                        if stats["first_ns"] is None:
+                            stats["first_ns"] = times[0].as_py()
+                        stats["last_ns"] = times[-1].as_py()
+                        stats["count"] += batch.num_rows
             result[stream] = dict(
                 row_count=stats["count"],
                 earliest=iso(stats["first_ns"]),

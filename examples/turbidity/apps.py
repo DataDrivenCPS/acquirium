@@ -30,16 +30,15 @@ LIMITS = {
 def declarations(client):
     raw = (
         client.query()
-        .measurement(alias="raw", quantity_kind=TURBIDITY)
+        .measurement(alias="raw", quantity_kind=TURBIDITY, data_source=SOURCE)
         .context(alias="location")
     )
     clean = aq.App(
         name="turbidity-clean",
         inputs=[aq.Selection.from_query(
-            raw, alias="raw", group="location", exclude_app="turbidity-clean",
-            parameters=SPIKES,
+            raw, alias="raw", group="location", parameters=SPIKES
         )],
-        outputs={"turbidity": aq.Output(unit=NTU, quantity_kind=TURBIDITY, on_group=True)},
+        outputs={"turbidity": aq.Output(replaces="raw", unit=NTU, quantity_kind=TURBIDITY, on_group=True)},
         function=aq.PythonFunction.from_file(CALCULATIONS, "clean"),
         window=aq.Rolling(lookback_ns=5 * MINUTE, step_ns=MINUTE, lookahead_ns=5 * MINUTE),
     )

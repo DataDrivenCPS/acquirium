@@ -119,14 +119,14 @@ calculations = Path("pipeline_functions.py")
 valid = aq.App(
     name="pipeline-valid",
     inputs=[aq.Selection.from_query(raw, alias="raw")],
-    outputs={"valid": aq.Output()},
+    outputs={"valid": aq.Output(replaces="raw")},
     function=aq.PythonFunction.from_file(calculations, "reject_invalid"),
     window=aq.Pointwise(),
 )
 filled = aq.App(
     name="pipeline-filled",
     inputs=[aq.Selection.outputs_of(valid, "valid", role="valid")],
-    outputs={"filled": aq.Output()},
+    outputs={"filled": aq.Output(replaces="valid")},
     function=aq.PythonFunction.from_file(calculations, "interpolate"),
     # Calculate every minute using observations from both sides of that minute.
     window=aq.Rolling(
@@ -160,7 +160,7 @@ filled_data = client.query().measurement(alias="filled", app=filled.name)
 high_data = client.query().measurement(alias="high", app=high.name)
 
 # Join explicitly selected streams for one view of the example's pipeline.
-table = raw.dataframe()
+table = raw.dataframe(view="raw")
 for query in (valid_data, filled_data, high_data):
     table = table.join(query.dataframe(), on="time", how="left")
 print(table.sort("time"))
@@ -176,11 +176,11 @@ join: that stream has no row at that timestamp.
 | 00:02 | 0.8 | 0.8 | 0.8 | 0.8 |
 | 00:03 | 0.4 | 0.4 | 0.4 | — |
 
-An application that wants the cleaned sensor should use `filled_data`.
-Querying the original point still selects the raw stream. Designating a derived
-stream as the authoritative result for that point, and automatically traversing
-all its descendants, are future query features; this example selects its
-stages explicitly.
+The `replaces` declarations form one chain from the original measurement to
+`filled`. `raw.dataframe()` now reads the filled stream. Use `view="raw"` for
+the original samples, as the comparison table does. Each query with an `app`
+filter reads that particular stage, so the intermediate `valid` result stays
+accessible. The alarm is an ordinary output and does not extend the chain.
 
 ## Corrections and downstream recalculation
 

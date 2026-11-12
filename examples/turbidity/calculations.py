@@ -10,8 +10,6 @@ from acquirium.functions import emit
 
 def clean(frame: pd.DataFrame, context):
     """One clean turbidity value per minute, from the raw readings around it."""
-    t = context["output_time"]
-
     # Fault codes arrive as text, with no numeric value.
     readings = frame.dropna(subset=["value"])
     # A spike, such as a bubble past the sensor, sits far from the median.
@@ -19,14 +17,14 @@ def clean(frame: pd.DataFrame, context):
     median = readings["value"].median()
     readings = readings[(readings["value"] - median).abs() <= threshold]
     if readings.empty:
-        return {"turbidity": emit(context, None)}
+        return {"turbidity": readings[["time", "value"]]}
 
     # Average the remaining readings within each minute.
     minutes = readings.resample("1min", on="time")["value"].mean()
     # Fill gaps between valid minutes; keep the edges unfilled.
     filled = minutes.interpolate(limit_area="inside")
-    # get() returns None for a minute outside the available range.
-    return {"turbidity": emit(context, filled.get(t))}
+    # Return the calculated series. The app maintains its one-minute grid.
+    return {"turbidity": filled.dropna().rename("value").rename_axis("time").reset_index()}
 
 
 def alarm(frame: pl.DataFrame, context):

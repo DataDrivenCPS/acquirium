@@ -33,6 +33,7 @@ from escapement import (
 from rdflib import Graph, Literal, RDF, RDFS, URIRef
 from rdflib.namespace import XSD
 
+from acquirium import replacements
 from acquirium.internals.models import compute_ref_uri, looks_like_uri
 from acquirium.Storage.values import normalize_value_kind
 from acquirium.internals.internals_namespaces import (
@@ -194,6 +195,8 @@ class Output:
     on_group: bool = False
     # "text" for a port whose function emits text; reads default to it.
     value_kind: str = "numeric"
+    # Input role whose measurement identity this complete output continues.
+    replaces: str | None = None
 
 
 @dataclass(frozen=True)
@@ -221,6 +224,10 @@ class App:
         if any(type(spec.on_group) is not bool for spec in self.outputs.values()):
             raise ValueError("output on_group must be a boolean")
         for spec in self.outputs.values():
+            if spec.replaces is not None and (not isinstance(spec.replaces, str) or not spec.replaces):
+                raise ValueError("output replaces must name an input role")
+            if spec.replaces is not None and spec.replaces not in {s.role for s in self.inputs}:
+                raise ValueError(f"unknown replacement input role {spec.replaces!r}")
             if spec.value_kind != normalize_value_kind(spec.value_kind):
                 raise ValueError("output value_kind must be 'numeric' or 'text'")
         ages = {}
@@ -236,6 +243,8 @@ class App:
                     not isinstance(key, str) or not key for key in values
                 ):
                     raise ValueError("parameters map groups to named values")
+                if "__acquirium" in values:
+                    raise ValueError("parameter __acquirium is reserved")
                 try:
                     _json(dict(values))
                 except (TypeError, ValueError) as error:
@@ -248,7 +257,8 @@ class App:
         return dict(
             name=self.name,
             inputs=[_selection_dict(item) for item in self.inputs],
-            outputs={key: asdict(value) for key, value in self.outputs.items()},
+            outputs={key: {k: v for k, v in asdict(value).items() if k != "replaces" or v is not None}
+                     for key, value in self.outputs.items()},
             function=function,
             window=self.window.to_dict(),
         )
@@ -532,17 +542,9 @@ class Apps:
                 function = _bind_parameters(
                     function_template, group_parameters, name, group
                 )
-                definition = dict(
-                    function=function,
-                    window=declaration["window"],
-                    outputs=outputs,
-                    parameters=group_parameters,
-                )
-                if as_of:
-                    definition["as_of"] = as_of
                 operator = Operator(
                     id=_operator_id(name, group),
-                    version=_digest(definition),
+                    version="pending",
                     inputs=sorted(inputs, key=lambda item: _json(item.to_dict())),
                     outputs=outputs,
                     window=app.window,
@@ -590,7 +592,54 @@ class Apps:
             }
             for name in matches
         }
+        if any(spec.get("replaces") is not None for app in declarations.values() for spec in app["outputs"].values()):
+            streams = self._replacement_metadata(operators, declarations)
+        else:
+            streams = {}
+        replacements.compile(operators, declarations, streams=streams, previous_plan=self.state.get("plan"))
+        for operator in operators:
+            definition = {key: operator[key] for key in ("function", "window", "outputs", "parameters")}
+            if operator.get("as_of"):
+                definition["as_of"] = {role: spec["max_age_ns"] for role, spec in operator["as_of"].items()}
+            operator["version"] = _digest(definition)
         return operators, metadata, report
+
+    def _replacement_metadata(self, operators, declarations):
+        # Candidate outputs need no graph lookup. Read missing source metadata
+        # in one batch, without inspecting unrelated registrations.
+        streams, sources = {}, set()
+        for operator in operators:
+            specs = declarations[app_of(operator["id"])]["outputs"]
+            for port, ref in operator["outputs"].items():
+                streams[ref] = specs[port]
+            roles = {spec["replaces"] for spec in specs.values() if spec.get("replaces") is not None}
+            sources.update(item["stream"] for item in operator["inputs"] if item["role"] in roles)
+        missing = sources - streams.keys()
+        if not missing:
+            return streams
+        refs = " ".join(URIRef(ref).n3() for ref in sorted(missing))
+        result = self.graph.sparql_query(f"""
+            SELECT ?stream ?value_kind ?unit ?quantity_kind WHERE {{
+                VALUES ?stream {{ {refs} }}
+                ?stream <{ACQUIRIUM_SOURCE_ID}> ?source .
+                OPTIONAL {{ ?stream <{ACQUIRIUM_VALUE_KIND}> ?value_kind . }}
+                OPTIONAL {{ ?point <{HAS_EXTERNAL_REFERENCE}> ?stream .
+                    OPTIONAL {{ ?point <{HAS_UNIT}> ?point_unit . }}
+                    OPTIONAL {{ ?point <{HAS_QUANTITY_KIND}> ?quantity_kind . }}
+                }}
+                OPTIONAL {{ ?stream <{HAS_UNIT}> ?ref_unit . }}
+                BIND(COALESCE(?ref_unit, ?point_unit) AS ?unit)
+            }}
+        """, wait_for_fresh=True)
+        for row in result.get("rows", []):
+            values = dict(zip(result["columns"], row))
+            ref = str(values.pop("stream"))
+            spec = {key: str(value) if value is not None else None for key, value in values.items()}
+            spec["value_kind"] = normalize_value_kind(spec.get("value_kind"))
+            if ref in streams and streams[ref] != spec:
+                raise ValueError(f"replacement input {ref!r} has conflicting metadata")
+            streams[ref] = spec
+        return streams
 
     def _conversions(self, target_unit):
         """The conversion context an input in each unit carries to

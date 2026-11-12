@@ -133,8 +133,6 @@ from acquirium.functions import emit
 
 def clean(frame: pd.DataFrame, context):
     """One clean turbidity value per minute, from the raw readings around it."""
-    t = context["output_time"]
-
     # Fault codes arrive as text, with no numeric value.
     readings = frame.dropna(subset=["value"])
     # A spike, such as a bubble past the sensor, sits far from the median.
@@ -142,14 +140,14 @@ def clean(frame: pd.DataFrame, context):
     median = readings["value"].median()
     readings = readings[(readings["value"] - median).abs() <= threshold]
     if readings.empty:
-        return {"turbidity": emit(context, None)}
+        return {"turbidity": readings[["time", "value"]]}
 
     # Average the remaining readings within each minute.
     minutes = readings.resample("1min", on="time")["value"].mean()
     # Fill gaps between valid minutes; keep the edges unfilled.
     filled = minutes.interpolate(limit_area="inside")
-    # get() returns None for a minute outside the available range.
-    return {"turbidity": emit(context, filled.get(t))}
+    # Return the calculated series. The app maintains its one-minute grid.
+    return {"turbidity": filled.dropna().rename("value").rename_axis("time").reset_index()}
 ```
 
 1. **Faults.** Rows without a numeric value are dropped. At 00:05 that
@@ -166,8 +164,9 @@ def clean(frame: pd.DataFrame, context):
    `limit_area="inside"` requires a valid value on both sides of a gap.
    At 00:10 both neighbours are 0.80 NTU, so the filled value is 0.80.
 
-`filled.get(t)` returns the value for the output minute, or `None` outside
-the range of valid minutes. `emit(context, None)` then returns no reading.
+The function returns the calculated series as `time` and `value` columns.
+Acquirium keeps the row for this call's output minute. No row at that minute
+removes its previous result. Other minutes are maintained by their own calls.
 A missing minute needs valid neighbours on both sides within the window;
 existing minute averages remain unchanged.
 
@@ -181,6 +180,7 @@ NTU = "http://qudt.org/vocab/unit/NTU"
 TURBIDITY = "http://qudt.org/vocab/quantitykind/Turbidity"
 MINUTE = 60 * 1_000_000_000
 CALCULATIONS = Path("examples/turbidity/calculations.py")
+SOURCE = "turbidity-analysers"
 
 # How far a reading may sit from the median around it before it counts as a spike.
 SPIKES = {
@@ -192,24 +192,24 @@ SPIKES = {
 
 raw = (
     client.query()
-    .measurement(alias="raw", quantity_kind=TURBIDITY)
+    .measurement(alias="raw", quantity_kind=TURBIDITY, data_source=SOURCE)
     .context(alias="location")
 )
 clean = aq.App(
     name="turbidity-clean",
     inputs=[aq.Selection.from_query(
-        raw, alias="raw", group="location", exclude_app="turbidity-clean",
-        parameters=SPIKES,
+        raw, alias="raw", group="location", parameters=SPIKES
     )],
-    outputs={"turbidity": aq.Output(unit=NTU, quantity_kind=TURBIDITY, on_group=True)},
+    outputs={"turbidity": aq.Output(replaces="raw", unit=NTU, quantity_kind=TURBIDITY, on_group=True)},
     function=aq.PythonFunction.from_file(CALCULATIONS, "clean"),
     window=aq.Rolling(lookback_ns=5 * MINUTE, step_ns=MINUTE, lookahead_ns=5 * MINUTE),
 )
 ```
 
-The query finds every turbidity measurement and the location it belongs to.
-`group="location"` makes one group per location, so the app runs separately
-for each one and needs no list of streams.
+The registrations tag the analyser measurements with
+`data_source="turbidity-analysers"`. The query finds those measurements and the
+location each belongs to. `group="location"` makes one calculation per
+location.
 
 `parameters` gives each location its settings, keyed by the location's URI.
 The combined effluent normally reads well under 0.3 NTU, so a smaller jump
@@ -219,10 +219,15 @@ recalculates only that location's history. Only the listed locations are
 cleaned: a fifth analyser needs an entry here too, and deployment warns about
 locations the query finds but `SPIKES` leaves out.
 
-The output is declared with `on_group=True`, which attaches the clean stream to
-its location as another turbidity measurement. That makes it easy to find, but
-it would also match the app's own query. `exclude_app` leaves the app's outputs
-out of its inputs.
+`on_group=True` attaches the clean stream to its location as another turbidity
+measurement. It has no analyser source tag, so the cleaning app stays bound
+to the original readings even when more replacement stages are added.
+
+`replaces="raw"` declares this output as the complete cleaned version of the
+input selected under `raw`. A normal query for the original measurement now
+reads the clean stream. `query.dataframe(view="raw", value_mode="coalesce")`
+reads its original samples, including faults and spikes. Queries with `app="turbidity-clean"`
+read that app's stored output explicitly.
 
 `Rolling` gives each call five minutes of readings on either side of
 `output_time`, at one-minute steps. The spike check needs that context, and so

@@ -36,6 +36,30 @@ This is also why apps cannot choose arbitrary output timestamps or run on a
 clock. If an app could emit whenever it liked, there would be no way to know
 which of its results a given reading had influenced.
 
+## Replacement chains
+
+A cleaning app can declare `Output(replaces="raw", ...)`. Its output continues
+the identity of one physical input under the role `raw`. A second replacement
+can continue that identity further. Each input has at most one replacement,
+so the chain has one final stage.
+
+Normal measurement reads select that final stage. `view="raw"` selects the
+original samples; `view="stored"` selects a particular physical stage. App
+queries remain specific to that app. Its input selections also stay physical:
+changing the read view does not change a function's dependencies.
+
+A replacement is a complete maintained result. A filtered reading stays absent;
+an empty result does not reveal the original value underneath. Each function
+call returns its calculated series, and Acquirium keeps the result at that
+call's scheduled timestamp. The existing window rules still determine which
+results a late reading repairs.
+
+The active plan records the chain. A historical read uses that epoch's chain
+as well as its values. If the final stage fails, its last successful values
+remain stale. A new stage that has never succeeded has no values; it does not
+silently fall back to an earlier stage. See
+[replacement outputs](../reference/apps.md#replacement-outputs).
+
 ## Group identity and membership
 
 The input selection decides which streams feed a calculation. Grouped by tank,

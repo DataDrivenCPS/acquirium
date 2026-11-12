@@ -22,7 +22,8 @@ The server exposes semantic graph operations and one Escapement timeseries engin
 | `POST /insert_timeseries_arrow` | Arrow `source_id, ref_name, ts, value`; required `X-Acquirium-Request-Id` |
 | `POST /delete_timeseries` | `{source_id, ref_name, timestamps: [UTC-ns], request_id}` |
 | `GET /timeseries` | Arrow `ts: timestamp[ns, UTC], value: float64, uri: utf8`; `after=<sequence>` waits until that receipt is published |
-| `POST /timeseries_info` | `{uris: [...]}` to counts and UTC bounds |
+| `POST /timeseries_info` | `{uris: [...], view: "current", epoch: null}` to counts and UTC bounds |
+| `POST /timeseries_exists` | Same read selectors; returns `{uris: [...]}` with rows present |
 | `GET /engine/status` | Accepted/applied frontiers, backlog, per-operator failures, processor error, timings, worker queue/RSS, server PID and peak RSS |
 | `GET /engine/snapshot` | Published epoch, applied sequence, complete active plan, per-operator failures |
 | `GET /engine/changes` | Bounded signed change-feed pages with exclusive epoch/ordinal cursor and complete-epoch frontier |
@@ -34,6 +35,15 @@ The server exposes semantic graph operations and one Escapement timeseries engin
 | `GET /embedding_status` | Exact/semantic index state |
 | `GET /drivers/list`, `POST /drivers/start`, `/drivers/stop` | Driver lifecycle |
 | `/experiments/...` | Studies (`templates`), variables, runs, recordings, artifacts, and stream annotations; see the [experiment reference](experiments.md#http-api). Unknown runs return 404 |
+
+Timeseries reads accept `view="current"` (the last replacement), `"raw"`
+(the chain's original input), or `"stored"` (the requested physical stream).
+`GET /timeseries` uses query parameters; `/resolve_storage_keys`,
+`/timeseries_info`, and `/timeseries_exists` accept `view` and optional `epoch`
+in their JSON bodies. Resolution and rows use the same published epoch,
+including across pagination. Without an epoch, the read captures the current
+one after waiting for `after`, if supplied. An explicit epoch must include
+that receipt. See [replacement outputs](apps.md#replacement-outputs).
 
 JSON values contain timestamp/value pairs. Integer timestamps are UTC nanoseconds;
 timezone-aware datetime strings are also accepted. Values are numbers or text,

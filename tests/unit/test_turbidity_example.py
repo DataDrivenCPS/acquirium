@@ -23,7 +23,7 @@ def raw(rows):
 def cleaned(frame, minute):
     context = {"output_time": START + minute * MINUTE, "parameters": {"threshold": 1.0}}
     result = clean(frame, context)["turbidity"]
-    return result["value"].to_list()
+    return result.loc[result["time"] == START + minute * MINUTE, "value"].to_list()
 
 
 def test_clean_drops_faults_and_spikes_and_averages_each_minute():
