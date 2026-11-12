@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from rdflib import URIRef
 
 import pytest
@@ -19,9 +21,20 @@ class _StubGraphStore:
         return {"rows": self._rows}
 
 
+class _StubEngine:
+    """An engine with no published plan, so references have no replacements."""
+
+    def snapshot(self):
+        return SimpleNamespace(plan=None)
+
+    def plan_at(self, epoch):
+        return None
+
+
 def _bare_manager(rows):
     manager = Manager.__new__(Manager)
     manager.graph_store = _StubGraphStore(rows)
+    manager.core = SimpleNamespace(engine=_StubEngine())
     return manager
 
 
