@@ -262,6 +262,14 @@ def test_variable_metadata_edits_keep_the_user_namespace(ac):
     assert reopened.unit == "PSI"
 
 
+def test_a_study_variable_unit_and_medium_are_fixed(ac):
+    study = ac.study.define("fixed unit")
+    flow = study.output("flow").timeseries(unit="L-PER-SEC")
+    for change in ({"unit": "GAL-PER-MIN"}, {"medium": "Water"}):
+        with pytest.raises(ValueError, match="declare a new variable"):
+            ac.insert_metadata(flow.uri, change)
+    assert ac.study.get("fixed unit").output["flow"].unit == "L-PER-SEC"
+
 def test_invalid_metadata_fails_before_anything_is_saved(ac):
     study = ac.study.define("validation")
     with pytest.raises(HTTPError, match="[Cc]ould not resolve"):

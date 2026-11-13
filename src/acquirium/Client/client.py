@@ -970,8 +970,36 @@ class AcquiriumClient:
         missing = sorted(set(subjects) - set(roles))
         if missing:
             raise ValueError(f"unknown node(s), not in any data graph: {missing}")
+        self._check_study_variable_terms(subjects)
         writes = self._plan_metadata(subjects, roles)
         return {**self._write_metadata(writes), "nodes": len(writes)}
+
+    def _check_study_variable_terms(self, records: Mapping[str, Mapping[str, Any]]) -> None:
+        """Raise if a write sets a ``POINT_FIELD_KINDS`` field on a Study
+        variable. Run streams copy these fields at creation, so they are fixed.
+
+        The nodes setting one are looked up with::
+
+            SELECT ?s WHERE {
+              VALUES ?s { <node-1> <node-2> }
+              ?s a <urn:acquirium:experiment:Variable>
+            }
+        """
+        from acquirium.ExperimentMetadata import EXPERIMENT
+        nodes = [uri for uri, values in records.items()
+                 if any(term in values for term in POINT_FIELD_KINDS)]
+        if not nodes:
+            return
+        listed = " ".join(f"<{uri}>" for uri in nodes)
+        sparql = f"""SELECT ?s WHERE {{
+  VALUES ?s {{ {listed} }}
+  ?s a <{EXPERIMENT.Variable}>
+}}"""
+        rows = self.sparql_query(sparql, include_dependencies=False)["rows"]
+        if rows:
+            variables = sorted(str(row[0]) for row in rows)
+            raise ValueError(f"cannot change the unit, quantity kind, medium or substance of Study "
+                             f"variable(s) {variables}; declare a new variable instead")
 
     def _plan_metadata(self, records: Mapping[str, Mapping[str, Any]],
                        roles: Mapping[str, str]) -> list:

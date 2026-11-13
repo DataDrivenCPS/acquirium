@@ -132,6 +132,10 @@ change in any release.
 - Currency codes such as `USD` resolve as units (`unit:CCY_USD`).
 
 ### Fixed
+- `insert_metadata()` refuses to change a Study variable's unit, quantity kind,
+  medium or substance, and says to declare a new variable. A medium change was
+  accepted but never reached the variable's run streams; the others failed with
+  "does not apply to a entity node".
 - App outputs keep their timestamps on TimescaleDB when the PostgreSQL
   session's time zone isn't UTC. They were shifted by the session's offset.
 - Inserting a TriX graph stores its triples. They were parsed into a plain
