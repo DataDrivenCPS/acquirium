@@ -53,7 +53,7 @@ from acquirium import Acquirium
 acq = Acquirium(server_url="127.0.0.1", server_port=8000)
 
 acq.insert_graph_file(
-    "deployments/WATERTAP/models/seawater-ro/model.ttl",
+    "src/acquirium/examples/seawater_ro/model.ttl",
     source_id="plant",
 )
 ```
