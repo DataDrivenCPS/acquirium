@@ -2,9 +2,6 @@
 title: Run the server
 ---
 
-<!-- TODO: intro -->
-
-
 This is a guide to running and configuring the acquirium server: the config
 file, storage backends, ontologies, and the HTTP API.
 

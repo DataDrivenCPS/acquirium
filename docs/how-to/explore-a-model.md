@@ -2,7 +2,7 @@
 title: Explore a model
 ---
 
-<!-- TODO: intro -->
+This is a guide to exploring a plant model you do not know yet: building a query step by step, and using `options()` and `facets()` to see which values occur in the matches.
 
 ## Building a query step by step
 
@@ -56,16 +56,16 @@ readings.options("quantity_kind")
 ```
 ```text
 shape: (6, 2)
-┌──────────────────────────┬───────┐
-│ quantity_kind            ┆ count │
-╞══════════════════════════╪═══════╡
-│ qudtqk:Efficiency        ┆ 2     │
-│ qudtqk:MassConcentration ┆ 2     │
-│ qudtqk:Power             ┆ 2     │
-│ qudtqk:Density           ┆ 1     │
-│ qudtqk:Pressure          ┆ 1     │
-│ qudtqk:VolumeFlowRate    ┆ 1     │
-└──────────────────────────┴───────┘
+┌────────────────────────────────┬───────┐
+│ quantity_kind                  ┆ count │
+╞════════════════════════════════╪═══════╡
+│ quantitykind:Efficiency        ┆ 2     │
+│ quantitykind:MassConcentration ┆ 2     │
+│ quantitykind:Power             ┆ 2     │
+│ quantitykind:Density           ┆ 1     │
+│ quantitykind:Pressure          ┆ 1     │
+│ quantitykind:VolumeFlowRate    ┆ 1     │
+└────────────────────────────────┴───────┘
 ```
 
 Narrow with `where()`, using one of the values `options()` reported, and check
@@ -114,8 +114,6 @@ no data transfer, so checking often is cheap.
 
 ## Exploring what is there
 
-TODO: More exploration/visulaization methods and __repr__ and __str__ for visualizing query object will be implemented
-
 In a new plant, the hard part is knowing what to ask for.
 `options()` and `facets()` answer that: they report the attribute values that
 actually occur in your current matches, so you can narrow down step by step.
@@ -132,19 +130,19 @@ acq.query().measurement().options("quantity_kind")
 ```
 ```text
 shape: (9, 2)
-┌──────────────────────────┬───────┐
-│ quantity_kind            ┆ count │
-╞══════════════════════════╪═══════╡
-│ qudtqk:MassFlowRate      ┆ 10    │
-│ qudtqk:Pressure          ┆ 6     │
-│ qudtqk:MassConcentration ┆ 5     │
-│ qudtqk:Efficiency        ┆ 3     │
-│ qudtqk:Power             ┆ 2     │
-│ qudtqk:Temperature       ┆ 2     │
-│ qudtqk:VolumeFlowRate    ┆ 2     │
-│ qudtqk:Area              ┆ 1     │
-│ qudtqk:Density           ┆ 1     │
-└──────────────────────────┴───────┘
+┌────────────────────────────────┬───────┐
+│ quantity_kind                  ┆ count │
+╞════════════════════════════════╪═══════╡
+│ quantitykind:MassFlowRate      ┆ 10    │
+│ quantitykind:Pressure          ┆ 6     │
+│ quantitykind:MassConcentration ┆ 5     │
+│ quantitykind:Efficiency        ┆ 3     │
+│ quantitykind:Power             ┆ 2     │
+│ quantitykind:Temperature       ┆ 2     │
+│ quantitykind:VolumeFlowRate    ┆ 2     │
+│ quantitykind:Area              ┆ 1     │
+│ quantitykind:Density           ┆ 1     │
+└────────────────────────────────┴───────┘
 ```
 
 The count is the number of matched nodes carrying that value, so it also tells
@@ -177,9 +175,9 @@ f
 ```text
 FacetSummary('RO_data')
   type [matched]: s223:QuantifiableObservableProperty (11), ns1:VirtualPoint (11)
-  medium [matched]: s223:Fluid-Water (3), nawi:Water-Seawater (2), nawi:Water-Brine (1)
-  substance [matched]: nawi:Constituent-Salt (3)
-  quantity_kind [matched]: qudtqk:MassFlowRate (6), qudtqk:Pressure (3), qudtqk:Area (1), qudtqk:Temperature (1)
+  medium [matched]: s223:Fluid-Water (3), watr:Water-Seawater (2), watr:Water-Brine (1)
+  substance [matched]: watr:Constituent-Salt (3)
+  quantity_kind [matched]: quantitykind:MassFlowRate (6), quantitykind:Pressure (3), quantitykind:Area (1), quantitykind:Temperature (1)
   unit [matched]: unit:KiloGM-PER-SEC (6), unit:M2 (1)
   enumeration_kind: (no values)
   data_source: (no values)
@@ -191,14 +189,14 @@ f["quantity_kind"]
 ```
 ```text
 shape: (4, 2)
-┌─────────────────────┬───────┐
-│ quantity_kind       ┆ count │
-╞═════════════════════╪═══════╡
-│ qudtqk:MassFlowRate ┆ 6     │
-│ qudtqk:Pressure     ┆ 3     │
-│ qudtqk:Area         ┆ 1     │
-│ qudtqk:Temperature  ┆ 1     │
-└─────────────────────┴───────┘
+┌───────────────────────────┬───────┐
+│ quantity_kind             ┆ count │
+╞═══════════════════════════╪═══════╡
+│ quantitykind:MassFlowRate ┆ 6     │
+│ quantitykind:Pressure     ┆ 3     │
+│ quantitykind:Area         ┆ 1     │
+│ quantitykind:Temperature  ┆ 1     │
+└───────────────────────────┴───────┘
 ```
 
 The `[matched]` tag is the scope of those counts.

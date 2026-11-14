@@ -5,46 +5,47 @@
     {
       "text": "clarifier",
       "expected": [
-        "urn:nawi-water-ontology#SedimentationTank"
+        "https://watermetadata.org/ontology/watr#Clarifier",
+        "https://watermetadata.org/ontology/watr#SedimentationTank"
       ]
     },
     {
       "text": "settling tank",
       "expected": [
-        "urn:nawi-water-ontology#SedimentationTank"
+        "https://watermetadata.org/ontology/watr#SedimentationTank"
       ]
     },
     {
       "text": "primary clarifier",
       "expected": [
-        "urn:nawi-water-ontology#SedimentationTank"
+        "https://watermetadata.org/ontology/watr#SedimentationTank"
       ]
     },
     {
       "text": "flow meter",
       "expected": [
-        "urn:nawi-water-ontology#FlowSensor",
+        "https://watermetadata.org/ontology/watr#FlowSensor",
         "http://data.ashrae.org/standard223#FlowSensor"
       ]
     },
     {
       "text": "flowmeter",
       "expected": [
-        "urn:nawi-water-ontology#FlowSensor",
+        "https://watermetadata.org/ontology/watr#FlowSensor",
         "http://data.ashrae.org/standard223#FlowSensor"
       ]
     },
     {
       "text": "pressure transmitter",
       "expected": [
-        "urn:nawi-water-ontology#PressureSensor",
+        "https://watermetadata.org/ontology/watr#PressureSensor",
         "http://data.ashrae.org/standard223#PressureSensor"
       ]
     },
     {
       "text": "pressure gauge",
       "expected": [
-        "urn:nawi-water-ontology#PressureSensor",
+        "https://watermetadata.org/ontology/watr#PressureSensor",
         "http://data.ashrae.org/standard223#PressureSensor",
         "http://data.ashrae.org/standard223#GaugePressureSensor"
       ]
@@ -52,142 +53,142 @@
     {
       "text": "thermometer",
       "expected": [
-        "urn:nawi-water-ontology#TemperatureSensor",
+        "https://watermetadata.org/ontology/watr#TemperatureSensor",
         "http://data.ashrae.org/standard223#TemperatureSensor"
       ]
     },
     {
       "text": "temperature probe",
       "expected": [
-        "urn:nawi-water-ontology#TemperatureSensor",
+        "https://watermetadata.org/ontology/watr#TemperatureSensor",
         "http://data.ashrae.org/standard223#TemperatureSensor"
       ]
     },
     {
       "text": "pH probe",
       "expected": [
-        "urn:nawi-water-ontology#pHSensor"
+        "https://watermetadata.org/ontology/watr#pHSensor"
       ]
     },
     {
       "text": "pH meter",
       "expected": [
-        "urn:nawi-water-ontology#pHSensor"
+        "https://watermetadata.org/ontology/watr#pHSensor"
       ]
     },
     {
       "text": "conductivity meter",
       "expected": [
-        "urn:nawi-water-ontology#ConductivitySensor"
+        "https://watermetadata.org/ontology/watr#ConductivitySensor"
       ]
     },
     {
       "text": "turbidimeter",
       "expected": [
-        "urn:nawi-water-ontology#TurbidityMeter"
+        "https://watermetadata.org/ontology/watr#TurbidityMeter"
       ]
     },
     {
       "text": "turbidity sensor",
       "expected": [
-        "urn:nawi-water-ontology#TurbidityMeter"
+        "https://watermetadata.org/ontology/watr#TurbidityMeter"
       ]
     },
     {
       "text": "level transmitter",
       "expected": [
-        "urn:nawi-water-ontology#LevelSensor"
+        "https://watermetadata.org/ontology/watr#LevelSensor"
       ]
     },
     {
       "text": "dissolved oxygen sensor",
       "expected": [
-        "urn:nawi-water-ontology#OxygenMeter"
+        "https://watermetadata.org/ontology/watr#OxygenMeter"
       ]
     },
     {
       "text": "variable speed drive",
       "expected": [
-        "urn:nawi-water-ontology#VariableFrequencyDrive",
+        "https://watermetadata.org/ontology/watr#VariableFrequencyDrive",
         "http://data.ashrae.org/standard223#VariableFrequencyDrive"
       ]
     },
     {
       "text": "lagoon",
       "expected": [
-        "urn:nawi-water-ontology#Pond"
+        "https://watermetadata.org/ontology/watr#Pond"
       ]
     },
     {
       "text": "storage tank",
       "expected": [
-        "urn:nawi-water-ontology#Tank"
+        "https://watermetadata.org/ontology/watr#Tank"
       ]
     },
     {
       "text": "sand filter",
       "expected": [
-        "urn:nawi-water-ontology#RapidSandFilter"
+        "https://watermetadata.org/ontology/watr#RapidSandFilter"
       ]
     },
     {
       "text": "carbon filter",
       "expected": [
-        "urn:nawi-water-ontology#GranularActivatedCarbonAdsorber"
+        "https://watermetadata.org/ontology/watr#GranularActivatedCarbonAdsorber"
       ]
     },
     {
       "text": "UV lamp",
       "expected": [
-        "urn:nawi-water-ontology#UltravioletLightUnit"
+        "https://watermetadata.org/ontology/watr#UltravioletLightUnit"
       ]
     },
     {
       "text": "ozone contactor",
       "expected": [
-        "urn:nawi-water-ontology#OzonationUnit"
+        "https://watermetadata.org/ontology/watr#OzonationUnit"
       ]
     },
     {
       "text": "ozone generator",
       "expected": [
-        "urn:nawi-water-ontology#OzonationUnit"
+        "https://watermetadata.org/ontology/watr#OzonationUnit"
       ]
     },
     {
       "text": "chlorine contact tank",
       "expected": [
-        "urn:nawi-water-ontology#ChlorinationUnit"
+        "https://watermetadata.org/ontology/watr#ChlorinationUnit"
       ]
     },
     {
       "text": "centrifuge",
       "expected": [
-        "urn:nawi-water-ontology#CentrifugalThickener"
+        "https://watermetadata.org/ontology/watr#CentrifugalThickener"
       ]
     },
     {
       "text": "bar screen",
       "expected": [
-        "urn:nawi-water-ontology#Screen"
+        "https://watermetadata.org/ontology/watr#Screen"
       ]
     },
     {
       "text": "non-return valve",
       "expected": [
-        "urn:nawi-water-ontology#CheckValve"
+        "https://watermetadata.org/ontology/watr#CheckValve"
       ]
     },
     {
       "text": "cartridge filter",
       "expected": [
-        "urn:nawi-water-ontology#CartridgeFiltrationUnit"
+        "https://watermetadata.org/ontology/watr#CartridgeFiltrationUnit"
       ]
     },
     {
       "text": "constructed wetland",
       "expected": [
-        "urn:nawi-water-ontology#Wetland"
+        "https://watermetadata.org/ontology/watr#Wetland"
       ]
     },
     {
@@ -229,258 +230,258 @@
     {
       "text": "stirred tank reactor",
       "expected": [
-        "urn:nawi-water-ontology#ContinuouslyStirredTankReactor"
+        "https://watermetadata.org/ontology/watr#ContinuouslyStirredTankReactor"
       ]
     },
     {
       "text": "mixer",
       "expected": [
-        "urn:nawi-water-ontology#StaticMixer"
+        "https://watermetadata.org/ontology/watr#StaticMixer"
       ]
     },
     {
       "text": "energy recovery device",
       "expected": [
-        "urn:nawi-water-ontology#PressureExchanger"
+        "https://watermetadata.org/ontology/watr#PressureExchanger"
       ]
     },
     {
       "text": "air compressor",
       "expected": [
-        "urn:nawi-water-ontology#Compressor",
+        "https://watermetadata.org/ontology/watr#Compressor",
         "http://data.ashrae.org/standard223#Compressor"
       ]
     },
     {
       "text": "RO element",
       "expected": [
-        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+        "https://watermetadata.org/ontology/watr#ReverseOsmosisMembrane"
       ]
     },
     {
       "text": "electrolysis cell",
       "expected": [
-        "urn:nawi-water-ontology#Electrolyzer"
+        "https://watermetadata.org/ontology/watr#Electrolyzer"
       ]
     },
     {
       "text": "sedimentation basin",
       "expected": [
-        "urn:nawi-water-ontology#SedimentationTank"
+        "https://watermetadata.org/ontology/watr#SedimentationTank"
       ]
     },
     {
       "text": "settling basin",
       "expected": [
-        "urn:nawi-water-ontology#SedimentationTank"
+        "https://watermetadata.org/ontology/watr#SedimentationTank"
       ]
     },
     {
       "text": "secondary clarifier",
       "expected": [
-        "urn:nawi-water-ontology#SedimentationTank"
+        "https://watermetadata.org/ontology/watr#SedimentationTank"
       ]
     },
     {
       "text": "sediment settling tank",
       "expected": [
-        "urn:nawi-water-ontology#SedimentationTank"
+        "https://watermetadata.org/ontology/watr#SedimentationTank"
       ]
     },
     {
       "text": "aerated basin",
       "expected": [
-        "urn:nawi-water-ontology#AerationBasin"
+        "https://watermetadata.org/ontology/watr#AerationBasin"
       ]
     },
     {
       "text": "aeration reactor basin",
       "expected": [
-        "urn:nawi-water-ontology#AerationBasin"
+        "https://watermetadata.org/ontology/watr#AerationBasin"
       ]
     },
     {
       "text": "flow transmitter",
       "expected": [
-        "urn:nawi-water-ontology#FlowSensor",
+        "https://watermetadata.org/ontology/watr#FlowSensor",
         "http://data.ashrae.org/standard223#FlowSensor"
       ]
     },
     {
       "text": "flow transducer",
       "expected": [
-        "urn:nawi-water-ontology#FlowSensor",
+        "https://watermetadata.org/ontology/watr#FlowSensor",
         "http://data.ashrae.org/standard223#FlowSensor"
       ]
     },
     {
       "text": "flow measuring device",
       "expected": [
-        "urn:nawi-water-ontology#FlowSensor",
+        "https://watermetadata.org/ontology/watr#FlowSensor",
         "http://data.ashrae.org/standard223#FlowSensor"
       ]
     },
     {
       "text": "temperature transmitter",
       "expected": [
-        "urn:nawi-water-ontology#TemperatureSensor",
+        "https://watermetadata.org/ontology/watr#TemperatureSensor",
         "http://data.ashrae.org/standard223#TemperatureSensor"
       ]
     },
     {
       "text": "thermocouple",
       "expected": [
-        "urn:nawi-water-ontology#TemperatureSensor",
+        "https://watermetadata.org/ontology/watr#TemperatureSensor",
         "http://data.ashrae.org/standard223#TemperatureSensor"
       ]
     },
     {
       "text": "temperature sensing element",
       "expected": [
-        "urn:nawi-water-ontology#TemperatureSensor",
+        "https://watermetadata.org/ontology/watr#TemperatureSensor",
         "http://data.ashrae.org/standard223#TemperatureSensor"
       ]
     },
     {
       "text": "temp sensor",
       "expected": [
-        "urn:nawi-water-ontology#TemperatureSensor",
+        "https://watermetadata.org/ontology/watr#TemperatureSensor",
         "http://data.ashrae.org/standard223#TemperatureSensor"
       ]
     },
     {
       "text": "pressure transducer",
       "expected": [
-        "urn:nawi-water-ontology#PressureSensor",
+        "https://watermetadata.org/ontology/watr#PressureSensor",
         "http://data.ashrae.org/standard223#PressureSensor"
       ]
     },
     {
       "text": "pressure sensing device",
       "expected": [
-        "urn:nawi-water-ontology#PressureSensor",
+        "https://watermetadata.org/ontology/watr#PressureSensor",
         "http://data.ashrae.org/standard223#PressureSensor"
       ]
     },
     {
       "text": "pressure measuring sensor",
       "expected": [
-        "urn:nawi-water-ontology#PressureSensor",
+        "https://watermetadata.org/ontology/watr#PressureSensor",
         "http://data.ashrae.org/standard223#PressureSensor"
       ]
     },
     {
       "text": "level gauge",
       "expected": [
-        "urn:nawi-water-ontology#LevelSensor"
+        "https://watermetadata.org/ontology/watr#LevelSensor"
       ]
     },
     {
       "text": "level indicator",
       "expected": [
-        "urn:nawi-water-ontology#LevelSensor"
+        "https://watermetadata.org/ontology/watr#LevelSensor"
       ]
     },
     {
       "text": "liquid level sensor",
       "expected": [
-        "urn:nawi-water-ontology#LevelSensor"
+        "https://watermetadata.org/ontology/watr#LevelSensor"
       ]
     },
     {
       "text": "conductivity probe",
       "expected": [
-        "urn:nawi-water-ontology#ConductivitySensor"
+        "https://watermetadata.org/ontology/watr#ConductivitySensor"
       ]
     },
     {
       "text": "conductivity analyzer",
       "expected": [
-        "urn:nawi-water-ontology#ConductivitySensor"
+        "https://watermetadata.org/ontology/watr#ConductivitySensor"
       ]
     },
     {
       "text": "conductivity transmitter",
       "expected": [
-        "urn:nawi-water-ontology#ConductivitySensor"
+        "https://watermetadata.org/ontology/watr#ConductivitySensor"
       ]
     },
     {
       "text": "pH analyzer",
       "expected": [
-        "urn:nawi-water-ontology#pHSensor"
+        "https://watermetadata.org/ontology/watr#pHSensor"
       ]
     },
     {
       "text": "pH electrode",
       "expected": [
-        "urn:nawi-water-ontology#pHSensor"
+        "https://watermetadata.org/ontology/watr#pHSensor"
       ]
     },
     {
       "text": "pH transmitter",
       "expected": [
-        "urn:nawi-water-ontology#pHSensor"
+        "https://watermetadata.org/ontology/watr#pHSensor"
       ]
     },
     {
       "text": "turbidity analyzer",
       "expected": [
-        "urn:nawi-water-ontology#TurbidityMeter"
+        "https://watermetadata.org/ontology/watr#TurbidityMeter"
       ]
     },
     {
       "text": "turbidity probe",
       "expected": [
-        "urn:nawi-water-ontology#TurbidityMeter"
+        "https://watermetadata.org/ontology/watr#TurbidityMeter"
       ]
     },
     {
       "text": "oxygen sensor",
       "expected": [
-        "urn:nawi-water-ontology#OxygenMeter"
+        "https://watermetadata.org/ontology/watr#OxygenMeter"
       ]
     },
     {
       "text": "oxygen analyzer",
       "expected": [
-        "urn:nawi-water-ontology#OxygenMeter"
+        "https://watermetadata.org/ontology/watr#OxygenMeter"
       ]
     },
     {
       "text": "dissolved oxygen meter",
       "expected": [
-        "urn:nawi-water-ontology#OxygenMeter"
+        "https://watermetadata.org/ontology/watr#OxygenMeter"
       ]
     },
     {
       "text": "dissolved oxygen probe",
       "expected": [
-        "urn:nawi-water-ontology#OxygenMeter"
+        "https://watermetadata.org/ontology/watr#OxygenMeter"
       ]
     },
     {
       "text": "one-way valve",
       "expected": [
-        "urn:nawi-water-ontology#CheckValve"
+        "https://watermetadata.org/ontology/watr#CheckValve"
       ]
     },
     {
       "text": "backflow preventer",
       "expected": [
-        "urn:nawi-water-ontology#CheckValve"
+        "https://watermetadata.org/ontology/watr#CheckValve"
       ]
     },
     {
       "text": "backflow prevention valve",
       "expected": [
-        "urn:nawi-water-ontology#CheckValve"
+        "https://watermetadata.org/ontology/watr#CheckValve"
       ]
     },
     {
       "text": "shutoff valve",
       "expected": [
-        "urn:nawi-water-ontology#Valve",
+        "https://watermetadata.org/ontology/watr#Valve",
         "http://data.ashrae.org/standard223#Valve",
         "http://data.ashrae.org/standard223#TwoWayValve"
       ]
@@ -488,7 +489,7 @@
     {
       "text": "isolation valve",
       "expected": [
-        "urn:nawi-water-ontology#Valve",
+        "https://watermetadata.org/ontology/watr#Valve",
         "http://data.ashrae.org/standard223#Valve",
         "http://data.ashrae.org/standard223#TwoWayValve"
       ]
@@ -496,370 +497,370 @@
     {
       "text": "frequency converter",
       "expected": [
-        "urn:nawi-water-ontology#VariableFrequencyDrive",
+        "https://watermetadata.org/ontology/watr#VariableFrequencyDrive",
         "http://data.ashrae.org/standard223#VariableFrequencyDrive"
       ]
     },
     {
       "text": "adjustable speed drive",
       "expected": [
-        "urn:nawi-water-ontology#VariableFrequencyDrive",
+        "https://watermetadata.org/ontology/watr#VariableFrequencyDrive",
         "http://data.ashrae.org/standard223#VariableFrequencyDrive"
       ]
     },
     {
       "text": "motor speed drive",
       "expected": [
-        "urn:nawi-water-ontology#VariableFrequencyDrive",
+        "https://watermetadata.org/ontology/watr#VariableFrequencyDrive",
         "http://data.ashrae.org/standard223#VariableFrequencyDrive"
       ]
     },
     {
       "text": "variable frequency motor drive",
       "expected": [
-        "urn:nawi-water-ontology#VariableFrequencyDrive",
+        "https://watermetadata.org/ontology/watr#VariableFrequencyDrive",
         "http://data.ashrae.org/standard223#VariableFrequencyDrive"
       ]
     },
     {
       "text": "holding tank",
       "expected": [
-        "urn:nawi-water-ontology#Tank"
+        "https://watermetadata.org/ontology/watr#Tank"
       ]
     },
     {
       "text": "water tank",
       "expected": [
-        "urn:nawi-water-ontology#Tank"
+        "https://watermetadata.org/ontology/watr#Tank"
       ]
     },
     {
       "text": "vessel",
       "expected": [
-        "urn:nawi-water-ontology#Tank"
+        "https://watermetadata.org/ontology/watr#Tank"
       ]
     },
     {
       "text": "digestion tank",
       "expected": [
-        "urn:nawi-water-ontology#Digester"
+        "https://watermetadata.org/ontology/watr#Digester"
       ]
     },
     {
       "text": "sludge digester",
       "expected": [
-        "urn:nawi-water-ontology#Digester",
-        "urn:nawi-water-ontology#AnaerobicDigester",
-        "urn:nawi-water-ontology#AerobicDigester"
+        "https://watermetadata.org/ontology/watr#Digester",
+        "https://watermetadata.org/ontology/watr#AnaerobicDigester",
+        "https://watermetadata.org/ontology/watr#AerobicDigester"
       ]
     },
     {
       "text": "sludge thickener",
       "expected": [
-        "urn:nawi-water-ontology#Thickener"
+        "https://watermetadata.org/ontology/watr#Thickener"
       ]
     },
     {
       "text": "thickening tank",
       "expected": [
-        "urn:nawi-water-ontology#Thickener"
+        "https://watermetadata.org/ontology/watr#Thickener"
       ]
     },
     {
       "text": "gravity thickening tank",
       "expected": [
-        "urn:nawi-water-ontology#GravityThickener"
+        "https://watermetadata.org/ontology/watr#GravityThickener"
       ]
     },
     {
       "text": "dewatering equipment",
       "expected": [
-        "urn:nawi-water-ontology#DewateringUnit"
+        "https://watermetadata.org/ontology/watr#DewateringUnit"
       ]
     },
     {
       "text": "sludge dewatering unit",
       "expected": [
-        "urn:nawi-water-ontology#DewateringUnit"
+        "https://watermetadata.org/ontology/watr#DewateringUnit"
       ]
     },
     {
       "text": "disinfection system",
       "expected": [
-        "urn:nawi-water-ontology#DisinfectionUnit"
+        "https://watermetadata.org/ontology/watr#DisinfectionUnit"
       ]
     },
     {
       "text": "disinfection equipment",
       "expected": [
-        "urn:nawi-water-ontology#DisinfectionUnit"
+        "https://watermetadata.org/ontology/watr#DisinfectionUnit"
       ]
     },
     {
       "text": "chlorinator",
       "expected": [
-        "urn:nawi-water-ontology#ChlorinationUnit"
+        "https://watermetadata.org/ontology/watr#ChlorinationUnit"
       ]
     },
     {
       "text": "chlorination system",
       "expected": [
-        "urn:nawi-water-ontology#ChlorinationUnit"
+        "https://watermetadata.org/ontology/watr#ChlorinationUnit"
       ]
     },
     {
       "text": "chlorine contact basin",
       "expected": [
-        "urn:nawi-water-ontology#ChlorinationUnit"
+        "https://watermetadata.org/ontology/watr#ChlorinationUnit"
       ]
     },
     {
       "text": "chlorination basin",
       "expected": [
-        "urn:nawi-water-ontology#ChlorinationUnit"
+        "https://watermetadata.org/ontology/watr#ChlorinationUnit"
       ]
     },
     {
       "text": "ozonator",
       "expected": [
-        "urn:nawi-water-ontology#OzonationUnit"
+        "https://watermetadata.org/ontology/watr#OzonationUnit"
       ]
     },
     {
       "text": "ozonation system",
       "expected": [
-        "urn:nawi-water-ontology#OzonationUnit"
+        "https://watermetadata.org/ontology/watr#OzonationUnit"
       ]
     },
     {
       "text": "ozone treatment unit",
       "expected": [
-        "urn:nawi-water-ontology#OzonationUnit"
+        "https://watermetadata.org/ontology/watr#OzonationUnit"
       ]
     },
     {
       "text": "UV disinfection unit",
       "expected": [
-        "urn:nawi-water-ontology#UltravioletLightUnit",
-        "urn:nawi-water-ontology#DisinfectionUnit"
+        "https://watermetadata.org/ontology/watr#UltravioletLightUnit",
+        "https://watermetadata.org/ontology/watr#DisinfectionUnit"
       ]
     },
     {
       "text": "reverse osmosis unit",
       "expected": [
-        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+        "https://watermetadata.org/ontology/watr#ReverseOsmosisMembrane"
       ]
     },
     {
       "text": "reverse osmosis system",
       "expected": [
-        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+        "https://watermetadata.org/ontology/watr#ReverseOsmosisMembrane"
       ]
     },
     {
       "text": "reverse osmosis module",
       "expected": [
-        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+        "https://watermetadata.org/ontology/watr#ReverseOsmosisMembrane"
       ]
     },
     {
       "text": "reverse osmosis element",
       "expected": [
-        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+        "https://watermetadata.org/ontology/watr#ReverseOsmosisMembrane"
       ]
     },
     {
       "text": "nanofiltration membrane",
       "expected": [
-        "urn:nawi-water-ontology#NanofiltrationUnit"
+        "https://watermetadata.org/ontology/watr#NanofiltrationUnit"
       ]
     },
     {
       "text": "nanofiltration system",
       "expected": [
-        "urn:nawi-water-ontology#NanofiltrationUnit"
+        "https://watermetadata.org/ontology/watr#NanofiltrationUnit"
       ]
     },
     {
       "text": "ultrafiltration membrane",
       "expected": [
-        "urn:nawi-water-ontology#UltrafiltrationUnit"
+        "https://watermetadata.org/ontology/watr#UltrafiltrationUnit"
       ]
     },
     {
       "text": "ultrafiltration system",
       "expected": [
-        "urn:nawi-water-ontology#UltrafiltrationUnit"
+        "https://watermetadata.org/ontology/watr#UltrafiltrationUnit"
       ]
     },
     {
       "text": "ultrafiltration module",
       "expected": [
-        "urn:nawi-water-ontology#UltrafiltrationUnit"
+        "https://watermetadata.org/ontology/watr#UltrafiltrationUnit"
       ]
     },
     {
       "text": "microfiltration membrane",
       "expected": [
-        "urn:nawi-water-ontology#MicrofiltrationUnit"
+        "https://watermetadata.org/ontology/watr#MicrofiltrationUnit"
       ]
     },
     {
       "text": "microfiltration system",
       "expected": [
-        "urn:nawi-water-ontology#MicrofiltrationUnit"
+        "https://watermetadata.org/ontology/watr#MicrofiltrationUnit"
       ]
     },
     {
       "text": "activated carbon adsorber",
       "expected": [
-        "urn:nawi-water-ontology#GranularActivatedCarbonAdsorber"
+        "https://watermetadata.org/ontology/watr#GranularActivatedCarbonAdsorber"
       ]
     },
     {
       "text": "carbon adsorber",
       "expected": [
-        "urn:nawi-water-ontology#GranularActivatedCarbonAdsorber"
+        "https://watermetadata.org/ontology/watr#GranularActivatedCarbonAdsorber"
       ]
     },
     {
       "text": "activated carbon filter",
       "expected": [
-        "urn:nawi-water-ontology#GranularActivatedCarbonAdsorber"
+        "https://watermetadata.org/ontology/watr#GranularActivatedCarbonAdsorber"
       ]
     },
     {
       "text": "media filter",
       "expected": [
-        "urn:nawi-water-ontology#MediaFiltration",
-        "urn:nawi-water-ontology#RapidSandFilter"
+        "https://watermetadata.org/ontology/watr#MediaFiltrationUnit",
+        "https://watermetadata.org/ontology/watr#RapidSandFilter"
       ]
     },
     {
       "text": "granular media filter",
       "expected": [
-        "urn:nawi-water-ontology#MediaFiltration",
-        "urn:nawi-water-ontology#RapidSandFilter"
+        "https://watermetadata.org/ontology/watr#MediaFiltrationUnit",
+        "https://watermetadata.org/ontology/watr#RapidSandFilter"
       ]
     },
     {
       "text": "multimedia filter",
       "expected": [
-        "urn:nawi-water-ontology#MediaFiltration"
+        "https://watermetadata.org/ontology/watr#MediaFiltrationUnit"
       ]
     },
     {
       "text": "rapid gravity filter",
       "expected": [
-        "urn:nawi-water-ontology#RapidSandFilter"
+        "https://watermetadata.org/ontology/watr#RapidSandFilter"
       ]
     },
     {
       "text": "rapid gravity sand filter",
       "expected": [
-        "urn:nawi-water-ontology#RapidSandFilter"
+        "https://watermetadata.org/ontology/watr#RapidSandFilter"
       ]
     },
     {
       "text": "grit removal chamber",
       "expected": [
-        "urn:nawi-water-ontology#GritChamber"
+        "https://watermetadata.org/ontology/watr#GritChamber"
       ]
     },
     {
       "text": "grit trap",
       "expected": [
-        "urn:nawi-water-ontology#GritChamber"
+        "https://watermetadata.org/ontology/watr#GritChamber"
       ]
     },
     {
       "text": "flocculation tank",
       "expected": [
-        "urn:nawi-water-ontology#FlocculationBasin"
+        "https://watermetadata.org/ontology/watr#FlocculationBasin"
       ]
     },
     {
       "text": "flocculator",
       "expected": [
-        "urn:nawi-water-ontology#FlocculationBasin"
+        "https://watermetadata.org/ontology/watr#FlocculationBasin"
       ]
     },
     {
       "text": "coagulation tank",
       "expected": [
-        "urn:nawi-water-ontology#CoagulationBasin"
+        "https://watermetadata.org/ontology/watr#CoagulationBasin"
       ]
     },
     {
       "text": "coagulation chamber",
       "expected": [
-        "urn:nawi-water-ontology#CoagulationBasin"
+        "https://watermetadata.org/ontology/watr#CoagulationBasin"
       ]
     },
     {
       "text": "mixing tank",
       "expected": [
-        "urn:nawi-water-ontology#MixingBasin"
+        "https://watermetadata.org/ontology/watr#MixingBasin"
       ]
     },
     {
       "text": "mixing chamber",
       "expected": [
-        "urn:nawi-water-ontology#MixingBasin"
+        "https://watermetadata.org/ontology/watr#MixingBasin"
       ]
     },
     {
       "text": "inline mixer",
       "expected": [
-        "urn:nawi-water-ontology#StaticMixer"
+        "https://watermetadata.org/ontology/watr#StaticMixer"
       ]
     },
     {
       "text": "inline static mixer",
       "expected": [
-        "urn:nawi-water-ontology#StaticMixer"
+        "https://watermetadata.org/ontology/watr#StaticMixer"
       ]
     },
     {
       "text": "stabilization pond",
       "expected": [
-        "urn:nawi-water-ontology#Pond"
+        "https://watermetadata.org/ontology/watr#Pond"
       ]
     },
     {
       "text": "treatment pond",
       "expected": [
-        "urn:nawi-water-ontology#Pond"
+        "https://watermetadata.org/ontology/watr#Pond"
       ]
     },
     {
       "text": "treatment wetland",
       "expected": [
-        "urn:nawi-water-ontology#Wetland"
+        "https://watermetadata.org/ontology/watr#Wetland"
       ]
     },
     {
       "text": "water reservoir",
       "expected": [
-        "urn:nawi-water-ontology#Reservoir"
+        "https://watermetadata.org/ontology/watr#Reservoir"
       ]
     },
     {
       "text": "storage reservoir",
       "expected": [
-        "urn:nawi-water-ontology#Reservoir"
+        "https://watermetadata.org/ontology/watr#Reservoir"
       ]
     },
     {
       "text": "heat exchange unit",
       "expected": [
-        "http://data.ashrae.org/standard223#HeatExchanger"
+        "https://watermetadata.org/ontology/watr#HeatExchanger"
       ]
     },
     {
       "text": "heat transfer unit",
       "expected": [
-        "http://data.ashrae.org/standard223#HeatExchanger"
+        "https://watermetadata.org/ontology/watr#HeatExchanger"
       ]
     },
     {
@@ -871,49 +872,49 @@
     {
       "text": "water pump",
       "expected": [
-        "urn:nawi-water-ontology#Pump",
+        "https://watermetadata.org/ontology/watr#Pump",
         "http://data.ashrae.org/standard223#Pump"
       ]
     },
     {
       "text": "centrifugal pump",
       "expected": [
-        "urn:nawi-water-ontology#Pump",
+        "https://watermetadata.org/ontology/watr#Pump",
         "http://data.ashrae.org/standard223#Pump"
       ]
     },
     {
       "text": "pumping unit",
       "expected": [
-        "urn:nawi-water-ontology#Pump",
+        "https://watermetadata.org/ontology/watr#Pump",
         "http://data.ashrae.org/standard223#Pump"
       ]
     },
     {
       "text": "steam boiler",
       "expected": [
-        "urn:nawi-water-ontology#Boiler",
+        "https://watermetadata.org/ontology/watr#Boiler",
         "http://data.ashrae.org/standard223#Boiler"
       ]
     },
     {
       "text": "hot water boiler",
       "expected": [
-        "urn:nawi-water-ontology#Boiler",
+        "https://watermetadata.org/ontology/watr#Boiler",
         "http://data.ashrae.org/standard223#Boiler"
       ]
     },
     {
       "text": "battery storage",
       "expected": [
-        "urn:nawi-water-ontology#Battery",
+        "https://watermetadata.org/ontology/watr#Battery",
         "http://data.ashrae.org/standard223#Battery"
       ]
     },
     {
       "text": "storage battery",
       "expected": [
-        "urn:nawi-water-ontology#Battery",
+        "https://watermetadata.org/ontology/watr#Battery",
         "http://data.ashrae.org/standard223#Battery"
       ]
     },
@@ -950,129 +951,329 @@
     {
       "text": "crystallization unit",
       "expected": [
-        "urn:nawi-water-ontology#Crystallizer"
+        "https://watermetadata.org/ontology/watr#Crystallizer"
       ]
     },
     {
       "text": "evaporation unit",
       "expected": [
-        "urn:nawi-water-ontology#Evaporator"
+        "https://watermetadata.org/ontology/watr#Evaporator"
       ]
     },
     {
       "text": "biogas flare",
       "expected": [
-        "urn:nawi-water-ontology#Flare"
+        "https://watermetadata.org/ontology/watr#Flare"
       ]
     },
     {
       "text": "gas flare",
       "expected": [
-        "urn:nawi-water-ontology#Flare"
+        "https://watermetadata.org/ontology/watr#Flare"
       ]
     },
     {
       "text": "combined heat and power unit",
       "expected": [
-        "urn:nawi-water-ontology#Cogenerator"
+        "https://watermetadata.org/ontology/watr#Cogenerator"
       ]
     },
     {
       "text": "cogeneration unit",
       "expected": [
-        "urn:nawi-water-ontology#Cogenerator"
+        "https://watermetadata.org/ontology/watr#Cogenerator"
       ]
     },
     {
       "text": "macerator",
       "expected": [
-        "urn:nawi-water-ontology#Grinder"
+        "https://watermetadata.org/ontology/watr#Grinder"
       ]
     },
     {
       "text": "sluice",
       "expected": [
-        "urn:nawi-water-ontology#SluiceGate"
+        "https://watermetadata.org/ontology/watr#SluiceGate"
       ]
     },
     {
       "text": "electrodialysis stack",
       "expected": [
-        "urn:nawi-water-ontology#ElectrodialysisUnit"
+        "https://watermetadata.org/ontology/watr#ElectrodialysisUnit"
       ]
     },
     {
       "text": "electrodialysis unit",
       "expected": [
-        "urn:nawi-water-ontology#ElectrodialysisUnit"
+        "https://watermetadata.org/ontology/watr#ElectrodialysisUnit"
       ]
     },
     {
       "text": "membrane bioreactor system",
       "expected": [
-        "urn:nawi-water-ontology#MembraneBioreactor"
+        "https://watermetadata.org/ontology/watr#MembraneBioreactor"
       ]
     },
     {
       "text": "membrane biological reactor",
       "expected": [
-        "urn:nawi-water-ontology#MembraneBioreactor"
+        "https://watermetadata.org/ontology/watr#MembraneBioreactor"
       ]
     },
     {
       "text": "gas compressor",
       "expected": [
-        "urn:nawi-water-ontology#Compressor",
+        "https://watermetadata.org/ontology/watr#Compressor",
         "http://data.ashrae.org/standard223#Compressor"
       ]
     },
     {
       "text": "screening unit",
       "expected": [
-        "urn:nawi-water-ontology#Screen"
+        "https://watermetadata.org/ontology/watr#Screen"
       ]
     },
     {
       "text": "influent screen",
       "expected": [
-        "urn:nawi-water-ontology#Screen"
+        "https://watermetadata.org/ontology/watr#Screen"
       ]
     },
     {
       "text": "biological trickling filter",
       "expected": [
-        "urn:nawi-water-ontology#TricklingFilter"
+        "https://watermetadata.org/ontology/watr#TricklingFilter"
       ]
     },
     {
       "text": "oxidation ditch reactor",
       "expected": [
-        "urn:nawi-water-ontology#OxidationDitch"
+        "https://watermetadata.org/ontology/watr#OxidationDitch"
       ]
     },
     {
       "text": "electrolyser",
       "expected": [
-        "urn:nawi-water-ontology#Electrolyzer"
+        "https://watermetadata.org/ontology/watr#Electrolyzer"
       ]
     },
     {
       "text": "electrolysis unit",
       "expected": [
-        "urn:nawi-water-ontology#Electrolyzer"
+        "https://watermetadata.org/ontology/watr#Electrolyzer"
       ]
     },
     {
       "text": "ion-selective membrane",
       "expected": [
-        "urn:nawi-water-ontology#IonExchangeMembrane"
+        "https://watermetadata.org/ontology/watr#IonExchangeMembrane"
       ]
     },
     {
       "text": "ion exchange membrane sheet",
       "expected": [
-        "urn:nawi-water-ontology#IonExchangeMembrane"
+        "https://watermetadata.org/ontology/watr#IonExchangeMembrane"
       ]
+    },
+    {
+      "text": "lime softening",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Softening"
+      ]
+    },
+    {
+      "text": "hardness removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Softening"
+      ]
+    },
+    {
+      "text": "sludge drying",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Drying"
+      ]
+    },
+    {
+      "text": "sludge dewatering",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Dewatering"
+      ]
+    },
+    {
+      "text": "pH control",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-pHControl"
+      ]
+    },
+    {
+      "text": "pH correction",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-pHControl"
+      ]
+    },
+    {
+      "text": "water softening",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Softening"
+      ]
+    },
+    {
+      "text": "chlorine removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-ChlorineResidualRemoval"
+      ]
+    },
+    {
+      "text": "chlorine neutralization",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-ChlorineResidualRemoval"
+      ]
+    },
+    {
+      "text": "pathogen inactivation",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Disinfection"
+      ]
+    },
+    {
+      "text": "pathogen removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Disinfection"
+      ]
+    },
+    {
+      "text": "microbial inactivation",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Disinfection"
+      ]
+    },
+    {
+      "text": "solids dewatering",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Dewatering"
+      ]
+    },
+    {
+      "text": "water removal from sludge",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Dewatering"
+      ]
+    },
+    {
+      "text": "biosolids dewatering",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Dewatering"
+      ]
+    },
+    {
+      "text": "mechanical dewatering",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Dewatering"
+      ]
+    },
+    {
+      "text": "pH neutralization",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Neutralization",
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-pHControl"
+      ]
+    },
+    {
+      "text": "acid neutralization",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Neutralization"
+      ]
+    },
+    {
+      "text": "neutralizing",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Neutralization"
+      ]
+    },
+    {
+      "text": "heat drying",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Drying"
+      ]
+    },
+    {
+      "text": "thermal drying",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Drying"
+      ]
+    },
+    {
+      "text": "biosolids drying",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Drying"
+      ]
+    },
+    {
+      "text": "calcium and magnesium removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Softening"
+      ]
+    },
+    {
+      "text": "biosolids handling",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-VolumeReduction"
+      ]
+    },
+    {
+      "text": "sludge handling",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-VolumeReduction"
+      ]
+    },
+    {
+      "text": "solids processing",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-VolumeReduction"
+      ]
+    },
+    {
+      "text": "nitrogen reduction",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-NitrogenRemoval"
+      ]
+    },
+    {
+      "text": "removing nitrogen",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-NitrogenRemoval"
+      ]
+    },
+    {
+      "text": "phosphate removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-PhosphorusRemoval"
+      ]
+    },
+    {
+      "text": "removing phosphorus",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-PhosphorusRemoval"
+      ]
+    },
+    {
+      "text": "nutrient reduction",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-NutrientRemoval"
+      ]
+    },
+    {
+      "text": "stabilizing",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Stabilization"
+      ]
+    },
+    {
+      "text": "ammonia removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-AmmoniaControl"
+      ],
+      "stage": "exact"
     }
   ]
 }

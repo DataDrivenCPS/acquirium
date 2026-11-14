@@ -5,21 +5,21 @@
     {
       "text": "sedimentation tank",
       "expected": [
-        "urn:nawi-water-ontology#SedimentationTank"
+        "https://watermetadata.org/ontology/watr#SedimentationTank"
       ],
       "stage": "exact"
     },
     {
       "text": "heat exchanger",
       "expected": [
-        "http://data.ashrae.org/standard223#HeatExchanger"
+        "https://watermetadata.org/ontology/watr#HeatExchanger"
       ],
       "stage": "exact"
     },
     {
       "text": "variable frequency drive",
       "expected": [
-        "urn:nawi-water-ontology#VariableFrequencyDrive",
+        "https://watermetadata.org/ontology/watr#VariableFrequencyDrive",
         "http://data.ashrae.org/standard223#VariableFrequencyDrive"
       ],
       "stage": "exact"
@@ -34,97 +34,97 @@
     {
       "text": "grit chamber",
       "expected": [
-        "urn:nawi-water-ontology#GritChamber"
+        "https://watermetadata.org/ontology/watr#GritChamber"
       ],
       "stage": "exact"
     },
     {
       "text": "trickling filter",
       "expected": [
-        "urn:nawi-water-ontology#TricklingFilter"
+        "https://watermetadata.org/ontology/watr#TricklingFilter"
       ],
       "stage": "exact"
     },
     {
       "text": "static mixer",
       "expected": [
-        "urn:nawi-water-ontology#StaticMixer"
+        "https://watermetadata.org/ontology/watr#StaticMixer"
       ],
       "stage": "exact"
     },
     {
       "text": "plug flow reactor",
       "expected": [
-        "urn:nawi-water-ontology#PlugFlowReactor"
+        "https://watermetadata.org/ontology/watr#PlugFlowReactor"
       ],
       "stage": "exact"
     },
     {
       "text": "sequencing batch reactor",
       "expected": [
-        "urn:nawi-water-ontology#SequencingBatchReactor"
+        "https://watermetadata.org/ontology/watr#SequencingBatchReactor"
       ],
       "stage": "exact"
     },
     {
       "text": "pressure exchanger",
       "expected": [
-        "urn:nawi-water-ontology#PressureExchanger"
+        "https://watermetadata.org/ontology/watr#PressureExchanger"
       ],
       "stage": "exact"
     },
     {
       "text": "continuously stirred tank reactor",
       "expected": [
-        "urn:nawi-water-ontology#ContinuouslyStirredTankReactor"
+        "https://watermetadata.org/ontology/watr#ContinuouslyStirredTankReactor"
       ],
       "stage": "exact"
     },
     {
       "text": "oxygen demand sensor",
       "expected": [
-        "urn:nawi-water-ontology#OxygenDemandSensor"
+        "https://watermetadata.org/ontology/watr#OxygenDemandSensor"
       ],
       "stage": "exact"
     },
     {
       "text": "media filtration unit",
       "expected": [
-        "urn:nawi-water-ontology#MediaFiltration"
+        "https://watermetadata.org/ontology/watr#MediaFiltrationUnit"
       ]
     },
     {
       "text": "rotating biological contactor",
       "expected": [
-        "urn:nawi-water-ontology#RotatingBiologicalContactor"
+        "https://watermetadata.org/ontology/watr#RotatingBiologicalContactor"
       ],
       "stage": "exact"
     },
     {
       "text": "biological aerated filter",
       "expected": [
-        "urn:nawi-water-ontology#BiologicalAeratedFilter"
+        "https://watermetadata.org/ontology/watr#BiologicalAeratedFilter"
       ],
       "stage": "exact"
     },
     {
       "text": "granular activated carbon adsorber",
       "expected": [
-        "urn:nawi-water-ontology#GranularActivatedCarbonAdsorber"
+        "https://watermetadata.org/ontology/watr#GranularActivatedCarbonAdsorber"
       ],
       "stage": "exact"
     },
     {
       "text": "electromagnetic field device",
       "expected": [
-        "urn:nawi-water-ontology#ElectromagneticFieldDevice"
+        "https://watermetadata.org/ontology/watr#ElectromagneticFieldDevice"
       ],
       "stage": "exact"
     },
     {
       "text": "dimethyl ether recovery system",
       "expected": [
-        "urn:nawi-water-ontology#DMERecoverySystem"
+        "https://watermetadata.org/ontology/watr#DMERecoverySystem"
       ]
     },
     {
@@ -152,14 +152,14 @@
     {
       "text": "aeration basin",
       "expected": [
-        "urn:nawi-water-ontology#AerationBasin"
+        "https://watermetadata.org/ontology/watr#AerationBasin"
       ],
       "stage": "exact"
     },
     {
       "text": "pump",
       "expected": [
-        "urn:nawi-water-ontology#Pump",
+        "https://watermetadata.org/ontology/watr#Pump",
         "http://data.ashrae.org/standard223#Pump"
       ],
       "stage": "exact"
@@ -167,7 +167,7 @@
     {
       "text": "boiler",
       "expected": [
-        "urn:nawi-water-ontology#Boiler",
+        "https://watermetadata.org/ontology/watr#Boiler",
         "http://data.ashrae.org/standard223#Boiler"
       ],
       "stage": "exact"
@@ -175,7 +175,7 @@
     {
       "text": "compressor",
       "expected": [
-        "urn:nawi-water-ontology#Compressor",
+        "https://watermetadata.org/ontology/watr#Compressor",
         "http://data.ashrae.org/standard223#Compressor"
       ],
       "stage": "exact"
@@ -183,14 +183,14 @@
     {
       "text": "condenser",
       "expected": [
-        "urn:nawi-water-ontology#Condenser"
+        "https://watermetadata.org/ontology/watr#Condenser"
       ],
       "stage": "exact"
     },
     {
       "text": "valve",
       "expected": [
-        "urn:nawi-water-ontology#Valve",
+        "https://watermetadata.org/ontology/watr#Valve",
         "http://data.ashrae.org/standard223#Valve"
       ],
       "stage": "exact"
@@ -198,7 +198,7 @@
     {
       "text": "filter",
       "expected": [
-        "urn:nawi-water-ontology#Filter",
+        "https://watermetadata.org/ontology/watr#Filter",
         "http://data.ashrae.org/standard223#Filter"
       ],
       "stage": "exact"
@@ -206,56 +206,56 @@
     {
       "text": "evaporator",
       "expected": [
-        "urn:nawi-water-ontology#Evaporator"
+        "https://watermetadata.org/ontology/watr#Evaporator"
       ],
       "stage": "exact"
     },
     {
       "text": "screen",
       "expected": [
-        "urn:nawi-water-ontology#Screen"
+        "https://watermetadata.org/ontology/watr#Screen"
       ],
       "stage": "exact"
     },
     {
       "text": "reservoir",
       "expected": [
-        "urn:nawi-water-ontology#Reservoir"
+        "https://watermetadata.org/ontology/watr#Reservoir"
       ],
       "stage": "exact"
     },
     {
       "text": "crystallizer",
       "expected": [
-        "urn:nawi-water-ontology#Crystallizer"
+        "https://watermetadata.org/ontology/watr#Crystallizer"
       ],
       "stage": "exact"
     },
     {
       "text": "digester",
       "expected": [
-        "urn:nawi-water-ontology#Digester"
+        "https://watermetadata.org/ontology/watr#Digester"
       ],
       "stage": "exact"
     },
     {
       "text": "check valve",
       "expected": [
-        "urn:nawi-water-ontology#CheckValve"
+        "https://watermetadata.org/ontology/watr#CheckValve"
       ],
       "stage": "exact"
     },
     {
       "text": "dewatering unit",
       "expected": [
-        "urn:nawi-water-ontology#DewateringUnit"
+        "https://watermetadata.org/ontology/watr#DewateringUnit"
       ],
       "stage": "exact"
     },
     {
       "text": "temperature sensor",
       "expected": [
-        "urn:nawi-water-ontology#TemperatureSensor",
+        "https://watermetadata.org/ontology/watr#TemperatureSensor",
         "http://data.ashrae.org/standard223#TemperatureSensor"
       ],
       "stage": "exact"
@@ -263,7 +263,7 @@
     {
       "text": "pressure sensor",
       "expected": [
-        "urn:nawi-water-ontology#PressureSensor",
+        "https://watermetadata.org/ontology/watr#PressureSensor",
         "http://data.ashrae.org/standard223#PressureSensor"
       ],
       "stage": "exact"
@@ -271,7 +271,7 @@
     {
       "text": "flow sensor",
       "expected": [
-        "urn:nawi-water-ontology#FlowSensor",
+        "https://watermetadata.org/ontology/watr#FlowSensor",
         "http://data.ashrae.org/standard223#FlowSensor"
       ],
       "stage": "exact"
@@ -279,35 +279,35 @@
     {
       "text": "conductivity sensor",
       "expected": [
-        "urn:nawi-water-ontology#ConductivitySensor"
+        "https://watermetadata.org/ontology/watr#ConductivitySensor"
       ],
       "stage": "exact"
     },
     {
       "text": "pH sensor",
       "expected": [
-        "urn:nawi-water-ontology#pHSensor"
+        "https://watermetadata.org/ontology/watr#pHSensor"
       ],
       "stage": "exact"
     },
     {
       "text": "turbidity meter",
       "expected": [
-        "urn:nawi-water-ontology#TurbidityMeter"
+        "https://watermetadata.org/ontology/watr#TurbidityMeter"
       ],
       "stage": "exact"
     },
     {
       "text": "level sensor",
       "expected": [
-        "urn:nawi-water-ontology#LevelSensor"
+        "https://watermetadata.org/ontology/watr#LevelSensor"
       ],
       "stage": "exact"
     },
     {
       "text": "concentration sensor",
       "expected": [
-        "urn:nawi-water-ontology#ConcentrationSensor",
+        "https://watermetadata.org/ontology/watr#ConcentrationSensor",
         "http://data.ashrae.org/standard223#ConcentrationSensor"
       ],
       "stage": "exact"
@@ -315,70 +315,327 @@
     {
       "text": "reverse osmosis membrane",
       "expected": [
-        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+        "https://watermetadata.org/ontology/watr#ReverseOsmosisMembrane"
       ],
       "stage": "exact"
     },
     {
       "text": "nanofiltration unit",
       "expected": [
-        "urn:nawi-water-ontology#NanofiltrationUnit"
+        "https://watermetadata.org/ontology/watr#NanofiltrationUnit"
       ],
       "stage": "exact"
     },
     {
       "text": "ultrafiltration unit",
       "expected": [
-        "urn:nawi-water-ontology#UltrafiltrationUnit"
+        "https://watermetadata.org/ontology/watr#UltrafiltrationUnit"
       ],
       "stage": "exact"
     },
     {
       "text": "microfiltration unit",
       "expected": [
-        "urn:nawi-water-ontology#MicrofiltrationUnit"
+        "https://watermetadata.org/ontology/watr#MicrofiltrationUnit"
       ],
       "stage": "exact"
     },
     {
       "text": "membrane bioreactor",
       "expected": [
-        "urn:nawi-water-ontology#MembraneBioreactor"
+        "https://watermetadata.org/ontology/watr#MembraneBioreactor"
       ],
       "stage": "exact"
     },
     {
       "text": "flocculation basin",
       "expected": [
-        "urn:nawi-water-ontology#FlocculationBasin"
+        "https://watermetadata.org/ontology/watr#FlocculationBasin"
       ],
       "stage": "exact"
     },
     {
       "text": "coagulation basin",
       "expected": [
-        "urn:nawi-water-ontology#CoagulationBasin"
+        "https://watermetadata.org/ontology/watr#CoagulationBasin"
       ],
       "stage": "exact"
     },
     {
       "text": "aerobic digester",
       "expected": [
-        "urn:nawi-water-ontology#AerobicDigester"
+        "https://watermetadata.org/ontology/watr#AerobicDigester"
       ],
       "stage": "exact"
     },
     {
       "text": "anaerobic digester",
       "expected": [
-        "urn:nawi-water-ontology#AnaerobicDigester"
+        "https://watermetadata.org/ontology/watr#AnaerobicDigester"
       ],
       "stage": "exact"
     },
     {
       "text": "oxidation ditch",
       "expected": [
-        "urn:nawi-water-ontology#OxidationDitch"
+        "https://watermetadata.org/ontology/watr#OxidationDitch"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "biosolids disposal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-BiosolidsDisposal"
+      ]
+    },
+    {
+      "text": "dechlorination",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-ChlorineResidualRemoval"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "dewatering",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Dewatering"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "pH adjustment",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-pHControl"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "softening",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Softening"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "nitrogen removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-NitrogenRemoval"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "phosphorus removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-PhosphorusRemoval"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "nutrient removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-NutrientRemoval"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "solids handling",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-VolumeReduction"
+      ]
+    },
+    {
+      "text": "air stripper",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#AirStripper"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "belt filter press",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#BeltFilterPress"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "centrifugal dewatering unit",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#CentrifugalDewateringUnit"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "equipment region",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#EquipmentRegion"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "moving bed bioreactor",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#MovingBedBioreactor"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "septic tank",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#SepticTank"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "treatment objective",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "ammonia control",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-AmmoniaControl"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "arsenic removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-ArsenicRemoval"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "chlorine residual removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-ChlorineResidualRemoval"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "clarification",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Clarification"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "constituent removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-ConstituentRemoval"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "desalination",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Desalination"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "dissolved solids removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-DissolvedSolidsRemoval"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "drying",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Drying"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "equipment cleaning",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-EquipmentCleaning"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "lead removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-LeadRemoval"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "metals removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-MetalsRemoval"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "neutralization",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Neutralization"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "organics removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-OrganicsRemoval"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "resource recovery",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-ResourceRecovery"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "silica removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-SilicaRemoval"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "stabilization",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Stabilization"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "sulfate removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-SulfateRemoval"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "suspended solids removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-SuspendedSolidsRemoval"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "thickening",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-Thickening"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "turbidity removal",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-TurbidityRemoval"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "volume reduction",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#TreatmentObjective-VolumeReduction"
       ],
       "stage": "exact"
     }

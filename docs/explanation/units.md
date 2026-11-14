@@ -2,8 +2,6 @@
 title: Units
 ---
 
-<!-- TODO: intro -->
-
 This is an explanation of how acquirium handles units: where a unit is
 recorded, what happens when the unit of a stream and the unit of its point
 disagree, and how values are converted, automatically and on request.
@@ -79,6 +77,33 @@ to the point's unit, which is the one `units()` reports.
 The conversion happens per stream, client side, when a `DataObject` fetches
 its rows; the factors are fetched from the server once per unit pair.
 
+For instance, a stream registered in psi under a point annotated in pascals
+is stored in psi and read in pascals:
+
+```python
+acq.register_streams([{
+    "source_id": "gauge", "ref_name": "p1", "value_kind": "numeric",
+    "point_uri": "urn:demo/P1-pressure", "unit": "http://qudt.org/vocab/unit/PSI",
+}])
+acq.insert_timeseries("gauge", "p1", [(t0, 14.5), (t1, 15.0), (t2, 100.0)])
+
+d = acq.query().entity("Pump").measurement(alias="p").data()
+d.units()
+d.dataframe()
+```
+```text
+{'p': ['http://qudt.org/vocab/unit/PA']}
+
+shape: (3, 2)
+┌─────────────────────────┬───────────────┐
+│ time                    ┆ p             │
+╞═════════════════════════╪═══════════════╡
+│ 2026-01-01 00:00:00 UTC ┆ 99973.980751  │
+│ 2026-01-01 00:01:00 UTC ┆ 103421.359398 │
+│ 2026-01-01 00:02:00 UTC ┆ 689475.729317 │
+└─────────────────────────┴───────────────┘
+```
+
 If the two are not convertible, the readings come through untouched, in the
 stream's unit, and a `UserWarning` names the point and both units.
 A mismatch should not break a query that did not ask for a conversion; the
@@ -86,11 +111,23 @@ warning says that the model needs a fix.
 Since registration rejects a non-convertible unit, this only happens when the
 graph was edited after the stream was registered.
 
+```text
+UserWarning: point <urn:demo/P1-pressure> is annotated http://qudt.org/vocab/unit/DEG_C
+but its stream is stored in http://qudt.org/vocab/unit/PSI, which does not convert;
+the values are returned in http://qudt.org/vocab/unit/PSI
+```
+
+Be aware that `units()` still reports the point's unit in this case, although
+the values are in the stream's unit.
+`convert_to()` raises `ValueError` for such a point, because the unit it would
+convert from is not the unit of the values.
+Passing `from_unit=` states the unit of the values and makes the conversion
+possible until the model is fixed, for instance
+`convert_to("bar", from_unit="psi")`.
+
 A conversion you asked for with `convert_to()` is different: if it cannot be
 applied when the values are fetched, the fetch raises `ValueError` rather
 than returning values in the wrong unit.
-
-**TODO:** We need to test and demonstrate this feature
 
 ## Converting on request
 

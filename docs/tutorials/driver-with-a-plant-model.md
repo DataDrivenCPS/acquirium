@@ -27,17 +27,17 @@ And the plant model already says what the skid is. These are the seawater-ro
 model's own triples:
 
 ```turtle
-wbs:RO  a nawi:ReverseOsmosisMembrane ;
+wbs:RO  a watr:ReverseOsmosisMembrane ;
     rdfs:label "Reverse Osmosis Stage" ;
     s223:cnx wbs:RO-in, wbs:RO-out, wbs:RO-out-retentate .
 
 wbs:RO-in-flow-mass-water  a s223:QuantifiableObservableProperty ;
-    s223:ofMedium        nawi:Water-Seawater ;
-    qudt:hasQuantityKind qudtqk:MassFlowRate ;
+    s223:ofMedium        watr:Water-Seawater ;
+    qudt:hasQuantityKind quantitykind:MassFlowRate ;
     qudt:hasUnit         unit:KiloGM-PER-SEC .
 
 wbs:RO-in-pressure  a s223:QuantifiableObservableProperty ;
-    qudt:hasQuantityKind qudtqk:Pressure .
+    qudt:hasQuantityKind quantitykind:Pressure .
 ```
 
 ## Step 1: find the points
@@ -53,21 +53,21 @@ already say. This is the step that replaces choosing URIs:
 ```
 ```text
 shape: (11, 4)
-┌────────┬─────────────────────────────────┬─────────────────────┬─────────────────────┐
-│ ro     ┆ m                               ┆ m.quantity_kind     ┆ m.unit              │
-╞════════╪═════════════════════════════════╪═════════════════════╪═════════════════════╡
-│ wbs:RO ┆ wbs:RO-membrane-area            ┆ qudtqk:Area         ┆ unit:M2             │
-│ wbs:RO ┆ wbs:RO-in-temperature           ┆ qudtqk:Temperature  ┆ null                │
-│ wbs:RO ┆ wbs:RO-out-retentate-flow-mass… ┆ qudtqk:MassFlowRate ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-in-flow-mass-tds         ┆ qudtqk:MassFlowRate ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-out-flow-mass-water      ┆ qudtqk:MassFlowRate ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-in-pressure              ┆ qudtqk:Pressure     ┆ null                │
-│ wbs:RO ┆ wbs:RO-out-retentate-pressure   ┆ qudtqk:Pressure     ┆ null                │
-│ wbs:RO ┆ wbs:RO-out-flow-mass-tds        ┆ qudtqk:MassFlowRate ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-in-flow-mass-water       ┆ qudtqk:MassFlowRate ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-out-pressure             ┆ qudtqk:Pressure     ┆ null                │
-│ wbs:RO ┆ wbs:RO-out-retentate-flow-mass… ┆ qudtqk:MassFlowRate ┆ unit:KiloGM-PER-SEC │
-└────────┴─────────────────────────────────┴─────────────────────┴─────────────────────┘
+┌────────┬─────────────────────────────────┬───────────────────────────┬─────────────────────┐
+│ ro     ┆ m                               ┆ m.quantity_kind           ┆ m.unit              │
+╞════════╪═════════════════════════════════╪═══════════════════════════╪═════════════════════╡
+│ wbs:RO ┆ wbs:RO-membrane-area            ┆ quantitykind:Area         ┆ unit:M2             │
+│ wbs:RO ┆ wbs:RO-in-temperature           ┆ quantitykind:Temperature  ┆ null                │
+│ wbs:RO ┆ wbs:RO-out-retentate-flow-mass… ┆ quantitykind:MassFlowRate ┆ unit:KiloGM-PER-SEC │
+│ wbs:RO ┆ wbs:RO-in-flow-mass-tds         ┆ quantitykind:MassFlowRate ┆ unit:KiloGM-PER-SEC │
+│ wbs:RO ┆ wbs:RO-out-flow-mass-water      ┆ quantitykind:MassFlowRate ┆ unit:KiloGM-PER-SEC │
+│ wbs:RO ┆ wbs:RO-in-pressure              ┆ quantitykind:Pressure     ┆ null                │
+│ wbs:RO ┆ wbs:RO-out-retentate-pressure   ┆ quantitykind:Pressure     ┆ null                │
+│ wbs:RO ┆ wbs:RO-out-flow-mass-tds        ┆ quantitykind:MassFlowRate ┆ unit:KiloGM-PER-SEC │
+│ wbs:RO ┆ wbs:RO-in-flow-mass-water       ┆ quantitykind:MassFlowRate ┆ unit:KiloGM-PER-SEC │
+│ wbs:RO ┆ wbs:RO-out-pressure             ┆ quantitykind:Pressure     ┆ null                │
+│ wbs:RO ┆ wbs:RO-out-retentate-flow-mass… ┆ quantitykind:MassFlowRate ┆ unit:KiloGM-PER-SEC │
+└────────┴─────────────────────────────────┴───────────────────────────┴─────────────────────┘
 ```
 
 Every URI in the `m` column is a binding target. Copy them exactly; a typo
@@ -138,7 +138,7 @@ what the graph says, and refuses to write a contradiction:
 |---|---|---|
 | nothing for that field | a value | the value is written onto the point |
 | the same value | the same value | no change |
-| `qudtqk:Pressure` | `quantity_kind="temperature"` | `ValueError`, nothing inserted |
+| `quantitykind:Pressure` | `quantity_kind="temperature"` | `ValueError`, nothing inserted |
 
 In the first tutorial nothing could
 contradict you: a placeholder point has no prior opinion, so declaring

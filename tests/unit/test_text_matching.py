@@ -599,7 +599,7 @@ def test_exact_only_matcher_indexes_exact_surfaces_too(tmp_path: Path) -> None:
 
 _ROLE_TTL = """
 @prefix s223: <http://data.ashrae.org/standard223#> .
-@prefix watr: <urn:nawi-water-ontology#> .
+@prefix watr: <https://watermetadata.org/ontology/watr#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix ex:   <urn:ex#> .
 
@@ -647,7 +647,7 @@ def test_role_is_found_by_its_bare_name() -> None:
 
 # ── initialisms of long labels ────────────────────────────────────────
 
-W, S = "urn:nawi-water-ontology#", "http://data.ashrae.org/standard223#"
+W, S = "https://watermetadata.org/ontology/watr#", "http://data.ashrae.org/standard223#"
 
 
 def _concept(uri: str, kind: str, *surfaces: str) -> dict[str, Any]:
@@ -925,10 +925,10 @@ class TestProcessKindRouting:
         source's kind set didn't include it, so resolve(kind='process')
         silently returned nothing."""
         r = _resolver(graph=[
-            _rr("urn:nawi-water-ontology#Process-ReverseOsmosis", "process", score=0.9),
+            _rr("https://watermetadata.org/ontology/watr#Process-ReverseOsmosis", "process", score=0.9),
         ])
         out = r.resolve("reverse osmosis", kind="process", min_score=0.4)
-        assert out and out[0].uri == "urn:nawi-water-ontology#Process-ReverseOsmosis"
+        assert out and out[0].uri == "https://watermetadata.org/ontology/watr#Process-ReverseOsmosis"
 
 
 # ══════════════════════════════════════════════════════════════════════

@@ -82,6 +82,7 @@ The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acq
 - [Explore a model](how-to/explore-a-model.md) — build a query step by step; `options()` and `facets()`
 - [Load a plant model](how-to/load-a-plant-model.md) — insert the model, check it landed, validate it against the shapes
 - [Inserting data](how-to/write-data.md) — register streams and write rows without a driver; the logbook
+- [Attach metadata to a node](how-to/attach-metadata.md) — your own values on equipment and points, queryable like built-in attributes
 - [Resolve text to URIs](how-to/resolve-text.md) — `resolve()`, units and conversion, tuning
 
 ## Reference

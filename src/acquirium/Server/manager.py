@@ -443,7 +443,7 @@ class Manager:
 
             # asset-type label from an equipment register row
             resolve_text("sedimentation tank", kind="class", top_k=2)
-            # -> [{"uri": "urn:nawi-water-ontology#SedimentationTank",
+            # -> [{"uri": "https://watermetadata.org/ontology/watr#SedimentationTank",
             #      "kind": "class", "score": 1.0,
             #      "match_stage": "exact", ...}, ...]
         """

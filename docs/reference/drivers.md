@@ -2,8 +2,6 @@
 title: Driver reference
 ---
 
-<!-- TODO: intro -->
-
 This is the reference for authoring and configuring drivers: the class
 hierarchy, every hook and helper with its signature, the persistent state
 API, the configuration keys, the built-in drivers and the CLI.
@@ -65,10 +63,9 @@ from acquirium import (Driver, IngestDriver, PollingIngestDriver, EventIngestDri
 from acquirium.DriverState import DriverState
 ```
 
-<!-- TODO: `from acquirium import DriverState` silently resolves to the
-     acquirium.DriverState *module*, not the class, because the module shadows
-     the name. Export the class from `acquirium/__init__.py` (or rename the
-     module) and simplify this import. -->
+Note that `DriverState` is imported from its own module.
+`from acquirium import DriverState` returns the `acquirium.DriverState` module,
+not the class.
 
 The other built-ins are imported by their module path, as in the `spec`
 values below.
@@ -264,7 +261,11 @@ keys need no declaration.
 | `source_id` | none | the driver's datasource; required by the ingest bases unless set in `setup()` |
 | `server_url`, `server_port` | `127.0.0.1`, the `[server]` port | under `[driver]`: where the actors reach the server |
 
-**TODO:** We can make default driver naming unique to avoid collisions.
+Note that the default `name` is not unique.
+Two `[[drivers]]` entries with the same class and no `name` get the same name,
+and the second one fails to start with `Driver '<name>' is already running`.
+The server logs the error and continues.
+To run one class twice, set a different `name` and `driver_id` on each entry.
 
 <!-- TODO: two more keys the supervisor reads are undocumented above:
      `[driver] use_ssl` (false; it is in the sample acquirium.toml) and
