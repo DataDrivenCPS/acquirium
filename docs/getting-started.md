@@ -93,11 +93,11 @@ The folder and the number after `127.0.0.1:` will be different on your machine.
 
 The tutorial pages are numbered. Please follow them in number order.
 
-:::{card} 0 - Acquirium at a glance &nbsp;→
-:link: tutorials/acquirium-at-a-glance
-:link-type: doc
-:class-card: next-page sd-shadow-md
-:class-title: sd-fs-3 sd-mb-0
+```{button-ref} tutorials/acquirium-at-a-glance
+:ref-type: doc
+:color: primary
+:outline:
+:align: right
 
-Next
-:::
+Next: Acquirium at a glance →
+```
