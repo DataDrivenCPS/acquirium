@@ -10,6 +10,12 @@ change in any release.
 
 ## [Unreleased]
 
+### Added
+- `Query` objects display themselves. `repr(q)` is a summary of the pattern,
+  one line per node, and does not contact the server. `print(q)` adds the
+  number of matches and the first five rows of `q.metadata()`; a notebook
+  cell ending in `q` shows the same. `q.summary()` returns the summary text.
+
 ### Changed
 - `value_kind` is optional in `register_streams()` and `Driver.declare()`. A
   stream registered without it becomes numeric when it receives its first

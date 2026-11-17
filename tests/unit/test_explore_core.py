@@ -441,3 +441,48 @@ class TestMetadataCompaction:
         assert sorted(meta["a"].to_list()) == ["t:a1", "t:a1", "t:a2", "t:a2"]
         assert meta["m"].null_count() == 1
         assert client.compact_uri.call_count == 4          # a1, a2, p1, p2, not 8 cells
+
+
+class TestDisplay:
+    def _client(self, rows):
+        from unittest.mock import MagicMock
+        client = MagicMock()
+        client.sparql_query.return_value = {"columns": ["v0"], "rows": [[row] for row in rows]}
+        client.compact_uri.side_effect = lambda u: "t:" + str(u).rsplit("#", 1)[-1]
+        return client
+
+    def test_repr_is_a_summary_and_does_not_contact_the_server(self):
+        client = self._client(["urn:t#a1"])
+        query = Query(client=client).entity(CLS_A, alias="a").measurement(alias="m")
+        assert repr(query) == "Query\n  a: entity, TypeA\n  m: measurement, of a"
+        assert client.mock_calls == []
+
+    def test_repr_of_an_empty_query(self):
+        assert repr(q()) == str(q()) == "Query (empty)"
+
+    def test_str_adds_the_first_five_matches(self):
+        client = self._client([f"urn:t#a{i}" for i in range(7)])
+        text = str(Query(client=client).entity(CLS_A, alias="a"))
+        assert text.startswith("Query\n  a: entity, TypeA\n7 matches, first 5:\n")
+        assert "t:a4" in text and "t:a5" not in text
+
+    def test_str_runs_the_query_once(self):
+        client = self._client(["urn:t#a1"])
+        query = Query(client=client).entity(CLS_A, alias="a")
+        str(query), str(query), query._repr_html_()
+        assert client.sparql_query.call_count == 1
+
+    def test_str_without_matches(self):
+        text = str(Query(client=self._client([])).entity(CLS_A, alias="a"))
+        assert text == "Query\n  a: entity, TypeA\n0 matches"
+
+    def test_str_survives_a_failing_server(self):
+        client = self._client([])
+        client.sparql_query.side_effect = ConnectionError("down")
+        text = str(Query(client=client).entity(CLS_A, alias="a"))
+        assert text == "Query\n  a: entity, TypeA\n(preview unavailable: ConnectionError)"
+
+    def test_html_escapes_the_summary_and_holds_the_table(self):
+        html = Query(client=self._client(["urn:t#a1"])).entity(CLS_A, alias="a")._repr_html_()
+        assert html.startswith("<pre>Query\n  a: entity, TypeA\n1 match:</pre>")
+        assert "<table" in html and "t:a1" in html

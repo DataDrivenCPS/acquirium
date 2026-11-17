@@ -1812,6 +1812,81 @@ class Query:
 
     # ---------- display helpers ----------
 
+    def summary(self) -> str:
+        """One line per node of the pattern. Does not contact the server."""
+        graph = self.query_graph
+        if not graph.nodes:
+            return "Query (empty)"
+        incoming = {edge.target_id: edge for edge in graph.edges}
+        lines = ["Query"]
+        for node in graph.nodes.values():
+            data = graph.data_nodes.get(node.id)
+            parts = ["measurement" if node.constraints.get("is_data_node") else "entity"]
+            if node.constraints.get("rdf_class"):
+                parts.append(_local_name(node.constraints["rdf_class"]))
+            if node.constraints.get("instance_uri"):
+                parts.append(f"uri={_local_name(node.constraints['instance_uri'])}")
+            edge = incoming.get(node.id)
+            if edge is not None:
+                source = graph.aliases_reverse.get(edge.source_id, edge.source_id)
+                if edge.direction:
+                    parts.append(f"{edge.direction} of {source}")
+                elif node.constraints.get("is_data_node"):
+                    parts.append(f"of {source}")
+                else:
+                    parts.append(f"related to {source}")
+            filters = {**node.constraints.get("attrs", {}), **(data.filters if data else {})}
+            parts.extend(f"{key}={_local_name(value)}" for key, value in filters.items())
+            conditions = len(node.constraints.get("exprs", ())) + (len(data.exprs) if data else 0)
+            if conditions:
+                parts.append(f"{conditions} where condition{'s' if conditions > 1 else ''}")
+            if data is not None and data.refs is not None:
+                parts.append(f"{len(data.refs)} stream{'s' if len(data.refs) != 1 else ''} given")
+            lines.append(f"  {node.alias if node.alias is not None else node.id}: {', '.join(parts)}")
+        return "\n".join(lines)
+
+    def _preview(self, rows: int = 5) -> "tuple[pl.DataFrame | None, str]":
+        """The first matches and a line describing them; ``(None, note)`` when
+        there is nothing to run or the server call fails."""
+        if not self.query_graph.nodes or self.client is None:
+            return None, ""
+        try:
+            matches = self.metadata()
+        except Exception as error:
+            return None, f"(preview unavailable: {type(error).__name__})"
+        total = len(matches)
+        if total > rows:
+            return matches.head(rows), f"{total} matches, first {rows}:"
+        if not total:
+            return matches, "0 matches"
+        return matches, f"{total} match{'' if total == 1 else 'es'}:"
+
+    def __repr__(self) -> str:
+        return self.summary()
+
+    def __str__(self) -> str:
+        """The summary and the first five matches. Runs the query (cached)."""
+        matches, note = self._preview()
+        text = self.summary()
+        if note:
+            text += f"\n{note}"
+        if matches is not None and len(matches):
+            with pl.Config(tbl_hide_dataframe_shape=True):
+                text += f"\n{matches}"
+        return text
+
+    def _repr_html_(self) -> str:
+        """Notebook display: the summary and the first five matches."""
+        import html
+
+        matches, note = self._preview()
+        text = self.summary() + (f"\n{note}" if note else "")
+        out = f"<pre>{html.escape(text)}</pre>"
+        if matches is not None and len(matches):
+            with pl.Config(tbl_hide_dataframe_shape=True):
+                out += matches._repr_html_()
+        return out
+
     def metadata_objects(self, *, include_dependencies: bool = True) -> List[Dict[str, Any]]:
         """The pattern matches as Python dicts, attributes in the shape they were saved.
 
@@ -2023,6 +2098,14 @@ class Query:
             return self.client.compact_uri(uri)
         except Exception:
             return str(uri)
+
+
+def _local_name(value: Any) -> str:
+    """The part of a URI after its last ``#`` or ``/``; other values as text."""
+    text = str(value)
+    if "://" in text or text.startswith("urn:"):
+        return text.rstrip("#/").replace("#", "/").rsplit("/", 1)[-1] or text
+    return text
 
 
 def _place(target: Dict[str, Any], segments: List[str], value: Any) -> None:
