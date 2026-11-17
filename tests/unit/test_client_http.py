@@ -224,7 +224,7 @@ class TestSparql:
 
 class TestResolve:
     def test_single_text_returns_best_uri(self, client):
-        assert client.resolve("pump", "class") == "http://data.ashrae.org/standard223#Pump"
+        assert client.resolve("pump", "class") == "https://watermetadata.org/ontology/watr#Pump"
 
     def test_single_text_no_match_is_none(self, client):
         assert client.resolve("zzzznonexistent") is None
@@ -232,7 +232,7 @@ class TestResolve:
     def test_top_k_returns_candidates(self, client):
         matches = client.resolve("pump", "class", top_k=3)
         assert 1 < len(matches) <= 3
-        assert matches[0]["uri"] == "http://data.ashrae.org/standard223#Pump"
+        assert matches[0]["uri"] == "https://watermetadata.org/ontology/watr#Pump"
 
     def test_record_form_joint_resolution(self, client):
         assert client.resolve({"eu": ("gal/min", "unit"), "qty": ("zzzznonexistent", "quantity_kind"),
