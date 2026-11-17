@@ -17,6 +17,7 @@ repository:
   branch: main
 
 html:
+  favicon: logo-notext.png
   use_issues_button: true
   use_repository_button: true
   extra_navbar: '<a href="/">watermetadata.org</a> · <a href="/docs">Ontology docs</a>'
