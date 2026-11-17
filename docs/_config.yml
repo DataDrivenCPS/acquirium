@@ -39,3 +39,5 @@ sphinx:
     myst_title_to_header: true
     # auto-generate #slug anchors for headings so GitHub-style section links resolve
     myst_heading_anchors: 4
+    # links to other sites open in a new tab
+    myst_links_external_new_tab: true
