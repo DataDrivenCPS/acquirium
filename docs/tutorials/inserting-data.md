@@ -87,3 +87,12 @@ Be aware that an empty list with `replace=True` clears the stream:
 ```python
 acq.insert_timeseries("lab-import", "effluent-tds", [], replace=True)
 ```
+
+```{button-ref} querying-data
+:ref-type: doc
+:color: primary
+:outline:
+:align: right
+
+Next: Querying Data →
+```

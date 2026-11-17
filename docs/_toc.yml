@@ -7,6 +7,8 @@ chapters:
   sections:
   - file: tutorials/fundamentals.md
   - file: tutorials/inserting-data.md
+  - file: tutorials/querying-data.md
+  - file: tutorials/inserting-metadata.md
   - file: tutorials/getting-started.md
   - file: tutorials/querying.md
   - file: tutorials/query-cookbook.md
