@@ -2,8 +2,10 @@
 format: jb-book
 root: _index.md
 chapters:
+- file: getting-started.md
 - file: tutorials/_index.md
   sections:
+  - file: tutorials/acquirium-at-a-glance.md
   - file: tutorials/getting-started.md
   - file: tutorials/querying.md
   - file: tutorials/query-cookbook.md
