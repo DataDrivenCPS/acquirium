@@ -148,9 +148,9 @@ class TestPointLabelsFirst:
             _client=client, _tall=tall, _materialized=True,
         )
 
-        assert d.dataframe("wide", start=t[1])["flow"].to_list() == [2.0, 3.0]
-        assert d.dataframe("wide", end=t[1])["flow"].to_list() == [1.0, 2.0]
-        assert d.dataframe("wide", limit=2, order="desc")["flow"].to_list() == [3.0, 2.0]
+        assert d.dataframe("wide", start=t[1])["flow__p1"].to_list() == [2.0, 3.0]
+        assert d.dataframe("wide", end=t[1])["flow__p1"].to_list() == [1.0, 2.0]
+        assert d.dataframe("wide", limit=2, order="desc")["flow__p1"].to_list() == [3.0, 2.0]
         assert d.dataframe("narrow", start="2026-01-02", order="desc")["value_numeric"].to_list() == [3.0, 2.0]
 
     def test_metadata_has_point_label_column(self):
@@ -220,7 +220,7 @@ class TestCastValue:
     def test_int_returns_int64_columns(self):
         d = self._object([1.0, 2.0], "int")
         assert d["flow"]["value"].dtype == pl.Int64
-        assert d.dataframe("wide")["flow"].to_list() == [1, 2]
+        assert d.dataframe("wide")["flow__p1"].to_list() == [1, 2]
         assert d.dataframe("narrow")["value_numeric"].dtype == pl.Int64
         assert d.dataframe("narrow", compact=False)["value_numeric"].dtype == pl.Int64
 
@@ -228,7 +228,7 @@ class TestCastValue:
         import pytest
         d = self._object([1.0, 1.5], "int")
         with pytest.warns(UserWarning, match="truncates 1 non-integer value.*such as 1.5"):
-            assert d.dataframe("wide")["flow"].to_list() == [1, 1]
+            assert d.dataframe("wide")["flow__p1"].to_list() == [1, 1]
         with pytest.warns(UserWarning, match="cast_value='int'"):
             assert d["flow"]["value"].to_list() == [1, 1]
 
@@ -311,8 +311,8 @@ class TestStreamInfo:
             "value_text": pl.Series([None, None, None], dtype=pl.Utf8),
         })
         d._materialized = True
-        assert d.dataframe(compact=False)["flow"].to_list() == [1.0]       # first stream wins
-        assert d.dataframe(compact=False, streams=[1])["flow"].to_list() == [1.1]
+        assert d.dataframe(compact=False)["flow__urn:t#p1"].to_list() == [1.0]       # first stream wins
+        assert d.dataframe(compact=False, streams=[1])["flow__urn:t#p1"].to_list() == [1.1]
         narrow = d.dataframe(shape="narrow", compact=False, streams=["urn:t#r2", 2])
         assert sorted(narrow["ref_uri"].to_list()) == ["urn:t#r2", "urn:t#r3"]
 

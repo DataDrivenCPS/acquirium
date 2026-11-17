@@ -872,11 +872,10 @@ class DataObject:
         """Return time-series for a data alias.
 
         Multiple ref_uris that share the same point_uri are combined
-        (first-wins). If the alias resolves to a single point_uri the result
-        is ``[time, value]``; if several point_uris share the alias the
-        result is ``[time, value, point_uri]`` so the caller can
-        disambiguate. An alias that exists but has no rows in the window
-        returns an empty ``[time, value]`` frame.
+        (first-wins). The result is ``[time, value, point_uri]``, whether
+        the alias resolves to one point or to several. An alias that exists
+        but has no rows in the window returns an empty frame with the same
+        columns.
 
         Raises:
             KeyError: If ``alias`` is not one of :attr:`aliases`.
@@ -886,7 +885,8 @@ class DataObject:
         self._materialize()
         subset = self._tall.filter(pl.col("data_alias") == alias)
         if subset.is_empty():
-            return pl.DataFrame(schema={"time": pl.Datetime(time_zone="UTC"), "value": pl.Float64})
+            return pl.DataFrame(schema={"time": pl.Datetime(time_zone="UTC"), "value": pl.Float64,
+                                        "point_uri": pl.String})
 
         # Combine ref_uris that share the same (point_uri, time). maintain_order
         # is what makes keep="first" mean the first row of _tall; without it
@@ -894,9 +894,6 @@ class DataObject:
         subset = subset.unique(subset=["point_uri", "time"], keep="first", maintain_order=True)
         subset = _restore_single_value_column(subset)
         subset = self._cast_output(subset, ["value"])
-        n_points = subset["point_uri"].n_unique()
-        if n_points <= 1:
-            return subset.select("time", "value").sort("time")
         # (time, point_uri) is unique after the dedup above, so sorting on both
         # gives a total order — repeated access returns identical frames.
         return subset.select("time", "value", "point_uri").sort(["time", "point_uri"])
@@ -993,9 +990,8 @@ class DataObject:
 
         - ``shape="wide"`` (default): pivots to ``[time, <one column per
           stream>]``. Multiple ref_uris that share the same point_uri are
-          combined (first-wins). When an alias resolves to a single point
-          the column is just the alias; when it resolves to several points
-          the columns are disambiguated per point.
+          combined (first-wins). A column is named ``alias__point``,
+          whether the alias matched one point or several.
         - ``shape="narrow"``: one row per observation.
 
         ``compact=True`` (default) renders URIs as CURIEs and identifies
@@ -1077,25 +1073,15 @@ class DataObject:
         # we want one row per point_uri at each timestamp.
         tall = tall.unique(subset=["data_alias", "point_uri", "time"], keep="first")
 
-        # Count distinct point_uris per alias from the bindings (i.e. the
-        # query's metadata view, not just whichever bindings produced rows).
-        # This keeps disambiguation stable even when some bindings had no
-        # data within the requested window.
-        points_per_alias: dict[str, set[str]] = {}
-        auto_aliases: set[str] = set()
-        for b in self._bindings:
-            points_per_alias.setdefault(b.alias, set()).add(b.point_uri)
-            if b.alias == str(b.nid):
-                auto_aliases.add(b.alias)
+        # A column is named alias__point whether the alias matched one point
+        # or several, so the schema does not depend on how many matched.
+        auto_aliases = {b.alias for b in self._bindings if b.alias == str(b.nid)}
         labels = self._point_labels()
 
         def _pivot_key(alias: str, point_uri: str) -> str:
             label = labels.get(point_uri)
             if alias in auto_aliases and label:
                 return label
-            pts = points_per_alias.get(alias, set())
-            if len(pts) <= 1:
-                return alias
             if label:
                 return f"{alias}__{label}"
             try:
@@ -1115,8 +1101,9 @@ class DataObject:
 
         Auto-aliased data nodes (alias == ``str(nid)``) are named by the
         point's ``rdfs:label`` when it has one, else by its compacted
-        point-local name; user aliases that resolve to several points are
-        disambiguated as ``f"{alias}__{label_or_point_local}"``.
+        point-local name; under a user alias every point is named
+        ``f"{alias}__{label_or_point_local}"``, also when the alias matched
+        a single point, so the schema does not depend on how many matched.
         """
         def _compact(uri: str) -> str:
             try:
@@ -1130,21 +1117,13 @@ class DataObject:
             subset=["data_alias", "point_uri", "ref_uri", "time"], keep="first"
         )
 
-        points_per_alias: dict[str, set[str]] = {}
-        auto_aliases: set[str] = set()
-        for b in self._bindings:
-            points_per_alias.setdefault(b.alias, set()).add(b.point_uri)
-            if b.alias == str(b.nid):
-                auto_aliases.add(b.alias)
-
+        auto_aliases = {b.alias for b in self._bindings if b.alias == str(b.nid)}
         labels = self._point_labels()
 
         def _label(alias: str, point_uri: str) -> str:
             if alias in auto_aliases:
                 return labels.get(point_uri) or _compact(point_uri)
-            if len(points_per_alias.get(alias, set())) > 1:
-                return f"{alias}__{labels.get(point_uri) or _compact(point_uri)}"
-            return alias
+            return f"{alias}__{labels.get(point_uri) or _compact(point_uri)}"
 
         tall = _with_mapped_column(tall, ["data_alias", "point_uri"], _label, "_label")
 
@@ -1251,8 +1230,7 @@ class DataObject:
         ``start``/``end`` bounds still apply: the newest reading inside them.
         A point fed by several refs reports its newest row across them.
 
-        With ``alias`` the frame is ``[time, value]`` for a single point or
-        ``[time, value, point_uri]`` when the alias covers several, as with
+        With ``alias`` the frame is ``[time, value, point_uri]``, as with
         ``__getitem__``. Without it every binding is reported as
         ``[data_alias, point_uri, time, value]``. ``streams`` restricts the
         fetch to the listed streams, as in :meth:`dataframe`.
@@ -1286,8 +1264,6 @@ class DataObject:
 
         if alias is None:
             return newest.select("data_alias", "point_uri", "time", "value").sort("data_alias", "point_uri")
-        if len({b.point_uri for b in bindings}) <= 1:
-            return newest.select("time", "value")
         return newest.select("time", "value", "point_uri").sort("point_uri")
 
     def is_empty(self) -> bool:
