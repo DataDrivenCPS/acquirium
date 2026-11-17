@@ -69,19 +69,19 @@ def _stream_set(client: Any, alias: str, descriptors: tuple[StreamDescriptor, ..
     refs, times, values = [], [], []
     numeric = True
     for descriptor in descriptors:
-        frame = client.timeseries_df(descriptor.ref_uri)
+        frame = client.timeseries_df(descriptor.stream_uri)
         if frame.is_empty():
             continue
         column = frame["value"]
         numeric = numeric and column.dtype.is_numeric()
-        refs.extend([descriptor.ref_uri] * frame.height)
+        refs.extend([descriptor.stream_uri] * frame.height)
         times.extend(frame["ts"].to_list())
         values.extend(column.to_list())
     value_type = pa.float64() if numeric else pa.string()
     if not numeric:
         values = [None if value is None else str(value) for value in values]
     table = pa.table({
-        "ref_uri": pa.array(refs, pa.string()),
+        "stream_uri": pa.array(refs, pa.string()),
         "time": pa.array(times, pa.timestamp("us", tz="UTC")),
         "value": pa.array(values, value_type),
     })

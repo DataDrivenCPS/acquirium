@@ -95,7 +95,7 @@ baseline_results = study.experiments.where(scenario="baseline").scalars()
 
 print(f"experiment: {experiment.run_id}")
 print(f"operating cost: {result.fun:.2f} USD")
-print(f"tank volume stream: {recorded_volume.ref_uri}")
+print(f"tank volume stream: {recorded_volume.stream_uri}")
 print(saved_schedule.head())
 print(baseline_results)
 

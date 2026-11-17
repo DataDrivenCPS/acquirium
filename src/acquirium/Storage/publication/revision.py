@@ -38,12 +38,12 @@ class RevisionPublisher:
         self._store._insert_frame(conn, writes, revision)
         return revision
 
-    def replace(self, request: PublicationRequest, ref_uri: str) -> PublicationReceipt:
+    def replace(self, request: PublicationRequest, stream_uri: str) -> PublicationReceipt:
         """Replace one stream, including empty requests, at one atomic revision."""
         frame = pl.from_arrow(request.mutations)
         if (
             frame["operation"].is_null() | (frame["operation"] != "upsert")
-            | frame["ref_uri"].is_null() | (frame["ref_uri"] != ref_uri)
+            | frame["stream_uri"].is_null() | (frame["stream_uri"] != stream_uri)
         ).any():
             raise ValueError("replacement requires only upserts for the specified stream")
         if frame["ts"].null_count():
@@ -52,7 +52,7 @@ class RevisionPublisher:
             raise ValueError("replacement rows cannot contain both numeric and text values")
         mutations = ids.normalize_mutations(request.mutations)
         writes = self._store._prepare_frame(pl.from_arrow(mutations))
-        row_count = self._store._replace_frame(ref_uri, writes)
+        row_count = self._store._replace_frame(stream_uri, writes)
         return PublicationReceipt(request.publication_id, ids.payload_hash(mutations), row_count, {})
 
     def reset(self, conn, refs, *, revision=None) -> int | None:
@@ -68,8 +68,8 @@ class RevisionPublisher:
             return None
         revision = self._store._next_revision(conn) if revision is None else revision
         marks = ",".join("?" for _ in refs)
-        execute(conn, f"DELETE FROM timeseries WHERE ref_id IN (SELECT ref_id FROM ref_ids WHERE ref_uri IN ({marks}))", refs)
+        execute(conn, f"DELETE FROM timeseries WHERE stream_id IN (SELECT stream_id FROM stream_ids WHERE stream_uri IN ({marks}))", refs)
         for ref in refs:
-            execute(conn, "INSERT INTO stream_resets (ref_uri, last_revision) VALUES (?, ?) "
-                    "ON CONFLICT (ref_uri) DO UPDATE SET last_revision=EXCLUDED.last_revision", [ref, revision])
+            execute(conn, "INSERT INTO stream_resets (stream_uri, last_revision) VALUES (?, ?) "
+                    "ON CONFLICT (stream_uri) DO UPDATE SET last_revision=EXCLUDED.last_revision", [ref, revision])
         return revision

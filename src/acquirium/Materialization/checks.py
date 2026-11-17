@@ -14,7 +14,7 @@ from acquirium.Materialization.models import Binding, InputBatch
 
 def check_entry(binding: Binding) -> dict[str, Any]:
     return {
-        "inputs": {alias: [{"ref_uri": d.ref_uri, "label": d.label, "unit": d.unit}
+        "inputs": {alias: [{"stream_uri": d.stream_uri, "label": d.label, "unit": d.unit}
                            for d in streams] for alias, streams in binding.inputs.items()},
         "row": dict(binding.row) if binding.row else None,
         "outputs": {}, "error": None,
@@ -38,7 +38,7 @@ def check_outputs(binding: Binding, context: InputBatch,
             shown = table if limit is None else table.slice(0, limit)
             values = [{"time": t.isoformat(), "value": v}
                       for t, v in zip(shown['time'].to_pylist(), shown['value'].to_pylist())]
-        outputs[name] = {"stream": port.ref_uri, "ref_name": port.ref_name,
+        outputs[name] = {"stream": port.stream_uri, "stream_name": port.stream_name,
                          "value_kind": port.spec.value_kind, "rows": rows,
                          "assigned": name in results, "truncated": len(values) < rows,
                          "values": values}

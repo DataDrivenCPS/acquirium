@@ -565,7 +565,7 @@ def _data_node_clauses(v: str, nid: int, info, registry: Mapping = REGISTRY) -> 
     clauses: List[str] = []
     refs = getattr(info, "refs", None)
     if refs is not None:
-        # measurement(ref=): pin the reference; an empty tuple matches nothing
+        # measurement(stream=): pin the reference; an empty tuple matches nothing
         clauses.append(f"VALUES ?ext{nid} {{ {' '.join(f'<{r}>' for r in refs)} }}")
     clauses.append(f"{v} <{HAS_EXTERNAL_REFERENCE}> ?ext{nid} .")
     clauses.append(f"OPTIONAL {{ {v} <{HAS_UNIT}> ?unit{nid} . }}")

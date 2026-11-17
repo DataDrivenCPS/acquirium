@@ -57,7 +57,7 @@ class ParquetIngestDriver(FileIngestDriver):
             skip_cols=cfg.get("skip_cols", []),
         )
         if batch.observations is not None:
-            for name in batch.observations["ref_name"].unique():
+            for name in batch.observations["stream_name"].unique():
                 if not self.is_declared(name):
                     self.declare(name)
         return batch

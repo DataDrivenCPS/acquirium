@@ -9,7 +9,7 @@ import pyarrow as pa
 
 MUTATION_SCHEMA = pa.schema([
     pa.field("operation", pa.string()),
-    pa.field("ref_uri", pa.string()),
+    pa.field("stream_uri", pa.string()),
     pa.field("ts", pa.timestamp("us", tz="UTC")),
     pa.field("numeric_value", pa.float64()),
     pa.field("text_value", pa.string()),
@@ -41,4 +41,4 @@ class PublicationReceipt:
 class PublicationStore(Protocol):
     def publish(self, request: PublicationRequest) -> PublicationReceipt: ...
 
-    def replace(self, request: PublicationRequest, ref_uri: str) -> PublicationReceipt: ...
+    def replace(self, request: PublicationRequest, stream_uri: str) -> PublicationReceipt: ...

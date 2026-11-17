@@ -14,7 +14,7 @@ from acquirium.internals.models import (
     LogEntry,
     StreamInsert,
     RegisterDatasourceRequest,
-    compute_ref_uri,
+    compute_stream_uri,
     looks_like_uri,
 )
 from acquirium.internals.internals_namespaces import *
@@ -25,6 +25,7 @@ from acquirium.Storage.values import normalize_value_kind
 from rdflib import Graph, URIRef, Literal
 from rdflib.namespace import NamespaceManager, RDF, RDFS
 import logging
+from acquirium.internals._names import accepts_old_names, new_names
 logger = logging.getLogger(__name__)
 
 DEFAULT_HEALTH_REQUEST_TIMEOUT = 30.0
@@ -94,6 +95,7 @@ def _split_stream_metadata(stream: dict) -> tuple[dict, dict]:
     return merged, rest
 
 
+@accepts_old_names
 class AcquiriumClient:
     # 127.0.0.1 rather than "localhost": the server listens on IPv4 only, and
     # "localhost" resolves to ::1 first on most systems. The failed IPv6
@@ -150,8 +152,8 @@ class AcquiriumClient:
     def observe_experiment(self, run_id: str, variable_id: str, **body: Any) -> dict: return self._experiment_post(f"/experiments/runs/{run_id}/variables/{quote(variable_id, safe='')}/observations", body)
     def observe_experiment_batch(self, run_id: str, observations: list[dict]) -> list[dict]:
         return self._experiment_post(f"/experiments/runs/{run_id}/observations/batch", observations)
-    def annotate_experiment_stream(self, run_id: str, ref_uri: str, *, start: str, end: str | None = None, metadata: dict | None = None) -> dict:
-        return self._experiment_post(f"/experiments/runs/{run_id}/stream-annotations", {"ref_uri": ref_uri, "start": start, "end": end, "metadata": {} if metadata is None else metadata})
+    def annotate_experiment_stream(self, run_id: str, stream_uri: str, *, start: str, end: str | None = None, metadata: dict | None = None) -> dict:
+        return self._experiment_post(f"/experiments/runs/{run_id}/stream-annotations", {"stream_uri": stream_uri, "start": start, "end": end, "metadata": {} if metadata is None else metadata})
     def close_experiment_stream_annotation(self, annotation_id: str, *, end: str) -> dict:
         return self._experiment_post(f"/experiments/stream-annotations/{annotation_id}/close", {"end": end})
     def list_experiment_stream_annotations(self, **filters: Any) -> list[dict]:
@@ -566,14 +568,18 @@ class AcquiriumClient:
             return matches[0]["uri"] if matches else None
         return matches
 
-    def resolve_point_metadata(
+    def resolve_point_metadata(self, *args, **kwargs):
+        """Alias of :meth:`resolve_property_metadata`."""
+        return self.resolve_property_metadata(*args, **kwargs)
+
+    def resolve_property_metadata(
         self, fields: dict[str, Any], min_score: float = 0.6
     ) -> dict[str, str | None]:
         """Resolve the semantic metadata of a single point/property.
 
         ``fields`` maps known semantic field names to a raw value::
 
-            client.resolve_point_metadata({
+            client.resolve_property_metadata({
                 "unit": "gal/min",
                 "quantity_kind": "flow rate",
                 "medium": "water",
@@ -699,17 +705,17 @@ class AcquiriumClient:
 
     def insert_log(
         self,
-        point_uri: Optional[str] = None,
+        property_uri: Optional[str] = None,
         log_time: Optional[str] = None,
         observation_start: Optional[str] = None,
         observation_end: Optional[str] = None,
         log_message: str = "",
     ) -> dict:
         """
-        Insert a log entry for a given point URI.
+        Insert a log entry for a given property URI.
 
         Args:
-            point_uri: The URI of the time series point. If None, defaults to the
+            property_uri: The URI of the time series point. If None, defaults to the
                 generic plant URI on the server.
             log_time: The timestamp of the log entry in ISO 8601 format.
                 If None, uses the current time.
@@ -726,8 +732,8 @@ class AcquiriumClient:
             "observation_end": observation_end,
             "message": log_message,
         }
-        if point_uri is not None:
-            data["point_uri"] = point_uri
+        if property_uri is not None:
+            data["property_uri"] = property_uri
         response = self._http.post(url, params=data)
         response.raise_for_status()
         return response.json()
@@ -786,9 +792,9 @@ class AcquiriumClient:
         return response.json()
 
     def resolve_storage_keys(self, uris: list[str]) -> dict[str, str]:
-        """Map each point URI to its canonical ref URI used by timeseries APIs.
+        """Map each property URI to its canonical stream URI used by timeseries APIs.
 
-        An already-canonical ref URI passes through. The database may map the
+        An already-canonical stream URI passes through. The database may map the
         returned URI to an internal integer key.
         """
         if not uris:
@@ -813,7 +819,7 @@ class AcquiriumClient:
         except Exception:
             return False
 
-    def _point_metadata(self, point_uri: str) -> dict[str, "str | None"]:
+    def _property_metadata(self, property_uri: str) -> dict[str, "str | None"]:
         """Return the semantic metadata a point already has in the graph.
 
         Keys match the stream-registration field names (``unit``,
@@ -824,7 +830,7 @@ class AcquiriumClient:
         fields = {**POINT_FIELD_PREDICATES, "data_source": DATA_SOURCE}
         select = " ".join(f"?{name}" for name in fields)
         optionals = "\n".join(
-            f"            OPTIONAL {{ <{point_uri}> <{pred}> ?{name} . }}"
+            f"            OPTIONAL {{ <{property_uri}> <{pred}> ?{name} . }}"
             for name, pred in fields.items()
         )
         sparql = f"SELECT {select} WHERE {{\n{optionals}\n        }}"
@@ -842,25 +848,25 @@ class AcquiriumClient:
 
         Each stream item is a dictionary with these commonly used keys:
 
-        - ``point_uri``: optional semantic URI. When provided, the point is
+        - ``property_uri``: optional semantic URI. When provided, the point is
           linked to the external reference and its provided metadata is
           checked against what the graph already has (see below). When
-          omitted, a dummy point (``<ref_uri>__point``) is minted and
+          omitted, a dummy point (``<stream_uri>__point``) is minted and
           linked to the external reference.
-        - ``source_id`` and ``ref_name``: source-local stream identity. When
+        - ``source_id`` and ``stream_name``: source-local stream identity. When
           both are present, Acquirium mints the canonical reference URI and
           writes ``acq:sourceId``, ``acq:refName``, and ``ref:storedAt`` on it.
         - ``label``: optional ``rdfs:label`` written on the point. A dummy
-          point without one gets its ``ref_name`` (e.g. the CSV column name).
+          point without one gets its ``stream_name`` (e.g. the CSV column name).
         - ``data_source``: optional datasource marker written on the point.
         - ``properties``: optional mapping of predicate URIRefs to values,
           written on the reference node (or the point when no ref node exists).
 
         Plain strings for ``unit``/``quantity_kind``/``medium``/``substance``
-        are resolved jointly per stream via :meth:`resolve_point_metadata`;
+        are resolved jointly per stream via :meth:`resolve_property_metadata`;
         URI / URIRef / None values pass through.
 
-        For a ``point_uri`` the graph already knows, a provided field the
+        For a ``property_uri`` the graph already knows, a provided field the
         point lacks is added to it; a value that conflicts with the point's
         raises ``ValueError`` before anything is inserted. Units are the
         one exception: a provided unit that differs from the point's is
@@ -870,7 +876,7 @@ class AcquiriumClient:
         A non-convertible unit raises ``ValueError``.
 
         Drivers should still insert rows with ``insert_timeseries_arrow`` using
-        the same ``source_id`` and source-local ``ref_name``. Acquirium resolves
+        the same ``source_id`` and source-local ``stream_name``. Acquirium resolves
         those inserts to the same canonical reference URI internally.
         """
         graphs: dict[str, Graph] = {}
@@ -878,7 +884,8 @@ class AcquiriumClient:
         # wins key by key
         extras: dict[str, dict[str, Any]] = {}
         for stream in streams:
-            stream, extra = _split_stream_metadata(stream)
+            # ``point_uri`` and the deprecated ``ref_name`` are still accepted
+            stream, extra = _split_stream_metadata(new_names(stream))
             source_id = stream.get("source_id")
             if not isinstance(source_id, str) or not source_id:
                 raise ValueError("each stream registration requires a non-empty source_id")
@@ -888,9 +895,9 @@ class AcquiriumClient:
                 for f in POINT_FIELD_KINDS
                 if stream.get(f) is not None
             }
-            resolved = self.resolve_point_metadata(meta) if meta else {}
-            point_uri = stream.get("point_uri")
-            existing = self._point_metadata(str(point_uri)) if point_uri is not None else {}
+            resolved = self.resolve_property_metadata(meta) if meta else {}
+            property_uri = stream.get("property_uri")
+            existing = self._property_metadata(str(property_uri)) if property_uri is not None else {}
             subj = _build_stream_triples(graph, stream, resolved, existing, self._units_compatible)
             if extra:
                 extras.setdefault(str(subj), {}).update(extra)
@@ -1002,17 +1009,17 @@ class AcquiriumClient:
         self,
         *,
         source_id: str,
-        ref_name: str,
+        stream_name: str,
         rows: list[tuple[datetime, Any]],
-        point_uri: Optional[str] = None,
+        property_uri: Optional[str] = None,
         replace: bool = False,
         publication_id: Optional[str] = None,
     ) -> dict:
         url = f"{self.base_url}/insert_timeseries"
         body = StreamInsert(
             source_id=source_id,
-            ref_name=ref_name,
-            point_uri=point_uri,
+            stream_name=stream_name,
+            property_uri=property_uri,
             replace=replace,
             values=rows,
             publication_id=publication_id,
@@ -1030,13 +1037,13 @@ class AcquiriumClient:
 
         Args:
             source_id: The registered datasource identifier.
-            streams: Mapping of ref_name → list of (timestamp, value) tuples.
+            streams: Mapping of stream_name → list of (timestamp, value) tuples.
         """
         url = f"{self.base_url}/insert_timeseries"
         payload = [
             StreamInsert(
                 source_id=source_id,
-                ref_name=rn,
+                stream_name=rn,
                 values=rows,
             )
             for rn, rows in streams.items()
@@ -1068,17 +1075,17 @@ class AcquiriumClient:
 
     def query_logs(
         self,
-        point_uri: Optional[str] = None,
+        property_uri: Optional[str] = None,
         log_time_start: Optional[str] = None,
         log_time_end: Optional[str] = None,
         observation_start: Optional[str] = None,
         observation_end: Optional[str] = None,
     ) -> list[LogEntry]:
         """
-        Query log entries for a given point URI within optional time intervals.
+        Query log entries for a given property URI within optional time intervals.
 
         Args:
-            point_uri: The URI of the time series point. If None, defaults to the
+            property_uri: The URI of the time series point. If None, defaults to the
                 generic plant URI (retrieves plant-level logs).
             log_time_start: Start of the log time interval in ISO 8601 format.
             log_time_end: End of the log time interval in ISO 8601 format.
@@ -1090,7 +1097,7 @@ class AcquiriumClient:
         """
         url = f"{self.base_url}/query_logs"
         params = {
-            "point_uri": point_uri,
+            "property_uri": property_uri,
             "log_time_start": log_time_start,
             "log_time_end": log_time_end,
             "observation_start": observation_start,
@@ -1102,18 +1109,18 @@ class AcquiriumClient:
         data = response.json()
         return [LogEntry.model_validate(x) for x in data]
 
-    def delete_logs(self, point_uri: Optional[str] = None) -> dict:
+    def delete_logs(self, property_uri: Optional[str] = None) -> dict:
         """
-        Delete all log entries for a given point URI.
+        Delete all log entries for a given property URI.
 
         Args:
-            point_uri: The URI of the time series point. If None, defaults to the
+            property_uri: The URI of the time series point. If None, defaults to the
                 generic plant URI.
         """
         url = f"{self.base_url}/delete_logs"
         params = {}
-        if point_uri is not None:
-            params["point_uri"] = point_uri
+        if property_uri is not None:
+            params["property_uri"] = property_uri
         response = self._http.delete(url, params=params)
         response.raise_for_status()
         return response.json()

@@ -37,8 +37,8 @@ time.sleep(1)
 
 # Clean slate (repeatable demo)
 banner("3) Clear existing logs for demo points")
-for point_uri in ("urn:ex/Pump1", "urn:ex/Pump1-in", "urn:ex/Pump1-out"):
-    acq.client.delete_logs(point_uri=point_uri)
+for property_uri in ("urn:ex/Pump1", "urn:ex/Pump1-in", "urn:ex/Pump1-out"):
+    acq.client.delete_logs(property_uri=property_uri)
 
 banner("4) Create a query and write logs")
 q = acq.query().entity(WATR.Pump, alias="pumps")
@@ -69,7 +69,7 @@ print("\nLogs (observation_start=2024-07-02T10:15:00Z):")
 print(q2.read_logs(alias="*", observation_start="2024-07-02T10:15:00Z"))
 
 banner("6) Cleanup (optional)")
-for point_uri in ("urn:ex/Pump1", "urn:ex/Pump1-in", "urn:ex/Pump1-out"):
-    acq.client.delete_logs(point_uri=point_uri)
+for property_uri in ("urn:ex/Pump1", "urn:ex/Pump1-in", "urn:ex/Pump1-out"):
+    acq.client.delete_logs(property_uri=property_uri)
 
 print("\nDone.")

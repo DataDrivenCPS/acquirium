@@ -145,7 +145,7 @@ def typed_value_series(values: list[Any]) -> pl.Series:
 def prepare_value_columns(df: pl.DataFrame) -> pl.DataFrame:
     if {"numeric_value", "text_value"}.issubset(df.columns):
         logger.debug("prepare_value_columns: already split (%d rows)", len(df))
-        return df.select(["ref_uri", "ts", "numeric_value", "text_value"])
+        return df.select(["stream_uri", "ts", "numeric_value", "text_value"])
 
     if "value" not in df.columns:
         raise ValueError("timeseries dataframe must include value or numeric_value/text_value columns")
@@ -215,48 +215,48 @@ def _prepare_value_columns_vectorized(df: pl.DataFrame) -> pl.DataFrame | None:
         )
         fallbacks = (
             tmp.filter(kind.eq("numeric") & pl.col("text_value").is_not_null())
-            .group_by("ref_uri")
+            .group_by("stream_uri")
             .len()
         )
-    for ref_uri, count in fallbacks.iter_rows():
+    for stream_uri, count in fallbacks.iter_rows():
         logger.warning(
             "timeseries: stored %d unparseable numeric value(s) as text for %s",
             count,
-            ref_uri,
+            stream_uri,
         )
-    return tmp.select(["ref_uri", "ts", "numeric_value", "text_value"])
+    return tmp.select(["stream_uri", "ts", "numeric_value", "text_value"])
 
 
 def _prepare_value_columns_rowwise(df: pl.DataFrame) -> pl.DataFrame:
     """Per-row split via ``split_value`` — the fallback for Object-dtype frames."""
     has_value_kind = "value_kind" in df.columns
-    selected = ["ref_uri", "ts", "value"] + (["value_kind"] if has_value_kind else [])
+    selected = ["stream_uri", "ts", "value"] + (["value_kind"] if has_value_kind else [])
     rows = []
     fallback_counts: defaultdict[str, int] = defaultdict(int)
     with timed_debug(logger, "prepare_value_columns split rows=%d has_value_kind=%s", len(df), has_value_kind):
         for row in df.select(selected).iter_rows():
             if has_value_kind:
-                ref_uri, ts, value, value_kind = row
+                stream_uri, ts, value, value_kind = row
                 kind = normalize_value_kind(value_kind)
                 numeric_value, text_value = split_value(value, kind)
                 if kind == "numeric" and text_value is not None:
-                    fallback_counts[str(ref_uri)] += 1
+                    fallback_counts[str(stream_uri)] += 1
             else:
-                ref_uri, ts, value = row
+                stream_uri, ts, value = row
                 numeric_value, text_value = split_value(value)
-            rows.append((ref_uri, ts, numeric_value, text_value))
+            rows.append((stream_uri, ts, numeric_value, text_value))
 
-    for ref_uri, count in fallback_counts.items():
+    for stream_uri, count in fallback_counts.items():
         logger.warning(
             "timeseries: stored %d unparseable numeric value(s) as text for %s",
             count,
-            ref_uri,
+            stream_uri,
         )
 
     return pl.DataFrame(
         rows,
         schema={
-            "ref_uri": pl.Utf8,
+            "stream_uri": pl.Utf8,
             "ts": df["ts"].dtype,
             "numeric_value": pl.Float64,
             "text_value": pl.Utf8,

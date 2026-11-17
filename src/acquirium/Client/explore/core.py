@@ -40,6 +40,7 @@ from acquirium.Client.explore.typed import (
 )
 from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
 from acquirium.internals.internals_namespaces import S223
+from acquirium.internals._names import accepts_old_names, warn_deprecated
 
 if TYPE_CHECKING:
     from acquirium.Client.client import AcquiriumClient
@@ -61,6 +62,7 @@ def _iso(v: "datetime | str | None") -> "str | None":
     return v.isoformat() if isinstance(v, datetime) else v
 
 
+@accepts_old_names
 @dataclass(frozen=True)
 class Query:
     """Immutable explore query bound to an Acquirium client."""
@@ -536,7 +538,7 @@ class Query:
     def measurement(self, *, frm: "str | list | tuple | None" = None, alias: Optional[str] = None,
                     direction: Optional[str] = None, max_depth: int = 3,
                     nearest: Optional[bool] = None, include_connection_points: bool = True,
-                    uri: str | URIRef | None = None, ref: Any = None, **attrs: Any) -> "Query":
+                    uri: str | URIRef | None = None, stream: Any = None, **attrs: Any) -> "Query":
         """Attach a measurement point (data node) to the pattern and point at it.
 
         Matches nodes carrying an external reference one hop from the source.
@@ -581,7 +583,7 @@ class Query:
         :class:`~acquirium.Client.streams.Stream`, or a list of either (an
         empty list matches nothing)::
 
-            aq.query().measurement(ref=aq.stream("hist", "FT_feed")).dataframe()
+            aq.query().measurement(stream=aq.stream("hist", "FT_feed")).dataframe()
 
         Extra keyword arguments are attribute filters applied to the new
         measurement node(s), same as ``where()``::
@@ -590,7 +592,13 @@ class Query:
         """
         g = self.query_graph
         instance_uri = self._normalize_instance_uri(uri)
-        refs = self._normalize_refs(ref)
+        if "ref" in attrs:
+            # the deprecated name of ``stream=``
+            if stream is not None:
+                raise TypeError("got both 'ref' and 'stream'; use 'stream' only")
+            warn_deprecated("ref", "stream")
+            stream = attrs.pop("ref")
+        refs = self._normalize_refs(stream)
 
         if isinstance(frm, (list, tuple)) and direction is not None:
             raise ValueError("measurement: frm list only combines with the non-directional form")
@@ -695,17 +703,17 @@ class Query:
 
     @staticmethod
     def _normalize_refs(ref: Any) -> Optional[tuple]:
-        """``measurement(ref=)`` as a tuple of unique reference URIs (None: no filter)."""
+        """``measurement(stream=)`` as a tuple of unique reference URIs (None: no filter)."""
         if ref is None:
             return None
         items = list(ref) if isinstance(ref, (list, tuple, set, frozenset)) else [ref]
-        refs = tuple(dict.fromkeys(str(getattr(r, "ref_uri", r)) for r in items))
+        refs = tuple(dict.fromkeys(str(getattr(r, "stream_uri", r)) for r in items))
         for r in refs:
             # the URIs go into a VALUES block verbatim, so nothing that could
             # close the IRI or the block gets through
             if not _is_uri(r) or any(c in r for c in '<>"{}|\\^` \t\n\r'):
                 raise ValueError(
-                    f"measurement: ref must be stream reference URIs or Stream handles, got {r!r}"
+                    f"measurement: stream must be stream URIs or Stream handles, got {r!r}"
                 )
         return refs
 
@@ -1470,7 +1478,7 @@ class Query:
         now = datetime.now(timezone.utc).isoformat()
         for uri in uris:
             self.client.insert_log(
-                point_uri=uri,
+                property_uri=uri,
                 log_message=message,
                 log_time=now,
                 observation_start=_iso(observation_start),
@@ -1490,11 +1498,11 @@ class Query:
         """Read the logbook notes of every entity the query matches.
 
         Same targeting as :meth:`insert_log`. Returns a frame with
-        ``point_uri``, ``message``, ``log_time``, ``observation_start`` and
+        ``property_uri``, ``message``, ``log_time``, ``observation_start`` and
         ``observation_end``, oldest first.
         """
         schema = {
-            "point_uri": pl.Utf8,
+            "property_uri": pl.Utf8,
             "message": pl.Utf8,
             "log_time": pl.Datetime(time_zone="UTC"),
             "observation_start": pl.Datetime(time_zone="UTC"),
@@ -1503,7 +1511,7 @@ class Query:
         rows: list[dict] = []
         for uri in self._log_targets(alias, verb="read_logs"):
             for entry in self.client.query_logs(
-                point_uri=uri,
+                property_uri=uri,
                 log_time_start=_iso(log_time_start),
                 log_time_end=_iso(log_time_end),
                 observation_start=_iso(observation_start),
@@ -1778,13 +1786,13 @@ class Query:
         include_dependencies: bool = True,
         cast_value: str | None = None,
         value_mode: str = "default",
-        include_ref: bool = False,
+        include_stream: bool = False,
         compact: bool = True,
     ) -> pl.DataFrame:
         """Fetch the matched streams' values as one polars frame.
 
         The shared parameters (``shape``, ``start``, ``end``, ``limit``,
-        ``order``, ``include_ref``, ``compact``) and their defaults mirror
+        ``order``, ``include_stream``, ``compact``) and their defaults mirror
         :meth:`DataObject.dataframe`, so ``q.dataframe(...)`` equals
         ``q.data(...).dataframe(...)``. Here the window bounds the fetch
         itself; on a DataObject they filter the already-fetched data. Only
@@ -1800,7 +1808,7 @@ class Query:
             include_dependencies=include_dependencies,
             cast_value=cast_value,
             value_mode=value_mode,
-        ).dataframe(shape=shape, include_ref=include_ref, compact=compact)
+        ).dataframe(shape=shape, include_stream=include_stream, compact=compact)
 
     # ---------- display helpers ----------
 
@@ -1987,7 +1995,7 @@ class Query:
                 return col_name
             base_alias = self.query_graph.aliases_reverse.get(node_id, f"v{node_id}")
             return f"{base_alias}.label"
-        for prefix, suffix in (("extsrc", "_source"), ("extname", "_ref_name")):
+        for prefix, suffix in (("extsrc", "_source"), ("extname", "_stream_name")):
             if col_name.startswith(prefix):
                 try:
                     node_id = int(col_name[len(prefix):])

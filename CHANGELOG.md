@@ -19,6 +19,26 @@ change in any release.
   colliding rows before inserting. Opening an existing database rebuilds the
   table once to drop the constraint; allow space for the replacement table
   when upgrading a large database.
+- "Point" is now "property" and "ref" is now "stream", following the WaTr
+  ontology and the rest of the interface: `point_uri` → `property_uri`,
+  `point_id` → `property_id`, `ref_uri` → `stream_uri`, `ref_name` →
+  `stream_name`, `measurement(ref=)` → `measurement(stream=)`, `include_ref` →
+  `include_stream`, `include_ref_uris` → `include_stream_uris`,
+  `resolve_point_metadata` → `resolve_property_metadata`, `compute_ref_uri` →
+  `compute_stream_uri`.
+  - The client, driver and app interfaces still accept the old names as
+    arguments, as `register_streams` keys, as the `ref_name` column of a
+    driver's observations, and as attributes of stream handles. `point` names
+    are plain aliases. `ref` names emit a `FutureWarning` and will be removed.
+  - Returned dataframes use the new names only: `property_uri`, `property_id`,
+    `stream_uri`, `stream_name`, and `stream` in place of the `ref` column.
+  - The HTTP API uses the new names only.
+  - Opening an existing database renames the columns in place (timeseries
+    schema version 3 on DuckDB and 2 on Timescale, experiment schema version
+    4). No data is rewritten.
+  - Identifiers already stored in graphs keep their form: the placeholder
+    `<stream_uri>__point`, `urn:acquirium:derived-point:…` and the `ref_uri`
+    field of experiment stream annotations.
 
 ## [0.4.0a9] - 2026-11-09
 

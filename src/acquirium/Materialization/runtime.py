@@ -97,9 +97,9 @@ class Materializer:
                 binding_signature VARCHAR NOT NULL, progress_key VARCHAR NOT NULL,
                 application_name VARCHAR NOT NULL,
                 executable_digest VARCHAR NOT NULL, input_alias VARCHAR NOT NULL,
-                input_ref_uri VARCHAR NOT NULL, output_name VARCHAR NOT NULL,
-                output_ref_uri VARCHAR NOT NULL, context_hash VARCHAR NOT NULL,
-                PRIMARY KEY (binding_signature, input_alias, input_ref_uri, output_name))""")
+                input_stream_uri VARCHAR NOT NULL, output_name VARCHAR NOT NULL,
+                output_stream_uri VARCHAR NOT NULL, context_hash VARCHAR NOT NULL,
+                PRIMARY KEY (binding_signature, input_alias, input_stream_uri, output_name))""")
 
     def _execute(self, conn: Any, query: str, params=()):
         if getattr(self._store, "materialization_backend", None) == "postgres":
@@ -254,7 +254,7 @@ class Materializer:
                 self._plan_errors["graph"] = str(error)
                 return
             with self._store._own_conn() as conn:
-                prior_outputs = dict(self._execute(conn, "SELECT output_ref_uri, progress_key FROM materialization_lineage").fetchall())
+                prior_outputs = dict(self._execute(conn, "SELECT output_stream_uri, progress_key FROM materialization_lineage").fetchall())
                 prior_context = dict(self._execute(conn, "SELECT progress_key, context_hash FROM materialization_lineage").fetchall())
             # A stable named output may now have different inputs; a binding's
             # own match row may have changed while its inputs did not. Both can
@@ -262,7 +262,7 @@ class Materializer:
             # than the old in-memory plan so restart detects this too. A change
             # to other rows of the fleet leaves a per-match binding alone.
             repair = [b for b in dag.bindings if
-                      any(p.ref_uri in prior_outputs and prior_outputs[p.ref_uri] != b.progress_key for p in b.outputs.values())
+                      any(p.stream_uri in prior_outputs and prior_outputs[p.stream_uri] != b.progress_key for p in b.outputs.values())
                       or (prior_context.get(b.progress_key) and prior_context[b.progress_key] != b.context_hash)]
             # Materialization-owned provenance is a complete projection of the
             # current DAG. Publish it only when the projection actually changed:
@@ -282,7 +282,7 @@ class Materializer:
                     continue
                 self._revisions.initialise(binding, applications[binding.signature].backfill)
                 with self._store._lock, self._store._write_conn() as conn:
-                    keys = {binding.progress_key} | {prior_outputs[p.ref_uri] for p in binding.outputs.values() if p.ref_uri in prior_outputs}
+                    keys = {binding.progress_key} | {prior_outputs[p.stream_uri] for p in binding.outputs.values() if p.stream_uri in prior_outputs}
                     for key in keys:
                         self._execute(conn, "DELETE FROM materialization_work WHERE progress_key=?", [key])
                 self._revisions.request_reprocess([binding], window)
@@ -296,15 +296,15 @@ class Materializer:
                     self._execute(conn, "DELETE FROM materialization_lineage")
                 for binding in dag.bindings:
                     rows = [(binding.signature, binding.progress_key, binding.application_name, binding.executable_digest,
-                        alias, stream.ref_uri, output_name, output_ref, binding.context_hash)
+                        alias, stream.stream_uri, output_name, output_ref, binding.context_hash)
                         for alias, streams in binding.inputs.items() for stream in streams
                         for output_name, output in binding.outputs.items()
-                        for output_ref in (output.ref_uri,)]
+                        for output_ref in (output.stream_uri,)]
                     if not rows:
                         # Empty aggregates retain output ownership across restart.
                         # Empty alias/ref fields represent no input edge in SQL.
                         rows = [(binding.signature, binding.progress_key, binding.application_name,
-                                 binding.executable_digest, "", "", name, port.ref_uri,
+                                 binding.executable_digest, "", "", name, port.stream_uri,
                                  binding.context_hash)
                                 for name, port in binding.outputs.items()]
                     if getattr(self._store, "materialization_backend", None) == "postgres":
@@ -331,10 +331,10 @@ class Materializer:
             binding_uri = URIRef(f"urn:acquirium:binding:{binding.signature}")
             for alias, inputs in binding.inputs.items():
                 for item in inputs:
-                    graph.add((binding_uri, IS_CALCULATED_FROM, URIRef(item.ref_uri)))
+                    graph.add((binding_uri, IS_CALCULATED_FROM, URIRef(item.stream_uri)))
             for name, output in binding.outputs.items():
                 spec = output.spec
-                ref, point = URIRef(output.ref_uri), URIRef(output.point_uri)
+                ref, point = URIRef(output.stream_uri), URIRef(output.property_uri)
                 graph.add((binding_uri, PRODUCES, ref))
                 graph.add((point, HAS_EXTERNAL_REFERENCE, ref))
                 # Which app made this. On the point, where query attributes
@@ -343,13 +343,13 @@ class Materializer:
                 graph.add((point, PRODUCED_BY, Literal(binding.application_name)))
                 graph.add((ref, RDF.type, TIMESERIES_REFERENCE))
                 graph.add((ref, ACQUIRIUM_SOURCE_ID, Literal(f"derived:{binding.application_name}")))
-                graph.add((ref, ACQUIRIUM_REF_NAME, Literal(output.ref_name)))
+                graph.add((ref, ACQUIRIUM_REF_NAME, Literal(output.stream_name)))
                 if spec.value_kind: graph.add((ref, ACQUIRIUM_VALUE_KIND, Literal(spec.value_kind)))
                 if spec.unit: graph.add((point, HAS_UNIT, URIRef(spec.unit)))
                 # A point the author supplied is theirs and already has a
                 # name; only a point this runtime created gets a generated
                 # one, so a derived stream never shows up as a bare URI.
-                label = spec.label or (None if spec.point_uri else _default_label(binding, name, spec))
+                label = spec.label or (None if spec.property_uri else _default_label(binding, name, spec))
                 if label: graph.add((point, RDFS.label, Literal(label)))
                 if spec.quantity_kind: graph.add((point, HAS_QUANTITY_KIND, URIRef(spec.quantity_kind)))
                 if spec.medium: graph.add((point, HAS_MEDIUM, URIRef(spec.medium)))
@@ -408,7 +408,7 @@ class Materializer:
                     continue
                 app = applications[binding.signature]
                 consumed = progress[binding.progress_key]
-                refs = [d.ref_uri for values in binding.inputs.values() for d in values]
+                refs = [d.stream_uri for values in binding.inputs.values() for d in values]
                 touched = any(changed.get(ref, 0) > consumed or resets.get(ref, 0) > consumed for ref in refs)
                 if not touched and binding.progress_key not in pending_work:
                     if consumed < target:
@@ -515,8 +515,8 @@ class Materializer:
         for binding in dag.bindings:
             consumed = progress.get(binding.progress_key)
             nodes.append({"binding_signature": binding.signature, "application_name": binding.application_name,
-                "inputs": {key: [item.ref_uri for item in value] for key,value in binding.inputs.items()},
-                "outputs": {key: output.ref_uri for key, output in binding.outputs.items()},
+                "inputs": {key: [item.stream_uri for item in value] for key,value in binding.inputs.items()},
+                "outputs": {key: output.stream_uri for key, output in binding.outputs.items()},
                 "lookback": "all" if binding.lookback is None else str(binding.lookback),
                 "backfill": bool(applications[binding.signature].backfill),
                 "consumed_revision": consumed, "current_revision": current,
@@ -528,4 +528,4 @@ class Materializer:
                 "last_success": self._scheduler.last_success.get(binding.signature),
                 "error": self._scheduler.errors.get(binding.signature)})
         return {"graph_revision": self._graph_revision, "nodes": nodes, "errors": dict(self._plan_errors),
-                "edges": [{"source": source, "target": target, "ref_uri": ref} for source,target,ref in dag.edges]}
+                "edges": [{"source": source, "target": target, "stream_uri": ref} for source,target,ref in dag.edges]}

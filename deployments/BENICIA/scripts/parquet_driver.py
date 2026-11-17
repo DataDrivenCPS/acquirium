@@ -57,8 +57,8 @@ class BeniciaParquetDriver(FileIngestDriver):
             self.insert_graph(model.serialize(format="turtle"))
 
         points = {local_name(prop): str(prop) for prop in get_properties(model)}
-        for ref_name, point_uri in points.items():
-            self.declare(ref_name, point_uri=point_uri, value_kind="numeric")
+        for stream_name, property_uri in points.items():
+            self.declare(stream_name, property_uri=property_uri, value_kind="numeric")
 
         logger.info(
             "benicia parquet: watching %s as %s (%d model points)",
@@ -79,7 +79,7 @@ class BeniciaParquetDriver(FileIngestDriver):
             skip_cols=cfg.get("skip_cols", []),
         )
         if batch.observations is not None:
-            for name in batch.observations["ref_name"].unique():
+            for name in batch.observations["stream_name"].unique():
                 if not self.is_declared(name):
                     self.declare(name)
         return batch

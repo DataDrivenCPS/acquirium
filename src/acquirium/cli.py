@@ -503,7 +503,7 @@ def _render_check(result: dict, limit: int, *, as_json: bool = False) -> None:
             typer.echo(f"      {alias}: {len(streams)} stream(s){count}")
             shown = streams if limit == 0 else streams[:limit]
             for item in shown:
-                typer.echo(f"        - {item.get('label') or item['ref_uri']}")
+                typer.echo(f"        - {item.get('label') or item['stream_uri']}")
             if len(shown) < len(streams):
                 typer.echo(f"        … {len(streams) - len(shown)} more stream(s)")
         # Entity columns say what this call's row is about; the stream
@@ -517,7 +517,7 @@ def _render_check(result: dict, limit: int, *, as_json: bool = False) -> None:
             typer.echo(f"    error: {entry['error']}", err=True)
             continue
         for port, out in entry["outputs"].items():
-            typer.echo(f"    output {port!r} -> {out['ref_name']} ({out['value_kind']}, {out['rows']} rows)")
+            typer.echo(f"    output {port!r} -> {out['stream_name']} ({out['value_kind']}, {out['rows']} rows)")
             for row in out["values"]:
                 typer.echo(f"        {row['time']}  {row['value']}")
             if out.get("truncated"):

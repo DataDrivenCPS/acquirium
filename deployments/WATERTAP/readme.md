@@ -109,7 +109,7 @@ generator and one set of drivers work for all of them:
 |------|------|
 | `build-and-solve.py` | `build() -> m`, `change_inputs(m, d)`, `solve(m)` — the Pyomo model lifecycle |
 | `generate-values.py` | `generate_new_values(ts, rng) -> dict` — realistic, deterministic feed inputs for a timestamp |
-| `watertap-mapping.json` | maps each ontology point URI (`urn:.../...`) to a Pyomo variable path; the driver contract |
+| `watertap-mapping.json` | maps each ontology property URI (`urn:.../...`) to a Pyomo variable path; the driver contract |
 | `model.ttl` | the `s223`/`nawi` semantic model: equipment, connection points, and sensor properties |
 
 ### `seawater-ro` — full seawater RO desalination plant

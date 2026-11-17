@@ -18,19 +18,19 @@ def main() -> None:
     args = parser.parse_args()
 
     client = aq.Acquirium(server_url=args.host, server_port=args.port)
-    source_id, ref_name = "temperature-example", "fahrenheit"
+    source_id, stream_name = "temperature-example", "fahrenheit"
     client.register_datasource(source_id)
     client.register_streams([{
         "source_id": source_id,
-        "ref_name": ref_name,
-        "point_uri": "urn:example:temperature:fahrenheit",
+        "stream_name": stream_name,
+        "property_uri": "urn:example:temperature:fahrenheit",
         "label": "Treatment tank water temperature in Fahrenheit",
         "unit": "http://qudt.org/vocab/unit/DEG_F",
         "value_kind": "numeric",
     }])
     deadline = monotonic() + args.timeout
     start = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    client.insert_timeseries(source_id, ref_name, [
+    client.insert_timeseries(source_id, stream_name, [
         (start + timedelta(minutes=index), 68.0 + 1.8 * index) for index in range(6)
     ])
 

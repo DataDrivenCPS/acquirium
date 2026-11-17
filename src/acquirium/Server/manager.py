@@ -24,7 +24,7 @@ from acquirium.Storage.values import normalize_value_kind
 from acquirium.Experiments import ExperimentStore
 from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.Server.config import OntologySource
-from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, compute_ref_uri
+from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, compute_stream_uri
 from acquirium.internals.internals_namespaces import *
 
 from typing import TYPE_CHECKING, Any, Iterable
@@ -257,22 +257,22 @@ class Manager:
 
         Matches every Acquirium-managed reference node:
             ?ref_node  acq:sourceId  ?source_id ;
-                       acq:refName   ?ref_name .
+                       acq:refName   ?stream_name .
         If a semantic point links to the reference with ``ref:hasExternalReference``,
-        ``point_uri`` is stored too. Standalone source-local references are
-        recorded with a null ``point_uri``.
+        ``property_uri`` is stored too. Standalone source-local references are
+        recorded with a null ``property_uri``.
         The reference-node URI is the canonical stream identity and should be
-        equal to ``compute_ref_uri(source_id, ref_name)``. We upsert into the
+        equal to ``compute_stream_uri(source_id, stream_name)``. We upsert into the
         streams table using the graph's actual reference URI as its canonical
-        identity. The timeseries table maps that URI to an integer ref_id.
+        identity. The timeseries table maps that URI to an integer stream_id.
         References without sourceId/refName are skipped; drivers are responsible
         for ingesting external data into managed streams.
         """
         q = f"""
-        SELECT ?point ?ref_node ?source_id ?ref_name ?value_kind
+        SELECT ?point ?ref_node ?source_id ?stream_name ?value_kind
         WHERE {{
           ?ref_node <{ACQUIRIUM_SOURCE_ID}> ?source_id .
-          ?ref_node <{ACQUIRIUM_REF_NAME}> ?ref_name .
+          ?ref_node <{ACQUIRIUM_REF_NAME}> ?stream_name .
           OPTIONAL {{ ?ref_node <{ACQUIRIUM_VALUE_KIND}> ?value_kind . }}
           OPTIONAL {{ ?point <{HAS_EXTERNAL_REFERENCE}> ?ref_node . }}
         }}
@@ -292,19 +292,19 @@ class Manager:
         # statement. Upserting row by row costs a round trip each, which grows with
         # the graph: ~3.6s for 1000 refs versus ~16ms batched.
         refs: list[tuple[str | None, str, str, URIRef, str]] = []
-        for point_uri, ref_node, source_id, ref_name, value_kind in rows:
+        for property_uri, ref_node, source_id, stream_name, value_kind in rows:
             try:
                 sid = str(source_id).strip('"')
-                rn  = str(ref_name).strip('"')
-                expected = compute_ref_uri(sid, rn)
+                rn  = str(stream_name).strip('"')
+                expected = compute_stream_uri(sid, rn)
                 actual = URIRef(str(ref_node))
                 if actual != expected:
                     raise ValueError(
-                        f"Managed reference URI mismatch for point {point_uri}: "
+                        f"Managed reference URI mismatch for point {property_uri}: "
                         f"graph has {actual}, expected {expected} from "
-                        f"source_id={sid!r}, ref_name={rn!r}"
+                        f"source_id={sid!r}, stream_name={rn!r}"
                     )
-                point = str(point_uri) if point_uri is not None else None
+                point = str(property_uri) if property_uri is not None else None
                 refs.append((
                     point,
                     sid,
@@ -315,7 +315,7 @@ class Manager:
                     ),
                 ))
             except Exception:
-                logger.warning("Failed to ensure stream ref %s / %s → %s", point_uri, source_id, ref_name, exc_info=True)
+                logger.warning("Failed to ensure stream ref %s / %s → %s", property_uri, source_id, stream_name, exc_info=True)
                 raise
         count = len(self.timeseries_store.ensure_stream_refs(refs)) if refs else 0
         if count:
@@ -597,7 +597,7 @@ class Manager:
         value_mode: str = "default",
     ) :
         """
-        Retrieve time series data for a given point URI within an optional time range.
+        Retrieve time series data for a given property URI within an optional time range.
 
         Returns:
             An iterator that yields batches of time series data as Arrow RecordBatches.
@@ -608,7 +608,7 @@ class Manager:
             uri, storage_key, start, end, limit,
         )
         return self.timeseries_store.timeseries(
-            ref_uri=storage_key,
+            stream_uri=storage_key,
             start=start,
             end=end,
             limit=limit,
@@ -618,7 +618,7 @@ class Manager:
         )
 
     def timeseries_info_batch(self, uris: list[str]) -> dict:
-        """Fetch stats for multiple stream or point URIs."""
+        """Fetch stats for multiple stream or property URIs."""
         if not uris:
             return {}
         uri_to_key = self.timeseries_store.resolve_storage_keys(uris)
@@ -627,7 +627,7 @@ class Manager:
         return {key_to_uri[k]: v for k, v in raw.items()}
 
     def timeseries_exists_batch(self, uris: list[str]) -> list[str]:
-        """The stream or point URIs among ``uris`` that have any row."""
+        """The stream or property URIs among ``uris`` that have any row."""
         if not uris:
             return []
         uri_to_key = self.timeseries_store.resolve_storage_keys(uris)
@@ -669,7 +669,7 @@ class Manager:
         is assigned when the caller supplies no ``publication_id``. The
         current revision publisher does not persist receipts or deduplicate a
         retry that reuses an identifier; row upserts remain idempotent by
-        ``(ref_uri, timestamp)``.
+        ``(stream_uri, timestamp)``.
         """
         pub_id = publication_id or str(uuid.uuid4())
         receipt = self.publication.publish(PublicationRequest(pub_id, mutations))
@@ -696,7 +696,7 @@ class Manager:
         split = prepare_value_columns(df)
         return (
             split.with_columns(pl.lit(operation).alias("operation"))
-            .select(["operation", "ref_uri", "ts", "numeric_value", "text_value"])
+            .select(["operation", "stream_uri", "ts", "numeric_value", "text_value"])
             .to_arrow()
         )
 
@@ -704,27 +704,27 @@ class Manager:
         self,
         *,
         source_id: str,
-        ref_name: str,
+        stream_name: str,
         rows: list[tuple[datetime, Any]],
-        point_uri: str | None = None,
+        property_uri: str | None = None,
         replace: bool = False,
         publication_id: str | None = None,
     ) -> PublicationReceipt:
         import polars as pl
         from acquirium.Storage.values import typed_value_series
 
-        ref_uri = str(compute_ref_uri(source_id, ref_name))
-        value_kind = self._registered_value_kind(ref_uri)
+        stream_uri = str(compute_stream_uri(source_id, stream_name))
+        value_kind = self._registered_value_kind(stream_uri)
         logger.debug(
-            "insert_timeseries source=%s ref_name=%s rows=%d kind=%s replace=%s",
-            source_id, ref_name, len(rows), value_kind, replace,
+            "insert_timeseries source=%s stream_name=%s rows=%d kind=%s replace=%s",
+            source_id, stream_name, len(rows), value_kind, replace,
         )
         n = len(rows)
         if n == 0 and not replace:
             return self._empty_receipt(publication_id)
         df = pl.DataFrame(
             {
-                "ref_uri": pl.Series("ref_uri", [ref_uri] * n, dtype=pl.Utf8),
+                "stream_uri": pl.Series("stream_uri", [stream_uri] * n, dtype=pl.Utf8),
                 "ts": pl.Series("ts", [ts for ts, _ in rows], dtype=pl.Datetime("us", "UTC")),
                 "value": typed_value_series([v for _, v in rows]),
                 "value_kind": pl.Series("value_kind", [value_kind] * n, dtype=pl.Utf8),
@@ -732,7 +732,7 @@ class Manager:
         )
         if replace:
             request = PublicationRequest(publication_id or str(uuid.uuid4()), self._mutation_table(df))
-            return self._after_canonical_publish(self.publication.replace(request, ref_uri))
+            return self._after_canonical_publish(self.publication.replace(request, stream_uri))
         return self.publish(self._mutation_table(df), publication_id=publication_id)
 
     def insert_timeseries_batch(
@@ -745,31 +745,31 @@ class Manager:
         """Publish multiple source-local streams as one atomic mutation set."""
         import polars as pl
 
-        ref_uris: list[str] = []
+        stream_uris: list[str] = []
         timestamps: list[datetime] = []
         values: list[Any] = []
         value_kinds: list[str] = []
         with timed_debug(logger, "insert_timeseries_batch source=%s streams=%d", source_id, len(streams)):
-            for ref_name, stream_rows in streams.items():
-                ref_uri = str(compute_ref_uri(source_id, ref_name))
-                value_kind = self._registered_value_kind(ref_uri)
+            for stream_name, stream_rows in streams.items():
+                stream_uri = str(compute_stream_uri(source_id, stream_name))
+                value_kind = self._registered_value_kind(stream_uri)
                 for ts, value in stream_rows:
-                    ref_uris.append(ref_uri)
+                    stream_uris.append(stream_uri)
                     timestamps.append(ts)
                     values.append(value)
                     value_kinds.append(value_kind)
         logger.debug(
             "insert_timeseries_batch source=%s built %d total rows across %d streams",
-            source_id, len(ref_uris), len(streams),
+            source_id, len(stream_uris), len(streams),
         )
-        if not ref_uris:
+        if not stream_uris:
             return self._empty_receipt(publication_id)
 
         from acquirium.Storage.values import typed_value_series
 
         df = pl.DataFrame(
             {
-                "ref_uri": pl.Series("ref_uri", ref_uris, dtype=pl.Utf8),
+                "stream_uri": pl.Series("stream_uri", stream_uris, dtype=pl.Utf8),
                 "ts": pl.Series("ts", timestamps, dtype=pl.Datetime("us", "UTC")),
                 "value": typed_value_series(values),
                 "value_kind": pl.Series("value_kind", value_kinds, dtype=pl.Utf8),
@@ -784,33 +784,33 @@ class Manager:
     def insert_timeseries_arrow(
         self, source_id: str, table: "pa.Table", *, publication_id: str | None = None
     ) -> PublicationReceipt:
-        """Publish a melted (ts, ref_name, value) Arrow table as one atomic mutation set."""
+        """Publish a melted (ts, stream_name, value) Arrow table as one atomic mutation set."""
         import polars as pl
 
         logger.debug("insert_timeseries_arrow source=%s arrow_rows=%d", source_id, len(table))
         if len(table) == 0:
             return self._empty_receipt(publication_id)
         df = pl.from_arrow(table)
-        stream_count = df["ref_name"].n_unique()
+        stream_count = df["stream_name"].n_unique()
         logger.info(
             "acquirium: insert_timeseries_arrow received %d row(s) across %d stream(s) for source_id=%s",
             len(df),
             stream_count,
             source_id,
         )
-        ref_uri_map = {
-            name: str(compute_ref_uri(source_id, name)) for name in df["ref_name"].unique().to_list()
+        stream_uri_map = {
+            name: str(compute_stream_uri(source_id, name)) for name in df["stream_name"].unique().to_list()
         }
-        kinds = self._registered_value_kinds(ref_uri_map.values())
-        value_kind_map = {name: kinds[ref_uri] for name, ref_uri in ref_uri_map.items()}
-        logger.debug("insert_timeseries_arrow source=%s unique_streams=%d", source_id, len(ref_uri_map))
+        kinds = self._registered_value_kinds(stream_uri_map.values())
+        value_kind_map = {name: kinds[stream_uri] for name, stream_uri in stream_uri_map.items()}
+        logger.debug("insert_timeseries_arrow source=%s unique_streams=%d", source_id, len(stream_uri_map))
         df = (
             df.with_columns([
-                pl.col("ref_name").replace(ref_uri_map).alias("ref_uri"),
-                pl.col("ref_name").replace(value_kind_map).alias("value_kind"),
+                pl.col("stream_name").replace(stream_uri_map).alias("stream_uri"),
+                pl.col("stream_name").replace(value_kind_map).alias("value_kind"),
             ])
-            .drop("ref_name")
-            .select(["ref_uri", "ts", "value", "value_kind"])
+            .drop("stream_name")
+            .select(["stream_uri", "ts", "value", "value_kind"])
         )
         if not hasattr(self, "publication"):
             return self.timeseries_store.bulk_insert_polars(df)
@@ -824,7 +824,7 @@ class Manager:
 
     def delete_timeseries(
         self,
-        ref_uri: str,
+        stream_uri: str,
         *,
         timestamps: list[datetime] | None = None,
         start: datetime | None = None,
@@ -836,11 +836,11 @@ class Manager:
         documented rejection so the API surface fails fast and clearly."""
         raise ValueError("deletion is not supported by incremental materialization")
 
-    def _registered_value_kind(self, ref_uri: str) -> str:
-        return self._registered_value_kinds([ref_uri])[ref_uri]
+    def _registered_value_kind(self, stream_uri: str) -> str:
+        return self._registered_value_kinds([stream_uri])[stream_uri]
 
-    def _registered_value_kinds(self, ref_uris: Iterable[str]) -> dict[str, str]:
-        """Normalised value kind of every stream in *ref_uris*; one store query per call.
+    def _registered_value_kinds(self, stream_uris: Iterable[str]) -> dict[str, str]:
+        """Normalised value kind of every stream in *stream_uris*; one store query per call.
 
         Graph writes and Arrow ingestion may be issued back-to-back by a
         client. Ensure the derived stream registry has observed the graph
@@ -849,7 +849,7 @@ class Manager:
         the last sync; otherwise repeated writes to an unregistered ref would
         each pay the full rebuild cost.
         """
-        wanted = list(dict.fromkeys(ref_uris))
+        wanted = list(dict.fromkeys(stream_uris))
         kinds = self.timeseries_store.stream_value_kinds(wanted)
         missing = [uri for uri in wanted if uri not in kinds]
         if missing:
@@ -864,11 +864,11 @@ class Manager:
         return {uri: normalize_value_kind(kinds[uri]) for uri in wanted}
 
     def insert_log(self, log_message: LogEntry):
-        logger.debug("insert_log point_uri=%s ts=%s", log_message.point_uri, log_message.timestamp)
+        logger.debug("insert_log property_uri=%s ts=%s", log_message.property_uri, log_message.timestamp)
         self.timeseries_store.insert_log(log_message)
         G = Graph()
-        log_uri = URIRef(f"{str(log_message.point_uri)}_log")
-        G.add((URIRef(log_message.point_uri), HAS_LOG, log_uri))
+        log_uri = URIRef(f"{str(log_message.property_uri)}_log")
+        G.add((URIRef(log_message.property_uri), HAS_LOG, log_uri))
         G.add((log_uri, RDF.type, LOGBOOK))
         # Log writes still change the store-owned graph version, but no
         # manager-local counter needs to be maintained.
@@ -882,15 +882,15 @@ class Manager:
 
     def query_logs(
         self,
-        point_uri: str,
+        property_uri: str,
         log_time_interval: TimeIntervalModel | None = None,
         obs_time_interval: TimeIntervalModel | None = None
     ) -> list[LogEntry]:
         """
-        Query log entries for a given point URI within an optional time interval.
+        Query log entries for a given property URI within an optional time interval.
 
         Args:
-            point_uri: The URI of the time series point.
+            property_uri: The URI of the time series point.
             log_time_interval: Optional TimeIntervalModel object specifying start and end times for log entries.
             obs_time_interval: Optional TimeIntervalModel object specifying start and end times for observation entries.
 
@@ -898,26 +898,26 @@ class Manager:
             A list of LogEntry objects.
         """
         return self.timeseries_store.query_logs(
-            point_uri=point_uri,
+            property_uri=property_uri,
             log_time_interval=log_time_interval,
             obs_time_interval=obs_time_interval
         )
 
-    def delete_logs(self, point_uri: str) -> bool:
+    def delete_logs(self, property_uri: str) -> bool:
         """
-        Delete all log entries for a given point URI.
+        Delete all log entries for a given property URI.
 
         Args:
-            point_uri: The URI of the time series point.
+            property_uri: The URI of the time series point.
         """
-        if not self.timeseries_store.delete_logs(point_uri):
-            logger.warning("Failed to delete log entries for point %s from database", point_uri)
+        if not self.timeseries_store.delete_logs(property_uri):
+            logger.warning("Failed to delete log entries for point %s from database", property_uri)
             return False
-        logger.info("Deleted all log entries for point %s from database", point_uri)
+        logger.info("Deleted all log entries for point %s from database", property_uri)
         # Optionally, remove log references from the graph
         q = f"""
         DELETE WHERE {{
-          <{point_uri}> <{HAS_LOG}> ?log .
+          <{property_uri}> <{HAS_LOG}> ?log .
           ?log a <{LOGBOOK}> .
         }}
         """
@@ -925,7 +925,7 @@ class Manager:
             q,
             graph_uri=self.graph_store.acquirium_graph_uri,
         )
-        logger.info("Deleted all log references for point %s from graph", point_uri)
+        logger.info("Deleted all log references for point %s from graph", property_uri)
         return True
 
     def sparql_update(self, update: str, source_id: str) -> dict[str, Any]:

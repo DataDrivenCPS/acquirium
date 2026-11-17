@@ -75,7 +75,7 @@ class ExperimentStartRequest(BaseModel):
 class ExperimentObservationRequest(BaseModel):
     value: Any = None
     occurred_at: datetime | None = None
-    ref_uri: str | None = None
+    stream_uri: str | None = None
     start: datetime | None = None
     end: datetime | None = None
     key: list[Any] | None = None
@@ -111,7 +111,7 @@ class ExperimentSampleEntry(ExperimentRecordingEntry):
 
 class ExperimentReferenceEntry(ExperimentRecordingEntry):
     form: Literal["reference"]
-    ref_uri: str
+    stream_uri: str
     interval: tuple[datetime, datetime] | None = None
 
 ExperimentRecordEntry = Annotated[
@@ -122,7 +122,7 @@ ExperimentRecordEntry = Annotated[
 class ExperimentFinishRequest(BaseModel):
     error: Any = None
 class ExperimentStreamAnnotationRequest(BaseModel):
-    ref_uri: str
+    stream_uri: str
     start: datetime
     end: datetime | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -289,7 +289,7 @@ def record_experiment_batch(run_id: str, request: list[ExperimentRecordEntry]):
 def annotate_experiment_stream(run_id: str, request: ExperimentStreamAnnotationRequest):
     try:
         return app.state.manager.experiments.annotate_stream(
-            run_id, request.ref_uri, request.start, request.end, request.metadata)
+            run_id, request.stream_uri, request.start, request.end, request.metadata)
     except KeyError: raise HTTPException(status_code=404, detail="unknown experiment run")
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
 
@@ -299,13 +299,13 @@ def close_experiment_stream_annotation(annotation_id: str, request: ExperimentSt
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
 
 def list_experiment_stream_annotations(
-    run_id: str | None = None, template_id: str | None = None, ref_uri: str | None = None,
+    run_id: str | None = None, template_id: str | None = None, stream_uri: str | None = None,
     start: datetime | None = None, end: datetime | None = None,
 ):
     try:
         ledger = app.state.manager.experiments
         items = ledger.stream_annotations(
-            run_id=run_id, template_id=template_id, ref_uri=ref_uri, start=start, end=end)
+            run_id=run_id, template_id=template_id, stream_uri=stream_uri, start=start, end=end)
         return items
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
 
@@ -1014,8 +1014,8 @@ def metadata_documents(subjects: Annotated[list[str], Body()]) -> dict[str, str]
 def register_datasource(req: RegisterDatasourceRequest) -> dict[str, Any]:
     """Register a named datasource in the knowledge graph.
 
-    The source_id is a user-provided string that scopes stream ref_names so
-    two sources with the same ref_name never collide in the timeseries store.
+    The source_id is a user-provided string that scopes stream names so
+    two sources with the same stream_name never collide in the timeseries store.
     """
     try:
         source_id = app.state.manager.register_datasource(req.source_id)
@@ -1030,9 +1030,9 @@ class ResolveStorageKeysRequest(BaseModel):
 
 @app.post("/resolve_storage_keys")
 def resolve_storage_keys(req: ResolveStorageKeysRequest) -> dict[str, str]:
-    """Map each semantic point_uri (or already-canonical ref_uri) in *uris*
-    to its canonical ref_uri. Callers do this before reading or subscribing;
-    the database's internal integer ref_id is never exposed."""
+    """Map each semantic property_uri (or already-canonical stream_uri) in *uris*
+    to its canonical stream_uri. Callers do this before reading or subscribing;
+    the database's internal integer stream_id is never exposed."""
     try:
         return app.state.manager.timescale.resolve_storage_keys(req.uris)
     except Exception as e:
@@ -1043,8 +1043,8 @@ def resolve_storage_keys(req: ResolveStorageKeysRequest) -> dict[str, str]:
 def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[str, Any]:
     """Insert timeseries data for one or more streams.
 
-    Each element specifies ``source_id``/``ref_name``, an optional semantic
-    ``point_uri``, an optional ``replace`` flag, and a list of
+    Each element specifies ``source_id``/``stream_name``, an optional semantic
+    ``property_uri``, an optional ``replace`` flag, and a list of
     ``[timestamp, value]`` pairs. A single-stream insert is a one-element list.
     """
     try:
@@ -1052,11 +1052,11 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[st
         bulk_streams: dict[str, dict[str, list[tuple[datetime, Any]]]] = {}
         individual_streams: list[StreamInsert] = []
         for s in streams:
-            # A stream needing its own publication_id, point_uri registration,
+            # A stream needing its own publication_id, property_uri registration,
             # or replace semantics can't share one bulk publication with its
             # source-id siblings, so it always takes the individual path.
-            if s.point_uri is None and not s.replace and s.publication_id is None:
-                bulk_streams.setdefault(s.source_id, {})[s.ref_name] = s.values
+            if s.property_uri is None and not s.replace and s.publication_id is None:
+                bulk_streams.setdefault(s.source_id, {})[s.stream_name] = s.values
             else:
                 individual_streams.append(s)
 
@@ -1065,16 +1065,16 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[st
         for s in individual_streams:
             total += app.state.manager.insert_timeseries(
                 source_id=s.source_id,
-                ref_name=s.ref_name,
+                stream_name=s.stream_name,
                 rows=s.values,
-                point_uri=s.point_uri,
+                property_uri=s.property_uri,
                 replace=s.replace,
                 publication_id=s.publication_id,
             ).row_count
         insert_stats.record(
             origin="http",
             rows=sum(len(s.values) for s in streams),
-            streams=[s.ref_name or str(s.point_uri) for s in streams],
+            streams=[s.stream_name or str(s.property_uri) for s in streams],
         )
         return {"ok": True, "rows_inserted": total}
     except Exception as e:
@@ -1319,19 +1319,19 @@ def resolve_record(req: ResolveRecordRequest) -> dict[str, Any]:
 
 @app.post("/insert_log")
 def insert_log(
-        point_uri: Optional[str] = None,
+        property_uri: Optional[str] = None,
         log_timestamp: str = "",
         observation_start: Optional[str] = None,
         observation_end: Optional[str] = None,
         message: str = "",
     ) -> dict[str, Any]:
     try:
-        uri = point_uri if point_uri else PLANT_URI
+        uri = property_uri if property_uri else PLANT_URI
         log_time = dtparser.isoparse(log_timestamp)
         obs_start = _parse_dt(observation_start)
         obs_end = _parse_dt(observation_end)
         log_entry = LogEntry(
-            point_uri=uri,
+            property_uri=uri,
             timestamp=log_time,
             period=TimeIntervalModel(start=obs_start, end=obs_end),
             message=message,
@@ -1344,7 +1344,7 @@ def insert_log(
 
 @app.get("/query_logs", response_model=list[LogEntry])
 def query_logs(
-        point_uri: Optional[str] = None,
+        property_uri: Optional[str] = None,
         log_time_start: Optional[str] = None,
         log_time_end: Optional[str] = None,
         observation_start: Optional[str] = None,
@@ -1363,9 +1363,9 @@ def query_logs(
                 start=_parse_dt(observation_start) if observation_start is not None else None,
                 end=_parse_dt(observation_end) if observation_end is not None else None,
             )
-        uri = point_uri if point_uri else PLANT_URI
+        uri = property_uri if property_uri else PLANT_URI
         logs = app.state.manager.query_logs(
-            point_uri=uri,
+            property_uri=uri,
             log_time_interval=log_time_interval,
             obs_time_interval=obs_time_interval,
         )
@@ -1375,10 +1375,10 @@ def query_logs(
 
 @app.delete("/delete_logs")
 def delete_logs(
-        point_uri: Optional[str] = None,
+        property_uri: Optional[str] = None,
     ) -> dict[str, Any]:
     try:
-        uri = point_uri if point_uri else PLANT_URI
+        uri = property_uri if property_uri else PLANT_URI
         if app.state.manager.delete_logs(uri):
             return {"ok": True}
         else:

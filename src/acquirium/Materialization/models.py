@@ -19,6 +19,7 @@ from typing import Any, Callable, Iterable, Iterator, Mapping, NamedTuple
 
 import pyarrow as pa
 import pyarrow.compute as pc
+from acquirium.internals._names import accepts_old_names
 
 
 UTC = timezone.utc
@@ -54,10 +55,14 @@ def parse_lookback(value: timedelta | str) -> timedelta | None:
     return _duration(value)
 
 
+_SIGNATURE_FIELDS = {"stream_uri": "ref_uri", "property_uri": "point_uri"}
+
+
+@accepts_old_names
 @dataclass(frozen=True)
 class StreamDescriptor:
-    ref_uri: str
-    point_uri: str | None = None
+    stream_uri: str
+    property_uri: str | None = None
     label: str | None = None
     value_kind: str = "numeric"
     unit: str | None = None
@@ -80,7 +85,7 @@ class TimeWindow:
 
 
 def _empty_table() -> pa.Table:
-    return pa.table({"ref_uri": pa.array([], pa.string()), "time": pa.array([], pa.timestamp("us", tz="UTC")), "value": pa.array([], pa.float64())})
+    return pa.table({"stream_uri": pa.array([], pa.string()), "time": pa.array([], pa.timestamp("us", tz="UTC")), "value": pa.array([], pa.float64())})
 
 
 @dataclass(frozen=True)
@@ -112,7 +117,7 @@ class StreamSet:
         A ``per_match`` app binds exactly one stream per alias per call —
         for every alias, even when a query row pairs two — so this is the
         usual way to ask what is being computed: ``inputs["temperature"].stream``
-        gives its ``ref_uri``, ``point_uri``, ``label`` and ``unit``.
+        gives its ``stream_uri``, ``property_uri``, ``label`` and ``unit``.
 
         An ``all_matches`` app sees the whole query result at once, so its aliases
         can hold many streams and this raises. Use :attr:`streams` there; an
@@ -148,16 +153,16 @@ class StreamSet:
             raise RuntimeError("this stream set carries no unit converter")
         for descriptor in self.streams:
             if descriptor.unit is None:
-                raise ValueError(f"stream {descriptor.ref_uri} has no recorded unit to convert from")
+                raise ValueError(f"stream {descriptor.stream_uri} has no recorded unit to convert from")
         # QUDT conversions are linear, so two probe conversions per stream
         # yield exact factors; the converter raises on incompatible units.
-        shifts = {d.ref_uri: converter.convert(0.0, d.unit, unit) for d in self.streams}
-        scales = {d.ref_uri: converter.convert(1.0, d.unit, unit) - shifts[d.ref_uri] for d in self.streams}
+        shifts = {d.stream_uri: converter.convert(0.0, d.unit, unit) for d in self.streams}
+        scales = {d.stream_uri: converter.convert(1.0, d.unit, unit) - shifts[d.stream_uri] for d in self.streams}
         def convert(table: pa.Table) -> pa.Table:
             if not (pa.types.is_floating(table["value"].type) or pa.types.is_integer(table["value"].type)):
                 raise TypeError("unit conversion requires numeric values")
-            refs = [d.ref_uri for d in self.streams]
-            index = pc.index_in(table["ref_uri"], pa.array(refs, pa.string()))
+            refs = [d.stream_uri for d in self.streams]
+            index = pc.index_in(table["stream_uri"], pa.array(refs, pa.string()))
             scale = pc.take(pa.array([scales[r] for r in refs], pa.float64()), index)
             shift = pc.take(pa.array([shifts[r] for r in refs], pa.float64()), index)
             value = pc.add(pc.multiply(pc.cast(table["value"], pa.float64()), scale), shift)
@@ -247,12 +252,13 @@ class Batch:
     context: InputBatch
 
 
+@accepts_old_names
 @dataclass(frozen=True)
 class OutputSpec:
     """A derived-stream definition: like a driver's stream registration,
     every field is declared, nothing is inferred from published data."""
     value_kind: str
-    point_uri: str | None = None
+    property_uri: str | None = None
     label: str | None = None
     unit: str | None = None
     quantity_kind: str | None = None
@@ -270,24 +276,26 @@ class OutputSpec:
             raise ValueError("a named output requires a non-empty stream name")
 
 
+@accepts_old_names
 class OutputPort(NamedTuple):
     """One output's resolved durable identity, decided once at planning time.
 
-    ``ref_name`` is what the stream is called under ``derived:<app>``,
-    ``ref_uri`` is the canonical stream identity that name hashes to, and
-    ``point_uri`` is the graph node carrying the output's metadata — the
+    ``stream_name`` is what the stream is called under ``derived:<app>``,
+    ``stream_uri`` is the canonical stream identity that name hashes to, and
+    ``property_uri`` is the graph node carrying the output's metadata — the
     author's own point when they declared one, otherwise a point named after
-    the stream itself. The storage backend maps ``ref_uri`` to its internal
+    the stream itself. The storage backend maps ``stream_uri`` to its internal
     integer key.
     Everything downstream reads these fields instead of recomputing them, so
     the name and the URI cannot drift apart.
     """
-    ref_uri: str
-    ref_name: str
-    point_uri: str
+    stream_uri: str
+    stream_name: str
+    property_uri: str
     spec: OutputSpec
 
 
+@accepts_old_names
 class _OutputAPI:
     """Declare a generated stream identity or an explicitly named identity.
 
@@ -406,9 +414,13 @@ class Binding:
         if not self.inputs or not self.outputs: raise ValueError("a binding needs inputs and outputs")
         if self.every is not None and self.every <= timedelta():
             raise ValueError("every must be positive")
+        # The signature is durable, so it hashes the field names it was first
+        # computed with (``ref_uri``, ``point_uri``). Renaming them here would
+        # give every deployed binding a new signature.
+        hashed = lambda item: {_SIGNATURE_FIELDS.get(key, key): value for key, value in item.__dict__.items()}
         payload = {"v": 1, "application": self.application_name, "executable": self.executable_digest,
-                   "inputs": {k: [x.__dict__ for x in sorted(v, key=lambda x: x.ref_uri)] for k,v in sorted(self.inputs.items())},
-                   "outputs": {k: (v.ref_uri, v.spec.__dict__) for k,v in sorted(self.outputs.items())},
+                   "inputs": {k: [hashed(x) for x in sorted(v, key=lambda x: x.stream_uri)] for k,v in sorted(self.inputs.items())},
+                   "outputs": {k: (v.stream_uri, hashed(v.spec)) for k,v in sorted(self.outputs.items())},
                    "lookback": "all" if self.lookback is None else self.lookback.total_seconds(),
                    "lookahead": self.lookahead.total_seconds(),
                    "every": self.every.total_seconds() if self.every else None}
@@ -419,8 +431,8 @@ class Binding:
         # Otherwise editing a comment would reset the frontier and, without
         # backfill, silently skip the rows written in between.
         progress = {"v": 1, "application": self.application_name,
-                    "inputs": {k: sorted(x.ref_uri for x in v) for k,v in sorted(self.inputs.items())},
-                    "outputs": {k: v.ref_uri for k,v in sorted(self.outputs.items())}}
+                    "inputs": {k: sorted(x.stream_uri for x in v) for k,v in sorted(self.inputs.items())},
+                    "outputs": {k: v.stream_uri for k,v in sorted(self.outputs.items())}}
         object.__setattr__(self, "progress_key", sha256(_canonical(progress).encode()).hexdigest())
 
     @property
@@ -451,11 +463,11 @@ class ApplicationGraph:
         owners: dict[str, str] = {}
         for binding in self.bindings:
             for port in binding.outputs.values():
-                if port.ref_uri in owners: raise ValueError(f"multiple bindings own {port.ref_uri!r}")
-                owners[port.ref_uri] = binding.signature
-        self.edges = tuple(sorted((owners[d.ref_uri], binding.signature, d.ref_uri)
+                if port.stream_uri in owners: raise ValueError(f"multiple bindings own {port.stream_uri!r}")
+                owners[port.stream_uri] = binding.signature
+        self.edges = tuple(sorted((owners[d.stream_uri], binding.signature, d.stream_uri)
             for binding in self.bindings for streams in binding.inputs.values() for d in streams
-            if d.ref_uri in owners))
+            if d.stream_uri in owners))
         # A binding never reads its own output in the same revision frontier.
         if any(source == target for source, target, _ in self.edges):
             raise ValueError("an application binding cannot consume its own output")
@@ -594,8 +606,8 @@ def align(inputs: Mapping[str, StreamSet], every: timedelta | str | None = None,
     columns: list[pl.DataFrame] = []
     for alias, stream_set in sorted(inputs.items()):
         frame = pl.from_arrow(stream_set.collect())
-        labels = {d.ref_uri: d.label or d.ref_uri for d in stream_set.streams}
-        for ref, group in sorted(frame.group_by("ref_uri"), key=lambda item: str(item[0][0])):
+        labels = {d.stream_uri: d.label or d.stream_uri for d in stream_set.streams}
+        for ref, group in sorted(frame.group_by("stream_uri"), key=lambda item: str(item[0][0])):
             name = alias if len(stream_set.streams) <= 1 else f"{alias}[{labels.get(str(ref[0]), str(ref[0]))}]"
             columns.append(group.sort("time")
                 .group_by_dynamic("time", every=step).agg(aggregates[aggregate].alias(name)))

@@ -131,7 +131,7 @@ def _load_seawater_ro(acq: Any) -> None:
     data = seawater_ro.generate()
     acq.register_streams(
         [
-            {"source_id": "seawater-ro", "ref_name": name, "point_uri": f"urn:swro/{name}", "value_kind": "numeric"}
+            {"source_id": "seawater-ro", "stream_name": name, "property_uri": f"urn:swro/{name}", "value_kind": "numeric"}
             for name in data
         ]
     )

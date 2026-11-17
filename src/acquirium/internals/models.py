@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel
 from acquirium.internals.internals_namespaces import ACQUIRIUM_NS
 from rdflib import URIRef
 # Fixed UUID namespace for deterministic reference URI generation.
-# All (source_id, ref_name) pairs are hashed within this namespace so ref URIs
+# All (source_id, stream_name) pairs are hashed within this namespace so stream URIs
 # are globally unique and reproducible without any state.
 _REF_URI_NAMESPACE = uuid.UUID("6a8f3c2e-4b1d-5e7f-9012-3a4b5c6d7e8f")
 
@@ -27,20 +27,27 @@ def looks_like_uri(value: object) -> bool:
     )
 
 
-def compute_ref_uri(source_id: str, ref_name: str) -> URIRef:
-    """Return a deterministic UUID5 ref URI for a (source_id, ref_name) pair.
+def compute_stream_uri(source_id: str, stream_name: str) -> URIRef:
+    """Return a deterministic UUID5 stream URI for a (source_id, stream_name) pair.
 
-    The ref URI is the canonical stream identity exposed by the graph and
+    The stream URI is the canonical stream identity exposed by the graph and
     client APIs. A point links to this reference node through
     ``ref:hasExternalReference``. Both SQL backends map it to an internal
-    integer ``ref_id`` for timeseries rows. It is stable across restarts and
+    integer ``stream_id`` for timeseries rows. It is stable across restarts and
     can be recomputed from the same inputs.
     """
-    ref_uri_str = str(uuid.uuid5(_REF_URI_NAMESPACE, f"{source_id}:{ref_name}"))
-    return ACQUIRIUM_NS[ref_uri_str]
+    stream_uri_str = str(uuid.uuid5(_REF_URI_NAMESPACE, f"{source_id}:{stream_name}"))
+    return ACQUIRIUM_NS[stream_uri_str]
 
 
-compute_handle = compute_ref_uri
+compute_handle = compute_stream_uri
+
+
+def compute_ref_uri(source_id: str, ref_name: str) -> URIRef:
+    """Deprecated name of :func:`compute_stream_uri`."""
+    from acquirium.internals._names import warn_deprecated
+    warn_deprecated("compute_ref_uri", "compute_stream_uri")
+    return compute_stream_uri(source_id, ref_name)
 
 
 class TimeseriesInfo(BaseModel):
@@ -56,7 +63,7 @@ class Point(BaseModel):
 
     uri: str
     handle: str | None = None
-    ref_uri: str | URIRef | list[str] | list[URIRef] | None = None
+    stream_uri: str | URIRef | list[str] | list[URIRef] | None = None
     types: list[str] = Field(default_factory=list)
     unit: str | None = None
     last_reported: datetime | None = None
@@ -78,15 +85,15 @@ class StreamInsert(BaseModel):
     """A single stream's data payload for the unified insert endpoint.
 
     ``source_id`` identifies the registered datasource (e.g. ``"mybox-metrics"``).
-    ``ref_name`` is the source-local stream identifier (e.g. ``"cpu_percent"``).
-    The canonical ref URI is computed deterministically from both via
-    :func:`compute_ref_uri`, so two sources with the same ``ref_name`` never
+    ``stream_name`` is the source-local stream identifier (e.g. ``"cpu_percent"``).
+    The canonical stream URI is computed deterministically from both via
+    :func:`compute_stream_uri`, so two sources with the same ``stream_name`` never
     collide. The storage backend maps that URI to its internal integer key.
     """
 
     source_id: str
-    ref_name: str
-    point_uri: str | None = None
+    stream_name: str
+    property_uri: str | None = None
     replace: bool = False
     values: list[tuple[datetime, float | int | str | None]]
     publication_id: str | None = None
@@ -160,14 +167,14 @@ class TimeIntervalModel(BaseModel):
         return TimeInterval(start=self.start, end=self.end)
 
 class LogEntry(BaseModel):
-    point_uri: str
+    property_uri: str
     timestamp: datetime
     period: TimeIntervalModel
     message: str | None = None
 
     def to_dict(self) -> dict:
         return {
-            "point_uri": self.point_uri,
+            "property_uri": self.property_uri,
             "log_time": self.timestamp.isoformat(),
             "observation_start": self.period.start.isoformat() if self.period.start else None,
             "observation_end": self.period.end.isoformat() if self.period.end else None,

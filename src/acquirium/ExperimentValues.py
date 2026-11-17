@@ -136,7 +136,7 @@ def sample_rows(rows: Any) -> list[tuple[datetime, Any]]:
             value = next(name for name in rows.columns if name != time)
         if time is None or value is None:
             raise ValueError("time-series tables need a time (or ts) column and a value (or value_numeric) column")
-        for column in ("data_alias", "point_uri", "ref_uri", "point_id", "ref", "uri"):
+        for column in ("data_alias", "property_uri", "stream_uri", "property_id", "stream", "ref", "uri"):
             if column in rows.columns and rows[column].n_unique() > 1:
                 raise ValueError("these rows come from several streams; record one stream at a time")
         rows = zip(rows[time].to_list(), rows[value].to_list())
@@ -188,7 +188,7 @@ def recording_entries(variable, value, *, at=None):
     if variable.kind != "timeseries":
         return [value_entry(variable.variable_id, variable.kind, variable.label, value)]
     if at is None and isinstance(value, StreamInterval):
-        return [{"form": "reference", "variable_id": variable.variable_id, "ref_uri": value.ref_uri,
+        return [{"form": "reference", "variable_id": variable.variable_id, "stream_uri": value.stream_uri,
                  "interval": [value.start.isoformat(), value.end.isoformat()]}]
     keys = variable.keys
     if at is not None:
