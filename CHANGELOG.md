@@ -32,6 +32,12 @@ change in any release.
   read, and registering streams never required it. Drop the call;
   `register_streams()` is the only registration step.
 
+### Fixed
+- Registering a stream again with a `label` replaces its label. Before, the
+  new label was added next to the old one, and `metadata()` listed the stream
+  once per label. Registering again without a `label` keeps the label the
+  stream has.
+
 ### Changed
 - Acquirium requires DuckDB 2.0 (`duckdb>=2.0.0`). An existing database file
   opens as is and keeps its storage format. A database created by DuckDB 2.0

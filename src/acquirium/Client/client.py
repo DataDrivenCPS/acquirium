@@ -832,6 +832,14 @@ class AcquiriumClient:
             return {}
         return dict(zip(result["columns"], rows[0]))
 
+    def _labels(self, node_uri: str) -> list[str]:
+        """The ``rdfs:label`` values a node has in the graph, sorted."""
+        result = self.sparql_query(
+            f"SELECT ?label WHERE {{ <{node_uri}> <{RDFS.label}> ?label . }}",
+            include_dependencies=False,
+        )
+        return sorted(str(row[0]) for row in result.get("rows") or [])
+
     def register_streams(
         self,
         streams: Iterable[dict[str, Any]],
@@ -850,6 +858,8 @@ class AcquiriumClient:
           writes ``acq:sourceId``, ``acq:refName``, and ``ref:storedAt`` on it.
         - ``label``: optional ``rdfs:label`` written on the point. A dummy
           point without one gets its ``stream_name`` (e.g. the CSV column name).
+          Registering again with a ``label`` replaces the label this source
+          wrote; registering again without one keeps it.
         - ``data_source``: optional datasource marker written on the point.
         - ``properties``: optional mapping of predicate URIRefs to values,
           written on the reference node (or the point when no ref node exists).
@@ -875,6 +885,8 @@ class AcquiriumClient:
         # the ``metadata`` maps per point; a later stream on the same point
         # wins key by key
         extras: dict[str, dict[str, Any]] = {}
+        # properties whose label is being replaced, per source
+        relabeled: dict[str, list[str]] = {}
         for stream in streams:
             # ``point_uri`` and the deprecated ``ref_name`` are still accepted
             stream, extra = _split_stream_metadata(new_names(stream))
@@ -890,11 +902,32 @@ class AcquiriumClient:
             resolved = self.resolve_property_metadata(meta) if meta else {}
             property_uri = stream.get("property_uri")
             existing = self._property_metadata(str(property_uri)) if property_uri is not None else {}
+            # A property keeps one label per source: a given label replaces
+            # the ones this source wrote, and the stream_name default is
+            # only used while the generated property has no label.
+            stream_name = stream.get("stream_name")
+            node = property_uri
+            if node is None and stream_name is not None:
+                node = f"{compute_stream_uri(source_id, stream_name)}__point"
+            current = self._labels(str(node)) if node is not None else []
+            if stream.get("label") is None:
+                if property_uri is None and current:
+                    stream = {**stream, "label": current[0]}
+            elif current != [str(stream["label"])]:
+                relabeled.setdefault(source_id, []).append(str(node))
             subj = _build_stream_triples(graph, stream, resolved, existing, self._units_compatible)
             if extra:
                 extras.setdefault(str(subj), {}).update(extra)
         writes = self._plan_metadata(extras, dict.fromkeys(extras, "data"))
         for source_id, graph in graphs.items():
+            if relabeled.get(source_id):
+                self.sparql_update(
+                    " ;\n".join(
+                        f"DELETE WHERE {{ <{node}> <{RDFS.label}> ?label }}"
+                        for node in dict.fromkeys(relabeled[source_id])
+                    ),
+                    source_id=source_id,
+                )
             if len(graph):
                 self.insert_graph(
                     graph.serialize(format="turtle"),

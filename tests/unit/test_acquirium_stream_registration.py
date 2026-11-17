@@ -31,6 +31,8 @@ def _client() -> AcquiriumClient:
     client.insert_graph = MagicMock()
     client._property_metadata = MagicMock(return_value={})
     client._units_compatible = MagicMock(return_value=False)
+    client._labels = MagicMock(return_value=[])
+    client.sparql_update = MagicMock()
     return client
 
 
@@ -116,6 +118,44 @@ def test_register_streams_without_point_uri_mint_one_dummy_point_each():
         assert len(list(g.subjects(HAS_EXTERNAL_REFERENCE, stream_uri))) == 1
 
     assert len(list(g.subjects(RDF.type, VIRTUAL_POINT))) == 2
+
+
+def _registered_labels(client: AcquiriumClient) -> list[str]:
+    g = Graph().parse(data=client.insert_graph.call_args[0][0], format="turtle")
+    return sorted(str(label) for label in g.objects(None, RDFS.label) if str(label) != "Acquirium TimescaleDB")
+
+
+def test_register_again_with_a_label_replaces_the_old_label():
+    client = _client()
+    client._labels = MagicMock(return_value=["temp"])
+
+    client.register_streams([{"source_id": "demo-source", "stream_name": "temp", "label": "Temperature"}])
+
+    point = f"{compute_stream_uri('demo-source', 'temp')}__point"
+    update, kwargs = client.sparql_update.call_args[0][0], client.sparql_update.call_args[1]
+    assert update == f"DELETE WHERE {{ <{point}> <{RDFS.label}> ?label }}"
+    assert kwargs == {"source_id": "demo-source"}
+    assert _registered_labels(client) == ["Temperature"]
+
+
+def test_register_again_without_a_label_keeps_the_given_label():
+    client = _client()
+    client._labels = MagicMock(return_value=["Temperature"])
+
+    client.register_streams([{"source_id": "demo-source", "stream_name": "temp"}])
+
+    client.sparql_update.assert_not_called()
+    assert _registered_labels(client) == ["Temperature"]
+
+
+def test_register_again_with_the_same_label_deletes_nothing():
+    client = _client()
+    client._labels = MagicMock(return_value=["Temperature"])
+
+    client.register_streams([{"source_id": "demo-source", "stream_name": "temp", "label": "Temperature"}])
+
+    client.sparql_update.assert_not_called()
+    assert _registered_labels(client) == ["Temperature"]
 
 
 def test_register_stream_without_point_uri_and_stream_name_raises():
