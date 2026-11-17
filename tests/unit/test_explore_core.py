@@ -14,7 +14,7 @@ from rdflib.plugins.sparql import prepareQuery
 
 from acquirium.Client.explore.core import Query
 from acquirium.Client.streams import Stream
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import compute_stream_uri
 
 CLS_A = "urn:test#TypeA"
 CLS_B = "urn:test#TypeB"
@@ -378,38 +378,38 @@ class TestMeasurementUri:
 
 
 class TestMeasurementRef:
-    R1 = str(compute_ref_uri("hist", "FT_feed"))
-    R2 = str(compute_ref_uri("hist", "FT_perm"))
+    R1 = str(compute_stream_uri("hist", "FT_feed"))
+    R2 = str(compute_stream_uri("hist", "FT_perm"))
 
     def test_root_measurement_pinned_to_one_stream(self):
-        sparql = q().measurement(alias="m", ref=self.R1).to_sparql()
+        sparql = q().measurement(alias="m", stream=self.R1).to_sparql()
         assert f"VALUES ?ext0 {{ <{self.R1}> }}" in sparql
         prepareQuery(sparql)
 
     def test_stream_handles_and_uris_are_deduplicated(self):
         refs = [Stream(self.R1), self.R1, URIRef(self.R2)]
-        sparql = q().measurement(alias="m", ref=refs).to_sparql()
+        sparql = q().measurement(alias="m", stream=refs).to_sparql()
         assert f"VALUES ?ext0 {{ <{self.R1}> <{self.R2}> }}" in sparql
 
     def test_every_data_node_of_a_frm_list_is_pinned(self):
         b = (q().entity(CLS_A, alias="a").entity(CLS_A, alias="b")
-             .measurement(frm=["a", "b"], ref=self.R1))
+             .measurement(frm=["a", "b"], stream=self.R1))
         sparql = b.to_sparql()
         for nid in b.query_graph.data_nodes:
             assert f"VALUES ?ext{nid} {{ <{self.R1}> }}" in sparql
         prepareQuery(sparql)
 
     def test_directional_measurement_keeps_the_refs(self):
-        b = q().entity(CLS_A, alias="a").measurement(direction="downstream", ref=self.R1)
+        b = q().entity(CLS_A, alias="a").measurement(direction="downstream", stream=self.R1)
         (info,) = b.query_graph.data_nodes.values()
         assert info.refs == (self.R1,)
 
     def test_refs_survive_later_attribute_filters(self):
-        b = q().measurement(alias="m", ref=self.R1).where(type="urn:test#Sensor")
+        b = q().measurement(alias="m", stream=self.R1).where(type="urn:test#Sensor")
         assert b.query_graph.data_nodes[0].refs == (self.R1,)
 
     def test_empty_list_matches_nothing(self):
-        sparql = q().measurement(alias="m", ref=[]).to_sparql()
+        sparql = q().measurement(alias="m", stream=[]).to_sparql()
         assert "VALUES ?ext0 {  }" in sparql
         prepareQuery(sparql)
 
@@ -418,11 +418,11 @@ class TestMeasurementRef:
 
     @pytest.mark.parametrize("bad", ["FT_feed", "hist:FT_feed", "urn:x> } ?s ?p ?o {", 3])
     def test_non_uris_and_sparql_breaking_text_rejected(self, bad):
-        with pytest.raises(ValueError, match="ref must be stream reference URIs"):
-            q().measurement(alias="m", ref=bad)
+        with pytest.raises(ValueError, match="stream must be stream URIs"):
+            q().measurement(alias="m", stream=bad)
 
     def test_to_dict_carries_the_refs(self):
-        (node,) = q().measurement(alias="m", ref=self.R1).to_dict()["data_nodes"]
+        (node,) = q().measurement(alias="m", stream=self.R1).to_dict()["data_nodes"]
         assert node["refs"] == [self.R1]
 
 

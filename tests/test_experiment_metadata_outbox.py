@@ -98,7 +98,7 @@ def seed_legacy_ledger(store, *, invalid=False):
             "CREATE TABLE experiment_templates (template_id VARCHAR PRIMARY KEY, name VARCHAR UNIQUE NOT NULL, created_at TIMESTAMP NOT NULL)",
             "CREATE TABLE experiment_variables (variable_id VARCHAR PRIMARY KEY, template_id VARCHAR NOT NULL, label VARCHAR NOT NULL, role VARCHAR NOT NULL, kind VARCHAR NOT NULL, metadata_json VARCHAR NOT NULL, created_at TIMESTAMP NOT NULL, UNIQUE(template_id,label))",
             "CREATE TABLE experiment_runs (run_id VARCHAR PRIMARY KEY, template_id VARCHAR NOT NULL, status VARCHAR NOT NULL, metadata_json VARCHAR NOT NULL, started_at TIMESTAMP NOT NULL, finished_at TIMESTAMP, error_json VARCHAR)",
-            "CREATE TABLE experiment_observations (run_id VARCHAR NOT NULL, variable_id VARCHAR, sequence BIGINT NOT NULL, recorded_at TIMESTAMP NOT NULL, occurred_at TIMESTAMP, value_json VARCHAR, artifact_digest VARCHAR, ref_uri VARCHAR, range_start TIMESTAMP, range_end TIMESTAMP, PRIMARY KEY(run_id,sequence))",
+            "CREATE TABLE experiment_observations (run_id VARCHAR NOT NULL, variable_id VARCHAR, sequence BIGINT NOT NULL, recorded_at TIMESTAMP NOT NULL, occurred_at TIMESTAMP, value_json VARCHAR, artifact_digest VARCHAR, stream_uri VARCHAR, range_start TIMESTAMP, range_end TIMESTAMP, PRIMARY KEY(run_id,sequence))",
             "CREATE TABLE experiment_metadata_resolutions (text VARCHAR NOT NULL, kind VARCHAR NOT NULL, uri VARCHAR NOT NULL, PRIMARY KEY(text,kind))",
         ]
         for statement in statements:
@@ -108,7 +108,7 @@ def seed_legacy_ledger(store, *, invalid=False):
         execute(conn, "INSERT INTO experiment_variables VALUES ('legacy-variable','legacy-study','pressure','output','scalar',?,?)", [json.dumps(metadata), stamp])
         execute(conn, "INSERT INTO experiment_runs VALUES ('legacy-run','legacy-study','succeeded',?,?,?,NULL)", [json.dumps({"tags": ["A", None, "B"]}), stamp, stamp])
         execute(conn, "INSERT INTO experiment_observations (run_id,variable_id,sequence,recorded_at,value_json) VALUES ('legacy-run','legacy-variable',1,?,'12.5')", [stamp])
-        execute(conn, "INSERT INTO experiment_observations (run_id,sequence,recorded_at,value_json,ref_uri,range_start) VALUES ('legacy-run',2,?,?,'urn:legacy:stream',?)", [stamp, json.dumps({"treatment": "old", "tags": [None, "A"]}), stamp])
+        execute(conn, "INSERT INTO experiment_observations (run_id,sequence,recorded_at,value_json,stream_uri,range_start) VALUES ('legacy-run',2,?,?,'urn:legacy:stream',?)", [stamp, json.dumps({"treatment": "old", "tags": [None, "A"]}), stamp])
         for text in ("psi", "PSI"):
             execute(conn, "INSERT INTO experiment_metadata_resolutions VALUES (?, 'unit', 'urn:unit:PSI')", [text])
     return metadata

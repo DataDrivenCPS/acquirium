@@ -89,12 +89,12 @@ def test_batch_deletion_rolls_back_resets_with_ledger_and_outbox(ledger, monkeyp
         run = ledger.start(study["template_id"], {})
         ref = str(store.ensure_stream_ref(None, f"experiment/{run['run_id']}", "level", value_kind="numeric"))
         store.upsert_rows(ref, [(WHEN, 1.0)], value_kind="numeric")
-        ledger.observe(run["run_id"], variable["variable_id"], ref_uri=ref, interval=(WHEN, WHEN))
+        ledger.observe(run["run_id"], variable["variable_id"], stream_uri=ref, interval=(WHEN, WHEN))
         ledger.finish(run["run_id"], "succeeded")
         runs.append(run["run_id"])
         refs.append(ref)
     with store._lock, store._write_conn() as conn:
-        execute(conn, "UPDATE timeseries SET deleted=TRUE WHERE ref_id=(SELECT ref_id FROM ref_ids WHERE ref_uri=?)", [refs[1]])
+        execute(conn, "UPDATE timeseries SET deleted=TRUE WHERE stream_id=(SELECT stream_id FROM stream_ids WHERE stream_uri=?)", [refs[1]])
     before = _snapshot(store)
     reset = RevisionPublisher.reset
 

@@ -60,11 +60,11 @@ def test_key_column_migrates_existing_ledger(storage):
         with store._lock, store._write_conn() as conn:
             # DuckDB requires dropping secondary indexes before dropping columns.
             execute(conn, "DROP INDEX experiment_observations_variable_idx")
-            execute(conn, "DROP INDEX experiment_observations_ref_idx")
+            execute(conn, "DROP INDEX experiment_observations_stream_idx")
             execute(conn, "ALTER TABLE experiment_observations DROP COLUMN key_json")
             execute(conn, "DELETE FROM schema_migrations WHERE component='experiments' AND version=1")
             execute(conn, "CREATE INDEX experiment_observations_variable_idx ON experiment_observations(variable_id, run_id, sequence)")
-            execute(conn, "CREATE INDEX experiment_observations_ref_idx ON experiment_observations(ref_uri, range_start, range_end)")
+            execute(conn, "CREATE INDEX experiment_observations_stream_idx ON experiment_observations(stream_uri, range_start, range_end)")
     finally:
         store.close()
     ac = aq.init(**options)
@@ -75,7 +75,7 @@ def test_key_column_migrates_existing_ledger(storage):
         assert observations[0]["key"] is None
         flow = _declare(client, study["template_id"], "flow", "output", "timeseries", {"keys": ["pump"]})
         refs = [client.record_experiment_batch(run["run_id"], [{"form": "samples", "variable_id": flow["variable_id"],
-                                                                "key": [pump], "samples": [[WHEN.isoformat(), 1.0]]}])[0]["ref_uri"]
+                                                                "key": [pump], "samples": [[WHEN.isoformat(), 1.0]]}])[0]["stream_uri"]
                 for pump in ("p1", "p2")]
         assert [item["key"] for item in client.list_experiment_observations(study["template_id"])][1:] == [["p1"], ["p2"]]
         client.finish_experiment(run["run_id"])

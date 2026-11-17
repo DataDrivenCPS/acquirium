@@ -272,9 +272,9 @@ class TestInsertLog:
     def test_insert_log_full_and_minimal(self, client, ns):
         point = f"{ns}p1"
         start, end = datetime(2025, 1, 1, tzinfo=timezone.utc), datetime(2025, 1, 2, tzinfo=timezone.utc)
-        assert client.insert_log(point_uri=point, log_time=start, observation_start=start,
+        assert client.insert_log(property_uri=point, log_time=start, observation_start=start,
                                  observation_end=end, log_message="test log")["ok"]
-        assert client.insert_log(point_uri=point, log_message="minimal log")["ok"]
-        logs = {entry.message: entry for entry in client.query_logs(point_uri=point)}
+        assert client.insert_log(property_uri=point, log_message="minimal log")["ok"]
+        logs = {entry.message: entry for entry in client.query_logs(property_uri=point)}
         assert logs.keys() == {"test log", "minimal log"}
         assert (logs["test log"].period.start, logs["test log"].period.end) == (start, end)

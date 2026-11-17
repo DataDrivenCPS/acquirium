@@ -22,7 +22,7 @@ def test_insert_timeseries_arrow_delegates_to_client():
     table = pa.table(
         {
             "ts": pa.array([ts, ts.replace(hour=1)], type=pa.timestamp("us", tz="UTC")),
-            "ref_name": ["temp", "state/value"],
+            "stream_name": ["temp", "state/value"],
             "value": ["72.4", "OK"],
         }
     )

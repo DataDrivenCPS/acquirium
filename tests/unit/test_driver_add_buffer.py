@@ -50,7 +50,7 @@ class CollectDriver(PollingIngestDriver):
     def collect(self) -> pl.DataFrame:
         return pl.DataFrame({
             "ts": [datetime(2024, 1, 1, tzinfo=timezone.utc)],
-            "ref_name": ["temp"],
+            "stream_name": ["temp"],
             "value": [21.5],
         })
 
@@ -82,7 +82,7 @@ def test_add_buffers_until_flush(tmp_path):
     driver.flush()
     (source_id, cols), = inserted(driver)
     assert source_id == "sensors"
-    assert cols["ref_name"] == ["temp"]
+    assert cols["stream_name"] == ["temp"]
     assert cols["value"] == ["21.5"]
 
 
@@ -96,7 +96,7 @@ def test_flush_sends_one_frame_for_all_buffered_rows(tmp_path):
 
     assert driver.aq.insert_timeseries_arrow.call_count == 1
     (_, cols), = inserted(driver)
-    assert cols["ref_name"] == ["temp", "rh", "temp"]
+    assert cols["stream_name"] == ["temp", "rh", "temp"]
     assert cols["value"] == ["21.5", "55.0", "22.0"]
 
 
@@ -157,7 +157,7 @@ def test_tick_reads_then_flushes(tmp_path):
 
     (source_id, cols), = inserted(driver)
     assert source_id == "sensors"
-    assert cols["ref_name"] == ["temp", "rh"]
+    assert cols["stream_name"] == ["temp", "rh"]
 
 
 def test_collect_style_driver_still_works(tmp_path):
@@ -166,7 +166,7 @@ def test_collect_style_driver_still_works(tmp_path):
 
     (source_id, cols), = inserted(driver)
     assert source_id == "sensors"
-    assert cols["ref_name"] == ["temp"]
+    assert cols["stream_name"] == ["temp"]
     assert cols["value"] == ["21.5"]
 
 
@@ -183,7 +183,7 @@ def test_event_driver_tick_flushes_buffered_callbacks(tmp_path):
     driver.tick()
     (source_id, cols), = inserted(driver)
     assert source_id == "mqtt"
-    assert cols["ref_name"] == ["temp"]
+    assert cols["stream_name"] == ["temp"]
 
 
 def test_driver_implementing_neither_read_nor_collect_is_rejected(tmp_path):
@@ -388,7 +388,7 @@ def test_undeclared_bulk_observation_is_rejected(tmp_path):
     driver = make_driver(AddDriver, tmp_path)
     frame = pl.DataFrame({
         "ts": [datetime.now(timezone.utc)],
-        "ref_name": ["missing"],
+        "stream_name": ["missing"],
         "value": [1.0],
     })
     with pytest.raises(UndeclaredStreamError, match="undeclared streams"):
@@ -412,17 +412,17 @@ def test_null_only_batch_does_not_freeze_inferred_value_kind(tmp_path):
         spec
         for call in driver.aq.register_streams.call_args_list
         for spec in call.args[0]
-        if spec["ref_name"] == "optional"
+        if spec["stream_name"] == "optional"
     ]
     assert specs[-1]["value_kind"] == "numeric"
 
 
 def test_conflicting_redeclaration_after_registration_raises(tmp_path):
     driver = make_driver(AddDriver, tmp_path)
-    driver.declare("state", point_uri="urn:first")
+    driver.declare("state", property_uri="urn:first")
     driver.register_declared()
     with pytest.raises(ValueError, match="conflicting declaration"):
-        driver.declare("state", point_uri="urn:second")
+        driver.declare("state", property_uri="urn:second")
 
 
 def test_graceful_shutdown_flushes_after_stopping_producer(tmp_path):

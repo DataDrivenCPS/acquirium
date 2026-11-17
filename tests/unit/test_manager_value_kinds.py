@@ -8,7 +8,7 @@ import pytest
 
 from acquirium.Server.manager import Manager
 from acquirium.Storage.duckdb_store import DuckDBStore
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import compute_stream_uri
 
 
 class _CountingStore:
@@ -16,8 +16,8 @@ class _CountingStore:
         self.kinds = kinds
         self.calls = []
 
-    def stream_value_kinds(self, ref_uris):
-        uris = list(ref_uris)
+    def stream_value_kinds(self, stream_uris):
+        uris = list(stream_uris)
         self.calls.append(uris)
         return {uri: self.kinds[uri] for uri in uris if uri in self.kinds}
 
@@ -52,11 +52,11 @@ def _manager(store, graph=None):
 def test_arrow_insert_resolves_all_streams_with_one_lookup():
     source = "plant"
     names = [f"p{i}" for i in range(50)]
-    kinds = {str(compute_ref_uri(source, n)): "numeric" for n in names}
+    kinds = {str(compute_stream_uri(source, n)): "numeric" for n in names}
     store = _CountingStore(kinds)
     mgr = _manager(store)
     ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    table = pa.table({"ts": [ts] * 50, "ref_name": names, "value": [float(i) for i in range(50)]})
+    table = pa.table({"ts": [ts] * 50, "stream_name": names, "value": [float(i) for i in range(50)]})
 
     mgr.insert_timeseries_arrow(source, table)
 

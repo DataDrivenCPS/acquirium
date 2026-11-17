@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 import pyarrow.ipc as ipc
 import pyarrow as pa
 
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import compute_stream_uri
 
 
 BASE_URL = (
@@ -116,13 +116,13 @@ class TestTimeseriesEndpoints:
         # find_all_data). Remove it once this class is done so it doesn't
         # leak into unrelated tests.
         yield
-        ref_uri = compute_ref_uri(self.TEST_SOURCE, self.TEST_REF_NAME)
+        stream_uri = compute_stream_uri(self.TEST_SOURCE, self.TEST_REF_NAME)
         update = f"""\
 PREFIX acq: <urn:acquirium#>
 PREFIX ref: <https://brickschema.org/schema/Brick/ref#>
 DELETE DATA {{
-  <{self.TEST_POINT}> ref:hasExternalReference <{ref_uri}> .
-  <{ref_uri}> a acq:Stream ;
+  <{self.TEST_POINT}> ref:hasExternalReference <{stream_uri}> .
+  <{stream_uri}> a acq:Stream ;
       acq:sourceId "{self.TEST_SOURCE}" ;
       acq:refName "{self.TEST_REF_NAME}" ;
       acq:valueKind "numeric" .
@@ -134,13 +134,13 @@ DELETE DATA {{
         })
 
     def _register_stream(self):
-        ref_uri = compute_ref_uri(self.TEST_SOURCE, self.TEST_REF_NAME)
+        stream_uri = compute_stream_uri(self.TEST_SOURCE, self.TEST_REF_NAME)
         graph = f"""\
 @prefix acq: <urn:acquirium#> .
 @prefix ref: <https://brickschema.org/schema/Brick/ref#> .
 
-<{self.TEST_POINT}> ref:hasExternalReference <{ref_uri}> .
-<{ref_uri}> a acq:Stream ;
+<{self.TEST_POINT}> ref:hasExternalReference <{stream_uri}> .
+<{stream_uri}> a acq:Stream ;
     acq:sourceId "{self.TEST_SOURCE}" ;
     acq:refName "{self.TEST_REF_NAME}" ;
     acq:valueKind "numeric" .
@@ -163,8 +163,8 @@ DELETE DATA {{
             f"{BASE_URL}/insert_timeseries",
             json=[{
                 "source_id": self.TEST_SOURCE,
-                "ref_name": self.TEST_REF_NAME,
-                "point_uri": self.TEST_POINT,
+                "stream_name": self.TEST_REF_NAME,
+                "property_uri": self.TEST_POINT,
                 "replace": False,
                 "values": values,
             }],
@@ -229,8 +229,8 @@ DELETE DATA {{
             f"{BASE_URL}/insert_timeseries",
             json=[{
                 "source_id": self.TEST_SOURCE,
-                "ref_name": self.TEST_REF_NAME,
-                "point_uri": self.TEST_POINT,
+                "stream_name": self.TEST_REF_NAME,
+                "property_uri": self.TEST_POINT,
                 "replace": True,
                 "values": values,
             }],
@@ -257,19 +257,19 @@ class TestLogEndpoints:
     LOG_POINT = "urn:test:api_log_point"
 
     def _cleanup(self):
-        requests.delete(f"{BASE_URL}/delete_logs", params={"point_uri": self.LOG_POINT})
+        requests.delete(f"{BASE_URL}/delete_logs", params={"property_uri": self.LOG_POINT})
 
     def test_insert_and_query(self):
         self._cleanup()
         resp = requests.post(f"{BASE_URL}/insert_log", params={
-            "point_uri": self.LOG_POINT,
+            "property_uri": self.LOG_POINT,
             "log_timestamp": "2025-06-15T10:00:00Z",
             "message": "api test log",
         })
         assert resp.status_code == 200
 
         resp = requests.get(f"{BASE_URL}/query_logs", params={
-            "point_uri": self.LOG_POINT,
+            "property_uri": self.LOG_POINT,
         })
         assert resp.status_code == 200
         logs = resp.json()
@@ -279,7 +279,7 @@ class TestLogEndpoints:
     def test_with_observation_period(self):
         self._cleanup()
         resp = requests.post(f"{BASE_URL}/insert_log", params={
-            "point_uri": self.LOG_POINT,
+            "property_uri": self.LOG_POINT,
             "log_timestamp": "2025-06-15T10:00:00Z",
             "observation_start": "2025-06-15T09:00:00Z",
             "observation_end": "2025-06-15T11:00:00Z",
@@ -289,17 +289,17 @@ class TestLogEndpoints:
 
     def test_delete_logs(self):
         requests.post(f"{BASE_URL}/insert_log", params={
-            "point_uri": self.LOG_POINT,
+            "property_uri": self.LOG_POINT,
             "log_timestamp": "2025-06-20T10:00:00Z",
             "message": "to delete",
         })
         resp = requests.delete(f"{BASE_URL}/delete_logs", params={
-            "point_uri": self.LOG_POINT,
+            "property_uri": self.LOG_POINT,
         })
         assert resp.status_code == 200
 
         resp = requests.get(f"{BASE_URL}/query_logs", params={
-            "point_uri": self.LOG_POINT,
+            "property_uri": self.LOG_POINT,
         })
         logs = resp.json()
         assert len(logs) == 0
@@ -307,7 +307,7 @@ class TestLogEndpoints:
     def test_no_period(self):
         self._cleanup()
         resp = requests.post(f"{BASE_URL}/insert_log", params={
-            "point_uri": self.LOG_POINT,
+            "property_uri": self.LOG_POINT,
             "log_timestamp": "2025-06-15T10:00:00Z",
             "message": "no period log",
         })

@@ -56,8 +56,8 @@ def acquirium_client_csv(acquirium_client_kwargs):
     acq.register_streams([
         {
             "source_id": _CSV_SOURCE_ID,
-            "ref_name": f"point_{i}",
-            "point_uri": f"urn:ex/point_{i}",
+            "stream_name": f"point_{i}",
+            "property_uri": f"urn:ex/point_{i}",
             "value_kind": "text" if i >= 9 else "numeric",
         }
         for i in range(1, 11)
@@ -69,7 +69,7 @@ def acquirium_client_csv(acquirium_client_kwargs):
             pl.col("Timestamp").str.to_datetime(time_zone="UTC"),
             *[pl.col(c).cast(pl.String) for c in value_cols],
         ])
-        .unpivot(on=value_cols, index="Timestamp", variable_name="ref_name", value_name="value")
+        .unpivot(on=value_cols, index="Timestamp", variable_name="stream_name", value_name="value")
         .rename({"Timestamp": "ts"})
     )
     acq.insert_timeseries_arrow(_CSV_SOURCE_ID, long.to_arrow())
@@ -86,16 +86,16 @@ def ts_store(pg_dsn):
 
 @pytest.fixture
 def clean_point(ts_store):
-    """Provides a test point URI and cleans up its data after each test."""
+    """Provides a test property URI and cleans up its data after each test."""
     yield TEST_POINT_URI
     with ts_store.conn.cursor() as cur:
         cur.execute(
-            "DELETE FROM timeseries WHERE ref_id = (SELECT ref_id FROM ref_ids WHERE ref_uri = %s)",
+            "DELETE FROM timeseries WHERE stream_id = (SELECT stream_id FROM stream_ids WHERE stream_uri = %s)",
             [TEST_POINT_URI],
         )
-        cur.execute("DELETE FROM ref_ids WHERE ref_uri = %s", [TEST_POINT_URI])
-        cur.execute("DELETE FROM streams WHERE point_uri = %s", [TEST_POINT_URI])
-        cur.execute("DELETE FROM logs WHERE point_uri = %s", [TEST_POINT_URI])
+        cur.execute("DELETE FROM stream_ids WHERE stream_uri = %s", [TEST_POINT_URI])
+        cur.execute("DELETE FROM streams WHERE property_uri = %s", [TEST_POINT_URI])
+        cur.execute("DELETE FROM logs WHERE property_uri = %s", [TEST_POINT_URI])
 
 
 def insert_sample_csv_streams(acq, *, source_id: str = SAMPLE_SOURCE_ID) -> None:
@@ -106,15 +106,15 @@ def insert_sample_csv_streams(acq, *, source_id: str = SAMPLE_SOURCE_ID) -> None
     stream_specs = []
     stream_rows: dict = {}
     for i in range(1, 11):
-        ref_name = f"point_{i}"
-        rows = list(df.select("Timestamp", ref_name).iter_rows())
+        stream_name = f"point_{i}"
+        rows = list(df.select("Timestamp", stream_name).iter_rows())
         stream_specs.append({
             "source_id": source_id,
-            "ref_name": ref_name,
-            "point_uri": f"urn:ex/point_{i}",
+            "stream_name": stream_name,
+            "property_uri": f"urn:ex/point_{i}",
             "value_kind": assign_stream_value_kind(value for _, value in rows),
         })
-        stream_rows[ref_name] = rows
+        stream_rows[stream_name] = rows
     acq.register_streams(stream_specs)
     acq.insert_timeseries_batch(source_id, stream_rows)
 

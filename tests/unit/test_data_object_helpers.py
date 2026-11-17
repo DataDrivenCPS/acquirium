@@ -60,8 +60,8 @@ def _data_object(bindings, rows):
     t = datetime(2026, 1, 1, tzinfo=timezone.utc)
     tall = pl.DataFrame({
         "data_alias": [r[0] for r in rows],
-        "point_uri": [r[1] for r in rows],
-        "ref_uri": [r[2] for r in rows],
+        "property_uri": [r[1] for r in rows],
+        "stream_uri": [r[2] for r in rows],
         "time": [t] * len(rows),
         "value_numeric": [1.0] * len(rows),
         "value_text": [None] * len(rows),
@@ -82,8 +82,8 @@ class TestPointLabelsFirst:
     def _binding(self, nid, point, ref, alias, label):
         from acquirium.Client.data_object import BindingInfo
         return BindingInfo(
-            nid=nid, point_uri=point, ref_uri=ref, alias=alias,
-            entity_contexts=[{}], point_label=label,
+            nid=nid, property_uri=point, stream_uri=ref, alias=alias,
+            entity_contexts=[{}], property_label=label,
         )
 
     def test_auto_alias_column_named_by_label(self):
@@ -118,7 +118,7 @@ class TestPointLabelsFirst:
 
         q = inspect.signature(Query.dataframe).parameters
         d = inspect.signature(DataObject.dataframe).parameters
-        for name in ("shape", "start", "end", "limit", "order", "include_ref", "compact"):
+        for name in ("shape", "start", "end", "limit", "order", "include_stream", "compact"):
             assert name in q and name in d, name
             assert q[name].default == d[name].default, name
         # shape is the one positional display parameter on both
@@ -133,8 +133,8 @@ class TestPointLabelsFirst:
         t = [datetime(2026, 1, d, tzinfo=timezone.utc) for d in (1, 2, 3)]
         tall = pl.DataFrame({
             "data_alias": ["flow"] * 3,
-            "point_uri": ["urn:t#p1"] * 3,
-            "ref_uri": ["urn:t#r1"] * 3,
+            "property_uri": ["urn:t#p1"] * 3,
+            "stream_uri": ["urn:t#r1"] * 3,
             "time": t,
             "value_numeric": [1.0, 2.0, 3.0],
             "value_text": [None] * 3,
@@ -142,7 +142,7 @@ class TestPointLabelsFirst:
         client = MagicMock()
         client.compact_uri.side_effect = lambda u: str(u).rsplit("#", 1)[-1]
         d = DataObject(
-            _bindings=[BindingInfo(nid=0, point_uri="urn:t#p1", ref_uri="urn:t#r1",
+            _bindings=[BindingInfo(nid=0, property_uri="urn:t#p1", stream_uri="urn:t#r1",
                                    alias="flow", entity_contexts=[{}])],
             _entity_columns=[], _query_graph=QueryGraph(),
             _client=client, _tall=tall, _materialized=True,
@@ -162,8 +162,8 @@ class TestPointLabelsFirst:
             _bindings=[b], _entity_columns=[], _query_graph=QueryGraph(),
         )
         meta = d.metadata()
-        assert meta.columns[:3] == ["data_alias", "point_label", "point_uri"]
-        assert meta["point_label"].to_list() == ["intake"]
+        assert meta.columns[:3] == ["data_alias", "property_label", "property_uri"]
+        assert meta["property_label"].to_list() == ["intake"]
 
 
 class TestCastValue:
@@ -175,8 +175,8 @@ class TestCastValue:
         t = [datetime(2026, 1, d, tzinfo=timezone.utc) for d in range(1, len(values) + 1)]
         tall = pl.DataFrame({
             "data_alias": ["flow"] * len(values),
-            "point_uri": ["urn:t#p1"] * len(values),
-            "ref_uri": ["urn:t#r1"] * len(values),
+            "property_uri": ["urn:t#p1"] * len(values),
+            "stream_uri": ["urn:t#r1"] * len(values),
             "time": t,
             "value_numeric": pl.Series(values, dtype=pl.Float64),
             "value_text": [None] * len(values),
@@ -184,7 +184,7 @@ class TestCastValue:
         client = MagicMock()
         client.compact_uri.side_effect = lambda u: str(u).rsplit("#", 1)[-1]
         return DataObject(
-            _bindings=[BindingInfo(nid=0, point_uri="urn:t#p1", ref_uri="urn:t#r1",
+            _bindings=[BindingInfo(nid=0, property_uri="urn:t#p1", stream_uri="urn:t#r1",
                                    alias="flow", entity_contexts=[{}])],
             _entity_columns=[], _query_graph=QueryGraph(), _client=client,
             _tall=tall, _materialized=True, _query_params={"cast_value": cast_value},
@@ -243,21 +243,21 @@ class TestStreamInfo:
         from acquirium.Client.data_object import BindingInfo, DataObject
         from acquirium.Client.query_graph import QueryGraph
         bs = [
-            BindingInfo(nid=0, point_uri="urn:t#p1", ref_uri="urn:t#r1", alias="flow",
-                        entity_contexts=[{}], source_id="scada", ref_name="FT-101"),
-            BindingInfo(nid=0, point_uri="urn:t#p1", ref_uri="urn:t#r2", alias="flow",
-                        entity_contexts=[{}], source_id="lab", ref_name="flow_csv"),
-            BindingInfo(nid=1, point_uri="urn:t#p2", ref_uri="urn:t#r3", alias="temp",
+            BindingInfo(nid=0, property_uri="urn:t#p1", stream_uri="urn:t#r1", alias="flow",
+                        entity_contexts=[{}], source_id="scada", stream_name="FT-101"),
+            BindingInfo(nid=0, property_uri="urn:t#p1", stream_uri="urn:t#r2", alias="flow",
+                        entity_contexts=[{}], source_id="lab", stream_name="flow_csv"),
+            BindingInfo(nid=1, property_uri="urn:t#p2", stream_uri="urn:t#r3", alias="temp",
                         entity_contexts=[{}]),
         ]
         return DataObject(_bindings=bs, _entity_columns=[], _query_graph=QueryGraph())
 
     def test_one_row_per_stream_with_driver_names(self):
         info = self._object().stream_info()
-        assert info.columns == ["stream", "alias", "point_uri", "ref_uri", "source_id", "ref_name"]
+        assert info.columns == ["stream", "alias", "property_uri", "stream_uri", "source_id", "stream_name"]
         assert info["stream"].to_list() == [0, 1, 2]
         assert info["source_id"].to_list() == ["scada", "lab", None]
-        assert info["ref_name"].to_list() == ["FT-101", "flow_csv", None]
+        assert info["stream_name"].to_list() == ["FT-101", "flow_csv", None]
 
     def test_alias_keeps_the_numbering(self):
         d = self._object()
@@ -267,10 +267,10 @@ class TestStreamInfo:
             d.stream_info("nope")
 
     def test_metadata_with_refs_shows_identity(self):
-        meta = self._object().metadata(include_ref_uris=True)
-        assert meta.filter(meta["ref_uri"] == "urn:t#r1")["ref_name"].to_list() == ["FT-101"]
+        meta = self._object().metadata(include_stream_uris=True)
+        assert meta.filter(meta["stream_uri"] == "urn:t#r1")["stream_name"].to_list() == ["FT-101"]
 
-    def test_streams_resolve_by_number_or_ref_uri(self):
+    def test_streams_resolve_by_number_or_stream_uri(self):
         d = self._object()
         assert d._resolve_streams(None) is None
         assert d._resolve_streams(1) == {"urn:t#r2"}
@@ -304,8 +304,8 @@ class TestStreamInfo:
         t = datetime(2026, 1, 1, tzinfo=timezone.utc)
         d._tall = pl.DataFrame({
             "data_alias": ["flow", "flow", "temp"],
-            "point_uri": ["urn:t#p1", "urn:t#p1", "urn:t#p2"],
-            "ref_uri": ["urn:t#r1", "urn:t#r2", "urn:t#r3"],
+            "property_uri": ["urn:t#p1", "urn:t#p1", "urn:t#p2"],
+            "stream_uri": ["urn:t#r1", "urn:t#r2", "urn:t#r3"],
             "time": [t, t, t],
             "value_numeric": [1.0, 1.1, 20.0],
             "value_text": pl.Series([None, None, None], dtype=pl.Utf8),
@@ -314,7 +314,7 @@ class TestStreamInfo:
         assert d.dataframe(compact=False)["flow__urn:t#p1"].to_list() == [1.0]       # first stream wins
         assert d.dataframe(compact=False, streams=[1])["flow__urn:t#p1"].to_list() == [1.1]
         narrow = d.dataframe(shape="narrow", compact=False, streams=["urn:t#r2", 2])
-        assert sorted(narrow["ref_uri"].to_list()) == ["urn:t#r2", "urn:t#r3"]
+        assert sorted(narrow["stream_uri"].to_list()) == ["urn:t#r2", "urn:t#r3"]
 
 
 class TestLazyStats:
@@ -381,7 +381,7 @@ class TestLazyStats:
 
     def test_bindings_carry_stats(self):
         data, client = self._data()
-        counts = {b.ref_uri: b.row_count for b in data.bindings}
+        counts = {b.stream_uri: b.row_count for b in data.bindings}
         assert counts == {self.R1: 3, self.R2: 0}  # a stream without stats has no rows
         client.timeseries_info_batch.assert_called_once()
 
@@ -515,8 +515,8 @@ class TestConvertToStoredUnitMismatch:
         from acquirium.Client.data_object import BindingInfo
 
         data = _data_object(
-            [BindingInfo(nid=0, point_uri="urn:t#p1", ref_uri="urn:t#r1", alias="p",
-                         entity_contexts=[{}], property_unit=annotated, ref_unit=stored)],
+            [BindingInfo(nid=0, property_uri="urn:t#p1", stream_uri="urn:t#r1", alias="p",
+                         entity_contexts=[{}], property_unit=annotated, stream_unit=stored)],
             [("p", "urn:t#p1", "urn:t#r1")],
         )
         client = data._client

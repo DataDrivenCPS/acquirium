@@ -111,11 +111,11 @@ def test_setup_registers_datasource_and_streams_from_mapping(tmp_path):
     # Streams are registered in one batch, straight from the mapping.
     driver.aq.register_streams.assert_called_once()
     specs = driver.aq.register_streams.call_args.args[0]
-    by_name = {s["ref_name"]: s for s in specs}
+    by_name = {s["stream_name"]: s for s in specs}
     assert set(by_name) == {"value_a", "value_b"}
     # Each spec links the ontology point and records its Pyomo var so
     # registration writes hasExternalReference + hasPyomoVar.
-    assert by_name["value_a"]["point_uri"] == "urn:point:value_a"
+    assert by_name["value_a"]["property_uri"] == "urn:point:value_a"
     assert by_name["value_a"]["value_kind"] == "numeric"
     assert by_name["value_a"]["properties"][HAS_PYOMO_VAR] == "fs.unit.value_a"
 
@@ -150,7 +150,7 @@ def test_loop_builds_model_and_ingests_batch(tmp_path):
 
     source_id, df = driver.aq.insert_timeseries_arrow.call_args.args
     assert source_id == "watertap"
-    values = dict(zip(df["ref_name"].to_pylist(), df["value"].to_pylist()))
+    values = dict(zip(df["stream_name"].to_pylist(), df["value"].to_pylist()))
     assert values["value_a"] == "2.5"
     assert values["value_b"] == "5.0"
 
@@ -167,7 +167,7 @@ def test_loop_can_extract_model_via_result_attr(tmp_path):
     driver.tick()
 
     _, df = driver.aq.insert_timeseries_arrow.call_args.args
-    values = dict(zip(df["ref_name"].to_pylist(), df["value"].to_pylist()))
+    values = dict(zip(df["stream_name"].to_pylist(), df["value"].to_pylist()))
     assert values["value_a"] == "3.0"
     assert values["value_b"] == "6.0"
 
@@ -183,7 +183,7 @@ def test_loop_preserves_nonnumeric_component_values_for_numeric_streams(tmp_path
     driver.tick()
 
     _, df = driver.aq.insert_timeseries_arrow.call_args.args
-    values = dict(zip(df["ref_name"].to_pylist(), df["value"].to_pylist()))
+    values = dict(zip(df["stream_name"].to_pylist(), df["value"].to_pylist()))
     assert values["value_a"] == "Manual Control"
     assert values["value_b"] == "6.0"
 
@@ -200,7 +200,7 @@ def test_loop_applies_change_inputs_then_solves(tmp_path):
     driver.tick()
 
     _, df = driver.aq.insert_timeseries_arrow.call_args.args
-    values = dict(zip(df["ref_name"].to_pylist(), df["value"].to_pylist()))
+    values = dict(zip(df["stream_name"].to_pylist(), df["value"].to_pylist()))
     # change_inputs overrode the build defaults before the read
     assert values["value_a"] == "4.0"
     assert values["value_b"] == "8.0"

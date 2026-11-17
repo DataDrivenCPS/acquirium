@@ -12,13 +12,13 @@ class RecordingClient:
     def __init__(self) -> None:
         self.calls = []
 
-    def timeseries_df(self, ref_uri, **kwargs):
-        self.calls.append((ref_uri, kwargs))
+    def timeseries_df(self, stream_uri, **kwargs):
+        self.calls.append((stream_uri, kwargs))
         return pl.DataFrame(
             {
                 "ts": [datetime(2026, 1, 1, tzinfo=timezone.utc)],
                 "value": ["Manual Control"],
-                "uri": [ref_uri],
+                "uri": [stream_uri],
             }
         )
 
@@ -29,8 +29,8 @@ def test_data_object_passes_value_mode_to_timeseries_client():
         _bindings=[
             BindingInfo(
                 nid=1,
-                point_uri="urn:point:1",
-                ref_uri="urn:ref:1",
+                property_uri="urn:point:1",
+                stream_uri="urn:ref:1",
                 alias="mode",
                 entity_contexts=[{}],
                 row_count=1,

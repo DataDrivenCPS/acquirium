@@ -24,7 +24,7 @@ def _frame(values: pl.Series, kinds: list[str | None]) -> pl.DataFrame:
     n = len(values)
     return pl.DataFrame(
         {
-            "ref_uri": pl.Series("ref_uri", [f"urn:v:{i % 3}" for i in range(n)], dtype=pl.Utf8),
+            "stream_uri": pl.Series("stream_uri", [f"urn:v:{i % 3}" for i in range(n)], dtype=pl.Utf8),
             "ts": pl.Series("ts", _ts(n), dtype=pl.Datetime("us", "UTC")),
             "value": values,
             "value_kind": pl.Series("value_kind", kinds, dtype=pl.Utf8),
@@ -174,7 +174,7 @@ def test_fallback_warning_logged(caplog):
 def test_no_value_kind_column_defaults_to_text():
     df = pl.DataFrame(
         {
-            "ref_uri": pl.Series(["urn:v:0"], dtype=pl.Utf8),
+            "stream_uri": pl.Series(["urn:v:0"], dtype=pl.Utf8),
             "ts": pl.Series(_ts(1), dtype=pl.Datetime("us", "UTC")),
             "value": typed_value_series([1.5]),
         }
@@ -192,7 +192,7 @@ def test_unknown_value_kind_raises():
 
 @pytest.mark.unit
 def test_missing_value_column_raises():
-    df = pl.DataFrame({"ref_uri": ["a"], "ts": _ts(1)})
+    df = pl.DataFrame({"stream_uri": ["a"], "ts": _ts(1)})
     with pytest.raises(ValueError):
         prepare_value_columns(df)
 
@@ -201,7 +201,7 @@ def test_missing_value_column_raises():
 def test_presplit_frame_passes_through():
     df = pl.DataFrame(
         {
-            "ref_uri": ["a"],
+            "stream_uri": ["a"],
             "ts": _ts(1),
             "numeric_value": [1.0],
             "text_value": [None],
@@ -209,4 +209,4 @@ def test_presplit_frame_passes_through():
         }
     )
     out = prepare_value_columns(df)
-    assert out.columns == ["ref_uri", "ts", "numeric_value", "text_value"]
+    assert out.columns == ["stream_uri", "ts", "numeric_value", "text_value"]

@@ -9,7 +9,7 @@ from rdflib.namespace import RDF, RDFS
 
 from acquirium.Client.acquirium import Acquirium
 from acquirium.Client.client import AcquiriumClient
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import compute_stream_uri
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_DB_URI,
     ACQUIRIUM_REF_NAME,
@@ -29,7 +29,7 @@ _TEST_PROP = URIRef("urn:test:prop:fileLocation")
 def _client() -> AcquiriumClient:
     client = AcquiriumClient()
     client.insert_graph = MagicMock()
-    client._point_metadata = MagicMock(return_value={})
+    client._property_metadata = MagicMock(return_value={})
     client._units_compatible = MagicMock(return_value=False)
     return client
 
@@ -40,17 +40,17 @@ def test_register_streams_inserts_one_graph_for_multiple_streams():
     client.register_streams(
         [
             {
-                "point_uri": "urn:test:point:temp",
+                "property_uri": "urn:test:point:temp",
                 "source_id": "demo-source",
-                "ref_name": "temp",
+                "stream_name": "temp",
                 "value_kind": "numeric",
                 "data_source": "CSV",
                 "properties": {_TEST_PROP: Literal("demo.csv")},
             },
             {
-                "point_uri": "urn:test:point:rh",
+                "property_uri": "urn:test:point:rh",
                 "source_id": "demo-source",
-                "ref_name": "rh",
+                "stream_name": "rh",
                 "value_kind": "numeric",
                 "data_source": "CSV",
                 "properties": {_TEST_PROP: Literal("demo.csv")},
@@ -62,34 +62,34 @@ def test_register_streams_inserts_one_graph_for_multiple_streams():
     graph_text = client.insert_graph.call_args[0][0]
     g = Graph().parse(data=graph_text, format="turtle")
 
-    for ref_name in ("temp", "rh"):
-        point_uri = URIRef(f"urn:test:point:{ref_name}")
-        ref_uri = compute_ref_uri("demo-source", ref_name)
-        assert (point_uri, RDF.type, VIRTUAL_POINT) in g
-        assert (point_uri, HAS_EXTERNAL_REFERENCE, ref_uri) in g
-        assert (point_uri, DATA_SOURCE, Literal("CSV")) in g
-        assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal("demo-source")) in g
-        assert (ref_uri, ACQUIRIUM_REF_NAME, Literal(ref_name)) in g
-        assert (ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
-        assert (ref_uri, STORED_AT, ACQUIRIUM_DB_URI) in g
-        assert (ref_uri, _TEST_PROP, Literal("demo.csv")) in g
+    for stream_name in ("temp", "rh"):
+        property_uri = URIRef(f"urn:test:point:{stream_name}")
+        stream_uri = compute_stream_uri("demo-source", stream_name)
+        assert (property_uri, RDF.type, VIRTUAL_POINT) in g
+        assert (property_uri, HAS_EXTERNAL_REFERENCE, stream_uri) in g
+        assert (property_uri, DATA_SOURCE, Literal("CSV")) in g
+        assert (stream_uri, ACQUIRIUM_SOURCE_ID, Literal("demo-source")) in g
+        assert (stream_uri, ACQUIRIUM_REF_NAME, Literal(stream_name)) in g
+        assert (stream_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
+        assert (stream_uri, STORED_AT, ACQUIRIUM_DB_URI) in g
+        assert (stream_uri, _TEST_PROP, Literal("demo.csv")) in g
 
 
 def test_register_stream_without_point_uri_mints_dummy_point():
     client = _client()
 
-    client.register_streams([{"source_id": "demo-source", "ref_name": "cpu_percent", "value_kind": "numeric"}])
+    client.register_streams([{"source_id": "demo-source", "stream_name": "cpu_percent", "value_kind": "numeric"}])
 
     client.insert_graph.assert_called_once()
     graph_text = client.insert_graph.call_args[0][0]
     g = Graph().parse(data=graph_text, format="turtle")
-    ref_uri = compute_ref_uri("demo-source", "cpu_percent")
+    stream_uri = compute_stream_uri("demo-source", "cpu_percent")
 
-    assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal("demo-source")) in g
-    assert (ref_uri, ACQUIRIUM_REF_NAME, Literal("cpu_percent")) in g
-    assert (ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
-    assert (ref_uri, STORED_AT, ACQUIRIUM_DB_URI) in g
-    points = list(g.subjects(HAS_EXTERNAL_REFERENCE, ref_uri))
+    assert (stream_uri, ACQUIRIUM_SOURCE_ID, Literal("demo-source")) in g
+    assert (stream_uri, ACQUIRIUM_REF_NAME, Literal("cpu_percent")) in g
+    assert (stream_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
+    assert (stream_uri, STORED_AT, ACQUIRIUM_DB_URI) in g
+    points = list(g.subjects(HAS_EXTERNAL_REFERENCE, stream_uri))
     assert len(points) == 1
     assert (points[0], RDF.type, VIRTUAL_POINT) in g
     assert (points[0], RDFS.label, Literal("cpu_percent")) in g
@@ -99,29 +99,29 @@ def test_register_streams_without_point_uri_mint_one_dummy_point_each():
     client = _client()
 
     client.register_streams([
-        {"source_id": "demo-source", "ref_name": "temp", "value_kind": "numeric"},
-        {"source_id": "demo-source", "ref_name": "rh", "value_kind": "numeric"},
+        {"source_id": "demo-source", "stream_name": "temp", "value_kind": "numeric"},
+        {"source_id": "demo-source", "stream_name": "rh", "value_kind": "numeric"},
     ])
 
     client.insert_graph.assert_called_once()
     graph_text = client.insert_graph.call_args[0][0]
     g = Graph().parse(data=graph_text, format="turtle")
 
-    for ref_name in ("temp", "rh"):
-        ref_uri = compute_ref_uri("demo-source", ref_name)
-        assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal("demo-source")) in g
-        assert (ref_uri, ACQUIRIUM_REF_NAME, Literal(ref_name)) in g
-        assert (ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
-        assert (ref_uri, STORED_AT, ACQUIRIUM_DB_URI) in g
-        assert len(list(g.subjects(HAS_EXTERNAL_REFERENCE, ref_uri))) == 1
+    for stream_name in ("temp", "rh"):
+        stream_uri = compute_stream_uri("demo-source", stream_name)
+        assert (stream_uri, ACQUIRIUM_SOURCE_ID, Literal("demo-source")) in g
+        assert (stream_uri, ACQUIRIUM_REF_NAME, Literal(stream_name)) in g
+        assert (stream_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
+        assert (stream_uri, STORED_AT, ACQUIRIUM_DB_URI) in g
+        assert len(list(g.subjects(HAS_EXTERNAL_REFERENCE, stream_uri))) == 1
 
     assert len(list(g.subjects(RDF.type, VIRTUAL_POINT))) == 2
 
 
-def test_register_stream_without_point_uri_and_ref_name_raises():
+def test_register_stream_without_point_uri_and_stream_name_raises():
     client = _client()
 
-    with pytest.raises(ValueError, match="point_uri or a"):
+    with pytest.raises(ValueError, match="property_uri or a"):
         client.register_streams([{"source_id": "demo-source"}])
     client.insert_graph.assert_not_called()
 
@@ -136,13 +136,13 @@ _DENSITY = "http://qudt.org/vocab/quantitykind/Density"
 
 def test_register_streams_conflicting_metadata_fails_before_insert():
     client = _client()
-    client._point_metadata = MagicMock(return_value={"quantity_kind": _MASS_CONC})
+    client._property_metadata = MagicMock(return_value={"quantity_kind": _MASS_CONC})
 
     with pytest.raises(ValueError, match="quantity_kind mismatch"):
         client.register_streams([{
-            "point_uri": "urn:test:point:conc",
+            "property_uri": "urn:test:point:conc",
             "source_id": "demo-source",
-            "ref_name": "conc",
+            "stream_name": "conc",
             "quantity_kind": _DENSITY,
         }])
     client.insert_graph.assert_not_called()
@@ -150,13 +150,13 @@ def test_register_streams_conflicting_metadata_fails_before_insert():
 
 def test_register_streams_unconvertible_unit_fails():
     client = _client()
-    client._point_metadata = MagicMock(return_value={"unit": _DEG_C})
+    client._property_metadata = MagicMock(return_value={"unit": _DEG_C})
 
     with pytest.raises(ValueError, match="not convertible"):
         client.register_streams([{
-            "point_uri": "urn:test:point:conc",
+            "property_uri": "urn:test:point:conc",
             "source_id": "demo-source",
-            "ref_name": "conc",
+            "stream_name": "conc",
             "unit": _MG_L,
         }])
     client._units_compatible.assert_called_once_with(URIRef(_MG_L), _DEG_C)
@@ -165,40 +165,40 @@ def test_register_streams_unconvertible_unit_fails():
 
 def test_register_streams_convertible_unit_becomes_storage_unit():
     client = _client()
-    client._point_metadata = MagicMock(return_value={"unit": _G_L})
+    client._property_metadata = MagicMock(return_value={"unit": _G_L})
     client._units_compatible = MagicMock(return_value=True)
 
     client.register_streams([{
-        "point_uri": "urn:test:point:conc",
+        "property_uri": "urn:test:point:conc",
         "source_id": "demo-source",
-        "ref_name": "conc",
+        "stream_name": "conc",
         "unit": _MG_L,
     }])
 
     g = Graph().parse(data=client.insert_graph.call_args[0][0], format="turtle")
-    ref_uri = compute_ref_uri("demo-source", "conc")
+    stream_uri = compute_stream_uri("demo-source", "conc")
     point = URIRef("urn:test:point:conc")
-    assert (ref_uri, HAS_UNIT, URIRef(_MG_L)) in g
+    assert (stream_uri, HAS_UNIT, URIRef(_MG_L)) in g
     # the point keeps its own unit; reads convert ref -> point automatically
     assert list(g.objects(point, HAS_UNIT)) == []
 
 
 def test_register_streams_matching_unit_lands_on_reference():
     client = _client()
-    client._point_metadata = MagicMock(return_value={"unit": _MG_L})
+    client._property_metadata = MagicMock(return_value={"unit": _MG_L})
 
     client.register_streams([{
-        "point_uri": "urn:test:point:conc",
+        "property_uri": "urn:test:point:conc",
         "source_id": "demo-source",
-        "ref_name": "conc",
+        "stream_name": "conc",
         "unit": _MG_L,
         "medium": _WATER,  # the point lacks it -> added to the point
     }])
 
     g = Graph().parse(data=client.insert_graph.call_args[0][0], format="turtle")
-    ref_uri = compute_ref_uri("demo-source", "conc")
+    stream_uri = compute_stream_uri("demo-source", "conc")
     point = URIRef("urn:test:point:conc")
-    assert (ref_uri, HAS_UNIT, URIRef(_MG_L)) in g
+    assert (stream_uri, HAS_UNIT, URIRef(_MG_L)) in g
     assert (point, HAS_UNIT, URIRef(_MG_L)) not in g
     assert (point, HAS_MEDIUM, URIRef(_WATER)) in g
 
