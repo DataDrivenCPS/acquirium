@@ -9,3 +9,13 @@
 .version-warning p {
   margin: 0;
 }
+
+/* the "next page" box at the bottom of a page */
+.next-page {
+  border: 2px solid var(--pst-color-primary);
+  text-align: right;
+  margin-top: 2rem;
+}
+.next-page .sd-card-title {
+  color: var(--pst-color-primary);
+}

@@ -6,6 +6,7 @@ chapters:
 - file: tutorials/_index.md
   sections:
   - file: tutorials/acquirium-at-a-glance.md
+  - file: tutorials/inserting-data.md
   - file: tutorials/getting-started.md
   - file: tutorials/querying.md
   - file: tutorials/query-cookbook.md

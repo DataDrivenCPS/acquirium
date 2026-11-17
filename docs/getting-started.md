@@ -88,3 +88,16 @@ shape: (1, 2)
 The first start takes about a minute.
 If you see the `ready at` line and the table with the reading, Acquirium is running.
 The folder and the number after `127.0.0.1:` will be different on your machine.
+
+## Moving on with the tutorial
+
+The tutorial pages are numbered. Please follow them in number order.
+
+:::{card} 0 - Acquirium at a glance &nbsp;→
+:link: tutorials/acquirium-at-a-glance
+:link-type: doc
+:class-card: next-page sd-shadow-md
+:class-title: sd-fs-3 sd-mb-0
+
+Next
+:::
