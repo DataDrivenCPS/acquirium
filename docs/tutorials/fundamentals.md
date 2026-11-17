@@ -27,6 +27,13 @@ The data is persistent among runs.
 The server can also be started on its own with the `acquirium` command (see the [CLI reference](../reference/cli.md)).
 This tutorial only uses `aq.init()`.
 
+#### Text matcher
+
+The server has a text matcher, so you can write plain text such as "mg/L" instead of RDF terms.
+
+- By default, only exact names and symbols are matched.
+- With `aq.init(exact_only=False)`, close matches are found as well, using a small embedding model. The first run takes a few minutes to download the model and prepare it. Later runs are faster.
+
 ## Data model
 
 Acquirium stores two kinds of things:
