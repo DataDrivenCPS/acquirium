@@ -87,7 +87,6 @@ def _write_module(tmp_path: Path) -> Path:
 
 def _make_driver(tmp_path: Path, **driver_cfg) -> WaterTAPDriver:
     aq = MagicMock()
-    aq.register_datasource.return_value = "watertap"
     aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 2}
     module_path = _write_module(tmp_path)
     config = {
@@ -101,13 +100,12 @@ def _make_driver(tmp_path: Path, **driver_cfg) -> WaterTAPDriver:
     return WaterTAPDriver(aq, config)
 
 
-def test_setup_registers_datasource_and_streams_from_mapping(tmp_path):
+def test_setup_registers_streams_from_mapping(tmp_path):
     driver = _make_driver(tmp_path)
 
     driver.setup()
     driver._after_setup()
 
-    driver.aq.register_datasource.assert_called_once_with("watertap")
     # Streams are registered in one batch, straight from the mapping.
     driver.aq.register_streams.assert_called_once()
     specs = driver.aq.register_streams.call_args.args[0]

@@ -72,7 +72,6 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 
 | method | description |
 |---|---|
-| `register_datasource(source_id: str) -> str` | Register a datasource in the graph; idempotent. |
 | `register_streams(streams: Iterable[dict]) -> None` | Declare one or more streams' identity and semantic metadata in one graph insert; see the [lifecycle guide](../explanation/stream-lifecycle.md). A stream's optional `metadata` key holds a [value map](#metadata-values) written on its point. |
 | `reference_uri(source_id: str, stream_name: str) -> URIRef` | The canonical stream URI for a `(source_id, stream_name)` pair. |
 | `resolve_property_metadata(fields: dict, min_score=0.6) -> dict[str, str \| None]` | Resolve `unit`, `quantity_kind`, `medium`, `substance` text to URIs jointly. |
@@ -381,7 +380,7 @@ and are listed once above.
 
 | method | description |
 |---|---|
-| `register_datasource(source_id) -> str`, `register_streams(streams) -> None` | As on `Acquirium`. |
+| `register_streams(streams) -> None` | As on `Acquirium`. |
 | `insert_timeseries(*, source_id, stream_name, rows, property_uri=None, replace=False, publication_id=None) -> dict` | Keyword-only form of the `Acquirium` method; `publication_id` is forwarded but does not currently deduplicate retries. |
 | `insert_timeseries_batch(source_id, streams) -> dict` | One HTTP request for several streams (unchunked). |
 | `insert_timeseries_arrow(source_id, table, *, publication_id=None) -> dict` | As on `Acquirium`; the optional ID is forwarded but does not currently deduplicate retries. |

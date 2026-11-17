@@ -36,7 +36,6 @@ This is a reference for the vocabulary of the other guides.
 | placeholder property | the property minted for a stream registered without a `property_uri`, labelled with its `stream_name` | `<stream_uri>__point` |
 | stream | the timeseries behind a property | the rows stored under that reference node |
 | source | the owner of a set of streams and of its own graph | a driver, an app, `plant` |
-| datasource | who writes a set of streams; the graph-side record of a source | `watertap-seawater-ro` |
 | deployment graph | the inferred union of every source's data, which queries run against | — |
 | dependencies | the resolved ontology and shape triples queried alongside it | `include_dependencies=True` |
 | medium | what flows at a connection point, or what a property is measured in | `watr:Water-Brine` |

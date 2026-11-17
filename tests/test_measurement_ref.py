@@ -16,7 +16,6 @@ SOURCE = "refstats"
 def hist(local_acquirium):
     """Two streams on two points, three rows in one and two in the other."""
     ac = acquirium_without_experiments(local_acquirium)
-    ac.register_datasource(SOURCE)
     ac.register_streams([
         {"property_uri": "urn:test:refstats#feed", "source_id": SOURCE, "stream_name": "FT_feed",
          "value_kind": "numeric"},

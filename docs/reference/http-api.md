@@ -201,14 +201,6 @@ The server compares the graph's `owl:imports` and `owl:Ontology` triples before 
 
 ## Timeseries ingestion
 
-### `POST /register_datasource`
-
-Register a named datasource. The `source_id` scopes stream `stream_name`s so two sources with the same name never collide.
-
-**Request body** `{"source_id": "my-source"}`
-
-**Response** `{"ok": true, "source_id": "my-source"}`
-
 ### `POST /insert_timeseries`
 
 Insert observations for one or more streams. Request body is a JSON array; a single-stream insert is a one-element list.

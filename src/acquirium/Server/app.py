@@ -38,7 +38,6 @@ from acquirium.internals.models import (
     LogEntry,
     TimeIntervalModel,
     StreamInsert,
-    RegisterDatasourceRequest,
     AppRegistration,
 )
 from acquirium.internals.internals_namespaces import PLANT_URI
@@ -1008,20 +1007,6 @@ def metadata_documents(subjects: Annotated[list[str], Body()]) -> dict[str, str]
         return {uri: dumps(value) for uri, value in manager.experiments.metadata.documents(subjects).items()}
     except (TypeError, ValueError, RuntimeError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
-
-
-@app.post("/register_datasource")
-def register_datasource(req: RegisterDatasourceRequest) -> dict[str, Any]:
-    """Register a named datasource in the knowledge graph.
-
-    The source_id is a user-provided string that scopes stream names so
-    two sources with the same stream_name never collide in the timeseries store.
-    """
-    try:
-        source_id = app.state.manager.register_datasource(req.source_id)
-        return {"ok": True, "source_id": source_id}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
 
 class ResolveStorageKeysRequest(BaseModel):

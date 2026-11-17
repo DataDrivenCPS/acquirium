@@ -304,7 +304,6 @@ class IngestDriver(Driver):
         self._declarations: dict[tuple[str, str], dict[str, Any]] = {}
         self._registered: set[tuple[str, str]] = set()
         self._kinded: set[tuple[str, str]] = set()
-        self._registered_sources: set[str] = set()
 
     def declare(
         self,
@@ -416,17 +415,13 @@ class IngestDriver(Driver):
                     continue
                 specs.setdefault(key, dict(meta))["value_kind"] = assign_stream_value_kind(meaningful)
                 inferred.add(key)
-            sources = sorted({source for source, _ in specs} - self._registered_sources)
 
-        for source in sources:
-            self.aq.register_datasource(source)
         if specs:
             self.aq.register_streams([
                 {"source_id": source, "stream_name": name, **meta}
                 for (source, name), meta in specs.items()
             ])
         with self._declaration_lock:
-            self._registered_sources.update(sources)
             self._registered.update(specs)
             self._kinded.update(inferred)
             self._kinded.update(key for key, meta in specs.items() if "value_kind" in meta)

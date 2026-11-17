@@ -76,11 +76,6 @@ class PointCreateRequest(BaseModel):
     unit: str | None = None
 
 
-class RegisterDatasourceRequest(BaseModel):
-    """Request to register a named datasource."""
-    source_id: str
-
-
 class StreamInsert(BaseModel):
     """A single stream's data payload for the unified insert endpoint.
 

@@ -395,11 +395,6 @@ def test_undeclared_bulk_observation_is_rejected(tmp_path):
         driver.insert_observations(frame)
 
 
-def test_platform_registers_declared_datasource(tmp_path):
-    driver = make_driver(AddDriver, tmp_path)
-    driver.aq.register_datasource.assert_called_once_with("sensors")
-
-
 def test_null_only_batch_does_not_freeze_inferred_value_kind(tmp_path):
     driver = make_driver(AddDriver, tmp_path)
     driver.declare("optional")

@@ -78,9 +78,6 @@ ACQUIRIUM_SOURCE_ID  = ACQUIRIUM_NS.sourceId   # the registered datasource name
 ACQUIRIUM_REF_NAME   = ACQUIRIUM_NS.refName    # the source-local stream identifier
 ACQUIRIUM_VALUE_KIND = ACQUIRIUM_NS.valueKind  # "numeric" or "text"
 
-# Class for registered datasource nodes
-ACQUIRIUM_DATASOURCE = ACQUIRIUM_NS.DataSourceRegistry
-
 HAS_MEDIUM = S223.hasMedium
 OF_MEDIUM = S223.ofMedium
 OF_SUBSTANCE = S223.ofSubstance

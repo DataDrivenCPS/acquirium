@@ -52,7 +52,6 @@ _CSV_SOURCE_ID = "test-csv-data"
 def acquirium_client_csv(acquirium_client_kwargs):
     acq = Acquirium(**acquirium_client_kwargs)
     acq.insert_graph_file("tests/test_model_csv.ttl", source_id="plant")
-    acq.register_datasource(_CSV_SOURCE_ID)
     acq.register_streams([
         {
             "source_id": _CSV_SOURCE_ID,

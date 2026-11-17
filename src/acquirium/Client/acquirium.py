@@ -214,18 +214,6 @@ class Acquirium:
     # TIMESERIES API
     # ------------------------------------------------------------------
 
-    def register_datasource(self, source_id: str) -> str:
-        """Register a named datasource in the knowledge graph.
-
-        The ``source_id`` is a user-provided string that scopes stream
-        ``stream_name`` values so two sources with the same ``stream_name`` never
-        produce colliding canonical reference URIs. Safe to call on every startup —
-        the graph write is idempotent.
-
-        Returns ``source_id``.
-        """
-        return self.client.register_datasource(source_id)
-
     def insert_timeseries(
         self,
         source_id: str,

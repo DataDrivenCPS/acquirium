@@ -13,11 +13,9 @@ Inserting data starts with registering the streams in Acquirium.
 A stream is identified by a `source_id` (who writes it) and a `stream_name` (which series).
 You can consider a stream as a "value column" of your dataset, where `stream_name` is the column header and `source_id` describes the file it comes from.
 
-Register both before the first row:
+Register the stream before the first row:
 
 ```python
-acq.register_datasource("lab-import")
-
 acq.register_streams([{
     "source_id": "lab-import",
     "stream_name": "effluent-tds",

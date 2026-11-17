@@ -86,7 +86,7 @@ A unit that does not convert raises `ValueError`.
 
 Note that driver authors do not call `register_streams()` themselves.
 A driver calls `self.declare(...)` per stream, and the platform calls
-`register_datasource()` and `register_streams()` for it just before the next
+`register_streams()` for it just before the next
 insert.
 `register_streams()` is the direct form, for backfills, imports and notebooks.
 See the [driver reference](../reference/drivers.md#declaring-streams).

@@ -267,8 +267,7 @@ self.insert_graph(metadata_turtle, replace=False)
 self.add("air_temp", value, timestamp)
 ```
 
-External programs can still call `register_datasource()`, `register_streams()`,
-and `insert_timeseries()` directly. Those are lower-level client operations,
+External programs can still call `register_streams()` and `insert_timeseries()` directly. Those are lower-level client operations,
 not extra lifecycle work required of driver authors.
 
 ### Apps

@@ -13,7 +13,6 @@ from acquirium.internals.models import (
     Order,
     LogEntry,
     StreamInsert,
-    RegisterDatasourceRequest,
     compute_stream_uri,
     looks_like_uri,
 )
@@ -803,13 +802,6 @@ class AcquiriumClient:
         response = self._http.post(url, json={"uris": uris})
         _raise_for_status(response)
         return response.json()
-
-    def register_datasource(self, source_id: str) -> str:
-        """Register a named datasource. Returns source_id."""
-        url = f"{self.base_url}/register_datasource"
-        response = self._http.post(url, json=RegisterDatasourceRequest(source_id=source_id).model_dump())
-        response.raise_for_status()
-        return response.json()["source_id"]
 
     def _units_compatible(self, from_unit: Any, to_unit: Any) -> bool:
         """True when the server can convert between the two unit URIs."""

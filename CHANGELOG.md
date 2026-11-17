@@ -10,6 +10,12 @@ change in any release.
 
 ## [Unreleased]
 
+### Removed
+- **Breaking:** `register_datasource()` on `Acquirium` and `AcquiriumClient`,
+  and the `POST /register_datasource` endpoint. The node it wrote was never
+  read, and registering streams never required it. Drop the call;
+  `register_streams()` is the only registration step.
+
 ### Changed
 - Acquirium requires DuckDB 2.0 (`duckdb>=2.0.0`). An existing database file
   opens as is and keeps its storage format. A database created by DuckDB 2.0

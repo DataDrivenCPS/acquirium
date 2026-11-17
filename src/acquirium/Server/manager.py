@@ -641,25 +641,6 @@ class Manager:
             return None
         return str(value).strip('"')
 
-    def register_datasource(self, source_id: str) -> str:
-        """Register a named datasource in the knowledge graph.
-
-        Writes a graph node typed as acquirium:DataSourceRegistry so the
-        datasource is discoverable via SPARQL.  Idempotent — safe to call
-        on every startup.  Returns source_id.
-        """
-        node = URIRef(f"urn:acquirium:datasource:{source_id}")
-        g = Graph()
-        g.add((node, RDF.type,   ACQUIRIUM_DATASOURCE))
-        g.add((node, RDFS.label, Literal(source_id)))
-        self.graph_store.insert_graph(
-            g,
-            format="turtle",
-            replace=False,
-            graph_uri=self.graph_store.source_graph_uri(source_id),
-        )
-        return source_id
-
     def publish(
         self, mutations: "pa.Table", *, publication_id: str | None = None
     ) -> PublicationReceipt:

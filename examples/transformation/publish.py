@@ -19,7 +19,6 @@ def main() -> None:
 
     client = aq.Acquirium(server_url=args.host, server_port=args.port)
     source_id, stream_name = "temperature-example", "fahrenheit"
-    client.register_datasource(source_id)
     client.register_streams([{
         "source_id": source_id,
         "stream_name": stream_name,

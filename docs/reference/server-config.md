@@ -155,7 +155,7 @@ A running server also serves the generated OpenAPI schema at `/docs` and
 | liveness | `GET /health`, `GET /graph_version`, `GET /embedding_status` |
 | graph | `POST /insert_graph`, `GET /export_graph`, `POST /sparql_update`, `POST /validate_graph`, `GET /namespace/list` |
 | sparql | `GET /sparql` (standards-compatible), `GET\|POST /sparql_json` (legacy `{columns, rows}`) |
-| timeseries | `POST /register_datasource`, `POST /insert_timeseries`, `POST /insert_timeseries_arrow`, `GET /timeseries`, `POST /timeseries_info` |
+| timeseries | `POST /insert_timeseries`, `POST /insert_timeseries_arrow`, `GET /timeseries`, `POST /timeseries_info` |
 | resolution | `GET /resolve_text`, `POST /resolve_record`, `POST /resolve_unit`, `POST /resolve_conversion`, `POST /conversion_factors` |
 | drivers | `POST /drivers/start`, `POST /drivers/stop`, `GET /drivers/list` |
 | apps | `GET /apps`, `GET /apps/{name}`, `PUT /apps/{name}`, `POST /apps/check`, `DELETE /apps/{name}`, `POST /apps/{name}/reprocess`, `GET /materialization/dag` |
