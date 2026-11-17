@@ -5,7 +5,7 @@ chapters:
 - file: getting-started.md
 - file: tutorials/_index.md
   sections:
-  - file: tutorials/acquirium-at-a-glance.md
+  - file: tutorials/fundamentals.md
   - file: tutorials/inserting-data.md
   - file: tutorials/getting-started.md
   - file: tutorials/querying.md
@@ -14,6 +14,7 @@ chapters:
   - file: tutorials/first-driver.md
   - file: tutorials/driver-with-a-plant-model.md
   - file: tutorials/first-app.md
+  - file: tutorials/acquirium-at-a-glance.md
 - file: how-to/_index.md
   sections:
   - file: how-to/load-a-plant-model.md

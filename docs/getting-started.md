@@ -93,11 +93,11 @@ The folder and the number after `127.0.0.1:` will be different on your machine.
 
 The tutorial pages are numbered. Please follow them in number order.
 
-```{button-ref} tutorials/acquirium-at-a-glance
+```{button-ref} tutorials/fundamentals
 :ref-type: doc
 :color: primary
 :outline:
 :align: right
 
-Next: Acquirium at a glance →
+Next: Fundamentals →
 ```
