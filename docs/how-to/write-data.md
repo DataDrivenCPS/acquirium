@@ -26,7 +26,7 @@ acq.register_streams([{
     "quantity_kind": "mass concentration",   # optional
 }])
 ```
-- `value_kind` can be "text" or "numeric".
+- `value_kind` can be "text" or "numeric". It is optional: when it is not given, the stream becomes numeric with its first numeric value (see [Values](../explanation/values.md)).
 - `property_uri` ties the stream to a point in the semantic model (see below).
 - `label` defaults to the `stream_name` when it is not given.
 - To attach metadata, you can use the keys `unit`, `quantity_kind`, `medium` and `substance`, whose values accept free text or URIs.

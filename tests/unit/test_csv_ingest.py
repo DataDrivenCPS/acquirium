@@ -386,31 +386,14 @@ def test_loop_registers_streams_before_insert(tmp_path):
     driver.tick()
 
 
-def test_loop_marks_text_only_csv_streams_as_text(tmp_path):
+def test_loop_leaves_the_value_kind_of_csv_streams_to_the_server(tmp_path):
     p = tmp_path / "mixed.csv"
     p.write_text("time,temp,state\n2024-01-01T00:00:00Z,22.5,ON\n")
     driver = make_driver(tmp_path=tmp_path)
     driver.tick()
 
     g = Graph().parse(data=driver.aq.client.insert_graph.call_args[0][0], format="turtle")
-    source_id = "csv_files"
-    assert (compute_stream_uri(source_id, "temp"), ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
-    assert (compute_stream_uri(source_id, "state"), ACQUIRIUM_VALUE_KIND, Literal("text")) in g
-
-
-def test_loop_registers_mixed_csv_streams_as_numeric(tmp_path):
-    p = tmp_path / "mixed_numeric.csv"
-    p.write_text(
-        "time,mode\n"
-        "2024-01-01T00:00:00Z,1.0\n"
-        "2024-01-02T00:00:00Z,Manual Control\n"
-    )
-    driver = make_driver(tmp_path=tmp_path)
-    driver.tick()
-
-    g = Graph().parse(data=driver.aq.client.insert_graph.call_args[0][0], format="turtle")
-    ref = compute_stream_uri("csv_files", "mode")
-    assert (ref, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
+    assert list(g.triples((None, ACQUIRIUM_VALUE_KIND, None))) == []
 
 
 def test_loop_mints_valid_dummy_point_uri_for_messy_stream_name(tmp_path):
@@ -426,7 +409,6 @@ def test_loop_mints_valid_dummy_point_uri_for_messy_stream_name(tmp_path):
     stream_uri = compute_stream_uri(source_id, stream_name)
     assert (stream_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)) in g
     assert (stream_uri, ACQUIRIUM_REF_NAME, Literal(stream_name)) in g
-    assert (stream_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
     points = list(g.subjects(HAS_EXTERNAL_REFERENCE, stream_uri))
     assert points == [URIRef(f"{stream_uri}__point")]
 

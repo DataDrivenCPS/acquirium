@@ -12,13 +12,21 @@ To avoid data loss, we keep data in two columns for each `(stream, timestamp)` r
 Exactly one of them holds the reading; the other is null.
 This lets us store a row of any type without changing the column type of the stream, and without dropping the rows that do not fit.
 
-A stream is declared numeric or text when it is registered, and readings are
-stored in the matching column: numbers in `numeric_value`, everything else in
-`text_value`.
-That declaration is called `value_kind`, and it is set by whoever writes the
-data, not by the reader.
-When a driver does not declare it, it is inferred from the first observed
-values: a stream with any numeric value is `numeric`, otherwise `text`.
+Each stream is either numeric or text, and readings are stored in the matching
+column: numbers in `numeric_value`, everything else in `text_value`.
+This is called the `value_kind` of the stream.
+
+You do not have to declare it.
+A stream registered without a `value_kind` becomes numeric when it receives
+its first numeric value, and stays numeric from then on.
+Until then its values are stored and returned as text.
+For instance, a stream that first receives `"Bad"` and later `12.5` is
+numeric: `12.5` is stored as a number and `"Bad"` stays in the text column.
+
+Passing `"value_kind": "numeric"` or `"value_kind": "text"` to
+`register_streams()` fixes the kind, and it is never inferred after that.
+This is useful for a status stream that carries `"1"` next to `"ON"` and
+should stay text.
 
 On a numeric stream, a value is stored as a number when it parses as one
 (`"12.5"` counts), including numeric strings coming from a CSV.
@@ -38,9 +46,9 @@ When reading, `value_mode` decides which of those columns you get.
 | `"text"` | text readings only, numeric rows filtered out |
 | `"coalesce"` | both columns as one string column, so no row is lost |
 
-`"default"` does not inspect the stored values; it follows the registered `value_kind`.
-A stream registered without a `value_kind` is a text stream, so numbers
-written to it are stored and returned as text.
+`"default"` does not inspect the stored values; it follows the `value_kind` of the stream.
+Note that a numeric-looking string such as `"12.5"` makes an undeclared stream numeric.
+To read such a stream as text, pass `value_mode="coalesce"`.
 
 Note that `"default"` returns every row of the stream.
 On a numeric stream, a reading that was stored as text comes back as a row

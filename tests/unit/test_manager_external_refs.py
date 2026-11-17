@@ -76,7 +76,7 @@ def test_sync_stream_refs_accepts_standalone_reference_without_property_uri():
             "source_id": source_id,
             "stream_name": stream_name,
             "stream_uri": URIRef(str(stream_uri)),
-            "value_kind": "text",
+            "value_kind": None,
         }
     ]
 

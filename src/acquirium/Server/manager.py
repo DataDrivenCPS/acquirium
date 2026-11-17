@@ -20,7 +20,7 @@ from acquirium.Storage import (
 from acquirium.Storage.graph_store import select_values
 from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
 from acquirium.Storage.publication.types import PublicationReceipt, PublicationRequest, PublicationStore
-from acquirium.Storage.values import normalize_value_kind
+from acquirium.Storage.values import UNDECLARED_VALUE_KIND, stored_value_kind
 from acquirium.Experiments import ExperimentStore
 from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.Server.config import OntologySource
@@ -291,7 +291,7 @@ class Manager:
         # Validate every row first, then hand the whole batch to the store in one
         # statement. Upserting row by row costs a round trip each, which grows with
         # the graph: ~3.6s for 1000 refs versus ~16ms batched.
-        refs: list[tuple[str | None, str, str, URIRef, str]] = []
+        refs: list[tuple[str | None, str, str, URIRef, str | None]] = []
         for property_uri, ref_node, source_id, stream_name, value_kind in rows:
             try:
                 sid = str(source_id).strip('"')
@@ -310,9 +310,9 @@ class Manager:
                     sid,
                     rn,
                     actual,
-                    normalize_value_kind(
-                        str(value_kind).strip('"') if value_kind is not None else None
-                    ),
+                    # None when the stream declared no kind; the store then
+                    # keeps the kind it has, which may be inferred from data.
+                    str(value_kind).strip('"') if value_kind is not None else None,
                 ))
             except Exception:
                 logger.warning("Failed to ensure stream ref %s / %s → %s", property_uri, source_id, stream_name, exc_info=True)
@@ -695,22 +695,21 @@ class Manager:
         from acquirium.Storage.values import typed_value_series
 
         stream_uri = str(compute_stream_uri(source_id, stream_name))
-        value_kind = self._registered_value_kind(stream_uri)
+        kinds = self._registered_value_kinds([stream_uri])
         logger.debug(
             "insert_timeseries source=%s stream_name=%s rows=%d kind=%s replace=%s",
-            source_id, stream_name, len(rows), value_kind, replace,
+            source_id, stream_name, len(rows), kinds[stream_uri], replace,
         )
         n = len(rows)
         if n == 0 and not replace:
             return self._empty_receipt(publication_id)
-        df = pl.DataFrame(
+        df = self._with_value_kinds(pl.DataFrame(
             {
                 "stream_uri": pl.Series("stream_uri", [stream_uri] * n, dtype=pl.Utf8),
                 "ts": pl.Series("ts", [ts for ts, _ in rows], dtype=pl.Datetime("us", "UTC")),
                 "value": typed_value_series([v for _, v in rows]),
-                "value_kind": pl.Series("value_kind", [value_kind] * n, dtype=pl.Utf8),
             }
-        )
+        ), kinds)
         if replace:
             request = PublicationRequest(publication_id or str(uuid.uuid4()), self._mutation_table(df))
             return self._after_canonical_publish(self.publication.replace(request, stream_uri))
@@ -729,16 +728,16 @@ class Manager:
         stream_uris: list[str] = []
         timestamps: list[datetime] = []
         values: list[Any] = []
-        value_kinds: list[str] = []
         with timed_debug(logger, "insert_timeseries_batch source=%s streams=%d", source_id, len(streams)):
             for stream_name, stream_rows in streams.items():
                 stream_uri = str(compute_stream_uri(source_id, stream_name))
-                value_kind = self._registered_value_kind(stream_uri)
                 for ts, value in stream_rows:
                     stream_uris.append(stream_uri)
                     timestamps.append(ts)
                     values.append(value)
-                    value_kinds.append(value_kind)
+        kinds = self._registered_value_kinds(
+            str(compute_stream_uri(source_id, stream_name)) for stream_name in streams
+        )
         logger.debug(
             "insert_timeseries_batch source=%s built %d total rows across %d streams",
             source_id, len(stream_uris), len(streams),
@@ -748,14 +747,13 @@ class Manager:
 
         from acquirium.Storage.values import typed_value_series
 
-        df = pl.DataFrame(
+        df = self._with_value_kinds(pl.DataFrame(
             {
                 "stream_uri": pl.Series("stream_uri", stream_uris, dtype=pl.Utf8),
                 "ts": pl.Series("ts", timestamps, dtype=pl.Datetime("us", "UTC")),
                 "value": typed_value_series(values),
-                "value_kind": pl.Series("value_kind", value_kinds, dtype=pl.Utf8),
             }
-        )
+        ), kinds)
         # Unit-level callers can supply only the storage seam. Production
         # managers publish through the revision store created at startup.
         if not hasattr(self, "publication"):
@@ -783,15 +781,11 @@ class Manager:
             name: str(compute_stream_uri(source_id, name)) for name in df["stream_name"].unique().to_list()
         }
         kinds = self._registered_value_kinds(stream_uri_map.values())
-        value_kind_map = {name: kinds[stream_uri] for name, stream_uri in stream_uri_map.items()}
         logger.debug("insert_timeseries_arrow source=%s unique_streams=%d", source_id, len(stream_uri_map))
-        df = (
-            df.with_columns([
-                pl.col("stream_name").replace(stream_uri_map).alias("stream_uri"),
-                pl.col("stream_name").replace(value_kind_map).alias("value_kind"),
-            ])
-            .drop("stream_name")
-            .select(["stream_uri", "ts", "value", "value_kind"])
+        df = self._with_value_kinds(
+            df.with_columns(pl.col("stream_name").replace(stream_uri_map).alias("stream_uri"))
+            .select(["stream_uri", "ts", "value"]),
+            kinds,
         )
         if not hasattr(self, "publication"):
             return self.timeseries_store.bulk_insert_polars(df)
@@ -817,11 +811,37 @@ class Manager:
         documented rejection so the API surface fails fast and clearly."""
         raise ValueError("deletion is not supported by incremental materialization")
 
+    def _with_value_kinds(self, df: "pl.DataFrame", kinds: dict[str, str]) -> "pl.DataFrame":
+        """Add the ``value_kind`` column each row of *df* is written with.
+
+        A stream that declared no kind becomes numeric when it receives its
+        first numeric value. Until then its values are written as text.
+        """
+        import polars as pl
+        from acquirium.Storage.values import streams_with_numeric_values
+
+        undeclared = [uri for uri, kind in kinds.items() if kind == UNDECLARED_VALUE_KIND]
+        if undeclared:
+            numeric = streams_with_numeric_values(
+                df.filter(pl.col("stream_uri").is_in(undeclared))
+            )
+            if numeric:
+                self.timeseries_store.mark_streams_numeric(sorted(numeric))
+            kinds = {
+                **kinds,
+                **{uri: "numeric" if uri in numeric else "text" for uri in undeclared},
+            }
+        return df.with_columns(
+            pl.col("stream_uri").replace_strict(kinds, return_dtype=pl.Utf8).alias("value_kind")
+        )
+
     def _registered_value_kind(self, stream_uri: str) -> str:
         return self._registered_value_kinds([stream_uri])[stream_uri]
 
     def _registered_value_kinds(self, stream_uris: Iterable[str]) -> dict[str, str]:
-        """Normalised value kind of every stream in *stream_uris*; one store query per call.
+        """Stored value kind of every stream in *stream_uris*; one store query per call.
+
+        The kind is ``"numeric"``, ``"text"`` or ``"undeclared"``.
 
         Graph writes and Arrow ingestion may be issued back-to-back by a
         client. Ensure the derived stream registry has observed the graph
@@ -842,7 +862,7 @@ class Manager:
             missing = [uri for uri in wanted if uri not in kinds]
         if missing:
             raise ValueError(f"stream {missing[0]} is not registered")
-        return {uri: normalize_value_kind(kinds[uri]) for uri in wanted}
+        return {uri: stored_value_kind(kinds[uri]) for uri in wanted}
 
     def insert_log(self, log_message: LogEntry):
         logger.debug("insert_log property_uri=%s ts=%s", log_message.property_uri, log_message.timestamp)

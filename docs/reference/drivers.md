@@ -145,8 +145,8 @@ declare(stream_name: str, *, source_id: str | None = None, value_kind: str | Non
 A stream is identified by `(source_id, stream_name)`; `source_id` defaults to
 the driver's own.
 `stream_name` is used exactly as given, spaces included.
-`value_kind` is `"numeric"` or `"text"`; when omitted it is inferred from the
-first observed values before they are inserted.
+`value_kind` is `"numeric"` or `"text"`; when omitted the stream becomes
+numeric with its first numeric value (see [Values](../explanation/values.md)).
 `unit`, `quantity_kind`, `medium` and `substance` take a URI or free text,
 resolved jointly.
 `properties` is a mapping of predicate URIs to values for extension triples.

@@ -16,18 +16,29 @@ logger = logging.getLogger(__name__)
 ValueMode = Literal["default", "coalesce", "numeric", "text"]
 VALUE_MODES = {"default", "coalesce", "numeric", "text"}
 
+# Kind of a stream registered without a ``value_kind``. It reads as text and
+# becomes numeric when its first numeric value is inserted.
+UNDECLARED_VALUE_KIND = "undeclared"
+
 
 def normalize_value_kind(value_kind: Any = None) -> Literal["numeric", "text"]:
     if value_kind is None:
         return "text"
     value = str(value_kind).strip().lower()
-    if value in {"", "unknown"}:
+    if value in {"", "unknown", UNDECLARED_VALUE_KIND}:
         return "text"
     if value in {"numeric", "number", "float", "int", "integer"}:
         return "numeric"
     if value in {"text", "string", "str", "status", "state"}:
         return "text"
     raise ValueError(f"value_kind must be 'numeric' or 'text', got {value_kind!r}")
+
+
+def stored_value_kind(value_kind: Any = None) -> str:
+    """The kind kept for a stream: the declared one, or ``"undeclared"``."""
+    if value_kind is None or str(value_kind).strip().lower() in {"", "unknown", UNDECLARED_VALUE_KIND}:
+        return UNDECLARED_VALUE_KIND
+    return normalize_value_kind(value_kind)
 
 
 def normalize_value_mode(value_mode: Any = None) -> ValueMode:
@@ -96,6 +107,31 @@ def split_value(value: Any, value_kind: str | None = None) -> tuple[float | None
             return None, None
         return numeric_value, None
     return None, str(value)
+
+
+def streams_with_numeric_values(df: pl.DataFrame) -> set[str]:
+    """The ``stream_uri`` values of *df* that have at least one numeric ``value``.
+
+    A value is numeric when a numeric stream would store it as a number:
+    finite numbers and strings that parse as one.
+    """
+    if df.is_empty():
+        return set()
+    dtype = df.schema["value"]
+    value = pl.col("value")
+    if dtype == pl.String:
+        numeric = value.str.strip_chars().cast(pl.Float64, strict=False).is_finite()
+    elif dtype.is_numeric() or isinstance(dtype, pl.Decimal):
+        numeric = value.cast(pl.Float64).is_finite()
+    elif dtype in (pl.Null, pl.Boolean):
+        return set()
+    else:
+        return {
+            uri
+            for uri, item in zip(df["stream_uri"].to_list(), df["value"].to_list())
+            if split_value(item, "numeric")[0] is not None
+        }
+    return set(df.filter(numeric)["stream_uri"].unique().to_list())
 
 
 def typed_value_series(values: list[Any]) -> pl.Series:

@@ -141,8 +141,10 @@ A row goes through five steps between a driver and the store.
 2. The server computes each row's `stream_uri` from `(source_id, stream_name)` and
    checks it against the `streams` table.
    An unregistered stream fails here, before anything is written.
-3. Each value is placed in one of two columns by the stream's registered
+3. Each value is placed in one of two columns by the stream's
    `value_kind`: numbers in `numeric_value`, everything else in `text_value`.
+   A stream registered without a `value_kind` becomes numeric here, when its
+   first numeric value arrives.
    A value on a numeric stream that does not parse as a number falls back to
    the text column instead of failing the batch.
 4. Rows are deduplicated on `(stream_uri, ts)`, keeping the last.

@@ -10,6 +10,16 @@ change in any release.
 
 ## [Unreleased]
 
+### Changed
+- `value_kind` is optional in `register_streams()` and `Driver.declare()`. A
+  stream registered without it becomes numeric when it receives its first
+  numeric value (a number, or a string that parses as one); until then its
+  values are stored and returned as text. Before, such a stream was a text
+  stream and stored numbers as text. A declared `value_kind` is never
+  changed. Streams already registered keep the kind they have.
+- `Driver` no longer infers `value_kind` from the first observed values; the
+  server does.
+
 ### Removed
 - **Breaking:** `register_datasource()` on `Acquirium` and `AcquiriumClient`,
   and the `POST /register_datasource` endpoint. The node it wrote was never

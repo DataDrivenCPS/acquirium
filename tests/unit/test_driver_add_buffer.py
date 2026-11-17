@@ -395,7 +395,7 @@ def test_undeclared_bulk_observation_is_rejected(tmp_path):
         driver.insert_observations(frame)
 
 
-def test_null_only_batch_does_not_freeze_inferred_value_kind(tmp_path):
+def test_undeclared_value_kind_is_left_to_the_server(tmp_path):
     driver = make_driver(AddDriver, tmp_path)
     driver.declare("optional")
     driver.add("optional", None)
@@ -409,7 +409,7 @@ def test_null_only_batch_does_not_freeze_inferred_value_kind(tmp_path):
         for spec in call.args[0]
         if spec["stream_name"] == "optional"
     ]
-    assert specs[-1]["value_kind"] == "numeric"
+    assert specs and all("value_kind" not in spec for spec in specs)
 
 
 def test_conflicting_redeclaration_after_registration_raises(tmp_path):

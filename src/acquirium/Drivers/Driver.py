@@ -16,7 +16,6 @@ from rdflib import URIRef
 
 from acquirium.DriverState import DriverState
 from acquirium.internals.models import compute_stream_uri
-from acquirium.Storage.values import assign_stream_value_kind
 from acquirium.internals._log import timed_debug
 from acquirium.internals._names import accepts_old_names, warn_deprecated
 
@@ -303,7 +302,6 @@ class IngestDriver(Driver):
         self._declaration_lock = threading.Lock()
         self._declarations: dict[tuple[str, str], dict[str, Any]] = {}
         self._registered: set[tuple[str, str]] = set()
-        self._kinded: set[tuple[str, str]] = set()
 
     def declare(
         self,
@@ -327,7 +325,8 @@ class IngestDriver(Driver):
         to the graph just before the next insert, so streams always exist before
         their observations do.
 
-        ``value_kind`` is inferred from the first observed values when omitted.
+        When ``value_kind`` is omitted, the server infers it from the stream's
+        values: the stream is numeric once it receives a numeric value.
         Repeating an identical declaration is a no-op; changing any metadata
         for an existing identity raises an error, even after registration.
 
@@ -374,24 +373,20 @@ class IngestDriver(Driver):
             return (source, str(stream_name)) in self._declarations
 
     def register_declared(self, observations: "pl.DataFrame | None" = None) -> None:
-        """Write pending declarations, inferring value kinds from *observations*.
+        """Write pending declarations and check *observations* against them.
 
-        Every observed stream must already have been declared. When a
-        declaration omitted ``value_kind``, its first values determine it.
+        Every observed stream must already have been declared.
         """
-        import polars as pl
-
-        observed: dict[tuple[str, str], list[Any]] = {}
+        observed: set[tuple[str, str]] = set()
         if observations is not None and not observations.is_empty():
             multi = "source_id" in observations.columns
             group = ["source_id", "stream_name"] if multi else ["stream_name"]
-            by_stream = observations.group_by(group).agg(pl.col("value"))
-            for row in by_stream.iter_rows(named=True):
+            for row in observations.select(group).unique().iter_rows(named=True):
                 source = str(row["source_id"]) if multi else self.source_id
-                observed[(source, str(row["stream_name"]))] = row["value"]
+                observed.add((source, str(row["stream_name"])))
 
         with self._declaration_lock:
-            missing = sorted(set(observed) - set(self._declarations))
+            missing = sorted(observed - set(self._declarations))
             if missing:
                 raise UndeclaredStreamError(
                     "observations contain undeclared streams: "
@@ -402,19 +397,6 @@ class IngestDriver(Driver):
                 for key, meta in self._declarations.items()
                 if key not in self._registered
             }
-            inferred: set[tuple[str, str]] = set()
-            for key, values in observed.items():
-                meta = self._declarations[key]
-                if key in self._kinded or "value_kind" in meta:
-                    continue
-                meaningful = [
-                    value for value in values
-                    if value is not None and not (isinstance(value, str) and not value.strip())
-                ]
-                if not meaningful:
-                    continue
-                specs.setdefault(key, dict(meta))["value_kind"] = assign_stream_value_kind(meaningful)
-                inferred.add(key)
 
         if specs:
             self.aq.register_streams([
@@ -423,8 +405,6 @@ class IngestDriver(Driver):
             ])
         with self._declaration_lock:
             self._registered.update(specs)
-            self._kinded.update(inferred)
-            self._kinded.update(key for key, meta in specs.items() if "value_kind" in meta)
 
     def add(
         self,

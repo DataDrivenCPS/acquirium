@@ -55,6 +55,8 @@ from acquirium.Storage.migrations import DUCKDB_TIMESERIES_MIGRATIONS, migrate
 from acquirium.Storage.publication.revision import RevisionPublisher
 from acquirium.Storage.values import (
     normalize_value_kind,
+    stored_value_kind,
+    UNDECLARED_VALUE_KIND,
     normalize_value_mode,
     prepare_value_columns,
     typed_value_series,
@@ -440,7 +442,7 @@ class DuckDBStore:
             # Last occurrence wins, matching a sequence of individual upserts.
             # DuckDB's ON CONFLICT DO UPDATE rejects a source naming the same row
             # twice, and the caller's SPARQL can legitimately yield repeats.
-            prepared[key] = [key, property_uri, source_id, stream_name, normalize_value_kind(value_kind)]
+            prepared[key] = [key, property_uri, source_id, stream_name, stored_value_kind(value_kind)]
         if not prepared:
             return []
         df = pl.DataFrame(
@@ -459,7 +461,8 @@ class DuckDBStore:
                     source_id  = excluded.source_id,
                     stream_name   = excluded.stream_name,
                     property_uri  = COALESCE(excluded.property_uri, {STREAMS_TABLE}.property_uri),
-                    value_kind = excluded.value_kind
+                    value_kind = CASE WHEN excluded.value_kind = '{UNDECLARED_VALUE_KIND}'
+                        THEN {STREAMS_TABLE}.value_kind ELSE excluded.value_kind END
                 """
             )
         finally:
@@ -873,6 +876,19 @@ class DuckDBStore:
                 [uris],
             ).fetchall()
         return {uri: kind for uri, kind in rows}
+
+    def mark_streams_numeric(self, stream_uris: Iterable[str]) -> None:
+        """Make numeric the streams among *stream_uris* that declared no kind."""
+        uris = list(dict.fromkeys(stream_uris))
+        if not uris:
+            return
+        with self._lock, self._write_conn() as conn:
+            conn.execute(
+                f"UPDATE {STREAMS_TABLE} SET value_kind = 'numeric' "
+                f"WHERE value_kind = '{UNDECLARED_VALUE_KIND}' "
+                "AND stream_uri IN (SELECT unnest(?::VARCHAR[]))",
+                [uris],
+            )
 
     def _stream_value_kind(self, conn, stream_uri: str) -> str | None:
         """Look up a stream's value kind on *conn* — the caller's connection, so

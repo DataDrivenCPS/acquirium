@@ -19,6 +19,8 @@ from acquirium.Storage.migrations import TIMESERIES_MIGRATIONS, migrate
 from acquirium.Storage.publication.revision import RevisionPublisher
 from acquirium.Storage.values import (
     normalize_value_kind,
+    stored_value_kind,
+    UNDECLARED_VALUE_KIND,
     normalize_value_mode,
     prepare_value_columns,
     typed_value_series,
@@ -462,7 +464,7 @@ class TimescaleStore(TimeseriesStore):
             # Last occurrence wins, matching a sequence of individual upserts.
             # ON CONFLICT DO UPDATE also refuses a source naming the same row
             # twice, and the caller's SPARQL can legitimately yield repeats.
-            prepared[key] = (key, property_uri, source_id, stream_name, normalize_value_kind(value_kind))
+            prepared[key] = (key, property_uri, source_id, stream_name, stored_value_kind(value_kind))
         if not prepared:
             return []
         cols = "(stream_uri, property_uri, source_id, stream_name, value_kind)"
@@ -494,7 +496,8 @@ class TimescaleStore(TimeseriesStore):
                         property_uri = COALESCE(EXCLUDED.property_uri, {STREAMS_TABLE}.property_uri),
                         source_id = EXCLUDED.source_id,
                         stream_name = EXCLUDED.stream_name,
-                        value_kind = EXCLUDED.value_kind
+                        value_kind = CASE WHEN EXCLUDED.value_kind = '{UNDECLARED_VALUE_KIND}'
+                            THEN {STREAMS_TABLE}.value_kind ELSE EXCLUDED.value_kind END
                 """
             )
         return list(prepared.keys())
@@ -872,6 +875,18 @@ class TimescaleStore(TimeseriesStore):
             )
             row = cur.fetchone()
         return row[0] if row else None
+
+    def mark_streams_numeric(self, stream_uris: Iterable[str]) -> None:
+        """Make numeric the streams among *stream_uris* that declared no kind."""
+        uris = list(dict.fromkeys(stream_uris))
+        if not uris:
+            return
+        with self._lock, self._write_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE {STREAMS_TABLE} SET value_kind = 'numeric' "
+                f"WHERE value_kind = '{UNDECLARED_VALUE_KIND}' AND stream_uri = ANY(%s)",
+                (uris,),
+            )
 
     def stream_value_kinds(self, stream_uris: Iterable[str]) -> dict[str, str]:
         """Value kinds of the registered streams among *stream_uris*, in one query."""
