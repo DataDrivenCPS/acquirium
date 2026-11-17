@@ -74,11 +74,11 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 |---|---|
 | `register_datasource(source_id: str) -> str` | Register a datasource in the graph; idempotent. |
 | `register_streams(streams: Iterable[dict]) -> None` | Declare one or more streams' identity and semantic metadata in one graph insert; see the [lifecycle guide](../explanation/stream-lifecycle.md). A stream's optional `metadata` key holds a [value map](#metadata-values) written on its point. |
-| `reference_uri(source_id: str, ref_name: str) -> URIRef` | The canonical stream URI for a `(source_id, ref_name)` pair. |
-| `resolve_point_metadata(fields: dict, min_score=0.6) -> dict[str, str \| None]` | Resolve `unit`, `quantity_kind`, `medium`, `substance` text to URIs jointly. |
-| `insert_timeseries(source_id, ref_name, rows: list[tuple[datetime, Any]], *, point_uri=None, replace=False) -> dict` | Insert or correct rows for one stream. Register point metadata separately; `replace=True` makes the stream contain exactly the supplied rows; an empty list clears it. Downstream apps fully rebuild after replacement. |
+| `reference_uri(source_id: str, stream_name: str) -> URIRef` | The canonical stream URI for a `(source_id, stream_name)` pair. |
+| `resolve_property_metadata(fields: dict, min_score=0.6) -> dict[str, str \| None]` | Resolve `unit`, `quantity_kind`, `medium`, `substance` text to URIs jointly. |
+| `insert_timeseries(source_id, stream_name, rows: list[tuple[datetime, Any]], *, property_uri=None, replace=False) -> dict` | Insert or correct rows for one stream. Register point metadata separately; `replace=True` makes the stream contain exactly the supplied rows; an empty list clears it. Downstream apps fully rebuild after replacement. |
 | `insert_timeseries_batch(source_id, streams: dict[str, list[tuple[datetime, Any]]]) -> dict` | Insert rows for several streams; chunked by `insert_batch_rows`. |
-| `insert_timeseries_arrow(source_id, table: pa.Table, *, publication_id=None) -> dict` | Insert a `(ts, ref_name, value)` Arrow table; the path drivers use. The optional ID is for request correlation and does not currently deduplicate retries. |
+| `insert_timeseries_arrow(source_id, table: pa.Table, *, publication_id=None) -> dict` | Insert a `(ts, stream_name, value)` Arrow table; the path drivers use. The optional ID is for request correlation and does not currently deduplicate retries. |
 
 ### Logbook
 
@@ -113,7 +113,7 @@ queries.
 | `study.define(name) -> Study` | Create or reopen a Study and load its variable declarations. |
 | `study.get(name_or_id) -> Study` | Reopen an existing Study. |
 | `study.all() -> list[Study]` | List saved Studies with their declarations. |
-| `study.stream_annotations(ref_uri=None, start=None, end=None)` | Find annotated stream intervals across Studies. |
+| `study.stream_annotations(stream_uri=None, start=None, end=None)` | Find annotated stream intervals across Studies. |
 | `point(uri) -> Point` | Wrap a full plant property URI for a variable declaration. |
 | `resolve(text, *, kind=None, min_score=0.6) -> Point` | Resolve vocabulary text; use plant queries to find property instances. |
 
@@ -136,7 +136,7 @@ See the [querying tutorial](../tutorials/querying.md) and
 |---|---|
 | `entity(cls=None, *, uri=None, alias=None, **attrs) -> Query` | Add an entity node for a class (URI or free text) or one instance (`uri=`, CURIEs accepted); keyword attributes filter inline. |
 | `related(cls=None, *, uri=None, alias=None, frm=None, via="any", direction=None, max_depth=None, nearest=None, **attrs) -> Query` | Add an entity connected to `frm` (default: the current node); `via=` restricts predicates, `direction=` walks the piping topology; `max_depth` defaults to 3 (1 for predicate lists), `nearest` to `True` for plain `via="any"`. |
-| `measurement(*, frm=None, alias=None, direction=None, max_depth=3, nearest=None, include_connection_points=True, uri=None, ref=None, **attrs) -> Query` | Attach the measurement points of `frm` (default: the current node; `"*"` for every entity, or a list of aliases); on an empty query, every registered stream. With `direction=`, `nearest` defaults to `True` and each source keeps the first place along the flow (own connection points, pipe, next entity with its connection points, ...) holding a match; `nearest=False` returns everything within `max_depth`. `uri=` pins the node to one point; `ref=` keeps only the given streams (reference URIs or `Stream` handles, one or a list). |
+| `measurement(*, frm=None, alias=None, direction=None, max_depth=3, nearest=None, include_connection_points=True, uri=None, stream=None, **attrs) -> Query` | Attach the measurement points of `frm` (default: the current node; `"*"` for every entity, or a list of aliases); on an empty query, every registered stream. With `direction=`, `nearest` defaults to `True` and each source keeps the first place along the flow (own connection points, pipe, next entity with its connection points, ...) holding a match; `nearest=False` returns everything within `max_depth`. `uri=` pins the node to one property; `stream=` keeps only the given streams (stream URIs or `Stream` handles, one or a list). |
 | `context(cls=None, *, uri=None, alias=None, frm=None, via="entity", **attrs) -> Query` | From a measurement node, add the entity it is about and point at it; `via=` names a relation (`"entity"`, `"upstream"`, `"downstream"`, or one registered with `register_relation`) or gives explicit predicates or step chains. One fixed step, compiled to SPARQL. |
 | `where(target=None, *exprs, **attrs) -> Query` | Filter a node (`target=` by alias, default the current node). Keyword values are URIs, free text, lists (OR) or `Not(value)`; positional arguments are [attribute expressions](#attribute-expressions). Everything in one call is AND. |
 | `include(*names, of=None, required=False, type=None, strict=True) -> Query` | Add `alias.attr` columns for a node, or un-drop a node; names are strings or `acq.attr` paths; `required=True` drops rows lacking the attribute. `type=` casts the named columns (`"string"`, `"int"`, `"float"`, `"bool"`, `"date"`, `"datetime"`, `"struct"`, `"object"`, or a Python type / polars dtype), list cells element by element; `strict=True` raises on a value that does not convert, `strict=False` makes it `null`. `"all"` on an entity node adds every attribute (a measurement point is an entity too) except `type` and `cp_type`; on a measurement node it adds the measurement attributes except `type`, `app` and `label`. Entity nodes accept any attribute named explicitly; a measurement node refuses entity-only ones (`process`, `cp_type`); a list attribute appears once, under its collapsed name, as a `pl.List` column. A parent key (`"product_info"`) is one `pl.Struct` column with the union of its sub-keys, fields sorted by name, nested dicts nested. A column whose values do not fit one dtype (a dict and a string, an integer and a string) is `pl.Object` with the values as written, unless `type=` casts it. |
@@ -166,7 +166,7 @@ only.
 | `schema() -> pl.Schema` | The schema `metadata()` will return, without running the query: node columns `String`, a measurement's `alias.label`, attribute columns typed from what the graph holds for each attribute (lists as `List`, parent keys as `Struct`, mixtures as `Object`, casts as their target). The one difference from `metadata().schema`: an `alias.label` column that is null on every row is dropped there. |
 | `metadata(*, include_internals=False, include_dependencies=True) -> pl.DataFrame` | The pattern matches, one column per node plus `alias.attr` and `alias.label` columns. Node columns are CURIE strings; attribute columns are typed from the graph (`Int64`, `Float64`, `Boolean`, `Date`, `Datetime`, `String`). A column mixing integers and floats is `Float64`; any other mixture is `pl.Object`, cells as written. A user attribute written as a list is one `pl.List` cell per node in written order (a scalar under the same key becomes a one-element list); built-ins with several values keep one row per value. |
 | `data(*, start=None, end=None, limit=None, order="asc", include_dependencies=True, cast_value=None, value_mode="default") -> DataObject` | A lazy `DataObject` over the matched streams. |
-| `dataframe(shape="wide", *, start=None, end=None, limit=None, order="asc", include_dependencies=True, cast_value=None, value_mode="default", include_ref=False, compact=True) -> pl.DataFrame` | `data(...).dataframe(...)` in one call. |
+| `dataframe(shape="wide", *, start=None, end=None, limit=None, order="asc", include_dependencies=True, cast_value=None, value_mode="default", include_stream=False, compact=True) -> pl.DataFrame` | `data(...).dataframe(...)` in one call. |
 | `options(attr_name, *, of=None, include_dependencies=True) -> pl.DataFrame` | Distinct values of one attribute (a name or an `acq.attr` path) across the matches, with counts. Values are typed like `metadata()` columns; a date and the same text as a string are two values, in an `Object` column. |
 | `facets(*, of=None, include_dependencies=True) -> FacetSummary` | Value counts for every attribute `include("all")` would add to the node, user attributes included and printed with their column type (`<Int64>`, `<List(String)>`, `<Object>`), keys under one parent grouped below it, a list attribute once; prints compactly, indexes like a dict, `attrs()` lists the attributes. |
 | `resolved_nodes(*, alias=None, only_data_nodes=False, include_dependencies=True) -> list[str]` | The URIs the pattern currently matches. |
@@ -304,16 +304,16 @@ See the [data tutorial](../tutorials/data.md).
 
 | method | description |
 |---|---|
-| `dataframe(shape="wide", *, start=None, end=None, limit=None, order="asc", include_ref=False, compact=True, streams=None) -> pl.DataFrame` | The values as one frame; the window filters the fetched rows (`limit` per stream). `streams=` keeps only the listed streams, by their `stream_info()` number, ref URI, or `Stream` handle. |
-| `d["alias"] -> pl.DataFrame` | One alias as `[time, value]`, plus `point_uri` when the alias covers several points. `KeyError` for an unknown alias. |
+| `dataframe(shape="wide", *, start=None, end=None, limit=None, order="asc", include_stream=False, compact=True, streams=None) -> pl.DataFrame` | The values as one frame; the window filters the fetched rows (`limit` per stream). `streams=` keeps only the listed streams, by their `stream_info()` number, stream URI, or `Stream` handle. |
+| `d["alias"] -> pl.DataFrame` | One alias as `[time, value]`, plus `property_uri` when the alias covers several points. `KeyError` for an unknown alias. |
 | `"alias" in d`, `iter(d)`, `len(d)` | Membership, iteration and count over `aliases`; none of them fetch. |
-| `metadata(*, include_ref_uris=False) -> pl.DataFrame` | Unique `(data_alias, point_label, point_uri, unit, entity__*)` rows; `include_ref_uris=True` adds `ref_uri`, `source_id` and `ref_name`. |
+| `metadata(*, include_stream_uris=False) -> pl.DataFrame` | Unique `(data_alias, property_label, property_uri, unit, entity__*)` rows; `include_stream_uris=True` adds `stream_uri`, `source_id` and `stream_name`. |
 | `units() -> dict[str, list[str \| None]]` | The distinct unit URIs of each alias's points; `metadata()` has the unit per point. |
 | `convert_to(to_unit, *, from_unit=None, alias=None) -> DataObject` | A new object with values converted to `to_unit`, each point from its own unit; `from_unit=` for points with no unit, `alias=` to convert one alias. |
 | `by(entity_alias) -> Iterator[tuple[str, DataObject]]` | A sub-object per entity. |
-| `latest(alias=None, *, streams=None) -> pl.DataFrame` | The newest reading per point, from its own one-row-per-stream fetch within the object's window; all bindings as `[data_alias, point_uri, time, value]` without an alias. `streams=` as in `dataframe()`. |
+| `latest(alias=None, *, streams=None) -> pl.DataFrame` | The newest reading per point, from its own one-row-per-stream fetch within the object's window; all bindings as `[data_alias, property_uri, time, value]` without an alias. `streams=` as in `dataframe()`. |
 | `is_empty() -> bool` | Whether any rows exist. Until the values are fetched it asks the server which streams have any row (ignoring the window), without counting them, or reads the statistics if they are loaded. |
-| `stream_info(alias=None) -> pl.DataFrame` | One row per stream: `stream` (its number in this object, for `streams=`), `alias`, `point_uri`, `ref_uri`, `source_id`, `ref_name`. |
+| `stream_info(alias=None) -> pl.DataFrame` | One row per stream: `stream` (its number in this object, for `streams=`), `alias`, `property_uri`, `stream_uri`, `source_id`, `stream_name`. |
 | `aliases`, `entity_aliases` | Properties: the data and entity aliases present. |
 | `total_rows`, `time_range` | Properties: row count and `(earliest, latest)` from stream statistics, without fetching the values. |
 | `bindings` | Property: read-only binding metadata per stream, with its statistics. |
@@ -326,8 +326,8 @@ See the [data tutorial](../tutorials/data.md).
 | `start`, `end` | time window; on `Query` it bounds the fetch, on `DataObject` it filters fetched rows |
 | `limit`, `order` | rows per stream, `"asc"` or `"desc"` |
 | `shape` | `"wide"` (one column per point) or `"narrow"` (one row per reading) |
-| `compact` | `True` renders URIs as CURIEs and identifies points by `point_id`; `False` returns raw `point_uri` and `ref_uri` columns |
-| `include_ref` | add the reference URI column in the compact layout |
+| `compact` | `True` renders URIs as CURIEs and identifies points by `property_id`; `False` returns raw `property_uri` and `stream_uri` columns |
+| `include_stream` | add the `stream` column (the stream URI) in the compact layout |
 | `cast_value` | client-side cast (`Query` only): `"float"` parses numeric text into `value_numeric`; `"int"` also returns `Int64` columns and warns when it truncates fractional values; `"str"` puts every value in `value_text`; `None` (default) leaves values as sent; anything else is a `ValueError` |
 | `value_mode` | `"default"`, `"numeric"`, `"text"` or `"coalesce"` (`Query` only) |
 | `include_dependencies` | query the ontology and shape triples alongside the plant data (`Query` only) |
@@ -374,7 +374,7 @@ and are listed once above.
 | `resolve(query, kind=None, *, top_k=1, min_score=0.5, context=None)` | Free text to a URI (`str`), ranked candidates (`top_k > 1`), or a dict of fields resolved jointly. |
 | `resolve_unit(identifier) -> dict` | The QUDT record behind a unit text, with conversion factors. |
 | `resolve_conversion(from_unit, to_unit, *, top_k=5, min_score=0.5) -> dict` | Resolve both sides to a convertible pair plus factors. |
-| `resolve_point_metadata(fields, min_score=0.6) -> dict` | As on `Acquirium`. |
+| `resolve_property_metadata(fields, min_score=0.6) -> dict` | As on `Acquirium`. |
 | `get_conversion_factors(from_unit, to_unit) -> dict` | Multipliers and offsets between two unit URIs. |
 
 ### Streams and timeseries
@@ -382,11 +382,11 @@ and are listed once above.
 | method | description |
 |---|---|
 | `register_datasource(source_id) -> str`, `register_streams(streams) -> None` | As on `Acquirium`. |
-| `insert_timeseries(*, source_id, ref_name, rows, point_uri=None, replace=False, publication_id=None) -> dict` | Keyword-only form of the `Acquirium` method; `publication_id` is forwarded but does not currently deduplicate retries. |
+| `insert_timeseries(*, source_id, stream_name, rows, property_uri=None, replace=False, publication_id=None) -> dict` | Keyword-only form of the `Acquirium` method; `publication_id` is forwarded but does not currently deduplicate retries. |
 | `insert_timeseries_batch(source_id, streams) -> dict` | One HTTP request for several streams (unchunked). |
 | `insert_timeseries_arrow(source_id, table, *, publication_id=None) -> dict` | As on `Acquirium`; the optional ID is forwarded but does not currently deduplicate retries. |
-| `resolve_storage_keys(uris: list[str]) -> dict[str, str]` | Map point URIs to the canonical ref URIs used by timeseries APIs; canonical ref URIs pass through. |
-| `timeseries_df(uri, start=None, end=None, limit=None, order="asc", timeout=60.0, *, value_mode="default") -> pl.DataFrame` | All rows of one stream by `ref_uri`. |
+| `resolve_storage_keys(uris: list[str]) -> dict[str, str]` | Map property URIs to the canonical stream URIs used by timeseries APIs; canonical stream URIs pass through. |
+| `timeseries_df(uri, start=None, end=None, limit=None, order="asc", timeout=60.0, *, value_mode="default") -> pl.DataFrame` | All rows of one stream by `stream_uri`. |
 | `timeseries_batches(uri, start=None, end=None, limit=None, order="asc", *, value_mode="default", timeout=60.0) -> Iterator[pl.DataFrame]` | The same, one frame per Arrow record batch. |
 | `timeseries_info_batch(uris: list[str]) -> dict` | `row_count`, `earliest`, `latest` for several streams in one request. |
 
@@ -394,9 +394,9 @@ and are listed once above.
 
 | method | description |
 |---|---|
-| `insert_log(point_uri=None, log_time=None, observation_start=None, observation_end=None, log_message="") -> dict` | Insert a log entry for a point (default: the plant). |
-| `query_logs(point_uri=None, log_time_start=None, log_time_end=None, observation_start=None, observation_end=None) -> list[LogEntry]` | Log entries for a point within optional intervals. |
-| `delete_logs(point_uri=None) -> dict` | Delete the log entries of a point. |
+| `insert_log(property_uri=None, log_time=None, observation_start=None, observation_end=None, log_message="") -> dict` | Insert a log entry for a point (default: the plant). |
+| `query_logs(property_uri=None, log_time_start=None, log_time_end=None, observation_start=None, observation_end=None) -> list[LogEntry]` | Log entries for a point within optional intervals. |
+| `delete_logs(property_uri=None) -> dict` | Delete the log entries of a point. |
 
 ### Apps
 

@@ -64,7 +64,7 @@ DataObject(5598 rows, aliases=['m'], entities=['Equipment'])
 Note that a `dataframe()` method also exists on the query object.
 This is a shortcut for `Query.data().dataframe()`, and the two take the same
 parameters with the same defaults (`shape`, `start`, `end`, `limit`, `order`,
-`include_ref`, `compact`), so `q.dataframe(...)` returns the same frame as
+`include_stream`, `compact`), so `q.dataframe(...)` returns the same frame as
 `q.data(...).dataframe(...)`.
 The difference is where the window applies: on the query it bounds the fetch,
 on a data object it filters the rows already fetched (`limit` keeps that many
@@ -74,7 +74,7 @@ they are set on `data()` (or on `Query.dataframe()`) and have no data-object
 counterpart.
 `streams=` exists only on the data object's `dataframe()`.
 It keeps the listed streams, which are identified by their number in the
-object's `stream_info()`, by ref URI or by a `Stream` handle.
+object's `stream_info()`, by stream URI or by a `Stream` handle.
 
 ## Shapes
 
@@ -111,7 +111,7 @@ d.dataframe("narrow").head(4)
 ```text
 shape: (4, 5)
 ┌──────────────────────────────────┬───────────────────────────────┬────────────────────────────────┬───────────────┬────────────┐
-│ data_alias                       ┆ point_id                      ┆ time                           ┆ value_numeric ┆ value_text │
+│ data_alias                       ┆ property_id                      ┆ time                           ┆ value_numeric ┆ value_text │
 ╞══════════════════════════════════╪═══════════════════════════════╪════════════════════════════════╪═══════════════╪════════════╡
 │ m__wbs:RO-out-pressure           ┆ wbs:RO-out-pressure           ┆ 2026-08-15 06:24:14.709710 UTC ┆ 101325.0      ┆ null       │
 │ m__wbs:RO-in-pressure            ┆ wbs:RO-in-pressure            ┆ 2026-08-15 06:24:14.709710 UTC ┆ 7e6           ┆ null       │
@@ -120,7 +120,7 @@ shape: (4, 5)
 └──────────────────────────────────┴───────────────────────────────┴────────────────────────────────┴───────────────┴────────────┘
 ```
 
-`data_alias` carries the same name the wide column would have, and `point_id`
+`data_alias` carries the same name the wide column would have, and `property_id`
 is the point as a CURIE.
 
 Numeric and text readings live in separate columns, `value_numeric` and
@@ -179,10 +179,10 @@ shape: (2, 5)
 
 Both `dataframe()` methods shorten the identifiers by default
 (`compact=True`): URIs are CURIEs and the narrow shape identifies a point by a
-`point_id` column.
-`compact=False` returns the raw layout, with full `point_uri` and `ref_uri`
+`property_id` column.
+`compact=False` returns the raw layout, with full `property_uri` and `stream_uri`
 columns and one `entity__<alias>` column per entity node in narrow shape.
-Pass `include_ref=True` to add the reference URI to the compact layout.
+Pass `include_stream=True` to add the reference URI to the compact layout.
 This is only needed if you need to distinguish data coming from different sources for the same measurement point.
 
 ## Units
@@ -248,7 +248,7 @@ A query that matched several points and several entities comes back as one
 object. These four methods split it up.
 
 `d["alias"]` returns one alias as a frame.
-When the alias covers more than one point, a `point_uri` column is added to
+When the alias covers more than one point, a `property_uri` column is added to
 tell the rows apart.
 
 ```python
@@ -259,7 +259,7 @@ d["m"].tail(3)
 ```text
 shape: (3, 3)
 ┌────────────────────────────────┬───────────────┬──────────────────────────────┐
-│ time                           ┆ value         ┆ point_uri                    │
+│ time                           ┆ value         ┆ property_uri                    │
 ╞════════════════════════════════╪═══════════════╪══════════════════════════════╡
 │ 2026-08-08 06:42:54.828898 UTC ┆ 109158.500253 ┆ urn:swro/P2-mechanical-power │
 │ 2026-08-08 06:43:10.129750 UTC ┆ 1.0610e6      ┆ urn:swro/P1-mechanical-power │
@@ -267,11 +267,11 @@ shape: (3, 3)
 └────────────────────────────────┴───────────────┴──────────────────────────────┘
 ```
 
-To work on the points one at a time, split that frame on `point_uri`.
+To work on the points one at a time, split that frame on `property_uri`.
 
 ```python
-for (point_uri,), df in d["m"].partition_by("point_uri", as_dict=True).items():
-    print(point_uri, df.shape)
+for (property_uri,), df in d["m"].partition_by("property_uri", as_dict=True).items():
+    print(property_uri, df.shape)
 ```
 ```text
 urn:swro/P1-mechanical-power (5892, 3)
@@ -294,7 +294,7 @@ urn:swro/P2 (5892, 2)
 This is useful for per-equipment work, like fitting a model per pump.
 
 `latest(alias)` returns the newest reading of each point of the alias.
-As with `d["alias"]`, a `point_uri` column is added when the alias covers more
+As with `d["alias"]`, a `property_uri` column is added when the alias covers more
 than one point.
 
 ```python
@@ -303,7 +303,7 @@ d.latest("m")
 ```text
 shape: (2, 3)
 ┌────────────────────────────────┬───────────────┬──────────────────────────────┐
-│ time                           ┆ value         ┆ point_uri                    │
+│ time                           ┆ value         ┆ property_uri                    │
 ╞════════════════════════════════╪═══════════════╪══════════════════════════════╡
 │ 2026-08-08 06:43:10.129750 UTC ┆ 1.0610e6      ┆ urn:swro/P1-mechanical-power │
 │ 2026-08-08 06:43:10.129750 UTC ┆ 111093.849382 ┆ urn:swro/P2-mechanical-power │
@@ -311,7 +311,7 @@ shape: (2, 3)
 ```
 
 Without an alias, `latest()` reports every point of the object as
-`[data_alias, point_uri, time, value]`.
+`[data_alias, property_uri, time, value]`.
 
 Note that `latest()` does not fetch the whole window.
 It runs its own fetch of one row per stream, so it is cheap, and it returns

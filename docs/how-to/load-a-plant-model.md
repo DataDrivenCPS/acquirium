@@ -178,7 +178,7 @@ Nothing enforces an order, but this one avoids avoidable churn:
    [server configuration](../reference/server-config.md#the-ontologies-section).
 2. **The plant model**, as above, in one call.
 3. **Drivers**, once the points they bind to exist. A driver that declares a
-   `point_uri` the graph already has gets its metadata checked against that
+   `property_uri` the graph already has gets its metadata checked against that
    point; a driver started first mints placeholder points instead, and those
    do not become the real ones later.
 
@@ -205,8 +205,8 @@ Note that a point's `rdfs:label` is what result columns display in place of
 its CURIE, so labels are worth adding even when nothing else changes.
 
 Existing timeseries are untouched by any of this. The graph joins a point to
-its canonical `ref_uri`; both storage backends map that URI to an internal
-integer `ref_id` used by timeseries rows. A reload that keeps the point and
+its canonical `stream_uri`; both storage backends map that URI to an internal
+integer `stream_id` used by timeseries rows. A reload that keeps the point and
 reference relationship keeps the data reachable. A reload that renames a
 point without preserving that relationship leaves its rows stored but
 unreachable through the new point, as described in

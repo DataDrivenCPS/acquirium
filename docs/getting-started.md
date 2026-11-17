@@ -57,7 +57,7 @@ acq = aq.init(exact_only=True)    # start Acquirium
 
 # write one temperature reading
 acq.register_streams([
-    {"source_id": "check", "ref_name": "temperature", "value_kind": "numeric"}
+    {"source_id": "check", "stream_name": "temperature", "value_kind": "numeric"}
 ])
 acq.insert_timeseries("check", "temperature", [(datetime(2026, 1, 1), 21.5)])
 

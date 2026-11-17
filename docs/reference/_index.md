@@ -6,6 +6,7 @@ This section is the reference for Acquirium's interfaces: the Python client, dri
 The pages list signatures, keys and defaults. The [glossary](glossary.md) defines the terms used across the documentation.
 
 - [Acquirium Client API](client-api.md) — every public method of the Python client with its signature
+- [CLI reference](cli.md) — the `acquirium` command and its subcommands
 - [Driver reference](drivers.md) — driver classes, hooks, helpers, configuration keys and the built-in drivers
 - [App reference](apps.md) — the `App` class, output declarations, `StreamSet`, `InputBatch`, and check and deploy
 - [Experiment reference](experiments.md) — studies and runs, declaring variables, recording and reading recorded data

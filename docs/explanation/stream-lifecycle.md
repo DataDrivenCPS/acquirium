@@ -14,12 +14,12 @@ A stream has three identifiers.
 | identifier | meaning | example |
 |---|---|---|
 | `source_id` | who writes the stream | `watertap-seawater-ro` |
-| `ref_name` | which series, unique within the source | `P1-out-pressure` |
-| `ref_uri` | the canonical URI of the stream | `urn:acquirium#399ce39c-...` |
+| `stream_name` | which series, unique within the source | `P1-out-pressure` |
+| `stream_uri` | the canonical URI of the stream | `urn:acquirium#399ce39c-...` |
 
-`ref_uri` is computed from the other two.
-The same `(source_id, ref_name)` pair always produces the same URI, and two
-sources can use the same `ref_name` without colliding.
+`stream_uri` is computed from the other two.
+The same `(source_id, stream_name)` pair always produces the same URI, and two
+sources can use the same `stream_name` without colliding.
 
 ```python
 acq.reference_uri("watertap-seawater-ro", "P1-out-pressure")
@@ -27,10 +27,10 @@ acq.reference_uri("watertap-seawater-ro", "P1-out-pressure")
 ```
 
 Since the URI is computable, no lookup is needed at insert time.
-A driver only needs its `source_id` and `ref_name` to insert rows.
+A driver only needs its `source_id` and `stream_name` to insert rows.
 
-These stream URIs can be attached to `point_uri`s in the semantic model.
-A stream registered without a point gets a placeholder point, `<ref_uri>__point`, so that
+These stream URIs can be attached to `property_uri`s in the semantic model.
+A stream registered without a point gets a placeholder point, `<stream_uri>__point`, so that
 `measurement()` on an empty query finds it; nothing else in the model refers to it, so topology
 queries do not reach it.
 
@@ -44,7 +44,7 @@ A stream's `metadata` key adds a third piece, in the same graph: one
 [`insert_metadata()`](../reference/client-api.md#metadata-values) writes
 them.
 
-For the stream itself, a reference node under the computed `ref_uri`:
+For the stream itself, a reference node under the computed `stream_uri`:
 
 ```turtle
 <urn:acquirium#399ce39c-...>
@@ -55,8 +55,8 @@ For the stream itself, a reference node under the computed `ref_uri`:
 ```
 
 And the point node with its semantic metadata and the link between the two.
-This is the given `point_uri`, or the placeholder `<ref_uri>__point` labelled
-with its `ref_name` when none was given:
+This is the given `property_uri`, or the placeholder `<stream_uri>__point` labelled
+with its `stream_name` when none was given:
 
 ```turtle
 <urn:swro/P1-out-pressure>
@@ -68,8 +68,8 @@ with its `ref_name` when none was given:
 ```
 
 Registration is idempotent and additive.
-Registering the same stream again with a `point_uri` does not erase metadata written earlier.
-Note that when the `point_uri` already exists in the graph, the metadata passed
+Registering the same stream again with a `property_uri` does not erase metadata written earlier.
+Note that when the `property_uri` already exists in the graph, the metadata passed
 is checked against it before anything is inserted: a field the point lacks is
 added, and a conflicting value raises `ValueError`.
 Units are the exception.
@@ -98,7 +98,7 @@ See the [driver reference](../reference/drivers.md#declaring-streams).
 The graph is the source of truth for streams, so the server keeps a derived
 index: a `streams` table in the timeseries store, with one row per reference
 node
-(`ref_uri`, `point_uri`, `source_id`, `ref_name`, `value_kind`).
+(`stream_uri`, `property_uri`, `source_id`, `stream_name`, `value_kind`).
 After every graph insert, the server scans for nodes carrying `acq:sourceId`
 and `acq:refName` and upserts them into the table.
 The scan reads the inferred graph together with the ontologies, not just the
@@ -110,16 +110,16 @@ the table, and a stream that was never registered has no row.
 Note that this sync has two additional behaviors.
 
 A later registration never erases an earlier link.
-If a stream was first registered with a `point_uri` and later without one,
+If a stream was first registered with a `property_uri` and later without one,
 the table keeps the point.
 
 The sync validates the canonical URI.
 A hand-written reference node whose URI does not equal
-`compute_ref_uri(source_id, ref_name)` fails the entire insert:
+`compute_stream_uri(source_id, stream_name)` fails the entire insert:
 
 ```text
 Managed reference URI mismatch for point <...>: graph has <...>, expected
-<...> from source_id='...', ref_name='...'
+<...> from source_id='...', stream_name='...'
 ```
 
 The same scan runs at server startup, so a bad reference node in a model file
@@ -138,18 +138,18 @@ A row goes through five steps between a driver and the store.
 
 1. The client normalizes the observation frame (timestamps to UTC, values to
    strings) and sends it as an Arrow table over HTTP.
-2. The server computes each row's `ref_uri` from `(source_id, ref_name)` and
+2. The server computes each row's `stream_uri` from `(source_id, stream_name)` and
    checks it against the `streams` table.
    An unregistered stream fails here, before anything is written.
 3. Each value is placed in one of two columns by the stream's registered
    `value_kind`: numbers in `numeric_value`, everything else in `text_value`.
    A value on a numeric stream that does not parse as a number falls back to
    the text column instead of failing the batch.
-4. Rows are deduplicated on `(ref_uri, ts)`, keeping the last.
+4. Rows are deduplicated on `(stream_uri, ts)`, keeping the last.
 5. The batch is written in one transaction. DuckDB deletes colliding pairs
    and inserts the frame; TimescaleDB `COPY`s the frame to a temporary staging
    table and merges it with `INSERT ... SELECT ... ON CONFLICT`, ordered by
-   `(ref_id, ts)`.
+   `(stream_id, ts)`.
 
 Step 5 makes ingestion idempotent by stream and timestamp: re-inserting the
 same timestamps replaces those rows instead of duplicating them, so re-running
@@ -163,8 +163,8 @@ removals to propagate without retaining deleted timestamps for replacement.
 Storage is one `timeseries` table holding `ts`, `numeric_value` and
 `text_value`, with one row per stream and timestamp and a check that only one
 of the two value columns is set.
-Both backends key rows by an integer `ref_id` and map it back through a
-`ref_ids` table, which keeps the column narrow; reads expose `ref_uri`.
+Both backends key rows by an integer `stream_id` and map it back through a
+`stream_ids` table, which keeps the column narrow; reads expose `stream_uri`.
 
 ## The read path
 
@@ -173,17 +173,17 @@ A query follows the same links in reverse.
 1. The query pattern compiles to SPARQL; each measurement node binds a point
    and follows its `ref:hasExternalReference` to the reference node.
    The point's unit and the reference node's unit both come along.
-2. The client collects the distinct `(point_uri, ref_uri)` pairs from the
+2. The client collects the distinct `(property_uri, stream_uri)` pairs from the
    result; these are the bindings a `DataObject` reports before fetching.
-3. Values are fetched per `ref_uri` from the timeseries store, streamed back
+3. Values are fetched per `stream_uri` from the timeseries store, streamed back
    as Arrow batches.
 4. When the reference node's unit differs from the point's, the values are
    converted during the fetch (see the
    [units guide](units.md#automatic-conversion)).
 
 The graph determines which streams to read, and the timeseries store returns
-their values. `ref_uri` is the logical join key at this boundary; the backend
-maps it to its internal integer `ref_id`.
+their values. `stream_uri` is the logical join key at this boundary; the backend
+maps it to its internal integer `stream_id`.
 A point with no reference node yields metadata but no data.
 A reference node with no point stores data that semantic queries cannot find.
 
@@ -218,10 +218,10 @@ Register many streams in one call rather than looping over single ones.
 
 When the planner compiles an app's query, it creates references for the output
 streams and generates points for outputs that do not specify an existing
-`point_uri`. Each output uses `derived:<name>` as its timeseries `source_id`.
+`property_uri`. Each output uses `derived:<name>` as its timeseries `source_id`.
 
-With `output.stream`, the generated `ref_name` combines the app name, port name,
-and a stable hash of the bound input aliases and reference URIs. The `ref_uri`
+With `output.stream`, the generated `stream_name` combines the app name, port name,
+and a stable hash of the bound input aliases and reference URIs. The `stream_uri`
 is derived from the source and reference name as usual. This keeps the stream
 identity stable when the app's code or a sensor's metadata changes. An app with
 `grouping="per_match"`, one generated output, and ten distinct sensor matches

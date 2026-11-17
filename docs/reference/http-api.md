@@ -203,7 +203,7 @@ The server compares the graph's `owl:imports` and `owl:Ontology` triples before 
 
 ### `POST /register_datasource`
 
-Register a named datasource. The `source_id` scopes stream `ref_name`s so two sources with the same name never collide.
+Register a named datasource. The `source_id` scopes stream `stream_name`s so two sources with the same name never collide.
 
 **Request body** `{"source_id": "my-source"}`
 
@@ -219,8 +219,8 @@ Insert observations for one or more streams. Request body is a JSON array; a sin
 [
   {
     "source_id": "plant-historian",
-    "ref_name": "TI-101",
-    "point_uri": null,
+    "stream_name": "TI-101",
+    "property_uri": null,
     "replace": false,
     "values": [
       ["2026-01-01T00:00:00Z", 21.5],
@@ -233,8 +233,8 @@ Insert observations for one or more streams. Request body is a JSON array; a sin
 | Field | Required | Description |
 | --- | --- | --- |
 | `source_id` | yes | Registered datasource identifier |
-| `ref_name` | yes | Source-local stream name |
-| `point_uri` | no | Compatibility field; register the stream-to-point relationship with `register_streams` before inserting data |
+| `stream_name` | yes | Source-local stream name |
+| `property_uri` | no | Compatibility field; register the stream-to-point relationship with `register_streams` before inserting data |
 | `replace` | no (default `false`) | Replace this stream with exactly the supplied rows; an empty `values` list clears it. Atomic per stream; downstream apps fully rebuild after replacement |
 | `publication_id` | no | Identifier echoed into the internal publication receipt; the current revision backend does not deduplicate retries by this value |
 | `values` | yes | List of `[timestamp, value]` pairs |
@@ -243,7 +243,7 @@ Insert observations for one or more streams. Request body is a JSON array; a sin
 
 ### `POST /insert_timeseries_arrow`
 
-High-throughput insert via Apache Arrow IPC stream. The request body is a binary Arrow stream with columns `source_id`, `ref_name`, `ts`, and `value`. Rows are partitioned by `source_id` and dispatched in bulk.
+High-throughput insert via Apache Arrow IPC stream. The request body is a binary Arrow stream with columns `source_id`, `stream_name`, `ts`, and `value`. Rows are partitioned by `source_id` and dispatched in bulk.
 
 **Content-Type** `application/vnd.apache.arrow.stream`
 
@@ -259,7 +259,7 @@ Read timeseries data for a single stream. Returns an Apache Arrow IPC stream (`a
 
 | Parameter | Default | Description |
 | --- | --- | --- |
-| `uri` | required | Ref URI or point URI of the stream |
+| `uri` | required | Ref URI or property URI of the stream |
 | `start` | — | ISO 8601 start timestamp (inclusive) |
 | `end` | — | ISO 8601 end timestamp (exclusive) |
 | `limit` | — | Maximum number of rows to return |
@@ -417,13 +417,13 @@ Get the conversion factors between two units that are already identified by URI.
 
 ### `POST /insert_log`
 
-Insert a log entry associated with a point URI and optional observation period. All parameters are query parameters.
+Insert a log entry associated with a property URI and optional observation period. All parameters are query parameters.
 
 | Parameter | Required | Description |
 | --- | --- | --- |
 | `log_timestamp` | yes | ISO 8601 timestamp for the log entry |
 | `message` | yes | Log message text |
-| `point_uri` | no | Semantic point URI (defaults to plant URI) |
+| `property_uri` | no | Semantic property URI (defaults to plant URI) |
 | `observation_start` | no | ISO 8601 start of the observed period |
 | `observation_end` | no | ISO 8601 end of the observed period |
 
@@ -431,11 +431,11 @@ Insert a log entry associated with a point URI and optional observation period. 
 
 ### `GET /query_logs`
 
-Query log entries by point URI and time range. All parameters are query parameters.
+Query log entries by property URI and time range. All parameters are query parameters.
 
 | Parameter | Description |
 | --- | --- |
-| `point_uri` | Filter by point URI (defaults to plant URI) |
+| `property_uri` | Filter by property URI (defaults to plant URI) |
 | `log_time_start` | Earliest log timestamp (inclusive) |
 | `log_time_end` | Latest log timestamp (inclusive) |
 | `observation_start` | Filter by observation period start |
@@ -445,11 +445,11 @@ Query log entries by point URI and time range. All parameters are query paramete
 
 ### `DELETE /delete_logs`
 
-Delete all log entries for a point URI.
+Delete all log entries for a property URI.
 
 | Parameter | Description |
 | --- | --- |
-| `point_uri` | Point URI to delete logs for (defaults to plant URI) |
+| `property_uri` | Property URI to delete logs for (defaults to plant URI) |
 
 **Response** `{"ok": true}`
 

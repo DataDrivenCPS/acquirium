@@ -10,8 +10,8 @@ For continuous data ingestion from specific sources we recommend writing your ow
 ## Stream registration
 
 Inserting data starts with registering the streams in Acquirium.
-A stream is identified by a `source_id` (who writes it) and a `ref_name` (which series).
-You can consider a stream as a "value column" of your dataset, where `ref_name` is the column header and `source_id` describes the file it comes from.
+A stream is identified by a `source_id` (who writes it) and a `stream_name` (which series).
+You can consider a stream as a "value column" of your dataset, where `stream_name` is the column header and `source_id` describes the file it comes from.
 
 Register both before the first row:
 
@@ -20,17 +20,17 @@ acq.register_datasource("lab-import")
 
 acq.register_streams([{
     "source_id": "lab-import",
-    "ref_name": "effluent-tds",
+    "stream_name": "effluent-tds",
     "value_kind": "numeric",
-    "point_uri": "urn:swro/effluent-tds",    # optional
+    "property_uri": "urn:swro/effluent-tds",    # optional
     "label": "Effluent TDS (lab)",           # optional
     "unit": "mg/L",                          # optional
     "quantity_kind": "mass concentration",   # optional
 }])
 ```
 - `value_kind` can be "text" or "numeric".
-- `point_uri` ties the stream to a point in the semantic model (see below).
-- `label` defaults to the `ref_name` when it is not given.
+- `property_uri` ties the stream to a point in the semantic model (see below).
+- `label` defaults to the `stream_name` when it is not given.
 - To attach metadata, you can use the keys `unit`, `quantity_kind`, `medium` and `substance`, whose values accept free text or URIs.
 - You can also insert other metadata with your own keys using `metadata = {key : value}`. See [Attach metadata to a node](attach-metadata.md) for more detail.
 
@@ -57,13 +57,13 @@ acq.insert_timeseries("lab-import", "effluent-tds", rows)
 {'ok': True, 'rows_inserted': 2}
 ```
 
-To insert into several streams at once, use `insert_timeseries_batch()` with a dictionary of `ref_name` to rows.
+To insert into several streams at once, use `insert_timeseries_batch()` with a dictionary of `stream_name` to rows.
 Every stream in the dictionary has to be registered first:
 
 ```python
 acq.register_streams([{
     "source_id": "lab-import",
-    "ref_name": "effluent-ph",
+    "stream_name": "effluent-ph",
     "value_kind": "numeric",
 }])
 
@@ -79,7 +79,7 @@ acq.insert_timeseries_batch("lab-import", {
 Large inputs are split into several requests automatically, so you can pass the whole dataset in one call.
 
 If your data is already in a table, use `insert_timeseries_arrow()`.
-It takes an Arrow table with the columns `ts`, `ref_name` and `value`.
+It takes an Arrow table with the columns `ts`, `stream_name` and `value`.
 This is useful for large imports, and it is the method the drivers use:
 
 ```python
@@ -88,7 +88,7 @@ import pyarrow as pa
 table = pa.table({
     "ts":       [datetime(2026, 8, 8, 10, 15, tzinfo=timezone.utc),
                  datetime(2026, 8, 8, 10, 15, tzinfo=timezone.utc)],
-    "ref_name": ["effluent-tds", "effluent-ph"],
+    "stream_name": ["effluent-tds", "effluent-ph"],
     "value":    [420.4, 7.1],
 })
 
@@ -131,14 +131,14 @@ acq.insert_graph("""
 """, source_id="plant")
 ```
 
-Insert the model first, then pass the URI of the point as `point_uri` when registering the stream:
+Insert the model first, then pass the URI of the point as `property_uri` when registering the stream:
 
 ```python
 acq.register_streams([{
     "source_id": "lab-import",
-    "ref_name": "effluent-tds",
+    "stream_name": "effluent-tds",
     "value_kind": "numeric",
-    "point_uri": "urn:swro/effluent-tds",
+    "property_uri": "urn:swro/effluent-tds",
 }])
 ```
 
@@ -174,5 +174,5 @@ ValueError: quantity_kind mismatch for point <urn:swro/effluent-tds>: the point 
 <http://qudt.org/vocab/quantitykind/Temperature>
 ```
 
-**Note:** If the `point_uri` does not exist in the model, a new point is created with that URI.
+**Note:** If the `property_uri` does not exist in the model, a new point is created with that URI.
 See [Load a plant model](load-a-plant-model.md) for loading a full model from a file.

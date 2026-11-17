@@ -9,7 +9,7 @@ quantity kind.
 This tutorial continues from the same driver and matches the data points to a model of the RO skid 
 [loaded in based on this guide](../how-to/load-a-plant-model.md).
 
-What changes is one argument. `declare()` gains a `point_uri` naming a point
+What changes is one argument. `declare()` gains a `property_uri` naming a point
 already in the graph, and attaching the data stream to that point. 
 
 ## The situation
@@ -80,7 +80,7 @@ state of affairs, and step 2 handles it.
 ## Step 2: declare against those points
 
 The driver is the same class as before, with one difference in
-`declare_stream()`: `point_uri` names a point in your model.
+`declare_stream()`: `property_uri` names a point in your model.
 
 ```python
 from acquirium import CSVIngestDriver
@@ -93,19 +93,19 @@ POINTS = {
 
 
 class ROSkidDriver(CSVIngestDriver):
-    def declare_stream(self, ref_name: str) -> None:
-        point_uri = POINTS.get(ref_name)
-        if point_uri is None:
-            self.declare(ref_name)          # unmapped column: ingest it, no point
+    def declare_stream(self, stream_name: str) -> None:
+        property_uri = POINTS.get(stream_name)
+        if property_uri is None:
+            self.declare(stream_name)          # unmapped column: ingest it, no point
             return
-        self.declare(ref_name, value_kind="numeric", point_uri=point_uri)
+        self.declare(stream_name, value_kind="numeric", property_uri=property_uri)
 ```
 
 The `unit` and `quantity_kind` arguments are gone. The point already carries
 both in the model for this example. 
 
 `Permeate TDS` does not have a corresponding point in the model, so just its reference is added
- `self.declare(ref_name)`. It still
+ `self.declare(stream_name)`. It still
 gets ingested and still gets a placeholder point, but they aren't reachable
 through `wbs:RO` until somebody adds the point to the model. 
 
@@ -157,7 +157,7 @@ overwrite:
 
 ```python
 self.declare("Feed Pressure", value_kind="numeric",
-             point_uri="urn:swro/RO-in-pressure", unit="psi")
+             property_uri="urn:swro/RO-in-pressure", unit="psi")
 ```
 
 The two are convertible, so psi is recorded on the *reference node* as the
@@ -189,7 +189,7 @@ equipment topology, by quantity kind, and by everything else in the
 [querying tutorial](querying.md), exactly like every other point on the skid.
 
 If instead the data only shows up under `measurement()` on an empty query, the
-`point_uri` did not match anything and a placeholder point was minted. Listing
+`property_uri` did not match anything and a placeholder point was minted. Listing
 every point in the plant shows them:
 
 ```python
@@ -197,7 +197,7 @@ acq.query().measurement(alias="m").metadata()
 ```
 
 `metadata()` adds an `m.label` column whenever the matched points carry an
-`rdfs:label`, and a placeholder's label is its `ref_name`, here the column
+`rdfs:label`, and a placeholder's label is its `stream_name`, here the column
 name `Feed Flow`. A row like that next to a URI ending in `__point` is a
 binding that missed.
 
@@ -219,8 +219,8 @@ Going from one to the other is a small change, and it does not strand the data
 you already collected. Load the model, point `declare()` at the real URIs, and
 restart the driver.
 
-Rows already written come along. A stream's `ref_uri` is computed from
-`(source_id, ref_name)`, so it does not change when you add a `point_uri`; the
+Rows already written come along. A stream's `stream_uri` is computed from
+`(source_id, stream_name)`, so it does not change when you add a `property_uri`; the
 new point is linked to the same reference node, and reads follow that link.
 The history was never stored per point.
 

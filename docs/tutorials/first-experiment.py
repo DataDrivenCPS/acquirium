@@ -599,7 +599,7 @@ def _(mo):
 def _(current_experiments, power_variables):
     saved_power = power_variables["pump power"]
     power_recordings = current_experiments.observations(saved_power)
-    power_recordings.frame().select("experiment_id", "ref_uri", "range_start", "range_end")
+    power_recordings.frame().select("experiment_id", "stream_uri", "range_start", "range_end")
     return
 
 
@@ -690,8 +690,8 @@ def _(TANK_VOLUME_URI, ac, mo, np, simulated_volume):
     site_stream_name = "tank-level-sensor"
     ac.register_streams([{
         "source_id": site_source,
-        "ref_name": site_stream_name,
-        "point_uri": TANK_VOLUME_URI,
+        "stream_name": site_stream_name,
+        "property_uri": TANK_VOLUME_URI,
         "label": "tank volume",
         "unit": "http://qudt.org/vocab/unit/M3",
         "value_kind": "numeric",
@@ -700,7 +700,7 @@ def _(TANK_VOLUME_URI, ac, mo, np, simulated_volume):
         site_source,
         site_stream_name,
         list(zip(simulated_volume["time"].to_list(), _measured.tolist(), strict=True)),
-        point_uri=TANK_VOLUME_URI,
+        property_uri=TANK_VOLUME_URI,
         replace=True,
     )
     mo.md("**Example setup:** synthetic site measurements are ready.")
@@ -715,7 +715,7 @@ def _(mo):
     Query the tank's measurements. For your site, replace `TANK_URI` with
     your tank's URI in the plant model. Experiment results do not appear
     here: each run's stream has its own point, so plant queries return site
-    data only. `ref_uri` identifies each stream.
+    data only. `stream_uri` identifies each stream.
 
     If you know the source ID and stream name from the driver configuration,
     `ac.stream(source_id, stream_name)` gives a handle for that stream.
@@ -731,7 +731,7 @@ def _(TANK_URI, ac, site_source, site_stream_name):
     )
     # This example knows the source and name from its setup cell.
     site_stream = ac.stream(site_source, site_stream_name)
-    tank_measurements.data().metadata(include_ref_uris=True)
+    tank_measurements.data().metadata(include_stream_uris=True)
     return (site_stream,)
 
 

@@ -260,7 +260,7 @@ The typical lifecycle is:
 self.source_id = "weather-station-1"
 self.declare(
     "air_temp",
-    point_uri=point_uri,
+    property_uri=property_uri,
     value_kind="numeric",
 )
 self.insert_graph(metadata_turtle, replace=False)
@@ -285,7 +285,7 @@ queries to select them with the `app` attribute.
 
 When an output has no explicit label, the planner generates an `rdfs:label`
 from the measurement and producing app. It preserves labels on existing plant
-points supplied through `point_uri=`. See the
+points supplied through `property_uri=`. See the
 [app reference](../reference/apps.md#output-declarations) for the complete output
 identity and metadata rules.
 

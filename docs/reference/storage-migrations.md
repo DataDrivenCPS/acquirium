@@ -35,6 +35,16 @@ from `timeseries`. DuckDB cannot drop a constraint in place, so a table that
 still has it is rebuilt the same way. A table created without the constraint
 is left as is.
 
+The next timeseries schema version (3 on DuckDB, 2 on Timescale) renames the
+`ref` and `point` names to `stream` and `property`: the `ref_ids` table becomes
+`stream_ids`, and the `ref_id`, `ref_uri`, `ref_name` and `point_uri` columns
+become `stream_id`, `stream_uri`, `stream_name` and `property_uri` in
+`timeseries`, `streams`, `logs`, `stream_resets` and `materialization_lineage`.
+The columns are renamed in place and no rows are copied. DuckDB cannot alter a
+table that has secondary indexes, so they are dropped and recreated when the
+store opens. Index names are unchanged. Experiment schema version 4 renames
+`experiment_observations.ref_uri` to `stream_uri` the same way.
+
 Experiment schema version 2 moves variable, run, and annotation metadata to the
 graph. It first converts existing SQL snapshots and pinned resolutions into
 resolved outbox operations in the schema transaction, then removes the snapshot

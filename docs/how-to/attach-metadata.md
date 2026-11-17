@@ -408,7 +408,7 @@ value per key:
 ```python
 acq.register_streams([{
     "source_id": "scada",
-    "ref_name": "FT-101",
+    "stream_name": "FT-101",
     "unit": "gal/min",
     "metadata": {"tags": ["scada"], "loop": "FIC-101"},
 }])

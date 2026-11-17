@@ -10,9 +10,9 @@ For the config keys that select them, see the [server configuration reference](.
 Both backends store the same logical schema: a `timeseries` table (one row
 per stream and timestamp, with a `numeric_value` and a `text_value` column),
 the `streams` reference table, and the logbook.
-Both key the rows by an integer `ref_id` and map it back through a `ref_ids`
+Both key the rows by an integer `stream_id` and map it back through a `stream_ids`
 table.
-Reads expose `ref_uri`.
+Reads expose `stream_uri`.
 
 `duckdb` is the default: one file under the data directory, with no extra
 services to install or run.

@@ -487,7 +487,7 @@ flow_query = ro.measurement(quantity_kind=mass_flow_kind, alias="flow")
 
 # Include references to distinguish streams on the same property.
 flow_data = flow_query.data()
-flow_streams = flow_data.metadata(include_ref_uris=True)
+flow_streams = flow_data.metadata(include_stream_uris=True)
 flow_streams
 ```
 
@@ -539,7 +539,7 @@ experiment.finish()
 ```
 
 The copy is stored under the run's own source and does not change when the
-site stream does. `ac.stream(ref_uri)` also accepts a stream's reference URI.
+site stream does. `ac.stream(stream_uri)` also accepts a stream's reference URI.
 
 A recorded range can be another run's input. `observation.interval` is the
 stream and range an observation covers:
@@ -559,7 +559,7 @@ delete the two together.
 
 Use `annotate_stream()` to associate an existing stream interval with a run.
 Set both bounds for past data, or omit the end for an ongoing trial. Find the
-stream URI through discovery or `ac.stream(source, name).ref_uri`.
+stream URI through discovery or `ac.stream(source, name).stream_uri`.
 
 ```python
 study = ac.study.define("membrane trials")
@@ -572,7 +572,7 @@ saved_run_id = experiment.run_id
 # Associate the existing stream with this trial from its start time onward.
 trial_start = aq.timestamp("2026-08-01T00:00:00Z")
 annotation = experiment.annotate_stream(
-    stream_ref_uri,
+    stream_uri,
     start=trial_start,
     metadata={"membrane": "candidate 2"},
 )
@@ -588,7 +588,7 @@ Find annotations across Studies by stream and overlapping time window:
 search_start = aq.timestamp("2026-08-05T00:00:00Z")
 search_end = aq.timestamp("2026-08-06T00:00:00Z")
 matches = ac.study.stream_annotations(
-    ref_uri=stream_ref_uri,
+    stream_uri=stream_uri,
     start=search_start,
     end=search_end,
 )

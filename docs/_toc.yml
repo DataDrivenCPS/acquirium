@@ -33,6 +33,7 @@ chapters:
 - file: reference/_index.md
   sections:
   - file: reference/client-api.md
+  - file: reference/cli.md
   - file: reference/drivers.md
   - file: reference/apps.md
   - file: reference/experiments.md

@@ -204,7 +204,7 @@ Batch endpoints accept a JSON array and return results in request order:
 |---|---|
 | `POST /experiments/templates/{template_id}/variables/batch` | `label`, `role`, `kind`, optional `metadata` |
 | `POST /experiments/runs/{run_id}/record` | `variable_id`, `form`, and that form’s payload (below) |
-| `POST /experiments/runs/{run_id}/observations/batch` (compatibility) | `variable_id`, optional `value`, `occurred_at`, `ref_uri`, `start`, `end`, `key`, `artifact_digest`, `artifact` |
+| `POST /experiments/runs/{run_id}/observations/batch` (compatibility) | `variable_id`, optional `value`, `occurred_at`, `stream_uri`, `start`, `end`, `key`, `artifact_digest`, `artifact` |
 
 Declarations and observations each commit in a single transaction using the
 same validation as individual writes. Unknown runs or observation variables
@@ -214,7 +214,7 @@ batch. Stream intervals require both `start` and `end` with `start <= end`.
 `artifact` contains `filename`, optional `media_type`, and base64-encoded
 `data`; tables must contain Parquet bytes. This lets a model's final tables
 and scalar observations share one request. Alternatively reference an existing
-`artifact_digest`. Artifact variables cannot also carry `value` or `ref_uri`.
+`artifact_digest`. Artifact variables cannot also carry `value` or `stream_uri`.
 
 The recording endpoint accepts one form per entry:
 
@@ -224,7 +224,7 @@ The recording endpoint accepts one form per entry:
 | `artifact` | `artifact` with `filename`, optional `media_type`, base64 `data` |
 | `artifact_reference` | Existing `artifact_digest` |
 | `samples` | `samples`: timestamp/number pairs, optional typed `key` |
-| `reference` | `ref_uri`, optional `interval: [start, end]`, optional typed `key` |
+| `reference` | `stream_uri`, optional `interval: [start, end]`, optional typed `key` |
 
 The server derives sample source and stream identities from the run, variable
 ID, and typed key. A nonempty `sample()` or `record_values()` uses one recording
@@ -398,7 +398,7 @@ power_samples = power_recording.dataframe()
 
 An Observation exposes `experiment_id`, `variable`, `sequence`, `recorded_at`,
 `occurred_at`, `status`, `experiment_metadata`, `started_at`, and `finished_at`.
-Time-series records also carry `ref_uri`, `range_start`, and `range_end`.
+Time-series records also carry `stream_uri`, `range_start`, and `range_end`.
 Files and tables carry `artifact_digest`, `filename`, `media_type`, and
 `byte_length`. A table's file is `<label>.parquet` with media type
 `application/vnd.apache.parquet`.
@@ -420,8 +420,8 @@ while preserving existing handles.
 | Method / member | Returns |
 |---|---|
 | `ac.stream(source_id, name)` | A `Stream` for the stream a driver writes as `(source_id, name)` |
-| `ac.stream(ref_uri)` | A `Stream` for a reference URI |
-| `stream.ref_uri` | The stream's reference URI; `str(stream)` returns it too |
+| `ac.stream(stream_uri)` | A `Stream` for a reference URI |
+| `stream.stream_uri` | The stream's reference URI; `str(stream)` returns it too |
 | `stream.dataframe(start=None, end=None, **options)` | The stream's samples as `time` and `value` columns |
 | `stream.between(start, end)` | A `StreamInterval`; the end must not precede the start |
 | `interval.stream`, `interval.start`, `interval.end` | The interval's stream and inclusive bounds |
@@ -499,7 +499,7 @@ Relation keys such as `entity` and `upstream` are rejected. These lifecycle keys
 are reserved at the top level:
 
 `study_id`, `run_id`, `variable_id`, `annotation_id`, `role`, `kind`, `status`,
-`created_at`, `started_at`, `finished_at`, `range_start`, `range_end`, `ref_uri`,
+`created_at`, `started_at`, `finished_at`, `range_start`, `range_end`, `stream_uri`,
 and `label`.
 
 Put similarly named descriptive fields inside a context object, such as
@@ -512,10 +512,10 @@ Put similarly named descriptive fields inside a context object, such as
 
 | Method | Behavior |
 |---|---|
-| `run.annotate_stream(ref_uri, start=..., end=None, metadata=None)` | Associate an existing stream interval with a run; return `StreamAnnotation` |
-| `run.stream_annotations(ref_uri=None, start=None, end=None)` | Find that run's annotations |
-| `study.stream_annotations(run_id=None, ref_uri=None, start=None, end=None)` | Find annotations within the Study |
-| `ac.study.stream_annotations(ref_uri=None, start=None, end=None)` | Find annotations across Studies |
+| `run.annotate_stream(stream_uri, start=..., end=None, metadata=None)` | Associate an existing stream interval with a run; return `StreamAnnotation` |
+| `run.stream_annotations(stream_uri=None, start=None, end=None)` | Find that run's annotations |
+| `study.stream_annotations(run_id=None, stream_uri=None, start=None, end=None)` | Find annotations within the Study |
+| `ac.study.stream_annotations(stream_uri=None, start=None, end=None)` | Find annotations across Studies |
 | `annotation.dataframe(**kwargs)` | Read current samples within the interval, with inclusive bounds |
 | `annotation.close(end)` | Set the end of an open interval once |
 
@@ -524,7 +524,7 @@ or after the start; omitted ends stay open. Times accept datetimes or ISO 8601
 strings, with naive values treated as UTC. Metadata is a JSON object.
 Intervals may overlap. Samples remain live; annotating does not copy them.
 
-Annotations expose `annotation_id`, `run_id`, `template_id`, `ref_uri`,
+Annotations expose `annotation_id`, `run_id`, `template_id`, `stream_uri`,
 `range_start`, `range_end`, `metadata`, and `created_at`. Annotation searches
 match overlapping intervals across all run statuses. Results are ordered by
 start time, run ID, and sequence; omitted search bounds are unbounded.

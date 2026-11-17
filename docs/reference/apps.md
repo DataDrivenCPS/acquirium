@@ -90,7 +90,7 @@ owning binding, so multiple per-match bindings cannot publish to it.
 | Metadata | Meaning |
 |---|---|
 | `value_kind` | Required: `"numeric"` or `"text"` |
-| `point_uri` | Existing point to attach to; otherwise a point is generated |
+| `property_uri` | Existing point to attach to; otherwise a point is generated |
 | `label` | Human-readable label |
 | `unit` | Unit URI |
 | `quantity_kind` | Quantity-kind URI |
@@ -125,10 +125,10 @@ and the corresponding progress updates in one transaction.
 `inputs[alias]` is a StreamSet with:
 
 - `stream`: the sole descriptor, raising if there is not exactly one.
-- `streams`: all descriptors (reference URI, point URI, label, unit).
+- `streams`: all descriptors (reference URI, property URI, label, unit).
 - `window`: the complete input read interval.
 - `every`: the app's declared bucket duration, if any.
-- `collect()`: loaded Arrow table with `ref_uri`, `time`, `value`.
+- `collect()`: loaded Arrow table with `stream_uri`, `time`, `value`.
 - `df("polars")` or `df("pandas")`: loaded data as a dataframe.
 - `batches()`: chunks of the loaded table, not streaming database reads.
 - `changes`: live rows with revisions in the invocation's revision range.
@@ -154,7 +154,7 @@ The `context` argument exposes:
 | `graph_revision` | Graph version used in planning |
 | `from_revision`, `to_revision` | Input revision range |
 
-Match columns use query aliases. A stream alias holds its point URI, with
+Match columns use query aliases. A stream alias holds its property URI, with
 `<alias>_ref`, `<alias>.label`, and `<alias>.unit` alongside it. Non-stream
 entities appear under their own aliases. Internal work cursor fields are
 reserved for runtime bookkeeping.
@@ -236,7 +236,7 @@ incomplete rows according to the calculation's requirements.
   restart, and a conflicting reprocessing request is rejected.
 
 Check outputs include `assigned`, `rows`, `truncated`, `value_kind`,
-`stream`, `ref_name`, and `values`. Use `assigned` to distinguish an empty
+`stream`, `stream_name`, and `values`. Use `assigned` to distinguish an empty
 replacement from an output the transform left unchanged. Checks load retained
 input history; the result limit only bounds the output included in the response.
 

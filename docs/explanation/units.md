@@ -41,7 +41,7 @@ unit and vice versa (see [text resolution](text-resolution.md)).
 
 TODO: This has a risk of registering arbitrary units due to mismatch in text resolver. We need a mechanism to verify the resolved units from the users.
 
-When the `point_uri` already exists in the graph, the unit you pass is checked
+When the `property_uri` already exists in the graph, the unit you pass is checked
 against the point's:
 
 | the point has | you pass | result |
@@ -82,8 +82,8 @@ is stored in psi and read in pascals:
 
 ```python
 acq.register_streams([{
-    "source_id": "gauge", "ref_name": "p1", "value_kind": "numeric",
-    "point_uri": "urn:demo/P1-pressure", "unit": "http://qudt.org/vocab/unit/PSI",
+    "source_id": "gauge", "stream_name": "p1", "value_kind": "numeric",
+    "property_uri": "urn:demo/P1-pressure", "unit": "http://qudt.org/vocab/unit/PSI",
 }])
 acq.insert_timeseries("gauge", "p1", [(t0, 14.5), (t1, 15.0), (t2, 100.0)])
 

@@ -37,7 +37,7 @@ Date,Time,Feed Flow,Permeate Flow,Feed Pressure,Permeate TDS
 - the timestamp is split over two columns, `Date` and `Time`, in US format;
 - missing values are written as `NaN`.
 
-The column names become the `ref_name` of each stream, unchanged, so
+The column names become the `stream_name` of each stream, unchanged, so
 `Feed Flow` is a stream called `Feed Flow`.
 
 ## Step 1: run it without code
@@ -109,7 +109,7 @@ the places to change behaviour.
 
 ## Step 3: say what each column measures
 
-`declare_stream(ref_name)` is called once per distinct column in every batch.
+`declare_stream(stream_name)` is called once per distinct column in every batch.
 The default declares the bare identity; override it to say what the column
 means:
 
@@ -125,14 +125,14 @@ COLUMNS = {
 
 
 class ROSkidDriver(CSVIngestDriver):
-    def declare_stream(self, ref_name: str) -> None:
-        described = COLUMNS.get(ref_name)
+    def declare_stream(self, stream_name: str) -> None:
+        described = COLUMNS.get(stream_name)
         if described is None:
-            self.declare(ref_name)               # a column we do not know: keep it as is
+            self.declare(stream_name)               # a column we do not know: keep it as is
             return
         label, unit, quantity_kind = described
         self.declare(
-            ref_name,
+            stream_name,
             value_kind="numeric",
             label=label,
             unit=unit,
@@ -154,7 +154,7 @@ acq.query().measurement(unit="gal/min").metadata()
 `label` replaces the default `Feed Flow` and is what result columns
 display in place of the URI to improve readability.
 
-Note that the driver does not pick point URIs here.
+Note that the driver does not pick property URIs here.
 URIs may be minted later, attached to a plant model.
 
 ## Step 4: fix the frame before it is parsed
@@ -191,13 +191,13 @@ class ROSkidDriver(CSVIngestDriver):
     def prepare_frame(self, df, path):
         return df.drop("Comment") if "Comment" in df.columns else df
 
-    def declare_stream(self, ref_name: str) -> None:
-        described = COLUMNS.get(ref_name)
+    def declare_stream(self, stream_name: str) -> None:
+        described = COLUMNS.get(stream_name)
         if described is None:
-            self.declare(ref_name)
+            self.declare(stream_name)
             return
         label, unit, quantity_kind = described
-        self.declare(ref_name, value_kind="numeric", label=label,
+        self.declare(stream_name, value_kind="numeric", label=label,
                      unit=unit, quantity_kind=quantity_kind)
 ```
 

@@ -101,7 +101,7 @@ graph with blank nodes, and the hook then fires on every tick.
 
 | method | meaning |
 |---|---|
-| `reference_uri(ref_name: str) -> URIRef` | the canonical URI of one of this driver's streams |
+| `reference_uri(stream_name: str) -> URIRef` | the canonical URI of one of this driver's streams |
 | `insert_graph(rdf_graph: str, *, format="turtle", replace=False) -> None` | write RDF into this driver's own graph, owned by `source_id` |
 | `insert_graph_file(path, *, format=None, replace=False) -> None` | the same from a file; format from the extension when omitted |
 | `sparql_update(update: str) -> dict` | a SPARQL UPDATE against this driver's own graph |
@@ -135,16 +135,16 @@ The file is named after `driver_id`, or derived from `spec` when unset.
 ### Declaring streams
 
 ```python
-declare(ref_name: str, *, source_id: str | None = None, value_kind: str | None = None,
-        point_uri: str | None = None, label: str | None = None,
+declare(stream_name: str, *, source_id: str | None = None, value_kind: str | None = None,
+        property_uri: str | None = None, label: str | None = None,
         unit: str | URIRef | None = None, quantity_kind: str | URIRef | None = None,
         medium: str | URIRef | None = None, substance: str | URIRef | None = None,
         data_source: str | URIRef | None = None, properties: dict | None = None) -> None
 ```
 
-A stream is identified by `(source_id, ref_name)`; `source_id` defaults to
+A stream is identified by `(source_id, stream_name)`; `source_id` defaults to
 the driver's own.
-`ref_name` is used exactly as given, spaces included.
+`stream_name` is used exactly as given, spaces included.
 `value_kind` is `"numeric"` or `"text"`; when omitted it is inferred from the
 first observed values before they are inserted.
 `unit`, `quantity_kind`, `medium` and `substance` take a URI or free text,
@@ -154,22 +154,22 @@ resolved jointly.
 Declaring is idempotent: an identical repeat is a no-op, a changed declaration
 for an existing pair raises.
 Declarations are written to the graph just before the next insert.
-When `point_uri` exists in the graph, the declared metadata is checked against
+When `property_uri` exists in the graph, the declared metadata is checked against
 it; see [units](../explanation/units.md#how-a-unit-gets-recorded) and the
 [lifecycle guide](../explanation/stream-lifecycle.md).
-Without `point_uri`, a placeholder point `<ref_uri>__point` labelled
-with its `ref_name` is minted.
+Without `property_uri`, a placeholder point `<stream_uri>__point` labelled
+with its `stream_name` is minted.
 
 | method | meaning |
 |---|---|
-| `is_declared(ref_name, *, source_id=None) -> bool` | whether this driver has declared the pair |
+| `is_declared(stream_name, *, source_id=None) -> bool` | whether this driver has declared the pair |
 | `register_declared(observations: pl.DataFrame \| None = None) -> None` | write pending declarations now, inferring value kinds from `observations`; the platform calls this before every insert |
 
 ### Reporting observations
 
 | method | meaning |
 |---|---|
-| `add(ref_name: str, value: Any, ts: datetime \| None = None, *, source_id: str \| None = None) -> None` | buffer one reading; `ts` defaults to now (UTC), naive datetimes are read as UTC. Raises `UndeclaredStreamError` for a pair this driver has not declared. Thread-safe, no network I/O |
+| `add(stream_name: str, value: Any, ts: datetime \| None = None, *, source_id: str \| None = None) -> None` | buffer one reading; `ts` defaults to now (UTC), naive datetimes are read as UTC. Raises `UndeclaredStreamError` for a pair this driver has not declared. Thread-safe, no network I/O |
 | `flush() -> dict` | insert everything buffered and clear the buffer; the platform calls it at the end of every tick and after `stop()` |
 | `insert_observations(observations: pl.DataFrame \| None) -> dict` | register what is pending and insert a frame directly |
 | `normalize_observations(observations: pl.DataFrame \| None) -> pl.DataFrame` | the normalization applied before upload |
@@ -182,10 +182,10 @@ is memory only and is lost if the process crashes.
 A failed final flush makes the shutdown unsuccessful and logs the unsent
 count.
 
-An observation frame has the columns `ts`, `ref_name`, `value`, plus
+An observation frame has the columns `ts`, `stream_name`, `value`, plus
 `source_id` for a multi-source driver.
-Before upload `ts` is cast to `Datetime(us, UTC)`, `ref_name` and `value` to
-strings, and rows with a null `ts` or `ref_name` are dropped.
+Before upload `ts` is cast to `Datetime(us, UTC)`, `stream_name` and `value` to
+strings, and rows with a null `ts` or `stream_name` are dropped.
 `value` is transferred as a string; the server picks the storage column from
 the stream's `value_kind`.
 A frame naming an undeclared pair raises `UndeclaredStreamError`.
@@ -226,7 +226,7 @@ skipped.
 | method | meaning |
 |---|---|
 | `prepare_frame(df: pl.DataFrame, path: Path) -> pl.DataFrame` | transform the raw frame after `skip_cols`, before timestamps are parsed |
-| `declare_stream(ref_name: str) -> None` | called once per distinct `ref_name` in each batch; default `self.declare(ref_name)` |
+| `declare_stream(stream_name: str) -> None` | called once per distinct `stream_name` in each batch; default `self.declare(stream_name)` |
 
 <!-- TODO: `XLSXIngestDriver` and `ParquetIngestDriver` have neither hook —
      they call `self.declare(name)` inline in `read()`, so attaching point
@@ -300,7 +300,7 @@ To run one class twice, set a different `name` and `driver_id` on each entry.
 Timestamp columns are discovered from common names (`timestamp`, `ts`,
 `Date` plus `Time`, `Sample Date` plus `Sample Time`); explicit keys win.
 Rows with an unparseable timestamp or a null value are dropped.
-Column names become `ref_name`s unchanged.
+Column names become `stream_name`s unchanged.
 
 ### MQTT
 
@@ -323,7 +323,7 @@ MQTT references carry broker, topic, time key and value key.
 | key | default | meaning |
 |---|---|---|
 | `source_id` | `"watertap"` | datasource for the results |
-| `watertap_mapping_path` | required | JSON mapping of point URI to Pyomo variable path |
+| `watertap_mapping_path` | required | JSON mapping of property URI to Pyomo variable path |
 | `watertap_build_spec`, `watertap_solve_spec` | required | `file.py:fn` or `module:fn` |
 | `watertap_change_inputs_spec` | none | function that varies the inputs per tick |
 | `watertap_inputs`, `watertap_build_kwargs` | `{}` | passed to the input and build functions |
