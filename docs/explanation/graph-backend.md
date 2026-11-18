@@ -285,7 +285,7 @@ queries to select them with the `app` attribute.
 When an output has no explicit label, the planner generates an `rdfs:label`
 from the measurement and producing app. It preserves labels on existing plant
 points supplied through `property_uri=`. See the
-[app reference](../reference/apps.md#output-declarations) for the complete output
+[app reference](../reference/apps/outputs.md) for the complete output
 identity and metadata rules.
 
 ### Updates, queries, and validation

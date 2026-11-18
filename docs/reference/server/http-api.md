@@ -55,7 +55,7 @@ Returns the current state of the semantic embedding indexes.
 `state` is one of `"idle"`, `"building"`, `"ready"`, or `"error"`.
 
 `semantic` is `false` when the server runs with
-[`exact_only`](server-config.md#exact-only-resolution): both indexes still
+[`exact_only`](configuration.md#exact-only-resolution): both indexes still
 build and report `"ready"`, but they answer exact matches only.
 
 ---
@@ -260,7 +260,7 @@ Read timeseries data for a single stream. Returns an Apache Arrow IPC stream (`a
 
 The Arrow schema is `(ts: timestamp[us, UTC], value: float64 or utf8, uri: utf8)`.
 
-See the [values guide](../explanation/values.md#numbers-and-text) for a full description of the
+See the [values guide](../../explanation/values.md#numbers-and-text) for a full description of the
 `value_mode` options.
 
 ### `POST /timeseries_info`
@@ -401,7 +401,7 @@ Get the conversion factors between two units that are already identified by URI.
 }
 ```
 
-`compatible` is the verdict of the dimension-vector check described in the [units guide](../explanation/units.md#what-convertible-means).
+`compatible` is the verdict of the dimension-vector check described in the [units guide](../../explanation/units.md#what-convertible-means).
 
 ---
 
@@ -449,7 +449,7 @@ Delete all log entries for a property URI.
 
 ## Drivers
 
-The `acquirium driver` CLI group is a thin wrapper over these three. See the [driver reference](drivers.md) for what a driver is and how it is configured.
+The `acquirium driver` CLI group is a thin wrapper over these three. See the [driver reference](../drivers/_index.md) for what a driver is and how it is configured.
 
 ### `POST /drivers/start`
 
@@ -516,8 +516,8 @@ List the drivers running on this server. Takes no parameters.
 
 The experiment endpoints create Studies, declare variables, start runs, and
 record values or stream references. The HTTP API calls a Study a `template`.
-See the [experiment endpoint table](experiments.md#http-api) for the full list
-and the [recording guide](../how-to/record-experiments.md) for Python examples.
+See the [experiment endpoint table](../experiments/_index.md) for the full list
+and the [recording guide](../../how-to/record-experiments.md) for Python examples.
 
 `GET /experiments/templates/{template_id}/runs` and
 `GET /experiments/templates/{template_id}/observations` accept `status`,
@@ -553,7 +553,7 @@ entries for values, artifact bytes or digests, sample rows, and existing stream
 intervals. It returns ordered observation receipts and owned sample stream URIs.
 Registration, samples, revisions, artifact ownership, observations, and resolved
 graph intent commit together. Invalid entries reject the whole SQL batch.
-See [batch recording forms](experiments.md#batch-transport).
+See [batch recording forms](../experiments/_index.md).
 
 `POST /experiments/metadata/sync` takes `{}` and returns
 `{"ok": true, "unpublished": []}` after delivering the durable outbox and
@@ -567,7 +567,7 @@ automatically. See [storage migration and recovery](storage-migrations.md).
 
 An app definition is the JSON built by `Deployment.from_class`: its name,
 importable entrypoint, executable digest, output declarations, parameters, and
-window and scheduling attributes. See the [app reference](apps.md) for the
+window and scheduling attributes. See the [app reference](../apps/_index.md) for the
 complete schema.
 
 ### `GET /apps`

@@ -41,7 +41,7 @@ Each stream needs a `source_id`, and its triples go into that source's own
 graph.
 A stream's `metadata` key adds a third piece, in the same graph: one
 `attr:` predicate per leaf of each key, as
-[`insert_metadata()`](../reference/client-api.md#metadata-values) writes
+[`insert_metadata()`](../reference/client/metadata.md) writes
 them.
 
 For the stream itself, a reference node under the computed `stream_uri`:
@@ -89,7 +89,7 @@ A driver calls `self.declare(...)` per stream, and the platform calls
 `register_streams()` for it just before the next
 insert.
 `register_streams()` is the direct form, for backfills, imports and notebooks.
-See the [driver reference](../reference/drivers.md#declaring-streams).
+See the [driver reference](../reference/drivers/helpers.md).
 
 **TODO:** We need to provide an interface to add, remove, replace streams. Also, auto register streams from a given graph.
 
@@ -132,7 +132,7 @@ Do not mint reference URIs by hand; use `acq.reference_uri()` or let
 Note that driver authors do not call this path directly.
 A driver declares its streams with `self.declare(...)` and reports values with
 `self.add(...)`; the platform registers and inserts for it.
-See the [driver reference](../reference/drivers.md#declaring-streams).
+See the [driver reference](../reference/drivers/helpers.md).
 
 A row goes through five steps between a driver and the store.
 
@@ -232,7 +232,7 @@ therefore owns ten derived streams.
 With `output.named`, the author supplies the reference name. The resulting
 stream keeps that identity when the set of inputs changes, which is useful
 for aggregates such as a plant-wide total. See the
-[app reference](../reference/apps.md#output-declarations) for ownership and
+[app reference](../reference/apps/outputs.md) for ownership and
 metadata rules.
 
 Queries can select derived streams by the metadata in their output declarations,
@@ -241,4 +241,4 @@ makes an output discoverable alongside sensors measuring that quantity. The
 runtime also records the producing app on each derived point, so
 `measurement(quantity_kind="temperature", app="normalize-temperatures")`
 selects temperature outputs from that app. See
-[query matches](../reference/apps.md#query-matches).
+[query matches](../reference/apps/app-class.md).

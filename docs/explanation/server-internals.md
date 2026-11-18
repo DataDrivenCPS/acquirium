@@ -3,7 +3,7 @@ title: Server internals
 ---
 
 This is an explanation of what the server stores and what it builds at startup: the two timeseries storage backends, the graph store and the embedding indexes.
-For the config keys that select them, see the [server configuration reference](../reference/server-config.md).
+For the config keys that select them, see the [server configuration reference](../reference/server/configuration.md).
 
 ## Storage backends
 
@@ -72,6 +72,6 @@ automatically.
 Each index answers a query in two stages: an exact lookup over the indexed
 surfaces, then embedding similarity for whatever slots remain.
 Only the second stage needs the model, which is what
-[`exact_only`](../reference/server-config.md#exact-only-resolution) turns
+[`exact_only`](../reference/server/configuration.md#exact-only-resolution) turns
 off — the same indexes over the same concepts, built in seconds, minus the
 fuzzy matching.

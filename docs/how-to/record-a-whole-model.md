@@ -149,5 +149,5 @@ batch leaves no new samples or observations. Graph delivery retries from the
 outbox after commit; HTTP retries can still append another observation.
 
 Hand declarations use the same user metadata namespace and semantic properties.
-See the [declaration conversion table](../reference/experiments.md#declaring-variables)
-and [storage boundary and recovery](../reference/storage-migrations.md).
+See the [declaration conversion table](../reference/experiments/declaring-variables.md)
+and [storage boundary and recovery](../reference/server/storage-migrations.md).

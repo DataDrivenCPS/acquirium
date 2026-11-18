@@ -68,7 +68,7 @@ acq.insert_timeseries_batch("lab-import", {
 
 Large inputs are split into several requests automatically, so you can pass the whole dataset in one call.
 
-For large inputs from dataframes or database connections, you can insert Arrow tables directly with `insert_timeseries_arrow()` for higher performance (see the [client reference](../reference/client-api.md)).
+For large inputs from dataframes or database connections, you can insert Arrow tables directly with `insert_timeseries_arrow()` for higher performance (see the [client reference](../reference/client/timeseries.md)).
 
 ## Inserting the same data twice
 

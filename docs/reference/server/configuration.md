@@ -5,8 +5,8 @@ title: Server configuration
 This is the reference for `acquirium.toml`: every key of the `[server]`
 section, the environment variables that override them, the `[ontologies]`
 section, and the endpoint map.
-The driver sections are in the [driver reference](drivers.md#configuration).
-For starting the server, see [run the server](../how-to/run-the-server.md).
+The driver sections are in the [driver reference](../drivers/configuration.md).
+For starting the server, see [run the server](cli.md#acquirium-server).
 
 Relative paths in a config file always resolve against that file's own
 directory, never the working directory.
@@ -95,7 +95,7 @@ Check the environment when a config edit appears to have no effect.
 ## The [driver] and [[drivers]] sections
 
 These declare the drivers the server starts; they are documented in the
-[driver reference](drivers.md#configuration).
+[driver reference](../drivers/configuration.md).
 One key concerns the server itself: `[driver] server_url` and `server_port`
 are the address driver actors use to reach the server. The server also uses
 that address for the client which deploys configured `[[apps]]` after startup.

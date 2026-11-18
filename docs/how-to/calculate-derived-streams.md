@@ -65,9 +65,9 @@ The transform receives three arguments: `inputs` holds readings selected by the
 query, `output` collects the tables to publish, and `context` describes the
 match and calculation windows. Each table assigned to an output port contains
 `time` and `value` columns. See the reference for the complete
-[StreamSet accessors](../reference/apps.md#streamset),
-[context fields](../reference/apps.md#inputbatch), and
-[output table requirements](../reference/apps.md#output-tables).
+[StreamSet accessors](../reference/apps/inputs.md),
+[context fields](../reference/apps/inputs.md), and
+[output table requirements](../reference/apps/outputs.md).
 
 Assigning a table to an output port replaces the stored results within
 `context.output_window`. Assign an empty table when previous results in that

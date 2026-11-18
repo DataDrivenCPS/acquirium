@@ -101,7 +101,7 @@ accepted as another name for `property_uri`.
 | stream annotation | an association between a run and an existing stream's time interval | `experiment.annotate_stream(stream_uri, start=t0)` |
 
 Experiment metadata uses the shared attribute registry and `.where()` syntax.
-See the [experiment reference](experiments.md) for the interface and read formats.
+See the [experiment reference](experiments/_index.md) for the interface and read formats.
 
 ## The platform
 

@@ -199,4 +199,4 @@ Recording every WaterTAP variable in large sweeps still needs a performance
 evaluation.
 
 See [Record experiments](../how-to/record-experiments.md) for examples and the
-[Experiment reference](../reference/experiments.md) for the API.
+[Experiment reference](../reference/experiments/_index.md) for the API.

@@ -72,5 +72,5 @@ Both controls measure elapsed wall-clock time, and their timing state resets
 on server restart. They do not delay failure retries; a failed transform can
 retry at the materialization polling cadence.
 
-See the [app reference](../reference/apps.md) for the complete contract,
+See the [app reference](../reference/apps/_index.md) for the complete contract,
 and [operations](../explanation/materialization-internals.md) for storage and server settings.

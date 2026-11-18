@@ -4,7 +4,7 @@ Record a script's inputs, outputs, and events as an Experiment. For a runnable
 example, see [Your first experiment](../tutorials/first-experiment.py).
 
 Declare variables, record a run, then select saved runs and read their results.
-The [API reference](../reference/experiments.md) groups the available methods by task.
+The [API reference](../reference/experiments/_index.md) groups the available methods by task.
 For model components bound to reader functions, see
 [Record a whole model](record-a-whole-model.md), including the Pyomo adapter.
 
@@ -94,7 +94,7 @@ NumPy values, tuples, and dates are converted for you: `cost.record(np.float64(1
 records `12.5`, and an array inside a JSON value becomes a list. A scalar
 records only finite numbers and booleans, and text only strings; other values
 raise before anything is sent. See the
-[reference](../reference/experiments.md#recording) for the conversion rules,
+[reference](../reference/experiments/recording.md) for the conversion rules,
 and [Record your own types](#record-your-own-types) for other classes.
 
 A table handle saves a table as a Parquet file, and reads it back as Polars:
@@ -126,7 +126,7 @@ Files are stored by SHA-256 digest. Later edits to the local file leave the
 recorded copy unchanged.
 
 Use `record()` throughout your script. The
-[reference](../reference/experiments.md#recording) lists the type-specific alternatives.
+[reference](../reference/experiments/recording.md) lists the type-specific alternatives.
 
 ## Record your own types
 
@@ -195,7 +195,7 @@ name, in this or a later session. `aq.PickleCodec`, `aq.CloudpickleCodec`,
 `aq.JsonCodec`, and `aq.BytesCodec` are built in. Prefer a format your library
 defines over a pickle when you can: a pickle runs code when it loads, and
 usually loads only with the library versions that wrote it. See the
-[reference](../reference/experiments.md#object-variables-and-codecs).
+[reference](../reference/experiments/codecs-and-values.md).
 
 ## Record progress and event times
 
@@ -377,8 +377,8 @@ unit_objects = variable_query.include("unit", "unit.raw").metadata_objects()
 `.frame()` includes saved metadata objects. The graph metadata table displays
 semantic units as URIs and nested values as typed structs or lists. An object's
 `.metadata` keeps its saved fields and supplied unit string. See the
-[reference](../reference/experiments.md#saved-objects-and-metadata-tables) for the
-read formats and [metadata rules](../reference/experiments.md#metadata-rules).
+[reference](../reference/experiments/reading.md) for the
+read formats and [metadata rules](../reference/experiments/studies-and-runs.md).
 
 ## Connect a time-series result to the facility
 
@@ -659,5 +659,5 @@ Deleting a run is also refused when another run recorded one of its streams as
 an input. Delete those runs together. `clear()` removes experiment records
 only; the plant model, metadata, and other streams stay.
 
-See the [reference](../reference/experiments.md) for the API and
+See the [reference](../reference/experiments/_index.md) for the API and
 [explanation](../explanation/experiments.md) for storage and run behavior.

@@ -24,7 +24,7 @@ aq.shutdown()       # stops the server
 `aq.init()` starts a server on your machine and keeps the data in a folder named `.acquirium`, in your working directory.
 The data is persistent among runs. 
 
-The server can also be started on its own with the `acquirium` command (see the [CLI reference](../reference/cli.md)).
+The server can also be started on its own with the `acquirium` command (see the [CLI reference](../reference/server/cli.md)).
 This tutorial only uses `aq.init()`.
 
 #### Text matcher
