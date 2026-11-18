@@ -62,7 +62,7 @@ acq.insert_metadata(ph, {"sampled_by": "day shift"})
 {'ok': True, 'message': 'update applied', 'changed': True, 'nodes': 1}
 ```
 
-The values can be text, numbers, booleans, dates, lists and nested dictionaries (see [Attach metadata to a node](../how-to/attach-metadata.md)).
+The values can be text, numbers, booleans, dates, lists and nested dictionaries (see [`insert_metadata`](../reference/client/metadata.md)).
 Writing a key of your own again replaces its value.
 
 The same can be done at registration, with the `metadata` key:
@@ -196,3 +196,12 @@ shape: (3, 2)
 ## Moving on
 
 The next page introduces how to insert a graph, and how to connect streams to a plant model, so queries can also select streams by equipment.
+
+```{button-ref} inserting-plant-model
+:ref-type: doc
+:color: primary
+:outline:
+:align: right
+
+Next: Inserting a Plant Model →
+```
