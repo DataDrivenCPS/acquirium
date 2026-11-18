@@ -112,6 +112,7 @@ def _build_stream_triples(
                 "(source_id, stream_name) pair to mint one"
             )
         subj = URIRef(f"{stream_uri}__point")
+        g.add((subj, IS_DISCONNECTED, Literal(True)))
         if label is None:
             label = stream_name
 

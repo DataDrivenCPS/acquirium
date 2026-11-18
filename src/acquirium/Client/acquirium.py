@@ -405,9 +405,12 @@ class Acquirium:
 
         Each stream item is a dictionary with these commonly used keys:
 
-        - ``property_uri``: optional semantic URI. When provided, a point node is
-          created and linked to the external reference. When omitted, only the
-          external reference node is written.
+        - ``property_uri``: optional semantic URI. When provided, the property is
+          linked to the stream. When omitted, Acquirium generates a property
+          for the stream and marks it ``is_disconnected``. Registering the
+          stream again with a ``property_uri`` connects it: the generated
+          property is replaced, and its metadata moves to ``property_uri``
+          (see :meth:`AcquiriumClient.register_streams` for the rules).
         - ``source_id`` and ``stream_name``: source-local stream identity. When
           both are present, Acquirium mints the canonical reference URI and
           writes ``acq:sourceId``, ``acq:refName``, and ``ref:storedAt`` on it.

@@ -832,13 +832,37 @@ class AcquiriumClient:
             return {}
         return dict(zip(result["columns"], rows[0]))
 
-    def _labels(self, node_uri: str) -> list[str]:
-        """The ``rdfs:label`` values a node has in the graph, sorted."""
-        result = self.sparql_query(
-            f"SELECT ?label WHERE {{ <{node_uri}> <{RDFS.label}> ?label . }}",
-            include_dependencies=False,
-        )
-        return sorted(str(row[0]) for row in result.get("rows") or [])
+    def _stream_properties(self, stream_uris: Iterable[str]) -> dict[str, list[str]]:
+        """``{stream_uri: [property_uri, ...]}`` for the streams the graph
+        links to a property; a stream without one is left out."""
+        uris = list(dict.fromkeys(str(u) for u in stream_uris))
+        found: dict[str, list[str]] = {}
+        for i in range(0, len(uris), 500):
+            chunk = " ".join(f"<{u}>" for u in uris[i:i + 500])
+            result = self.sparql_query(
+                f"SELECT DISTINCT ?s ?p WHERE {{ VALUES ?s {{ {chunk} }} "
+                f"?p <{HAS_EXTERNAL_REFERENCE}> ?s . }}",
+                include_dependencies=False,
+            )
+            for stream_uri, property_uri in result.get("rows") or []:
+                found.setdefault(str(stream_uri), []).append(str(property_uri))
+        return {uri: sorted(properties) for uri, properties in found.items()}
+
+    def _node_labels(self, node_uris: Iterable[str]) -> dict[str, list[str]]:
+        """``{node_uri: [label, ...]}``, sorted; a node without a label is
+        left out."""
+        uris = list(dict.fromkeys(str(u) for u in node_uris))
+        found: dict[str, list[str]] = {}
+        for i in range(0, len(uris), 500):
+            chunk = " ".join(f"<{u}>" for u in uris[i:i + 500])
+            result = self.sparql_query(
+                f"SELECT DISTINCT ?n ?label WHERE {{ VALUES ?n {{ {chunk} }} "
+                f"?n <{RDFS.label}> ?label . }}",
+                include_dependencies=False,
+            )
+            for node, label in result.get("rows") or []:
+                found.setdefault(str(node), []).append(str(label))
+        return {uri: sorted(labels) for uri, labels in found.items()}
 
     def register_streams(
         self,
@@ -848,11 +872,13 @@ class AcquiriumClient:
 
         Each stream item is a dictionary with these commonly used keys:
 
-        - ``property_uri``: optional semantic URI. When provided, the point is
+        - ``property_uri``: optional semantic URI, or a CURIE with a prefix
+          the server binds (``"wbs:P1-out-pressure"``). When provided, the point is
           linked to the external reference and its provided metadata is
           checked against what the graph already has (see below). When
-          omitted, a dummy point (``<stream_uri>__point``) is minted and
-          linked to the external reference.
+          omitted, a dummy point (``<stream_uri>__point``) is minted, linked
+          to the external reference and marked ``acq:isDisconnected``
+          (``where(is_disconnected=True)`` lists such streams).
         - ``source_id`` and ``stream_name``: source-local stream identity. When
           both are present, Acquirium mints the canonical reference URI and
           writes ``acq:sourceId``, ``acq:refName``, and ``ref:storedAt`` on it.
@@ -877,47 +903,122 @@ class AcquiriumClient:
         access defaults to the point's unit and converts automatically.
         A non-convertible unit raises ``ValueError``.
 
+        A stream registered without a ``property_uri`` can be connected
+        later: register it again with one. The dummy point is then replaced
+        by ``property_uri``, and what was attached to it moves along: its
+        unit, quantity kind and medium go through the checks above, so a
+        mismatch raises ``ValueError`` and nothing is written. Its substance,
+        data source and the keys of its own are written on ``property_uri``
+        where it has none; where it has a different value, it keeps its own
+        and a warning says so (use ``insert_metadata`` to change it). A value
+        given in the call wins over both. The dummy point's label moves only
+        when ``property_uri`` has none. Once connected, registering the
+        stream again without a ``property_uri`` describes that property.
+
         Drivers should still insert rows with ``insert_timeseries_arrow`` using
         the same ``source_id`` and source-local ``stream_name``. Acquirium resolves
         those inserts to the same canonical reference URI internally.
         """
+        # ``point_uri`` and the deprecated ``ref_name`` are still accepted
+        items = [_split_stream_metadata(new_names(stream)) for stream in streams]
+        for stream, _ in items:
+            source_id = stream.get("source_id")
+            if not isinstance(source_id, str) or not source_id:
+                raise ValueError("each stream registration requires a non-empty source_id")
+            # a property_uri may be a CURIE, as metadata() prints them
+            given = stream.get("property_uri")
+            if given is not None and not str(given).startswith(("urn:", "http://", "https://")):
+                expanded = self._expand_curie(str(given))
+                if expanded is not None:
+                    stream["property_uri"] = expanded
+
+        def stream_uri_of(stream: dict) -> Optional[str]:
+            if stream.get("stream_name") is None:
+                return None
+            return str(compute_stream_uri(stream["source_id"], stream["stream_name"]))
+
+        # What the graph already holds for these streams: the properties each
+        # one is linked to, and the labels of every property involved.
+        linked = self._stream_properties(
+            uri for uri in (stream_uri_of(stream) for stream, _ in items) if uri is not None
+        )
+        nodes: list[str] = []
+        for stream, _ in items:
+            stream_uri = stream_uri_of(stream)
+            if stream.get("property_uri") is not None:
+                nodes.append(str(stream["property_uri"]))
+            if stream_uri is not None:
+                nodes.append(f"{stream_uri}__point")
+                nodes.extend(linked.get(stream_uri, []))
+        labels = self._node_labels(nodes)
+
         graphs: dict[str, Graph] = {}
         # the ``metadata`` maps per point; a later stream on the same point
         # wins key by key
         extras: dict[str, dict[str, Any]] = {}
         # properties whose label is being replaced, per source
         relabeled: dict[str, list[str]] = {}
-        for stream in streams:
-            # ``point_uri`` and the deprecated ``ref_name`` are still accepted
-            stream, extra = _split_stream_metadata(new_names(stream))
-            source_id = stream.get("source_id")
-            if not isinstance(source_id, str) or not source_id:
-                raise ValueError("each stream registration requires a non-empty source_id")
+        # generated properties replaced by a plant property, per source
+        replaced: dict[str, list[str]] = {}
+        for stream, extra in items:
+            source_id = stream["source_id"]
             graph = graphs.setdefault(source_id, Graph())
+            stream_uri = stream_uri_of(stream)
+            generated = f"{stream_uri}__point" if stream_uri is not None else None
+            properties = linked.get(stream_uri, []) if stream_uri is not None else []
+            property_uri = stream.get("property_uri")
+            carried: dict[str, Any] = {}
+            connecting = False
+            if property_uri is None and generated not in properties and properties:
+                # Already connected: registering again without a property_uri
+                # describes the property the stream is connected to.
+                if len(properties) > 1:
+                    raise ValueError(
+                        f"stream {stream['source_id']!r}/{stream['stream_name']!r} is "
+                        f"connected to several properties ({', '.join(properties)}); "
+                        "pass property_uri to choose one"
+                    )
+                property_uri = properties[0]
+                stream = {**stream, "property_uri": property_uri}
+            elif (property_uri is not None and generated in properties
+                    and str(property_uri) != generated):
+                # Connecting a stream that was registered on its own: the
+                # generated property is replaced by the given one, and what
+                # was attached to it moves along. A value given in this call
+                # wins over the one the generated property had.
+                stream, carried = self._carry_generated_property(
+                    stream, extra, generated, str(property_uri), labels)
+                replaced.setdefault(source_id, []).append(generated)
+                connecting = True
             meta = {
                 f: stream.get(f)
                 for f in POINT_FIELD_KINDS
                 if stream.get(f) is not None
             }
             resolved = self.resolve_property_metadata(meta) if meta else {}
-            property_uri = stream.get("property_uri")
             existing = self._property_metadata(str(property_uri)) if property_uri is not None else {}
             # A property keeps one label per source: a given label replaces
             # the ones this source wrote, and the stream_name default is
             # only used while the generated property has no label.
-            stream_name = stream.get("stream_name")
-            node = property_uri
-            if node is None and stream_name is not None:
-                node = f"{compute_stream_uri(source_id, stream_name)}__point"
-            current = self._labels(str(node)) if node is not None else []
+            node = str(property_uri) if property_uri is not None else generated
+            current = labels.get(node, []) if node is not None else []
             if stream.get("label") is None:
                 if property_uri is None and current:
                     stream = {**stream, "label": current[0]}
             elif current != [str(stream["label"])]:
                 relabeled.setdefault(source_id, []).append(str(node))
-            subj = _build_stream_triples(graph, stream, resolved, existing, self._units_compatible)
-            if extra:
-                extras.setdefault(str(subj), {}).update(extra)
+            try:
+                subj = _build_stream_triples(graph, stream, resolved, existing, self._units_compatible)
+            except ValueError as exc:
+                if not connecting:
+                    raise
+                raise ValueError(
+                    f"{exc}. The stream's value comes from its earlier registration; "
+                    "pass the key in this call to say which value is right"
+                ) from None
+            moved = {**carried, **extra}
+            if moved:
+                extras.setdefault(str(subj), {}).update(moved)
         writes = self._plan_metadata(extras, dict.fromkeys(extras, "data"))
         for source_id, graph in graphs.items():
             if relabeled.get(source_id):
@@ -940,6 +1041,68 @@ class AcquiriumClient:
         # leaves only the new one. Runs after the stream triples, which make
         # the point a node the metadata graph may describe.
         self._write_metadata(writes)
+        # Last, so a failure above leaves the generated properties in place.
+        for source_id, generated_nodes in replaced.items():
+            removal = " ;\n".join(
+                f"DELETE WHERE {{ <{node}> ?p ?o }}" for node in dict.fromkeys(generated_nodes)
+            )
+            self.sparql_update(removal, source_id=source_id)
+            self.sparql_update(removal, source_id=METADATA_SOURCE_ID)
+
+    def _carry_generated_property(
+        self, stream: dict, extra: dict, generated: str, property_uri: str,
+        labels: Mapping[str, list[str]],
+    ) -> tuple[dict, dict[str, Any]]:
+        """What moves from a stream's generated property to ``property_uri``.
+
+        Returns the stream with the generated property's built-in fields
+        filled in where the call gave none, and the keys of its own to write
+        on ``property_uri``. Where both properties have a value and the two
+        differ, ``property_uri`` keeps its own and a warning says so. The
+        unit, quantity kind and medium are the exception: they are carried
+        regardless, so the checks of a registration with a ``property_uri``
+        apply to them and a mismatch raises.
+        """
+        from acquirium.Metadata import dumps
+
+        def kept(key: str, ours: Any, theirs: Any) -> None:
+            warnings.warn(
+                f"{key!r} of stream {stream['source_id']!r}/{stream['stream_name']!r} "
+                f"is not moved: <{property_uri}> has {theirs!r}, the stream had "
+                f"{ours!r}. Use insert_metadata() to change it",
+                stacklevel=4,
+            )
+
+        stream = dict(stream)
+        had = self._property_metadata(generated)
+        has = self._property_metadata(property_uri)
+        for field in (*POINT_FIELD_KINDS, "data_source"):
+            value = had.get(field)
+            if stream.get(field) is not None or value is None:
+                continue
+            current = has.get(field)
+            if (field in ("substance", "data_source") and current is not None
+                    and str(current) != str(value)):
+                kept(field, value, current)
+                continue
+            stream[field] = URIRef(str(value)) if field in POINT_FIELD_KINDS else value
+        # The default label is the stream_name, which names the generated
+        # property only; a label that was given moves when the property has none.
+        if stream.get("label") is None and not labels.get(property_uri):
+            given = [label for label in labels.get(generated, []) if label != stream.get("stream_name")]
+            if given:
+                stream["label"] = given[0]
+        documents = self.metadata_documents([generated, property_uri])
+        ours, theirs = documents.get(generated, {}), documents.get(property_uri, {})
+        carried: dict[str, Any] = {}
+        for key, value in ours.items():
+            if key in STREAM_FIELDS or key in extra:
+                continue
+            if key not in theirs:
+                carried[key] = value
+            elif dumps(theirs[key]) != dumps(value):
+                kept(key, value, theirs[key])
+        return stream, carried
 
     def _resolve_one(self, text: str, kind: str) -> Optional[str]:
         """Resolve one text value of the given kind to a URI, or None."""

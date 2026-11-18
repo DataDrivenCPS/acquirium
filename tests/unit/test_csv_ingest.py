@@ -27,6 +27,8 @@ from acquirium.internals.internals_namespaces import (
 def make_driver(cfg_overrides: dict | None = None, tmp_path: Path | None = None) -> CSVIngestDriver:
     aq = MagicMock()
     aq.client = MagicMock()
+    aq.client._stream_properties.return_value = {}
+    aq.client._node_labels.return_value = {}
     aq.register_streams.side_effect = lambda streams: AcquiriumClient.register_streams(aq.client, streams)
     aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0}
     watch = str(tmp_path) if tmp_path else "/tmp/csv_test_watch"
