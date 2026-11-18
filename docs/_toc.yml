@@ -21,8 +21,6 @@ chapters:
   - file: how-to/record-a-whole-model.md
   - file: how-to/record-experiments.md
   - file: how-to/compare-experiment-runs.md
-  - file: how-to/local-runtime.md
-  - file: how-to/resolve-text.md
 - file: reference/_index.md
   sections:
   - file: reference/client/_index.md

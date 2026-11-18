@@ -12,5 +12,3 @@ The guides assume a running server. If you do not have one, start with [getting 
 - [Record a whole model](record-a-whole-model.md) — declare model components and record snapshots across runs
 - [Record experiments](record-experiments.md) — record the inputs, outputs and events of a script as an experiment
 - [Compare runs with formulas](compare-experiment-runs.md) — read the scalar results of a study as one row per run and compute formulas from them
-- [Start Acquirium from a script](local-runtime.md) — start a local server with `aq.init()` and share it between scripts
-- [Resolve text to URIs](resolve-text.md) — use `resolve()` directly and check a bad match

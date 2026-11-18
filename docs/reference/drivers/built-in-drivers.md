@@ -163,7 +163,7 @@ class PlantCSV(aq.CSVIngestDriver):
 XLSXIngestDriver(aq, config)
 ```
 
-Reads Excel files from a directory. Import it from `acquirium.Drivers.BuiltInDrivers.xlsx_ingest`.
+Reads Excel files from a directory. Import it from `acquirium.Drivers.BuiltInDrivers.xlsx_ingest`. It needs the `xlsx` extra, which is installed with `pip install "acquirium[xlsx]"`.
 
 **Configuration keys**
 
@@ -225,7 +225,7 @@ time_col  = "timestamp"
 MQTTIngestDriver(aq, config)
 ```
 
-Subscribes to MQTT topics and inserts the messages. The topics are not listed in the configuration. They are read from the graph, and read again whenever the graph changes. Import it from `acquirium.Drivers.BuiltInDrivers.mqtt_ingestion`.
+Subscribes to MQTT topics and inserts the messages. The topics are not listed in the configuration. They are read from the graph, and read again whenever the graph changes. Import it from `acquirium.Drivers.BuiltInDrivers.mqtt_ingestion`. It needs the `mqtt` extra, which is installed with `pip install "acquirium[mqtt]"`.
 
 **Configuration keys**
 
@@ -304,7 +304,7 @@ class PlainNumberMQTT(MQTTIngestDriver):
 WaterTAPDriver(aq, config)
 ```
 
-Builds and solves a WaterTAP model on every tick and inserts the values of the mapped model variables. Import it from `acquirium.Drivers.BuiltInDrivers.watertap`.
+Builds and solves a WaterTAP model on every tick and inserts the values of the mapped model variables. Import it from `acquirium.Drivers.BuiltInDrivers.watertap`. It needs the `watertap` extra, which is installed with `pip install "acquirium[watertap]"`.
 
 **Configuration keys**
 

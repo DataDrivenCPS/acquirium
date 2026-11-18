@@ -87,7 +87,9 @@ Closes the client that `init` returned. If this process started the server, the 
 
 A server that another script started, or one reached with `address`, keeps running. Calling `shutdown` when `init` was not called does nothing.
 
-Python calls `shutdown` when the script exits, so calling it yourself is only needed to stop the server earlier or to call `init` with other options.
+Python calls `shutdown` when the script exits, so calling it yourself is only needed to stop the server earlier or to call `init` with other options. Note that in a notebook this happens when the kernel exits, not when a cell finishes.
+
+Be aware that the server keeps running when the script that started it is killed or crashes, because `shutdown` is not called in that case. The next `init` with the same data directory connects to that server and does not own it, so its `shutdown` does not stop the server. Such a server is stopped by ending its process.
 
 **Returns**
 
