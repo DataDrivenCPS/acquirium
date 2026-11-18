@@ -2,7 +2,7 @@
 title: Query cookbook
 ---
 
-This tutorial shows how to write acquirum queries based on common questions a plant engineer may ask. 
+This page shows how to write acquirum queries based on common questions a plant engineer may ask. 
 
 This tutorial uses data from the WaterTAP seawater-RO model, 
 so start the server against `deployments/WATERTAP/models/seawater-ro/acquirium.toml`
