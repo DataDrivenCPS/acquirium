@@ -1,7 +1,7 @@
 # Record experiments
 
-Record a script's inputs, outputs, and events as an Experiment. For a runnable
-example, see [Your first experiment](../tutorials/first-experiment.py).
+Record a script's inputs, outputs, and events as an Experiment. For an
+introduction, see [Running experiments](../tutorials/advanced/experiments.md).
 
 Declare variables, record a run, then select saved runs and read their results.
 The [API reference](../reference/experiments/_index.md) groups the available methods by task.

@@ -145,7 +145,7 @@ text, the server picks the one that is actually convertible from the source
 unit, so a near-match that is not convertible never shadows one that is.
 When no candidate is convertible, `convert_to()` raises with both candidate
 lists in the message.
-The [data tutorial](../tutorials/data.md#units) shows the calls.
+The [`convert_to` reference](../reference/query/data-object.md#dataobjectconvert_to) shows the calls.
 
 ## The arithmetic
 

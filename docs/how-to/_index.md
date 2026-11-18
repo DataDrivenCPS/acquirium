@@ -3,10 +3,11 @@ title: How-to guides
 ---
 
 Each guide in this section shows how to do one task with Acquirium, such as exploring a model, calculating derived streams or recording an experiment.
-The guides assume a running server. If you do not have one, start with [getting started](../tutorials/getting-started.md).
+The guides assume a running server. If you do not have one, start with [getting started](../getting-started.md).
 
 - [Explore a model](explore-a-model.md) — build a query step by step and list the values that occur in the matches
 - [Debugging queries for an unexpected result](debug-an-empty-query.md) — common causes of an empty or unexpected result, each with a way to check it
+- [Query cookbook](query-cookbook.md) — queries for common questions about a plant
 - [Calculate derived streams](calculate-derived-streams.md) — write an app that calculates new streams from existing readings
 - [Check, deploy, and repair an app](check-deploy-apps.md) — check an app, deploy it, apply code changes to retained history and remove it
 - [Record a whole model](record-a-whole-model.md) — declare model components and record snapshots across runs

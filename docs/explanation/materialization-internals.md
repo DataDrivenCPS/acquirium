@@ -9,7 +9,7 @@ to resume after a restart without relying on worker memory.
 
 This page describes how the storage backends support that behavior and which
 settings affect server operation. For an introduction to writing an app, see
-[Your first app](../tutorials/first-app.md). For the calculation model and
+[Declaring and deploying Apps](../tutorials/advanced/first-app.md). For the calculation model and
 processing guarantees, see [Apps](apps.md).
 
 ## Scheduling and recovery
@@ -73,7 +73,7 @@ For read-only operational inspection, use `acquirium app list` and
 with the latest in-memory plan and stored progress. They do not trigger graph
 refresh or execution. Progress is fetched once per request, not once per binding.
 Declarations remain inspectable when code cannot be loaded or queries match
-nothing. See the [inspection guide](apps.md#inspect-deployed-apps) for status
+nothing. See [`inspect_app`](../reference/client/apps.md#acquiriuminspect_app) for status
 and plan-freshness semantics.
 
 The timeseries backend stores `system_state` (one global `current_revision`)

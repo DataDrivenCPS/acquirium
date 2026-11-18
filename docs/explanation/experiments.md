@@ -170,8 +170,7 @@ are stored in the experiment ledger, so they do not appear in
 
 To compare them, select a saved run's output and the site's stream. Read the
 same time range from each, convert units if needed, and match timestamps.
-The [notebook](../tutorials/first-experiment.py) shows these steps. Its synthetic
-site stream supplies example data; use your driver's stream at a real site.
+[Record experiments](../how-to/record-experiments.md) shows these steps.
 
 ## Limits
 
@@ -186,8 +185,6 @@ graph writes. Delivery is idempotent: a crash before acknowledgment replays the
 write, and successful acknowledgment removes the pending payload. Lifecycle
 updates patch their own fields without replacing descriptive metadata. Backup
 and restore must include the authoritative graph as well as the SQL ledger.
-The [integration plan](../plans/experiment-metadata-integration.md) describes the
-implemented boundary and recovery behavior.
 
 Stream annotations and stream ranges read live data. Record a range's rows for
 a fixed copy; an annotation has no copy form.

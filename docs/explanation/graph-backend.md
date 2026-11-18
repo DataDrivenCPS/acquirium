@@ -74,8 +74,7 @@ alongside them. The shared document reader uses source quads, so it does not
 wait for or read inferred projections. SQL retains pending resolved operations
 until graph delivery succeeds, then removes them. Backup and restore include
 both the graph and the SQL recording ledger.
-See [Experiments](experiments.md#storage) for storage behavior and the
-[integration plan](../plans/experiment-metadata-integration.md) for the dependency.
+See [Experiments](experiments.md#storage) for storage behavior.
 
 ### Public graph views
 

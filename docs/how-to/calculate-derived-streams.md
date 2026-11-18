@@ -6,7 +6,7 @@ An app uses a semantic query to select input streams, calculates new values
 from their readings, and publishes the results as derived streams. Acquirium
 keeps those results up to date as readings arrive or are corrected. This guide
 starts with water-temperature conversion, then extends it to averages and alarms.
-It assumes you have worked through [Your first app](../tutorials/first-app.md).
+It assumes you have worked through [Declaring and deploying Apps](../tutorials/advanced/first-app.md).
 The input source tags used below should match those registered by your drivers.
 
 ## Normalize water temperatures to Celsius

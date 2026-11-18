@@ -5,7 +5,7 @@ title: The query model
 This is an explanation of the ideas behind the `Query` interface: what a
 query is, why we built it this way, how free text turns into ontology terms,
 and how a query is executed.
-Using the interface is covered in the [querying tutorial](../tutorials/querying.md).
+Using the interface is covered in the [querying tutorial](../tutorials/querying-data.md).
 
 ## The mental model of Querying in Acquirium
 
