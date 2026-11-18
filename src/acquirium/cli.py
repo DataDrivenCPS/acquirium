@@ -727,6 +727,56 @@ def config_init(
 
 
 # ---------------------------------------------------------------------------
+# Example data
+# ---------------------------------------------------------------------------
+
+example_app = typer.Typer(help="Create the files of the example plant.", add_completion=False)
+app.add_typer(example_app, name="example")
+
+
+@example_app.command("init")
+def example_init(
+    path: Annotated[Path, typer.Argument(help="Folder to create")] = Path("example"),
+    step: Annotated[int, typer.Option("--step", help="Minutes between two rows of data.csv")] = 60,
+    force: Annotated[bool, typer.Option("--force", "-f", help="Overwrite the files if they exist")] = False,
+) -> None:
+    """Create a folder with the example plant: its model and one year of data.
+
+    Writes ``model.ttl``, the plant model of a seawater reverse-osmosis
+    plant, and ``data.csv``, the year 2025 of that plant with a ``time``
+    column and one column per stream. Does not start a server.
+    """
+    import shutil
+    from datetime import timedelta
+
+    import polars as pl
+
+    from acquirium.examples import seawater_ro
+
+    if step < 1:
+        typer.echo("--step must be at least 1 minute.", err=True)
+        raise typer.Exit(1)
+    model, data = path / "model.ttl", path / "data.csv"
+    existing = [str(target) for target in (model, data) if target.exists()]
+    if existing and not force:
+        typer.echo(f"{', '.join(existing)} already exist. Pass --force to overwrite.", err=True)
+        raise typer.Exit(1)
+    path.mkdir(parents=True, exist_ok=True)
+
+    shutil.copyfile(seawater_ro.model_path, model)
+    streams = seawater_ro.generate(step=timedelta(minutes=step))
+    names = list(streams)
+    frame = pl.DataFrame({
+        "time": [timestamp for timestamp, _ in streams[names[0]]],
+        **{name: [value for _, value in streams[name]] for name in names},
+    })
+    frame.write_csv(data)
+
+    typer.echo(f"Wrote {model}")
+    typer.echo(f"Wrote {data} ({frame.height} rows, {len(names)} streams)")
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
