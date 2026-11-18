@@ -31,7 +31,6 @@ Get started
 1. Found a bug or a performance issue? Open a [GitHub issue](https://github.com/DataDrivenCPS/acquirium/issues).
 2. Feel free to fork the repo and open a [pull request](https://github.com/DataDrivenCPS/acquirium/pulls).
 3. Join our community on [Slack](https://join.slack.com/t/acquirium/shared_invite/zt-4ek0gz21f-M~3mwGxSC1VgyPrzjyq9wQ)
-4. Join the [email list](https://groups.google.com/g/acquirium)
 
 ## About this documentation
 
