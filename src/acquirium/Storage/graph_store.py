@@ -308,6 +308,13 @@ class OxigraphGraphStore:
         # nothing would name unit:, quantitykind: or acquirium's own
         # namespaces and every client would invent its own name for them.
         self._bind_prefixes(CANONICAL_NAMESPACES.namespaces(), override=True)
+        # The prefixes that inserted models declared are kept in a file next
+        # to the store and bound again here, so a model keeps its names
+        # (wbs:P1) across restarts. Everything bound before this point is
+        # seeded on every open and does not need saving.
+        self._seeded_prefixes = self._bound_prefixes()
+        self._saved_prefixes = self._load_saved_prefixes()
+        self._bind_prefixes(self._saved_prefixes.items(), override=False)
 
         # ontoenv shares this Oxigraph store via the graph-store protocol,
         # over the authoritative source dataset. SPARQL reads query that
@@ -697,7 +704,47 @@ class OxigraphGraphStore:
         # endpoint. A model keeps the name its author chose for its own
         # vocabulary, but never renames a canonical namespace.
         self._bind_prefixes(incoming.namespaces(), override=False, target=target)
+        self._save_prefixes()
         return target
+
+    def _prefix_file(self) -> Path:
+        return self.store_path / "acquirium_prefixes.json"
+
+    def _bound_prefixes(self) -> dict[str, str]:
+        # the fake datasets in the unit tests have no namespace manager
+        nm = getattr(self.query_dataset, "namespace_manager", None)
+        if nm is None:
+            return {}
+        return {str(prefix): str(namespace) for prefix, namespace in nm.namespaces()}
+
+    def _load_saved_prefixes(self) -> dict[str, str]:
+        try:
+            saved = json.loads(self._prefix_file().read_text())
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(saved, dict):
+            return {}
+        return {str(prefix): str(namespace) for prefix, namespace in saved.items()}
+
+    def _save_prefixes(self) -> None:
+        """Write the prefixes that models declared, when they changed."""
+        # a store that the unit tests assemble without __init__ has no file
+        seeded = getattr(self, "_seeded_prefixes", None)
+        if seeded is None:
+            return
+        declared = {
+            prefix: namespace
+            for prefix, namespace in self._bound_prefixes().items()
+            if seeded.get(prefix) != namespace
+            and not _GENERATED_PREFIX.match(prefix)
+        }
+        if declared == self._saved_prefixes:
+            return
+        try:
+            self._prefix_file().write_text(json.dumps(declared, indent=2, sort_keys=True))
+            self._saved_prefixes = declared
+        except OSError:
+            _logger.warning("could not save prefix bindings to %s", self._prefix_file(), exc_info=True)
 
     def _bind_prefixes(
         self,

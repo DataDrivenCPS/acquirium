@@ -221,6 +221,31 @@ def test_an_insert_adds_its_prefixes_without_renaming_canonical_ones(tmp_path, m
         store.close()
 
 
+def test_the_prefixes_of_a_model_survive_a_restart(tmp_path, monkeypatch):
+    """Oxigraph does not store prefix bindings, so a model's own names
+    (wbs:P1) used to turn into ns1:P1 after the server was restarted."""
+    from rdflib import Graph, URIRef
+
+    store = _real_store(tmp_path, monkeypatch)
+    try:
+        incoming = Graph()
+        incoming.parse(data="@prefix wbs: <urn:swro/> . wbs:a wbs:b wbs:c .", format="turtle")
+        store._apply_graph_write(
+            incoming, target=store.query_dataset.graph(URIRef("urn:test:g")), replace=False
+        )
+        assert _bound(store)["wbs"] == "urn:swro/"
+    finally:
+        store.close()
+
+    reopened = _real_store(tmp_path, monkeypatch)
+    try:
+        bound = _bound(reopened)
+        assert bound["wbs"] == "urn:swro/"
+        assert bound["quantitykind"] == "http://qudt.org/vocab/quantitykind/"
+    finally:
+        reopened.close()
+
+
 def test_a_generated_name_is_never_bound(tmp_path, monkeypatch):
     """A client that serializes a bare rdflib Graph sends `@prefix ns1:` for
     whatever namespace it happened to write first."""
