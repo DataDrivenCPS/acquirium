@@ -200,6 +200,12 @@ def _attr_clauses(var: str, attr: Attr, value: Any) -> List[str]:
             # Anchored at the constant class on the right, so no fence needed.
             step = f"<{_RDF_TYPE}>/<{_SUBCLASS}>*" if _RDF_TYPE in attr.predicates \
                 else f"({pred_path})/<{_RDF_TYPE}>/<{_SUBCLASS}>*"
+            if _RDF_TYPE in attr.predicates:
+                # NOT EXISTS binds nothing. When the type is the only
+                # constraint, the node has to be bound here, or the filter
+                # is evaluated once with ``var`` free and rejects every row
+                # as soon as the graph has one instance of the class.
+                clauses.append(f"{var} <{_RDF_TYPE}> {var}_{attr.name}_any .")
             for c in values:
                 clauses.append(f"FILTER NOT EXISTS {{ {var} {step} <{c}> . }}")
             return clauses
@@ -536,6 +542,12 @@ def _node_constraint_clauses(v: str, node, registry: Mapping = REGISTRY) -> List
     rdf_class = (node.constraints or {}).get("rdf_class")
     if instance_uri is not None:
         clauses.append(f"VALUES {v} {{ <{instance_uri}> }}")
+        # VALUES binds the URI whether or not the graph has it. Without this
+        # a mistyped URI is one match as long as nothing else constrains it.
+        clauses.append(
+            f"FILTER EXISTS {{ {{ {v} {v}_any_p {v}_any_o . }} "
+            f"UNION {{ {v}_any_s {v}_any_q {v} . }} }}"
+        )
     if rdf_class:
         # Anchor the subClassOf* traversal at the constant class inside
         # a sub-SELECT. This fences the property path so Oxigraph

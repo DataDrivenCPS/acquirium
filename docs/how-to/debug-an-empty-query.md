@@ -94,34 +94,42 @@ shape: (1, 2)
 To read these streams in kilowatts, filter on the quantity kind and convert the values with `data().convert_to("kW")`.
 
 The same can happen with a class.
-`"filter"` is matched to the class `Filter`, which this plant model does not use:
+`"valve"` is matched to the class `Valve`, which this plant model does not use:
 
 ```python
-print(acq.query().entity("filter"))
+print(acq.query().entity("valve"))
 ```
 ```text
 Query
-  filter: entity, Filter
+  valve: entity, Valve
 0 matches
 ```
 
-To see the class the model uses, find the equipment by its label and include its `type`:
+To see the classes the model uses, count them with `options("type")`:
 
 ```python
-acq.query().entity(label="Cartridge Filtration", alias="unit").include("type").metadata()
+acq.query().entity("equipment").options("type")
 ```
 ```text
-shape: (1, 2)
-┌──────────────────────────┬──────────────────────────────┐
-│ unit                     ┆ unit.type                    │
-│ ---                      ┆ ---                          │
-│ str                      ┆ str                          │
-╞══════════════════════════╪══════════════════════════════╡
-│ wbs:cartridge-filtration ┆ watr:CartridgeFiltrationUnit │
-└──────────────────────────┴──────────────────────────────┘
+shape: (18, 2)
+┌─────────────────────────────┬───────┐
+│ type                        ┆ count │
+│ ---                         ┆ ---   │
+│ str                         ┆ i64   │
+╞═════════════════════════════╪═══════╡
+│ watr:FlowSensor             ┆ 12    │
+│ watr:PressureSensor         ┆ 6     │
+│ watr:Pump                   ┆ 4     │
+│ watr:Reactor                ┆ 4     │
+│ watr:Tank                   ┆ 4     │
+│ …                           ┆ …     │
+│ watr:MediaFiltrationUnit    ┆ 1     │
+│ watr:PressureExchanger      ┆ 1     │
+│ watr:ReverseOsmosisMembrane ┆ 1     │
+│ watr:StaticMixer            ┆ 1     │
+│ watr:UltravioletLightUnit   ┆ 1     │
+└─────────────────────────────┴───────┘
 ```
-
-`entity("cartridge filtration unit")` selects it.
 
 A text that matches no term raises an error:
 
@@ -172,37 +180,39 @@ shape: (1, 3)
 ```
 
 `related()` and `measurement()` also start from the current node.
-The query below looks for a reactor connected to the tank, not to the pump:
+The query below looks for a reactor connected to the filter, not to the pump:
 
 ```python
-acq.query().entity("pump").related("tank").related("reactor").metadata()
+acq.query().entity("pump").related("filter").related("reactor").metadata()
 ```
 ```text
-shape: (2, 3)
-┌────────┬────────────────────┬──────────────────┐
-│ pump   ┆ tank               ┆ reactor          │
-│ ---    ┆ ---                ┆ ---              │
-│ str    ┆ str                ┆ str              │
-╞════════╪════════════════════╪══════════════════╡
-│ wbs:P1 ┆ wbs:storage-tank-2 ┆ wbs:co2-addition │
-│ wbs:P2 ┆ wbs:storage-tank-2 ┆ wbs:co2-addition │
-└────────┴────────────────────┴──────────────────┘
+shape: (3, 3)
+┌────────┬──────────────────────────┬───────────────────────────┐
+│ pump   ┆ filter                   ┆ reactor                   │
+│ ---    ┆ ---                      ┆ ---                       │
+│ str    ┆ str                      ┆ str                       │
+╞════════╪══════════════════════════╪═══════════════════════════╡
+│ wbs:P1 ┆ wbs:RO                   ┆ wbs:uv-aop                │
+│ wbs:P2 ┆ wbs:RO                   ┆ wbs:uv-aop                │
+│ wbs:P1 ┆ wbs:cartridge-filtration ┆ wbs:anti-scalant-addition │
+└────────┴──────────────────────────┴───────────────────────────┘
 ```
 
 `frm=` names the node to start from:
 
 ```python
-acq.query().entity("pump").related("tank").related("reactor", frm="pump").metadata()
+acq.query().entity("pump").related("filter").related("reactor", frm="pump").metadata()
 ```
 ```text
-shape: (1, 3)
-┌────────┬────────────────────┬───────────────────────────┐
-│ pump   ┆ tank               ┆ reactor                   │
-│ ---    ┆ ---                ┆ ---                       │
-│ str    ┆ str                ┆ str                       │
-╞════════╪════════════════════╪═══════════════════════════╡
-│ wbs:P1 ┆ wbs:storage-tank-2 ┆ wbs:anti-scalant-addition │
-└────────┴────────────────────┴───────────────────────────┘
+shape: (2, 3)
+┌────────┬──────────────────────────┬───────────────────────────┐
+│ pump   ┆ filter                   ┆ reactor                   │
+│ ---    ┆ ---                      ┆ ---                       │
+│ str    ┆ str                      ┆ str                       │
+╞════════╪══════════════════════════╪═══════════════════════════╡
+│ wbs:P1 ┆ wbs:cartridge-filtration ┆ wbs:anti-scalant-addition │
+│ wbs:P1 ┆ wbs:RO                   ┆ wbs:anti-scalant-addition │
+└────────┴──────────────────────────┴───────────────────────────┘
 ```
 
 Be aware that an attribute that does not apply to a measurement raises an error instead of returning nothing:
@@ -302,8 +312,7 @@ The default returns 11 streams for `wbs:RO`.
 
 ## The URI is not in the model
 
-`entity(uri=...)` does not check that the node exists.
-A mistyped URI gives one match for the entity alone, and no match after the next step.
+A URI that is not in the model matches nothing.
 Here the URI ends with a zero instead of the letter O:
 
 ```python
@@ -312,25 +321,10 @@ print(acq.query().entity(uri="wbs:R0", alias="ro"))
 ```text
 Query
   ro: entity, uri=R0
-1 match:
-┌────────┐
-│ ro     │
-│ ---    │
-│ str    │
-╞════════╡
-│ wbs:R0 │
-└────────┘
-```
-
-```python
-print(acq.query().entity(uri="wbs:R0", alias="ro").measurement())
-```
-```text
-Query
-  ro: entity, uri=R0
-  ro_data: measurement, of ro
 0 matches
 ```
+
+To find the right URI, select the equipment by its class or its label first, as in the sections above.
 
 ## The property has no stream
 
