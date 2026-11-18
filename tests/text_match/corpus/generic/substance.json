@@ -20,21 +20,21 @@
     {
       "text": "chlorine",
       "expected": [
-        "urn:nawi-water-ontology#Disinfectant-Chlorine"
+        "https://watermetadata.org/ontology/watr#Disinfectant-Chlorine"
       ],
       "stage": "exact"
     },
     {
       "text": "coagulant",
       "expected": [
-        "urn:nawi-water-ontology#Coagulant"
+        "https://watermetadata.org/ontology/watr#Coagulant"
       ],
       "stage": "exact"
     },
     {
       "text": "flocculant",
       "expected": [
-        "urn:nawi-water-ontology#Flocculant"
+        "https://watermetadata.org/ontology/watr#Flocculant"
       ]
     },
     {

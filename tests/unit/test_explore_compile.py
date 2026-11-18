@@ -161,12 +161,12 @@ class TestDataNodes:
 class TestFullChain:
     def test_entity_cp_data_chain(self):
         """The soft-sensor RO shape: entity -> CP class -> data with filters."""
-        g = entity(QueryGraph(), 0, cls="urn:nawi-water-ontology#ReverseOsmosisMembrane", alias="ro")
+        g = entity(QueryGraph(), 0, cls="https://watermetadata.org/ontology/watr#ReverseOsmosisMembrane", alias="ro")
         g = entity(g, 1, cls="http://data.ashrae.org/standard223#OutletConnectionPoint", alias="ro_out")
         g = g.with_edge(QueryEdge(source_id=0, target_id=1, hops=1))
         g = data_node(g, 2, filters={
             QK: "http://qudt.org/vocab/quantitykind/MassFlowRate",
-            MEDIUM: Not("urn:nawi-water-ontology#Water-Brine"),
+            MEDIUM: Not("https://watermetadata.org/ontology/watr#Water-Brine"),
         })
         g = g.with_edge(QueryEdge(source_id=1, target_id=2, hops=1))
 

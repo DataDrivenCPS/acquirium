@@ -12,6 +12,9 @@ from examples.streaming.consumer import ChangeConsumer
 from examples.streaming.producer import WorkloadDriver
 from examples.streaming.workload import run, verify
 
+# Each test starts its own server with aq.init().
+pytestmark = pytest.mark.usefixtures("separate_server")
+
 
 def drain(client, consumer, *, timeout=30):
     deadline = time.monotonic() + timeout

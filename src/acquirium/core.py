@@ -112,11 +112,15 @@ class Core:
             self.engine.close()
             raise
 
-    def ingest(self, source: str, request_id: str, frame: pl.DataFrame) -> Receipt:
+    def ingest(self, source: str, request_id: str, frame: pl.DataFrame, *, replace=()) -> Receipt:
         """Submit ``ref_uri``, timezone-aware ``ts`` and ``value`` rows, or rows
         with ``operation`` ``"delete"``. Each value is stored as its row's
-        ``value_kind`` (numeric when absent; see ``split_values``)."""
-        if frame.height > MAX_REQUEST_ROWS:
+        ``value_kind`` (numeric when absent; see ``split_values``).
+
+        Each stream in ``replace`` first loses all its readings, in the same
+        request, so it holds exactly the rows supplied for it."""
+        replace = sorted(set(replace))
+        if frame.height + len(replace) > MAX_REQUEST_ROWS:
             raise ValueError(
                 f"a request may contain at most {MAX_REQUEST_ROWS:,} rows; chunk imports explicitly"
             )
@@ -157,7 +161,9 @@ class Core:
                 if delete
                 else Mutation.put(stream, timestamp, text if number is None else number)
             )
-        mutations = [normalized[key] for key in sorted(normalized)]
+        # Escapement applies a request's mutations in order.
+        mutations = [Mutation.delete_range(stream) for stream in replace]
+        mutations += [normalized[key] for key in sorted(normalized)]
         return self._submit(lambda: self.engine.ingest(source, request_id, mutations))
 
     def _submit(self, submit) -> Receipt:

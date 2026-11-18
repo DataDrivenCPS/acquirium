@@ -115,8 +115,8 @@ The constructor waits for `GET /health` for up to `health_timeout` seconds.
 | `register_streams(streams: Iterable[dict]) -> None` | Declare one or more streams' identity and semantic metadata in one graph insert; see the [lifecycle guide](../explanation/stream-lifecycle.md). A stream's optional `metadata` key holds a [value map](#metadata-values) written on its point. |
 | `reference_uri(source_id: str, ref_name: str) -> URIRef` | The canonical stream URI for a `(source_id, ref_name)` pair. |
 | `resolve_point_metadata(fields: dict, min_score=0.6) -> dict[str, str \| None]` | Resolve `unit`, `quantity_kind`, `medium`, `substance` text to URIs jointly. |
-| `insert_timeseries(source_id, ref_name, rows, *, request_id=None, wait=30, timeout=60, retry_for=60) -> dict` | Upsert finite numeric observations; timestamps are UTC nanoseconds or timezone-aware datetimes. `wait=0` returns after durable admission. A request refused with 503 is resent after `Retry-After` for up to `retry_for` seconds. |
-| `insert_timeseries_batch(source_id, streams, *, request_id=None, wait=30, timeout=60, retry_for=60) -> dict` | One atomic bounded request across streams, at most 10,000 input rows. Chunk larger imports explicitly. |
+| `insert_timeseries(source_id, ref_name, rows, *, request_id=None, replace=False, wait=30, timeout=60, retry_for=60) -> dict` | Upsert observations; timestamps are UTC nanoseconds or timezone-aware datetimes. `replace=True` keeps exactly the supplied rows, and an empty replacement clears the stream. `wait=0` returns after durable admission. A request refused with 503 is resent after `Retry-After` for up to `retry_for` seconds. |
+| `insert_timeseries_batch(source_id, streams, *, request_id=None, wait=30, timeout=60, retry_for=60) -> dict` | Upsert several streams. Inputs over 10,000 rows are split into requests in order, each atomic; only the last waits for publication, and `receipts` lists them all. |
 | `insert_timeseries_arrow(source_id, table: pa.Table, *, request_id=None, wait=30, timeout=60, retry_for=60) -> dict` | Insert `(ts, ref_name, value)` Arrow data with timezone-aware timestamps. Reuse request ID and payload on retry. |
 | `delete_timeseries(source_id, ref_name, timestamps, *, request_id=None, wait=30, timeout=60, retry_for=60) -> dict` | Explicitly delete observations; returns one receipt directly. |
 | `wait(receipt, *, timeout=30) -> dict` | Wait for an accepted receipt sequence to publish, then return a snapshot token. Raises for paused or timed-out pending work. |
@@ -422,8 +422,8 @@ and are listed once above.
 | method | description |
 |---|---|
 | `register_datasource(source_id) -> str`, `register_streams(streams) -> None` | As on `Acquirium`. |
-| `insert_timeseries(*, source_id, ref_name, rows, request_id=None, wait=30, timeout=60, retry_for=60) -> dict` | Keyword-only form of the `Acquirium` method; the same bounded retry identity applies. |
-| `insert_timeseries_batch(source_id, streams, *, request_id=None, wait=30, timeout=60, retry_for=60) -> dict` | One atomic bounded request for several streams. |
+| `insert_timeseries(*, source_id, ref_name, rows, request_id=None, replace=False, wait=30, timeout=60, retry_for=60) -> dict` | Keyword-only form of the `Acquirium` method; the same bounded retry identity applies. |
+| `insert_timeseries_batch(source_id, streams, *, request_id=None, replace=(), wait=30, timeout=60, retry_for=60) -> dict` | As on `Acquirium`, splitting inputs over 10,000 rows; each stream named in `replace` holds exactly its supplied rows. |
 | `insert_timeseries_arrow(source_id, table, *, request_id=None, wait=30, timeout=60, retry_for=60) -> dict` | As on `Acquirium`. |
 | `resolve_storage_keys(uris, *, view="current", epoch=None) -> dict[str, str]` | Resolve points or references to the chain head, base (`raw`), or exact stage (`stored`) at one epoch. |
 | `timeseries_df(uri, start=None, end=None, limit=None, order="asc", timeout=60.0, *, value_mode="default", epoch=None, end_ns=None, after=None, view="current") -> pl.DataFrame` | All rows of one stream by `ref_uri`; empty results preserve their schema. Pass one captured epoch for related reads. |

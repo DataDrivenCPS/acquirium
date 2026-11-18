@@ -25,21 +25,21 @@ them:
 ```
 ```text
 shape: (11, 4)
-┌────────┬─────────────────────────────────┬─────────────────────┬─────────────────────┐
-│ ro     ┆ m                               ┆ m.quantity_kind     ┆ m.unit              │
-╞════════╪═════════════════════════════════╪═════════════════════╪═════════════════════╡
-│ wbs:RO ┆ wbs:RO-membrane-area            ┆ qudtqk:Area         ┆ unit:M2             │
-│ wbs:RO ┆ wbs:RO-in-temperature           ┆ qudtqk:Temperature  ┆ null                │
-│ wbs:RO ┆ wbs:RO-out-retentate-flow-mass… ┆ qudtqk:MassFlowRate ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-in-flow-mass-tds         ┆ qudtqk:MassFlowRate ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-out-flow-mass-water      ┆ qudtqk:MassFlowRate ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-in-pressure              ┆ qudtqk:Pressure     ┆ null                │
-│ wbs:RO ┆ wbs:RO-out-retentate-pressure   ┆ qudtqk:Pressure     ┆ null                │
-│ wbs:RO ┆ wbs:RO-out-flow-mass-tds        ┆ qudtqk:MassFlowRate ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-in-flow-mass-water       ┆ qudtqk:MassFlowRate ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-out-pressure             ┆ qudtqk:Pressure     ┆ null                │
-│ wbs:RO ┆ wbs:RO-out-retentate-flow-mass… ┆ qudtqk:MassFlowRate ┆ unit:KiloGM-PER-SEC │
-└────────┴─────────────────────────────────┴─────────────────────┴─────────────────────┘
+┌────────┬─────────────────────────────────┬───────────────────────────┬─────────────────────┐
+│ ro     ┆ m                               ┆ m.quantity_kind           ┆ m.unit              │
+╞════════╪═════════════════════════════════╪═══════════════════════════╪═════════════════════╡
+│ wbs:RO ┆ wbs:RO-membrane-area            ┆ quantitykind:Area         ┆ unit:M2             │
+│ wbs:RO ┆ wbs:RO-in-temperature           ┆ quantitykind:Temperature  ┆ null                │
+│ wbs:RO ┆ wbs:RO-out-retentate-flow-mass… ┆ quantitykind:MassFlowRate ┆ unit:KiloGM-PER-SEC │
+│ wbs:RO ┆ wbs:RO-in-flow-mass-tds         ┆ quantitykind:MassFlowRate ┆ unit:KiloGM-PER-SEC │
+│ wbs:RO ┆ wbs:RO-out-flow-mass-water      ┆ quantitykind:MassFlowRate ┆ unit:KiloGM-PER-SEC │
+│ wbs:RO ┆ wbs:RO-in-pressure              ┆ quantitykind:Pressure     ┆ null                │
+│ wbs:RO ┆ wbs:RO-out-retentate-pressure   ┆ quantitykind:Pressure     ┆ null                │
+│ wbs:RO ┆ wbs:RO-out-flow-mass-tds        ┆ quantitykind:MassFlowRate ┆ unit:KiloGM-PER-SEC │
+│ wbs:RO ┆ wbs:RO-in-flow-mass-water       ┆ quantitykind:MassFlowRate ┆ unit:KiloGM-PER-SEC │
+│ wbs:RO ┆ wbs:RO-out-pressure             ┆ quantitykind:Pressure     ┆ null                │
+│ wbs:RO ┆ wbs:RO-out-retentate-flow-mass… ┆ quantitykind:MassFlowRate ┆ unit:KiloGM-PER-SEC │
+└────────┴─────────────────────────────────┴───────────────────────────┴─────────────────────┘
 ```
 
 Three of the skid's columns have a match: feed flow, permeate flow and feed
@@ -84,7 +84,7 @@ with what the model says:
 
 - if the point says nothing about a field, your value is written onto it;
 - if it already holds the same value, nothing changes;
-- if it holds a different value, say `qudtqk:Pressure` against your
+- if it holds a different value, say `quantitykind:Pressure` against your
   `quantity_kind="temperature"`, registration raises `ValueError` and stores
   nothing.
 

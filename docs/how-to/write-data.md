@@ -2,17 +2,18 @@
 title: Direct data insertion
 ---
 
-Most data enters acquirium through drivers, covered in the [first driver tutorial](../tutorials/first-driver.md).
-Drivers can pull data from any source, and once registered, acquirium manages running them for continuous data ingestion.
-Use this only if you want to build your own data ingestion pipeline.
-This might be useful for backfills, one-off imports and tests.
+In this article we'll describe the simplest way to insert data into Acquirium.
+This method is useful for inserting static datasets, one-off imports, running examples and tests.
+You can also use it for building your own data ingestion pipeline.
 
-## Stream registration and reading insertion
+For continuous data ingestion from specific sources we recommend writing your own [driver](../tutorials/first-driver.md) instead.
 
-The client can write timeseries data directly.
+## Stream registration
 
-A stream is identified by a `source_id` (who writes it) and a `ref_name`
-(which series).
+Inserting data starts with registering the streams in Acquirium.
+A stream is identified by a `source_id` (who writes it) and a `ref_name` (which series).
+You can consider a stream as a "value column" of your dataset, where `ref_name` is the column header and `source_id` describes the file it comes from.
+
 Register both before the first row:
 
 ```python
@@ -22,75 +23,174 @@ acq.register_streams([{
     "source_id": "lab-import",
     "ref_name": "effluent-tds",
     "value_kind": "numeric",
-    "point_uri": "urn:swro/effluent-tds",
-    "label": "Effluent TDS (lab)",
-    "unit": "mg/L",
-    "quantity_kind": "mass concentration",
+    "point_uri": "urn:swro/effluent-tds",    # optional
+    "label": "Effluent TDS (lab)",           # optional
+    "unit": "mg/L",                          # optional
+    "quantity_kind": "mass concentration",   # optional
 }])
 ```
+- `value_kind` can be "text" or "numeric"; see [values](../explanation/values.md).
+- `point_uri` ties the stream to a point in the semantic model (see below).
+- `label` defaults to the `ref_name` when it is not given.
+- To attach metadata, you can use the keys `unit`, `quantity_kind`, `medium` and `substance`, whose values accept free text or URIs.
+- You can also insert other metadata with your own keys using `metadata = {key : value}`. See [Node metadata](attach-metadata.md) for more detail.
 
-`point_uri` ties the stream to a point in the semantic model.
-This link makes the rows reachable by queries.
-A stream registered without it gets a placeholder point, `<ref_uri>__point`,
-labelled with its `ref_name` unless you pass `label`.
-`measurement()` on an empty query finds it, but no equipment refers to it, so
-topology queries do not reach it.
-`unit`, `quantity_kind`, `medium` and `substance` accept free text or URIs,
-like everywhere else.
-An optional `metadata` key takes the same value map `insert_metadata()`
-takes, written on the point together with the stream: each key becomes a
-queryable attribute of the point.
-See [Node metadata](attach-metadata.md).
-
-When `point_uri` names a point the graph already has, the metadata you pass
-is checked against it.
-A field the point lacks is added, a field that conflicts raises `ValueError`
-before anything is inserted, and a unit that differs from the point's is
-accepted only when the two are convertible.
-In that case it is recorded on the reference node as the storage unit, and
-reads convert to the point's unit automatically; see
-[Automatic conversion](../explanation/units.md#automatic-conversion).
-
-Registration is required before the first insert.
-Inserting to an unregistered stream raises an error:
+**Note:** Registration is required before the first insert. Inserting into an unregistered stream raises an error:
 
 ```text
 HTTPError: 400 Client Error: Bad Request for url: http://localhost:8000/insert_timeseries;
 response body: stream urn:acquirium#a98759dd-... is not registered
 ```
 
+## Insert timeseries data
+
 Then insert rows as `(timestamp, value)` pairs:
 
 ```python
-import acquirium as aq
+from datetime import datetime, timezone
 
-rows = [(aq.to_timestamp("2026-08-08T10:00:00 UTC"), 412.0),
-        (aq.to_timestamp("2026-08-08T10:05:00 UTC"), 415.3)]
+rows = [(datetime(2026, 8, 8, 10, 0, tzinfo=timezone.utc), 412.0),
+        (datetime(2026, 8, 8, 10, 5, tzinfo=timezone.utc), 415.3)]
 
 acq.insert_timeseries("lab-import", "effluent-tds", rows)
 ```
+```text
+{'ok': True, 'rows_inserted': 2, 'receipts': [{'source_id': 'lab-import', 'request_id': '...', 'sequence': 2, 'accepted': True, 'published': True, 'error': None}]}
+```
 
-`aq.to_timestamp` returns a timezone-aware UTC datetime. It accepts RFC 3339
-and ISO 8601 strings such as `"2026-08-08T10:00:00Z"`, numeric timezone offsets,
-and the readable ` UTC` suffix. A timezone-less value defaults to UTC; use
-`timezone="America/Denver"` for local source times. See
-[timestamp conversion](../reference/client-api.md#timestamp-conversion).
+The call returns once the rows are published, so a query made next reads
+them. A receipt identifies the request; retrying with the same `request_id`
+and rows is safe after a lost response.
 
-For several streams at once, `insert_timeseries_batch(source_id, {ref_name:
-rows, ...})` chunks the upload automatically.
-For high volume, `insert_timeseries_arrow(source_id, table)` takes a
-`(ts, ref_name, value)` arrow table; this is the path the drivers use.
-
-Writes are idempotent on the (stream, timestamp) pair.
-Re-inserting a timestamp replaces that reading, so re-running an import is safe
-and does not duplicate anything. Apps that read a corrected reading recompute
-the windows that contain it.
-
-Values may be numbers or text. Each is stored as the stream's `value_kind`; see
-[values](../explanation/values.md).
-
-To remove readings, delete them by timestamp:
+To insert into several streams at once, use `insert_timeseries_batch()` with a dictionary of `ref_name` to rows.
+Every stream in the dictionary has to be registered first:
 
 ```python
-acq.delete_timeseries("lab-import", "effluent-tds", [aq.to_timestamp("2026-08-08T10:00:00 UTC")])
+acq.register_streams([{
+    "source_id": "lab-import",
+    "ref_name": "effluent-ph",
+    "value_kind": "numeric",
+}])
+
+acq.insert_timeseries_batch("lab-import", {
+    "effluent-tds": [(datetime(2026, 8, 8, 10, 10, tzinfo=timezone.utc), 418.1)],
+    "effluent-ph":  [(datetime(2026, 8, 8, 10, 10, tzinfo=timezone.utc), 7.2)],
+})
 ```
+```text
+{'ok': True, 'rows_inserted': 2, 'receipts': [...]}
+```
+
+Large inputs are split into requests of at most 10,000 rows automatically,
+so you can pass the whole dataset in one call. Each request is applied
+atomically, and the result lists one receipt per request.
+
+If your data is already in a table, use `insert_timeseries_arrow()`.
+It takes an Arrow table with the columns `ts`, `ref_name` and `value`.
+This is useful for large imports, and it is the method the drivers use:
+
+```python
+import pyarrow as pa
+
+table = pa.table({
+    "ts":       [datetime(2026, 8, 8, 10, 15, tzinfo=timezone.utc),
+                 datetime(2026, 8, 8, 10, 15, tzinfo=timezone.utc)],
+    "ref_name": ["effluent-tds", "effluent-ph"],
+    "value":    [420.4, 7.1],
+})
+
+acq.insert_timeseries_arrow("lab-import", table)
+```
+
+## Inserting the same data twice
+
+Rows are identified by their stream and timestamp.
+Inserting a row with a timestamp that already exists overwrites the old value, so re-running an import does not duplicate anything.
+Apps that read a corrected reading recompute the windows that contain it.
+
+To make a stream contain exactly the rows you supply, use `replace=True`.
+Rows with other timestamps are removed:
+
+```python
+acq.insert_timeseries("lab-import", "effluent-tds", rows, replace=True)
+```
+
+Be aware that an empty list with `replace=True` clears the stream:
+
+```python
+acq.insert_timeseries("lab-import", "effluent-tds", [], replace=True)
+```
+
+A replacement of up to 10,000 rows is atomic: a query sees the old readings
+or the new ones, never a mix. A larger one is sent in several requests, so a
+query made while it is under way can see part of it. Apps that read the
+stream recompute from the replaced readings.
+
+To remove individual readings, delete them by timestamp:
+
+```python
+acq.delete_timeseries("lab-import", "effluent-tds", [datetime(2026, 8, 8, 10, 0, tzinfo=timezone.utc)])
+```
+
+## Relating streams to the metadata model
+
+If you have a metadata model of the plant, you can associate the registered streams with the points in that model.
+For instance, the model below describes the effluent TDS point:
+
+```python
+acq.insert_graph("""
+@prefix s223: <http://data.ashrae.org/standard223#> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix quantitykind: <http://qudt.org/vocab/quantitykind/> .
+@prefix unit: <http://qudt.org/vocab/unit/> .
+
+<urn:swro/effluent-tds> a s223:QuantifiableObservableProperty ;
+    qudt:hasQuantityKind quantitykind:MassConcentration ;
+    qudt:hasUnit unit:MilliGM-PER-L .
+""", source_id="plant")
+```
+
+Insert the model first, then pass the URI of the point as `point_uri` when registering the stream:
+
+```python
+acq.register_streams([{
+    "source_id": "lab-import",
+    "ref_name": "effluent-tds",
+    "value_kind": "numeric",
+    "point_uri": "urn:swro/effluent-tds",
+}])
+```
+
+The stream is now attached to that point, and its data is reachable through the model:
+
+```python
+acq.query().measurement(quantity_kind="mass concentration").dataframe()
+```
+```text
+shape: (3, 2)
+┌─────────────────────────┬───────┐
+│ time                    ┆ data  │
+│ ---                     ┆ ---   │
+│ datetime[μs, UTC]       ┆ f64   │
+╞═════════════════════════╪═══════╡
+│ 2026-08-08 10:05:00 UTC ┆ 415.3 │
+│ 2026-08-08 10:10:00 UTC ┆ 418.1 │
+│ 2026-08-08 10:15:00 UTC ┆ 420.4 │
+└─────────────────────────┴───────┘
+```
+
+The point already has its unit and quantity kind in the model, so you don't need to repeat them.
+If you do pass them, they are checked against the point:
+
+- A field the point does not have is added to it.
+- A field that conflicts with the point raises a `ValueError`, and nothing is inserted.
+- A different unit is accepted only when it is convertible to the point's unit. See [Units](../explanation/units.md#automatic-conversion) for more detail.
+
+```text
+ValueError: quantity_kind mismatch for point <urn:swro/effluent-tds>: the point has
+<http://qudt.org/vocab/quantitykind/MassConcentration>, the stream provided
+<http://qudt.org/vocab/quantitykind/Temperature>
+```
+
+**Note:** If the `point_uri` does not exist in the model, a new point is created with that URI.
+See [Load a plant model](load-a-plant-model.md) for loading a full model from a file.

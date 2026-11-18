@@ -106,6 +106,9 @@ change in any release.
   read it. Requires the Escapement rolling-window release.
 
 ### Changed
+- Acquirium requires DuckDB 2.0 (`duckdb>=2.0.0`) for the experiment ledger. An
+  existing ledger file opens as is and keeps its storage format. A file created
+  by DuckDB 2.0 uses the 2.0 storage format, which DuckDB 1.x cannot open.
 - **Breaking:** an app's `inputs` map input names to selections,
   `inputs={"raw": selection}`, or to a list of selections that feed one input.
   `Selection` no longer takes `role=`, and `Selection.from_query` takes

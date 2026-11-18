@@ -2,6 +2,8 @@
 title: Values
 ---
 
+This is an explanation of how Acquirium stores readings that can be numbers or text, and how `value_mode` and `cast_value` decide what a query returns.
+
 ## Numbers and text
 
 Each reading is a finite number or text. A stream can hold both: a flow meter
@@ -34,6 +36,22 @@ When reading, `value_mode` decides which readings you get.
 | `"numeric"` | numeric readings only, as `Float64` |
 | `"text"` | text readings only, as strings |
 | `"coalesce"` | every reading as a string, so no row is left out |
+
+`"default"` does not inspect the stored values; it follows the registered
+`value_kind`. A stream registered without a `value_kind` is numeric.
+
+On a numeric stream, a value that parses as a number is stored as one, and
+anything else is kept as text. `"default"` therefore leaves the text readings
+out of a numeric stream; `"text"` returns only them, and `"coalesce"` returns
+them next to the numbers as strings. For instance, a numeric stream that
+received `12.5`, `"13.0"`, `"Bad"` and `14.0` reads as follows:
+
+| value_mode | values |
+|---|---|
+| `"default"` | `12.5`, `13.0`, `14.0` |
+| `"numeric"` | `12.5`, `13.0`, `14.0` |
+| `"text"` | `"Bad"` |
+| `"coalesce"` | `"12.5"`, `"13.0"`, `"Bad"`, `"14.0"` |
 
 ```python
 d = q.data(value_mode="numeric")

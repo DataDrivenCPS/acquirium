@@ -11,6 +11,7 @@ from urllib.parse import quote
 import polars as pl
 import pyarrow.ipc as ipc
 from acquirium.internals.models import (
+    MAX_REQUEST_ROWS,
     Order,
     StreamInsert,
     RegisterDatasourceRequest,
@@ -31,6 +32,26 @@ DEFAULT_HEALTH_REQUEST_TIMEOUT = 30.0
 # committed, so the same request can be sent again.
 CAPACITY_RETRY_S = 60.0
 _CURIE = re.compile(r"[A-Za-z_][\w.-]*:[^\s:]+")
+
+
+def _insert_chunks(streams, replace, size=MAX_REQUEST_ROWS):
+    """Split ``{ref_name: rows}`` into requests of at most ``size`` rows, as
+    ``(ref_name, rows, replace)`` items. A replaced stream's clear counts as a
+    row and travels with its first piece, so it lands before that stream's
+    rows; an empty replacement is a clear alone."""
+    chunk, used = [], 0
+    for name, rows in streams.items():
+        rows, clear = list(rows), name in replace
+        while rows or clear:
+            if used + clear >= size:
+                yield chunk
+                chunk, used = [], 0
+            piece, rows = rows[:size - used - clear], rows[size - used - clear:]
+            chunk.append((name, piece, clear))
+            used += len(piece) + clear
+            clear = False
+    if chunk:
+        yield chunk
 
 if TYPE_CHECKING:
     import pyarrow as pa
@@ -603,7 +624,7 @@ class AcquiriumClient:
             })
             # -> {"unit": "http://qudt.org/vocab/unit/GAL_US-PER-MIN",
             #     "quantity_kind": ".../quantitykind/VolumeFlowRate",
-            #     "medium": "urn:nawi-water-ontology#Water"}
+            #     "medium": "https://watermetadata.org/ontology/watr#Water"}
 
         The field name *is* the role — no ``kind`` to supply, no label, no
         tuple. Recognised fields (``unit``, ``quantity_kind``, ``medium``,
@@ -985,19 +1006,40 @@ class AcquiriumClient:
             logger.debug("%s refused (%s), resending in %.1f s", path, response.text[:200], delay)
             time.sleep(delay)
 
-    def insert_timeseries(self, *, source_id, ref_name, rows, request_id=None, wait=30, timeout=60,
-                          retry_for=CAPACITY_RETRY_S):
+    def insert_timeseries(self, *, source_id, ref_name, rows, request_id=None, replace=False,
+                          wait=30, timeout=60, retry_for=CAPACITY_RETRY_S):
         return self.insert_timeseries_batch(source_id, {ref_name: rows}, request_id=request_id,
+                                            replace=[ref_name] if replace else (),
                                             wait=wait, timeout=timeout, retry_for=retry_for)
 
-    def insert_timeseries_batch(self, source_id, streams, *, request_id=None, wait=30, timeout=60,
-                                retry_for=CAPACITY_RETRY_S):
+    def insert_timeseries_batch(self, source_id, streams, *, request_id=None, replace=(), wait=30,
+                                timeout=60, retry_for=CAPACITY_RETRY_S):
+        """Upsert ``{ref_name: rows}``. Each stream named in ``replace`` holds
+        exactly its supplied rows afterwards.
+
+        Up to ``MAX_REQUEST_ROWS`` rows go in one atomic request. Larger inputs
+        are split into several, sent in order; only the last waits for
+        publication, and the result lists every request's receipt. Retrying
+        with the same ``request_id`` and streams resends the same requests.
+        """
         request_id = request_id or str(uuid.uuid4())
-        payload = [StreamInsert(source_id=source_id, ref_name=name, values=rows,
-                               request_id=request_id) for name, rows in streams.items()]
-        return self._post_admitted("/insert_timeseries", retry_for=retry_for,
-                                   json=[item.model_dump(mode="json") for item in payload],
-                                   params={"wait": wait}, timeout=timeout).json()
+        replace = set(replace)
+        if replace - streams.keys():
+            raise ValueError(f"replace names streams not in the insert: {sorted(replace - streams.keys())}")
+        # Nothing to split still sends one request, as an empty insert did.
+        chunks = list(_insert_chunks(streams, replace)) or [[(name, [], False) for name in streams]]
+        result = {"ok": True, "rows_inserted": 0, "receipts": []}
+        for index, chunk in enumerate(chunks):
+            last = index == len(chunks) - 1
+            payload = [StreamInsert(source_id=source_id, ref_name=name, values=rows, replace=clear,
+                                    request_id=request_id if len(chunks) == 1 else f"{request_id}:{index}")
+                       for name, rows, clear in chunk]
+            response = self._post_admitted("/insert_timeseries", retry_for=retry_for,
+                                           json=[item.model_dump(mode="json") for item in payload],
+                                           params={"wait": wait if last else 0}, timeout=timeout).json()
+            result["rows_inserted"] += response["rows_inserted"]
+            result["receipts"] += response["receipts"]
+        return result
 
     def wait(self, receipt, *, timeout=30):
         """Wait for a database-scoped sequence returned by an accepted request."""

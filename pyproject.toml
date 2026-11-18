@@ -35,7 +35,7 @@ classifiers = [
 
 dependencies = [
     # The experiment ledger runs on DuckDB or PostgreSQL.
-    "duckdb>=0.10.0",
+    "duckdb>=2.0.0",
     "psycopg[binary]>=3.3.1",
     "escapement-db @ git+ssh://git@github.com/gtfierro/escapement.git@151cb87e630dce61ea44f0a75af8eea10e0262ab",
     "typer>=0.12.0",

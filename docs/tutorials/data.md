@@ -23,14 +23,23 @@ fetches nothing yet:
 flows = (acq.query().entity("Equipment")
          .measurement(alias="m", quantity_kind="mass flow rate")
          .data())
+flows.total_rows     # asks the server for the count, fetches no readings
+```
+```text
+55980
+```
+
+```python
 flows
 ```
 ```text
 DataObject(lazy, ~55980 rows, range=2026-08-05T16:28:39.137381+00:00 to 2026-08-08T05:30:48.864274+00:00, aliases=['m'], entities=['Equipment'])
 ```
 
-The server counted the rows and found the time range without sending any
-readings. If 56,000 rows is more than you want, bound the query with `start=`,
+`total_rows` and `time_range` ask the server for the row count and time range
+of the matched streams without sending any readings. Printing the object does
+not contact the server: until one of them is read, it shows the number of
+matched streams in place of the count and range. If 56,000 rows is more than you want, bound the query with `start=`,
 `end=` or `limit=` before fetching. `dataframe()` fetches the readings and
 keeps them on the object, so later calls reuse them.
 

@@ -69,6 +69,8 @@ class StreamInsert(BaseModel):
     ref_name: str = Field(min_length=1)
     values: list[tuple[Any, Any]]
     request_id: str = Field(min_length=1)
+    # The stream holds exactly ``values`` afterwards; empty clears it.
+    replace: bool = False
 
 
 # The most rows (or mutations) one write request may carry; Core.ingest

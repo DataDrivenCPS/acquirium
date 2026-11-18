@@ -17,26 +17,30 @@ the ASHRAE 223 and NAWI water ontologies. The seawater-ro model shipped with
 the repo is a worked example:
 
 ```turtle
-@prefix nawi: <urn:nawi-water-ontology#> .
+@prefix watr: <https://watermetadata.org/ontology/watr#> .
 @prefix s223: <http://data.ashrae.org/standard223#> .
 @prefix wbs:  <urn:swro/> .
 
 wbs: a owl:Ontology ;
-    owl:imports nawi: .
+    owl:imports <urn:nawi-water-ontology> .
 
 wbs:P1  a s223:Pump ;
     s223:hasConnectionPoint wbs:P1-out .
 
 wbs:P1-out-pressure  a s223:QuantifiableObservableProperty ;
-    qudt:hasQuantityKind qudtqk:Pressure .
+    qudt:hasQuantityKind quantitykind:Pressure .
 ```
 
 Two things matter for querying to work later.
 
-Declare the imports. `owl:imports nawi:` is what pulls the water ontology's
+Declare the imports. `owl:imports <urn:nawi-water-ontology>` is what pulls the water ontology's
 class hierarchy into the query view, and that hierarchy is why
 `entity("pump")` matches `wbs:P1` without the file ever saying the word
 "equipment".
+Note that `urn:nawi-water-ontology` is the name of the bundled ontology graph,
+which is not the same as the `watr:` namespace of its terms.
+The [server configuration reference](../reference/server-config.md) lists the
+names of the bundled ontologies.
 
 Give every instance a stable URI. Those URIs are what drivers bind their
 streams to, so renaming one later orphans its data.

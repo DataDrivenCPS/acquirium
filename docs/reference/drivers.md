@@ -63,6 +63,10 @@ from acquirium import (Driver, IngestDriver, PollingIngestDriver, EventIngestDri
 from acquirium.DriverState import DriverState
 ```
 
+Note that `DriverState` is imported from its own module.
+`from acquirium import DriverState` returns the `acquirium.DriverState` module,
+not the class.
+
 The other built-ins are imported by their module path, as in the `spec`
 values below.
 
@@ -263,9 +267,17 @@ keys need no declaration.
 | `source_id` | none | the driver's datasource; required by the ingest bases unless set in `setup()` |
 | `server_url`, `server_port` | `127.0.0.1`, the `[server]` port | under `[driver]`: where the actors reach the server |
 
-Set distinct `name` and `driver_id` values when configuring the same class
-more than once: the name identifies the running driver, and the ID identifies
-its saved state.
+Note that the default `name` is not unique.
+Two `[[drivers]]` entries with the same class and no `name` get the same name,
+and the second one fails to start with `Driver '<name>' is already running`.
+The server logs the error and continues.
+To run one class twice, set a different `name` and `driver_id` on each entry:
+the name identifies the running driver, and the ID identifies its saved state.
+
+<!-- TODO: two more keys the supervisor reads are undocumented above:
+     `[driver] use_ssl` (false; it is in the sample acquirium.toml) and
+     `[driver] insert_batch_rows` (50000, passed to the actor's client). Add
+     them once we decide whether they are public config. -->
 
 ## Built-in drivers
 

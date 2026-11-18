@@ -2,6 +2,10 @@
 title: Graph updates and queries
 ---
 
+This is an explanation of the graph backend: the persistent graphs, the derived
+query views, the update rules, and the interfaces application and driver
+authors use.
+
 A plant model, driver registrations, app outputs, and experiment metadata all
 contribute to the same graph. A query can follow relationships across those
 contributions, while each writer keeps ownership of its own statements.

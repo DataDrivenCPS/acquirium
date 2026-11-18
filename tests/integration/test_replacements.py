@@ -8,6 +8,9 @@ import acquirium as aq
 from examples.turbidity.apps import NTU, SOURCE, TURBIDITY, declarations
 from examples.turbidity.run import LOCATIONS, readings
 
+# Each test starts its own server with aq.init().
+pytestmark = pytest.mark.usefixtures("separate_server")
+
 
 @pytest.mark.integration
 def test_replacement_discovery_physical_inputs_and_history_survive_restart(tmp_path):

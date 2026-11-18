@@ -13,8 +13,8 @@ from acquirium.Client.explore.core import Query
 
 CLS_A = "urn:test#TypeA"
 QK_URI = "http://qudt.org/vocab/quantitykind/MassFlowRate"
-MEDIUM_URI = "urn:nawi-water-ontology#Water-Brine"
-PROCESS_URI = "urn:nawi-water-ontology#OzonationProcess"
+MEDIUM_URI = "https://watermetadata.org/ontology/watr#Water-Brine"
+PROCESS_URI = "https://watermetadata.org/ontology/watr#OzonationProcess"
 OF_MEDIUM = "http://data.ashrae.org/standard223#ofMedium"
 HAS_MEDIUM = "http://data.ashrae.org/standard223#hasMedium"
 
@@ -102,7 +102,7 @@ class TestSparqlExpansion:
 
     def test_process_compiles_with_subclass_fence(self):
         s = q().entity(CLS_A, alias="ro").where(process=PROCESS_URI).to_sparql()
-        assert f"?v0 (<urn:nawi-water-ontology#hasProcess>) ?v0_process ." in s
+        assert f"?v0 (<https://watermetadata.org/ontology/watr#hasProcess>) ?v0_process ." in s
         assert "?v0_process <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> ?v0_process_typ ." in s
         assert f"SELECT DISTINCT ?v0_process_typ WHERE {{ ?v0_process_typ <http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{PROCESS_URI}>" in s
 
@@ -113,7 +113,7 @@ class TestSparqlExpansion:
 
     def test_negated_subclass_attr_uses_anchored_path(self):
         s = q().entity(CLS_A, alias="ro").where(process=Not(PROCESS_URI)).to_sparql()
-        assert ("FILTER NOT EXISTS { ?v0 (<urn:nawi-water-ontology#hasProcess>)"
+        assert ("FILTER NOT EXISTS { ?v0 (<https://watermetadata.org/ontology/watr#hasProcess>)"
                 f"/<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>/<http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{PROCESS_URI}> . }}") in s
 
     def test_cp_type_on_entity(self):
@@ -198,13 +198,13 @@ class TestResolution:
 class TestProcessKind:
     def test_process_resolves_with_its_own_kind(self):
         client = MagicMock()
-        client.resolve.return_value = {"process_0": "urn:nawi-water-ontology#Process-ReverseOsmosis"}
+        client.resolve.return_value = {"process_0": "https://watermetadata.org/ontology/watr#Process-ReverseOsmosis"}
         b = (Query(client=client).entity(CLS_A, alias="eq")
              .where(process="reverse osmosis"))
         client.resolve.assert_called_once_with(
             {"process_0": ("reverse osmosis", "process")}, min_score=0.4)
         assert b.query_graph.nodes[0].constraints["attrs"]["process"] == \
-            "urn:nawi-water-ontology#Process-ReverseOsmosis"
+            "https://watermetadata.org/ontology/watr#Process-ReverseOsmosis"
 
 
 class TestAttributeDocs:

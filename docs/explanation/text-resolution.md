@@ -2,6 +2,9 @@
 title: Text resolution
 ---
 
+This is an explanation of how Acquirium matches free text, such as `"ro membrane"` or `"psi"`, to ontology URIs.
+For using the resolver directly, see [resolve text to URIs](../how-to/resolve-text.md).
+
 ## Text matching
 
 Each text is matched in two stages.

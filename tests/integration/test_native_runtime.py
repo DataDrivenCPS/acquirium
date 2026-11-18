@@ -10,6 +10,9 @@ import pytest
 
 import acquirium as aq
 
+# Each test starts its own server with aq.init().
+pytestmark = pytest.mark.usefixtures("separate_server")
+
 
 @pytest.mark.parametrize("deployment", ["python", "config"])
 def test_sine_wave_driver_and_python_threshold(tmp_path, deployment):

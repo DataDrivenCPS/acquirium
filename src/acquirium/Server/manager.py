@@ -440,7 +440,7 @@ class Manager:
 
             # asset-type label from an equipment register row
             resolve_text("sedimentation tank", kind="class", top_k=2)
-            # -> [{"uri": "urn:nawi-water-ontology#SedimentationTank",
+            # -> [{"uri": "https://watermetadata.org/ontology/watr#SedimentationTank",
             #      "kind": "class", "score": 1.0,
             #      "match_stage": "exact", ...}, ...]
         """
@@ -672,7 +672,9 @@ class Manager:
     def insert_timeseries(self, *, source_id, ref_name, rows, request_id=None):
         return self.insert_timeseries_batch(source_id, {ref_name: rows}, request_id=request_id)
 
-    def insert_timeseries_batch(self, source_id, streams, *, request_id=None):
+    def insert_timeseries_batch(self, source_id, streams, *, request_id=None, replace=()):
+        """Upsert ``{ref_name: rows}`` in one request; each stream named in
+        ``replace`` holds exactly its supplied rows afterwards."""
         import polars as pl
         from acquirium.core import time_ns
         refs, times, values = [], [], []
@@ -685,7 +687,8 @@ class Manager:
         frame = pl.DataFrame({"ref_uri": pl.Series(refs, dtype=pl.String),
                               "ts": pl.Series(times, dtype=pl.Int64).cast(pl.Datetime("ns", "UTC")),
                               "value": pl.Series(values, dtype=pl.Object)})
-        return self._ingest(source_id, frame, request_id)
+        replaced = {str(compute_ref_uri(source_id, name)) for name in replace}
+        return self._ingest(source_id, frame, request_id, replace=replaced)
 
     def insert_timeseries_arrow(self, source_id, table, *, request_id=None):
         import polars as pl
@@ -697,15 +700,15 @@ class Manager:
         frame = frame.with_columns(pl.col("ref_name").replace_strict(refs).alias("ref_uri"))
         return self._ingest(source_id, frame.drop("ref_name"), request_id)
 
-    def _ingest(self, source_id, frame, request_id):
+    def _ingest(self, source_id, frame, request_id, replace=()):
         """Submit ``ref_uri``/``ts``/``value`` rows, each value stored as its
         stream's declared kind."""
         import polars as pl
-        kinds = self._validate_refs(source_id, set(frame["ref_uri"].unique().to_list()))
+        kinds = self._validate_refs(source_id, set(frame["ref_uri"].unique().to_list()) | set(replace))
         frame = frame.with_columns(
             pl.col("ref_uri").replace_strict(kinds, return_dtype=pl.String).alias("value_kind")
         )
-        return self.core.ingest(source_id, request_id or str(uuid.uuid4()), frame)
+        return self.core.ingest(source_id, request_id or str(uuid.uuid4()), frame, replace=replace)
 
     def _validate_refs(self, source, references):
         """Each registered reference's value kind; unregistered or foreign

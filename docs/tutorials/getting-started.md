@@ -2,46 +2,64 @@
 title: Installation and startup
 ---
 
-Acquirium runs as a server. Drivers feed it readings from the plant, and your
-scripts and notebooks ask it questions through a Python client. Install the
-package first:
+This tutorial installs Acquirium from PyPI, generates a config file, starts a server and runs one query.
+The starter config collects CPU, memory, disk and network readings of your machine, so there is data to query without a plant model.
+
+## 1. Install
+
+Acquirium requires Python 3.11 or newer.
+Create a directory for the project and install the package with either pip or uv.
+
+With pip and a virtual environment:
 
 ```bash
-pip install acquirium          # extras add drivers: acquirium[mqtt], [xlsx], [watertap]
+mkdir my-plant && cd my-plant
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install acquirium
 ```
 
-There are two ways to get a server running. Which one you want depends on how
-long it needs to live.
-
-## Server in a Python script
-
-When you are exploring in a notebook, let the client start a server for you:
-
-```python
-import acquirium as aq
-
-acq = aq.init()
-acq.query().measurement().metadata()   # every stream the server knows about
-aq.shutdown()
-```
-
-`aq.init()` reads `acquirium.toml` from the current directory if there is one,
-starts a server in the background, and returns a client connected to it.
-`aq.init("plant.toml")` uses a different config file. When the script ends, so
-does the server. [Starting from a script](../how-to/local-runtime.md) explains
-how several scripts can share one server.
-
-## Standalone server
-
-Drivers that poll a SCADA export overnight, or a plant model that several
-people query, need a server that outlives any one script. Start it from the
-command line:
+With uv:
 
 ```bash
-acquirium server --config acquirium.toml
+uv init my-plant && cd my-plant
+uv add acquirium
 ```
 
-and connect to it from Python:
+Note that with uv, the `acquirium` and `python` commands below are run as
+`uv run acquirium ...` and `uv run python ...`.
+
+Some drivers need extra dependencies, which are installed as extras:
+`acquirium[mqtt]`, `acquirium[xlsx]`, `acquirium[watertap]`.
+
+## 2. Generate a config file
+
+```bash
+acquirium config init
+```
+```text
+Wrote acquirium.toml
+Start the server with: acquirium server --config acquirium.toml
+```
+
+This writes `acquirium.toml` into the current directory.
+An existing file is not overwritten unless `--force` is passed.
+
+## 3. Start Acquirium
+
+There are two ways to start Acquirium:
+
+### Option A: run the server
+
+```bash
+acquirium server
+```
+
+Default `--config`, is `acquirium.toml` at the working directory.
+It keeps running until you stop it with Ctrl+C.
+This is useful when drivers should keep collecting data, or when several scripts and notebooks use the same server.
+
+Connect to it from a second terminal or a notebook:
 
 ```python
 from acquirium import Acquirium
@@ -49,24 +67,76 @@ from acquirium import Acquirium
 acq = Acquirium(server_url="127.0.0.1", server_port=8000)
 ```
 
-The two servers differ in one respect. When you ask for `"pump"`, the server
-has to work out which concept in the plant vocabulary you mean. A server
-started by `aq.init()` matches names exactly, so it starts at once. A
-standalone server also matches by meaning, which needs an embedding model: the
-first start downloads it and builds an index, and later starts reuse the
-cache. [Text resolution](../reference/server-config.md#text-resolution) covers
-the setting.
+See [run the server](../how-to/run-the-server.md) for the command's flags and the startup order.
 
-## Related tutorials
+### Option B: start it from Python
 
-A new server is empty. It has no plant model and no streams, so the tutorials
-fill it in one of two ways.
+```python
+import acquirium as aq
 
-The [querying](querying.md) and [data](data.md) tutorials use a simulated
-seawater reverse-osmosis plant from WaterTAP, which comes with a plant model
-and a steady supply of readings. Start it by following the
-[WaterTAP deployment guide](https://github.com/DataDrivenCPS/acquirium/blob/main/deployments/WATERTAP/readme.md).
+acq = aq.init()      # reads ./acquirium.toml and starts a local server
+# ... use acq ...
+aq.shutdown()
+```
 
-To begin with your own data instead, start with
-[File ingestion driver](first-driver.md), which reads a folder of CSV files and
-needs no plant model at all.
+`aq.init()` starts the server in the background and returns the same client as option A.
+The server stops at `aq.shutdown()` or when the script exits. The data stays in `data_dir`.
+This is useful for a single script or notebook.
+
+See [start Acquirium from a script](../how-to/local-runtime.md) for the
+arguments of `aq.init()` and for sharing one server between scripts.
+
+## 4. Run a query
+
+The system metrics driver in the starter config describes your machine as a
+`Computer` with six measurement points, and takes a reading every 30 seconds.
+Wait about a minute after the start, then run:
+
+```python
+(acq.query()
+ .entity("Computer")
+ .measurement(alias="m", quantity_kind="dimensionless ratio")
+ .dataframe()
+ .tail(2))
+```
+```text
+shape: (2, 4)
+┌────────────────────────────────┬──────────────┬──────────────────────┬──────────────┐
+│ time                           ┆ m__CPU usage ┆ m__Disk usage (root) ┆ m__RAM usage │
+│ ---                            ┆ ---          ┆ ---                  ┆ ---          │
+│ datetime[ns, UTC]              ┆ f64          ┆ f64                  ┆ f64          │
+╞════════════════════════════════╪══════════════╪══════════════════════╪══════════════╡
+│ 2026-11-10 21:50:48.834927 UTC ┆ 79.8         ┆ 5.1                  ┆ 75.8         │
+│ 2026-11-10 21:51:20.641139 UTC ┆ 70.3         ┆ 5.1                  ┆ 76.5         │
+└────────────────────────────────┴──────────────┴──────────────────────┴──────────────┘
+```
+
+The query selects every `Computer` in the graph, then the measurements of it whose quantity kind is a dimensionless ratio, which are the three percentages.
+`dataframe()` fetches their readings as a polars frame. 
+The [querying tutorial](querying.md) covers the query interface.
+
+## The config file
+
+These are the keys of the starter `acquirium.toml` that matter first.
+Relative paths resolve against the directory of the config file.
+
+| key | starter value | meaning |
+|---|---|---|
+| `[server] host` | `"127.0.0.1"` | The address the server listens on. `127.0.0.1` accepts connections from this machine only; `"0.0.0.0"` accepts connections from other machines. `aq.init()` always uses `127.0.0.1`. |
+| `[server] port` | `8000` | The port the server listens on. Pass the same value as `server_port` to `Acquirium(...)`. |
+| `[server] data_dir` | `".acquirium"` | The directory that holds the graph store, the readings and experiment records, and the embedding cache. |
+| `[server] engine_path` | commented out | Where readings are stored. By default they are in a DuckDB file under `data_dir`; a `postgresql://` URL keeps them, and the experiment records, in PostgreSQL. |
+| `[server] exact_only` | `true` | How free text such as `"dimensionless ratio"` is matched to ontology terms. `true` matches labels exactly. `false` also matches by meaning; it downloads an embedding model and builds indexes on the first start, which can take several minutes. See [text resolution](../explanation/text-resolution.md). |
+| `[server] recreate` | `false` | `true` deletes all stored data every time the server starts. |
+| `[driver] interval` | `10.0` | Seconds between two polls of a driver. This is the default for every `[[drivers]]` entry. |
+| `[[drivers]] spec` | system metrics driver | The driver class to start with the server, as `module:Class` or `path/to/file.py:Class`. Each `[[drivers]]` entry starts one driver and can override the `[driver]` defaults. |
+
+The [server configuration reference](../reference/server-config.md) lists every `[server]` key, and the [driver reference](../reference/drivers.md#configuration) lists the driver keys and the built-in drivers.
+
+## Next steps
+
+- [Load a plant model](../how-to/load-a-plant-model.md) to describe your own equipment and points.
+- [Write a first driver](first-driver.md) to ingest your own data.
+- [Querying](querying.md) and [working with data](data.md) for the query interface. Their examples use the WaterTAP seawater-ro model; the
+  [WaterTAP deployment guide](https://github.com/DataDrivenCPS/acquirium/blob/main/deployments/WATERTAP/readme.md)
+  shows how to run it.

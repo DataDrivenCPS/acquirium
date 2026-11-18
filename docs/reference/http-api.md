@@ -19,7 +19,7 @@ The server exposes semantic graph operations and one Escapement timeseries engin
 | `POST /register_datasource` | Source identity in RDF |
 | `POST /resolve_storage_keys` | Point/reference URIs to canonical references; ambiguous points fail |
 | `POST /stream_views` | `{uris: [...]}` to each reference's current `current` and `raw` streams and the unit a replacement head reports, or null |
-| `POST /insert_timeseries` | JSON list of `{source_id, ref_name, request_id, values}` |
+| `POST /insert_timeseries` | JSON list of `{source_id, ref_name, request_id, values, replace: false}`; items sharing a `request_id` form one atomic request, and `replace` makes that stream hold exactly `values` |
 | `POST /insert_timeseries_arrow` | Arrow `source_id, ref_name, ts, value`; required `X-Acquirium-Request-Id` |
 | `POST /delete_timeseries` | `{source_id, ref_name, timestamps: [UTC-ns], request_id}` |
 | `GET /timeseries` | Arrow `ts: timestamp[ns, UTC], value: float64, uri: utf8`; `after=<sequence>` waits until that receipt is published |

@@ -1014,14 +1014,18 @@ def _receipt(receipt, source_id, request_id, wait):
 @_engine_errors
 def insert_timeseries(streams: Annotated[list[StreamInsert], Body()], wait: float = Query(30, ge=0)):
     receipts, total = [], 0
-    groups = {}
+    groups, replaced = {}, {}
     for stream in streams:
-        group = groups.setdefault((stream.source_id, stream.request_id), {})
-        group.setdefault(stream.ref_name, []).extend(stream.values)
+        key = (stream.source_id, stream.request_id)
+        groups.setdefault(key, {}).setdefault(stream.ref_name, []).extend(stream.values)
+        if stream.replace:
+            replaced.setdefault(key, set()).add(stream.ref_name)
         total += len(stream.values)
     for (source_id, request_id), observations in groups.items():
-        receipt = app.state.manager.insert_timeseries_batch(source_id, observations,
-                                                           request_id=request_id)
+        receipt = app.state.manager.insert_timeseries_batch(
+            source_id, observations, request_id=request_id,
+            replace=replaced.get((source_id, request_id), ()),
+        )
         receipts.append(_receipt(receipt, source_id, request_id, wait))
     insert_stats.record(origin="http", rows=total, streams=[s.ref_name for s in streams])
     return {"ok": True, "rows_inserted": total, "receipts": receipts}

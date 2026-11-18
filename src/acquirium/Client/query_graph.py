@@ -22,7 +22,7 @@ class QueryNode:
     - id: internal identifier (stable within this QueryGraph)
     - alias: user-facing name to refer to this node (e.g., 'valve'), if not provided, same as id
     - constraints: node constraints; well-known keys are "rdf_class"
-      (ontology class URI, e.g. 'urn:nawi-water-ontology#Valve'),
+      (ontology class URI, e.g. 'https://watermetadata.org/ontology/watr#Valve'),
       "instance_uri", "is_data_node", "path_from", and "process"
     """
     id: int

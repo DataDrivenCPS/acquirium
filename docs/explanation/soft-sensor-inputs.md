@@ -49,7 +49,7 @@ This query finds the tanks and their raw temperature streams:
 
 ```python
 selection_query = """
-PREFIX watr: <urn:nawi-water-ontology#>
+PREFIX watr: <https://watermetadata.org/ontology/watr#>
 PREFIX s223: <http://data.ashrae.org/standard223#>
 PREFIX ref: <https://brickschema.org/schema/Brick/ref#>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
@@ -487,7 +487,7 @@ Acquirium has already separated the calls by tank.
 The same grouping choice is available through `Selection.from_query`:
 
 ```python
-temperatures = client.query().entity("urn:nawi-water-ontology#Tank", alias="tank").measurement(
+temperatures = client.query().entity("https://watermetadata.org/ontology/watr#Tank", alias="tank").measurement(
     alias="temperature", label="Raw temperature"
 )
 # Each matched stream gets its own calculation.

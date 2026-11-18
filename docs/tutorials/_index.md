@@ -5,7 +5,7 @@ title: Tutorials
 The tutorials build on each other, and each one leaves you with something that
 runs.
 
-1. [Installation and startup](getting-started.md): install Acquirium and start a server.
+1. [Installation and startup](getting-started.md): install Acquirium, generate a config file, and start a server.
 2. [Querying](querying.md) and [Data retrieval and formats](data.md): ask a simulated
    RO plant about its equipment and read its measurements. The
    [query cookbook](query-cookbook.md) works through more plant questions.

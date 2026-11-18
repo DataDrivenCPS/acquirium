@@ -25,7 +25,7 @@ Every place that takes a class, a predicate or an attribute value also takes
 free text.
 The server matches it against the ontologies (exact match on a label first,
 then semantic similarity) and picks the best hit.
-`"ozone unit"` becomes `nawi:OzonationUnit`, `"mg/L"` becomes `unit:MilliGM-PER-L`.
+`"ozone unit"` becomes `watr:OzonationUnit`, `"mg/L"` becomes `unit:MilliGM-PER-L`.
 Each slot is matched against its own vocabulary, so `unit="PSI"` searches
 units, not classes.
 
@@ -38,9 +38,9 @@ In such case, try to change the text you enter, use the exact URI of the equipme
 acq.client.resolve("ro membrane", "class", top_k=3, min_score=0.3)
 ```
 ```text
-[{'uri': 'urn:nawi-water-ontology#ReverseOsmosisMembrane',        'score': 0.839, ...},
- {'uri': 'urn:nawi-water-ontology#ElectricallyConductingMembrane', 'score': 0.788, ...},
- {'uri': 'urn:nawi-water-ontology#MolybdenumSulfideBasedMembrane', 'score': 0.786, ...}]
+[{'uri': 'https://watermetadata.org/ontology/watr#ReverseOsmosisMembrane',        'score': 0.839, ...},
+ {'uri': 'https://watermetadata.org/ontology/watr#ElectricallyConductingMembrane', 'score': 0.788, ...},
+ {'uri': 'https://watermetadata.org/ontology/watr#MolybdenumSulfideBasedMembrane', 'score': 0.786, ...}]
 ```
 
 Note that only the ontologies are searchable this way, not your plant's own
@@ -191,6 +191,8 @@ This is the middle ground between a single `frm=` and `frm="*"`:
 `alias()` renames the current node, but the previous alias keeps working as
 an alternative handle in `target=`, `frm=` and `of=`; display uses the latest
 name.
+Note that the previous alias stays reserved for that node, so giving it to
+another node raises a `ValueError`.
 
 The terminals take `include_dependencies=` (default `True`).
 `True` queries the deployment data together with the resolved ontology and

@@ -2,6 +2,11 @@
 title: Data stream lifecycle
 ---
 
+This is an explanation of how a timeseries stream comes into existence, how its
+readings are stored, and how a query finds them again. It is background for
+driver authors and for anyone debugging ingestion; using the data is covered in
+the [data tutorial](../tutorials/data.md).
+
 A stream is identified by its `source_id` and a source-local `ref_name`.
 `compute_ref_uri` derives its canonical reference URI from the two. Registering
 the stream writes that reference, its `value_kind`, and its point's unit and

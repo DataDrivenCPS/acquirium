@@ -216,12 +216,15 @@ class Acquirium:
         rows: list[tuple[datetime, Any]],
         *,
         request_id: str | None = None,
+        replace: bool = False,
         wait: float = 30,
         timeout: float = 60,
         retry_for: float = CAPACITY_RETRY_S,
     ) -> dict[str, Any]:
-        """Upsert numeric observations; wait=0 returns after durable acceptance.
+        """Upsert observations; wait=0 returns after durable acceptance.
 
+        ``replace=True`` keeps exactly the supplied rows, removing readings at
+        other timestamps; an empty replacement clears the stream.
         timeout bounds the HTTP call. A transport failure leaves acceptance
         unknown; retry the same request ID and payload. A request the server
         refuses with 503 is resent for up to ``retry_for`` seconds.
@@ -231,12 +234,14 @@ class Acquirium:
             ref_name=ref_name,
             rows=rows,
             request_id=request_id,
+            replace=replace,
             wait=wait, timeout=timeout, retry_for=retry_for,
         )
 
     def insert_timeseries_batch(self, source_id, streams, *, request_id=None, wait=30, timeout=60,
                                 retry_for=CAPACITY_RETRY_S):
-        """Submit one atomic bounded request. Chunk larger imports explicitly."""
+        """Upsert ``{ref_name: rows}``. Large inputs are split into requests of
+        at most 10,000 rows, each atomic; pass the whole dataset in one call."""
         return self.client.insert_timeseries_batch(source_id, streams, request_id=request_id,
                                                   wait=wait, timeout=timeout, retry_for=retry_for)
 
@@ -270,7 +275,7 @@ class Acquirium:
             })
             # -> {"unit": "http://qudt.org/vocab/unit/GAL_US-PER-MIN",
             #     "quantity_kind": ".../quantitykind/VolumeFlowRate",
-            #     "medium": "urn:nawi-water-ontology#Water"}
+            #     "medium": "https://watermetadata.org/ontology/watr#Water"}
 
         The field name *is* the role — no ``kind`` to supply, no label, no
         tuple. Recognised fields (``unit``, ``quantity_kind``, ``medium``,

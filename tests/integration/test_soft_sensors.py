@@ -27,6 +27,9 @@ from examples.soft_sensors.declarations import (
     register,
 )
 
+# Each test starts its own server with aq.init().
+pytestmark = pytest.mark.usefixtures("separate_server")
+
 SECOND = 1_000_000_000
 
 

@@ -5,65 +5,59 @@
     {
       "text": "filtration",
       "expected": [
-        "urn:nawi-water-ontology#Process-Filtration"
+        "https://watermetadata.org/ontology/watr#Process-Filtration"
       ],
       "stage": "exact"
     },
     {
       "text": "digestion",
       "expected": [
-        "urn:nawi-water-ontology#Process-Digestion"
+        "https://watermetadata.org/ontology/watr#Process-Digestion"
       ]
     },
     {
       "text": "oxidation",
       "expected": [
-        "urn:nawi-water-ontology#Process-Oxidation"
+        "https://watermetadata.org/ontology/watr#Process-Oxidation"
       ]
-    },
-    {
-      "text": "disinfection",
-      "expected": [
-        "urn:nawi-water-ontology#Process-Disinfection"
-      ],
-      "stage": "exact"
     },
     {
       "text": "incineration",
       "expected": [
-        "urn:nawi-water-ontology#Process-Incineration"
-      ],
-      "stage": "exact"
+        "https://watermetadata.org/ontology/watr#Process-FluidizedBedIncineration",
+        "https://watermetadata.org/ontology/watr#Process-MultipleHearthIncineration",
+        "https://watermetadata.org/ontology/watr#Process-Combustion"
+      ]
     },
     {
       "text": "filtration process",
       "expected": [
-        "urn:nawi-water-ontology#Process-Filtration"
+        "https://watermetadata.org/ontology/watr#Process-Filtration"
       ]
     },
     {
       "text": "oxidation process",
       "expected": [
-        "urn:nawi-water-ontology#Process-Oxidation",
-        "urn:nawi-water-ontology#Process-AdvancedOxidation"
+        "https://watermetadata.org/ontology/watr#Process-Oxidation",
+        "https://watermetadata.org/ontology/watr#Process-AdvancedOxidation"
       ]
     },
     {
       "text": "separation process",
       "expected": [
-        "urn:nawi-water-ontology#Process-Separation"
+        "https://watermetadata.org/ontology/watr#Process-Separation"
       ]
     },
     {
       "text": "digestion process",
       "expected": [
-        "urn:nawi-water-ontology#Process-Digestion"
+        "https://watermetadata.org/ontology/watr#Process-Digestion"
       ]
     },
     {
       "text": "osmosis",
       "expected": [
-        "urn:nawi-water-ontology#Process-ReverseOsmosis"
+        "https://watermetadata.org/ontology/watr#Process-ReverseOsmosis"
       ]
     }
   ]

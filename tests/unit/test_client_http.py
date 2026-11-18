@@ -4,7 +4,7 @@ Calls that must not reach a server use a client pointed at a port nobody
 listens on, so any request fails the test.
 """
 import socket
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from unittest.mock import patch
 from uuid import uuid4
@@ -16,6 +16,7 @@ from requests import HTTPError
 
 from acquirium import Acquirium
 from acquirium.Client.client import AcquiriumClient
+from acquirium.internals.models import compute_ref_uri
 
 
 @pytest.fixture
@@ -240,7 +241,7 @@ class TestResolve:
             "eu": "http://qudt.org/vocab/unit/GAL_US-PER-MIN", "qty": None, "pinned": "urn:x", "empty": None}
 
     def test_bound_curies_expand(self, client):
-        assert client.resolve("watr:UltrafiltrationUnit", "class") == "urn:nawi-water-ontology#UltrafiltrationUnit"
+        assert client.resolve("watr:UltrafiltrationUnit", "class") == "https://watermetadata.org/ontology/watr#UltrafiltrationUnit"
         assert client.resolve("quantitykind:Pressure", "quantity_kind", top_k=2) == [{
             "uri": "http://qudt.org/vocab/quantitykind/Pressure",
             "kind": "quantity_kind", "score": 1.0, "match_stage": "passthrough",
@@ -303,3 +304,34 @@ def test_writes_raise_other_errors_and_a_refusal_past_the_budget(offline):
         with pytest.raises(HTTPError, match="full"):
             offline.delete_timeseries("src", "temp", [1], retry_for=0)
     assert post.call_count == 1
+
+
+def test_large_inserts_are_split_in_order_and_only_the_last_waits(offline):
+    from acquirium.internals.models import MAX_REQUEST_ROWS
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    rows = [(start + timedelta(seconds=i), float(i)) for i in range(MAX_REQUEST_ROWS + 5)]
+    reply = b'{"ok": true, "rows_inserted": 0, "receipts": [{"sequence": 1}]}'
+    with patch.object(offline._http, "post", return_value=_response(200, reply)) as post:
+        result = offline.insert_timeseries_batch("src", {"a": rows, "b": rows[:3]}, request_id="r",
+                                                 replace=["a"])
+    bodies = [call.kwargs["json"] for call in post.call_args_list]
+    assert [sum(len(item["values"]) + item["replace"] for item in body) for body in bodies] == [MAX_REQUEST_ROWS, 9]
+    # The clear travels with the stream's first rows, so it lands before them.
+    assert [(item["ref_name"], item["replace"]) for body in bodies for item in body] == [
+        ("a", True), ("a", False), ("b", False)]
+    assert {item["request_id"] for item in bodies[0]} == {"r:0"} and {item["request_id"] for item in bodies[1]} == {"r:1"}
+    assert [call.kwargs["params"]["wait"] for call in post.call_args_list] == [0, 30]
+    assert len(result["receipts"]) == 2
+
+
+def test_replace_keeps_exactly_the_supplied_rows(client, ns):
+    source, start = f"replace-{uuid4().hex[:8]}", datetime(2026, 1, 1, tzinfo=timezone.utc)
+    client.register_datasource(source)
+    client.register_streams([{"source_id": source, "ref_name": "s", "value_kind": "numeric"}])
+    at = [start + timedelta(minutes=i) for i in range(3)]
+    client.insert_timeseries(source_id=source, ref_name="s", rows=list(zip(at, [1.0, 2.0, 3.0])))
+    client.insert_timeseries(source_id=source, ref_name="s", rows=[(at[1], 20.0)], replace=True)
+    ref = str(compute_ref_uri(source, "s"))
+    assert client.timeseries_df(ref)["value"].to_list() == [20.0]
+    client.insert_timeseries(source_id=source, ref_name="s", rows=[], replace=True)
+    assert client.timeseries_df(ref).is_empty()

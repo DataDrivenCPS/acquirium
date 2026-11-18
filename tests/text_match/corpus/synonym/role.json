@@ -5,69 +5,51 @@
     {
       "text": "feed water",
       "expected": [
-        "urn:nawi-water-ontology#Role-Feed"
+        "https://watermetadata.org/ontology/watr#Role-Feed"
       ]
     },
     {
       "text": "influent feed",
       "expected": [
-        "urn:nawi-water-ontology#Role-Feed"
+        "https://watermetadata.org/ontology/watr#Role-Feed"
       ]
     },
     {
       "text": "product water",
       "expected": [
-        "urn:nawi-water-ontology#Role-Permeate"
+        "https://watermetadata.org/ontology/watr#Role-Permeate"
       ]
     },
     {
       "text": "filtrate",
       "expected": [
-        "urn:nawi-water-ontology#Role-Permeate"
+        "https://watermetadata.org/ontology/watr#Role-Permeate"
       ]
     },
     {
       "text": "permeate stream",
       "expected": [
-        "urn:nawi-water-ontology#Role-Permeate"
+        "https://watermetadata.org/ontology/watr#Role-Permeate"
       ]
     },
     {
       "text": "makeup water",
       "expected": [
-        "urn:nawi-water-ontology#Role-MakeUp"
+        "https://watermetadata.org/ontology/watr#Role-MakeUp"
       ]
     },
     {
       "text": "make-up supply",
       "expected": [
-        "urn:nawi-water-ontology#Role-MakeUp"
-      ]
-    },
-    {
-      "text": "biosolids handling",
-      "expected": [
-        "urn:nawi-water-ontology#Role-SolidsHandling"
-      ]
-    },
-    {
-      "text": "sludge handling",
-      "expected": [
-        "urn:nawi-water-ontology#Role-SolidsHandling"
-      ]
-    },
-    {
-      "text": "solids processing",
-      "expected": [
-        "urn:nawi-water-ontology#Role-SolidsHandling"
+        "https://watermetadata.org/ontology/watr#Role-MakeUp"
       ]
     },
     {
       "text": "holding",
       "expected": [
-        "urn:nawi-water-ontology#Role-Storage",
-        "urn:nawi-water-ontology#Role-Retention",
-        "urn:nawi-water-ontology#Role-Detention"
+        "https://watermetadata.org/ontology/watr#Role-Storage",
+        "https://watermetadata.org/ontology/watr#Role-Retention",
+        "https://watermetadata.org/ontology/watr#Role-Detention"
       ]
     },
     {
@@ -127,156 +109,114 @@
     {
       "text": "flow equalization",
       "expected": [
-        "urn:nawi-water-ontology#Role-Equalization"
+        "https://watermetadata.org/ontology/watr#Role-Equalization"
       ]
     },
     {
       "text": "flow balancing",
       "expected": [
-        "urn:nawi-water-ontology#Role-Equalization"
-      ]
-    },
-    {
-      "text": "nitrogen reduction",
-      "expected": [
-        "urn:nawi-water-ontology#Role-NitrogenRemoval"
-      ]
-    },
-    {
-      "text": "removing nitrogen",
-      "expected": [
-        "urn:nawi-water-ontology#Role-NitrogenRemoval"
-      ]
-    },
-    {
-      "text": "phosphate removal",
-      "expected": [
-        "urn:nawi-water-ontology#Role-PhosphorusRemoval"
-      ]
-    },
-    {
-      "text": "removing phosphorus",
-      "expected": [
-        "urn:nawi-water-ontology#Role-PhosphorusRemoval"
-      ]
-    },
-    {
-      "text": "nutrient reduction",
-      "expected": [
-        "urn:nawi-water-ontology#Role-NutrientRemoval"
+        "https://watermetadata.org/ontology/watr#Role-Equalization"
       ]
     },
     {
       "text": "oxygen-free",
       "expected": [
-        "urn:nawi-water-ontology#Role-Anaerobic",
-        "urn:nawi-water-ontology#Role-Anoxic"
+        "https://watermetadata.org/ontology/watr#Role-Anaerobic",
+        "https://watermetadata.org/ontology/watr#Role-Anoxic"
       ]
     },
     {
       "text": "aerated",
       "expected": [
-        "urn:nawi-water-ontology#Role-Aerobic"
+        "https://watermetadata.org/ontology/watr#Role-Aerobic"
       ]
     },
     {
       "text": "with oxygen",
       "expected": [
-        "urn:nawi-water-ontology#Role-Aerobic"
+        "https://watermetadata.org/ontology/watr#Role-Aerobic"
       ]
     },
     {
       "text": "third stage",
       "expected": [
-        "urn:nawi-water-ontology#Role-Tertiary"
+        "https://watermetadata.org/ontology/watr#Role-Tertiary"
       ]
     },
     {
       "text": "tertiary treatment",
       "expected": [
-        "urn:nawi-water-ontology#Role-Tertiary"
+        "https://watermetadata.org/ontology/watr#Role-Tertiary"
       ]
     },
     {
       "text": "first stage",
       "expected": [
-        "urn:nawi-water-ontology#Role-Primary",
+        "https://watermetadata.org/ontology/watr#Role-Primary",
         "http://data.ashrae.org/standard223#Role-Primary"
       ]
     },
     {
       "text": "primary treatment",
       "expected": [
-        "urn:nawi-water-ontology#Role-Primary",
+        "https://watermetadata.org/ontology/watr#Role-Primary",
         "http://data.ashrae.org/standard223#Role-Primary"
       ]
     },
     {
       "text": "second stage",
       "expected": [
-        "urn:nawi-water-ontology#Role-Secondary",
+        "https://watermetadata.org/ontology/watr#Role-Secondary",
         "http://data.ashrae.org/standard223#Role-Secondary"
       ]
     },
     {
       "text": "secondary treatment",
       "expected": [
-        "urn:nawi-water-ontology#Role-Secondary",
+        "https://watermetadata.org/ontology/watr#Role-Secondary",
         "http://data.ashrae.org/standard223#Role-Secondary"
       ]
     },
     {
       "text": "preliminary treatment",
       "expected": [
-        "urn:nawi-water-ontology#Role-Pretreatment"
+        "https://watermetadata.org/ontology/watr#Role-Pretreatment"
       ]
     },
     {
       "text": "upstream treatment",
       "expected": [
-        "urn:nawi-water-ontology#Role-Pretreatment"
+        "https://watermetadata.org/ontology/watr#Role-Pretreatment"
       ]
     },
     {
       "text": "final treatment",
       "expected": [
-        "urn:nawi-water-ontology#Role-Posttreatment"
+        "https://watermetadata.org/ontology/watr#Role-Posttreatment"
       ]
     },
     {
       "text": "polishing treatment",
       "expected": [
-        "urn:nawi-water-ontology#Role-Posttreatment"
-      ]
-    },
-    {
-      "text": "backwashing",
-      "expected": [
-        "urn:nawi-water-ontology#Role-Backwash"
-      ]
-    },
-    {
-      "text": "filter backwash",
-      "expected": [
-        "urn:nawi-water-ontology#Role-Backwash"
+        "https://watermetadata.org/ontology/watr#Role-Posttreatment"
       ]
     },
     {
       "text": "drainage",
       "expected": [
-        "urn:nawi-water-ontology#Role-Drain"
+        "https://watermetadata.org/ontology/watr#Role-Drain"
       ]
     },
     {
       "text": "draining",
       "expected": [
-        "urn:nawi-water-ontology#Role-Drain"
+        "https://watermetadata.org/ontology/watr#Role-Drain"
       ]
     },
     {
       "text": "spill containment",
       "expected": [
-        "urn:nawi-water-ontology#Role-Containment"
+        "https://watermetadata.org/ontology/watr#Role-Containment"
       ]
     },
     {
@@ -289,12 +229,6 @@
       "text": "chilling",
       "expected": [
         "http://data.ashrae.org/standard223#Role-Cooling"
-      ]
-    },
-    {
-      "text": "stabilizing",
-      "expected": [
-        "urn:nawi-water-ontology#Role-Stabilization"
       ]
     },
     {
