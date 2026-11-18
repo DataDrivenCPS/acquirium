@@ -70,6 +70,14 @@ change in any release.
   `register_streams()` is the only registration step.
 
 ### Fixed
+
+- The prefixes a plant model declares (`wbs:`) are kept across a restart.
+  They used to be lost, so results showed `ns1:P1` and
+  `entity(uri="wbs:P1")` failed with "Prefix "wbs" not bound to any
+  namespace" in the next session.
+- The `acquirium driver` and `acquirium app` commands find the server of a
+  config that only sets `[server] port`. They used to read the port from
+  `[driver] server_port` alone and fall back to 8000.
 - Registering a stream again with a `label` replaces its label. Before, the
   new label was added next to the old one, and `metadata()` listed the stream
   once per label. Registering again without a `label` keeps the label the
