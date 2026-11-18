@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any, Iterable
 
 if TYPE_CHECKING:
     import pyarrow as pa
+    import polars as pl
 import shutil
 from acquirium.TextMatch.embedding_matcher import DEFAULT_MODEL, EmbeddingMatcher
 from acquirium.TextMatch.graph_concepts import GraphConcepts
