@@ -4,6 +4,8 @@ title: 4 - Inserting a Plant Model
 
 In this article we'll describe how to insert a plant model, and how to connect streams to it.
 
+This page is also available as a [Python script](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/4_inserting_plant_model.py) and a [Jupyter notebook](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/4_inserting_plant_model.ipynb).
+
 ## The model file
 
 A plant model is an RDF file, normally in Turtle format.
@@ -28,8 +30,6 @@ In this model, the pump `P1` feeds the mixer `M1`, and the mixer feeds the rever
 There's a property at the outlet of `P1`, which represents a pressure measurement.
 
 ```python
-import acquirium as aq
-
 model = """
 @prefix owl:    <http://www.w3.org/2002/07/owl#> .
 @prefix qudt:   <http://qudt.org/schema/qudt/> .
@@ -64,12 +64,9 @@ wbs:P1-out-pressure-pa a s223:QuantifiableObservableProperty ;
     qudt:hasUnit unit:PA .
 """
 
-acq = aq.init()
 acq.insert_graph(model, source_id="plant")
 
 print(acq.query().entity("Equipment").include("label"))
-
-aq.shutdown()
 ```
 ```text
 Query
@@ -90,6 +87,8 @@ Note that `Equipment` is a superclass in the ASHRAE 223 and water ontologies, th
 The mixer is a `Junction`, which is not an `Equipment`.
 
 The `owl:imports` line at the top of the model loads the water ontology, which Acquirium needs to know that a `watr:Pump` is an `Equipment`.
+
+`wbs:` is the short form of `urn:swro/`, as declared in the `@prefix` line of the model. So `wbs:P1` and `urn:swro/P1` are the same thing.
 
 ## Connecting streams to the plant model
 
@@ -112,14 +111,24 @@ acq.insert_timeseries("scada", "PT-101", [
 ])
 ```
 
-The stream now gets its unit and quantity kind from the model:
+There are now a few names around this one measurement:
+
+| name | value | where it comes from |
+|---|---|---|
+| `source_id` | `scada` | you choose it |
+| `stream_name` | `PT-101` | you choose it, for example the instrument tag |
+| property | `wbs:P1-out-pressure-pa` | the plant model |
+| label | `P1 out pressure pa` | made from the name of the property, unless the model or the registration gives one |
+
+The stream now gets its unit and quantity kind from the model.
+The values of the stream are not changed, so the data has to be in the unit of the model.
 
 ```python
-print(acq.query().measurement().include("unit", "quantity_kind"))
+print(acq.query().measurement().where(quantity_kind="pressure").include("unit", "quantity_kind"))
 ```
 ```text
 Query
-  data: measurement
+  data: measurement, quantity_kind=Pressure
 1 match:
 ┌────────────────────────┬────────────────────┬───────────┬───────────────────────┐
 │ data                   ┆ data.label         ┆ data.unit ┆ data.quantity_kind    │

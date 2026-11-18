@@ -5,6 +5,8 @@ title: 2 - Querying Data
 In this article we'll describe the simplest way to read data back from Acquirium.
 The examples use the two streams inserted in [1 - Inserting Data](inserting-data.md).
 
+This page is also available as a [Python script](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/2_querying_data.py) and a [Jupyter notebook](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/2_querying_data.ipynb).
+
 ## Building a query
 
 A query describes which streams you are looking for.
@@ -55,6 +57,7 @@ shape: (3, 3)
 
 The result is a polars dataframe.
 If you use pandas, convert it with `q.dataframe().to_pandas()`.
+To open it in Excel, save it as a CSV file with `q.dataframe().write_csv("readings.csv")`.
 
 The other format is **narrow**, which gives one row per reading.
 This is useful when the streams do not share timestamps, or for text values.

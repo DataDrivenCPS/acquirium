@@ -5,6 +5,8 @@ title: 3 - Inserting Metadata
 In this article we'll describe how to annotate streams with metadata, and how to use that metadata in queries.
 The examples continue with the two streams from [1 - Inserting Data](inserting-data.md).
 
+This page is also available as a [Python script](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/3_inserting_metadata.py) and a [Jupyter notebook](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/3_inserting_metadata.ipynb).
+
 If you have a plant model, some of this metadata might already be in the graph.
 The querying section below works the same way, and you can still add more metadata.
 Plant models are discussed in the next tutorial.
@@ -48,6 +50,16 @@ UserWarning: Could not resolve 'unit' value 'pH units' to a QUDT URI; skipping
 **Note:** By default only exact names and symbols are matched.
 Start Acquirium with `aq.init(exact_only=False)` to also match text that is close.
 
+The symbol of the unit is "pH", so this one is matched:
+
+```python
+acq.register_streams([{
+    "source_id": "lab-import",
+    "stream_name": "effluent-ph",
+    "unit": "pH",
+}])
+```
+
 ### Your own keys
 
 You can also attach any keys of your own with `insert_metadata()`.
@@ -64,6 +76,7 @@ acq.insert_metadata(ph, {"sampled_by": "day shift"})
 
 The values can be text, numbers, booleans, dates, lists and nested dictionaries (see [`insert_metadata`](../reference/client/metadata.md)).
 Writing a key of your own again replaces its value.
+Note that a key describes the stream as a whole, not single readings.
 
 The same can be done at registration, with the `metadata` key:
 
@@ -94,12 +107,12 @@ shape: (2, 5)
 │ str                             ┆ str          ┆ str                ┆ str                            ┆ str             │
 ╞═════════════════════════════════╪══════════════╪════════════════════╪════════════════════════════════╪═════════════════╡
 │ acq:b67d0b22-3ac0-5060-9618-d9… ┆ effluent-tds ┆ unit:MilliGM-PER-L ┆ quantitykind:MassConcentration ┆ night shift     │
-│ acq:56d39005-89a9-50a3-9b51-f2… ┆ effluent-ph  ┆ null               ┆ null                           ┆ day shift       │
+│ acq:56d39005-89a9-50a3-9b51-f2… ┆ effluent-ph  ┆ unit:PH            ┆ null                           ┆ day shift       │
 └─────────────────────────────────┴──────────────┴────────────────────┴────────────────────────────────┴─────────────────┘
 ```
 
 `unit:MilliGM-PER-L` is the standard unit that "mg/L" was matched to.
-`effluent-ph` has no unit, because "pH units" did not match anything.
+`effluent-ph` has no quantity kind, because none was given.
 
 ### Selecting streams by metadata
 

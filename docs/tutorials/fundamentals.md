@@ -64,7 +64,7 @@ The metadata in the graph store serves the following purposes:
     - If you want to build your own plant model, we recommend using the [metadata-annotator](https://github.com/DataDrivenCPS/metadata-annotator).
 - It records which **property** is measured at which part of the plant, and which stream holds the data of that property. A property is one measured quantity, such as the outlet pressure of a pump.
     - If your plant model has property nodes, you can connect your streams to them.
-    - This is explained in [TODO]().
+    - This is explained in [4 - Inserting a Plant Model](inserting-plant-model.md).
 - It holds the key metadata of streams, such as the unit and the quantity kind (what is measured, for example pressure).
     - This metadata is attached to the property of the stream.
     - If a stream is not connected to a property, Acquirium creates a property node for it and attaches the metadata there.

@@ -6,6 +6,27 @@ In this article we'll describe the simplest way to insert data into Acquirium.
 This method is useful for inserting static datasets, one-off imports, running examples and tests.
 You can also use it for building your own data ingestion pipeline.
 
+This page is also available as a [Python script](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/1_inserting_data.py) and a [Jupyter notebook](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/1_inserting_data.ipynb).
+
+## Running the examples
+
+The examples of pages 1 to 4 are parts of a script, or cells of a notebook.
+Acquirium has to be started before them, and stopped at the end:
+
+```python
+import acquirium as aq
+
+acq = aq.init()
+
+# the examples go here
+
+aq.shutdown()
+```
+
+- The pages follow each other: page 2 reads the data inserted in page 1, and so on. Run them in the same folder, in number order.
+- The script in [Getting started](../getting-started.md) left a `temperature` stream behind. Run `acquirium clear` in the command line before you start, so your results match the ones shown here. It erases the data Acquirium keeps in the current folder.
+- In a notebook, the result of the last line of a cell is displayed. In a script, wrap that line in `print()`.
+
 ## Stream registration
 
 Inserting data starts with registering the streams in Acquirium.
@@ -54,6 +75,8 @@ acq.insert_timeseries("lab-import", "effluent-tds", rows)
 {'ok': True, 'rows_inserted': 2}
 ```
 
+Timestamps without a timezone are taken as UTC.
+
 To insert into several streams at once, use `insert_timeseries_batch()` with a dictionary of `stream_name` to rows:
 
 ```python
@@ -87,6 +110,8 @@ Be aware that an empty list with `replace=True` clears the stream:
 ```python
 acq.insert_timeseries("lab-import", "effluent-tds", [], replace=True)
 ```
+
+**Note:** These two calls remove rows of the example. If you run them, run the two inserts above again before moving on to the next page.
 
 ```{button-ref} querying-data
 :ref-type: doc

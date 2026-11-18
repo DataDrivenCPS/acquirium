@@ -8,11 +8,11 @@ The example plant is taken from the [WaterTAP seawater RO desalination flowsheet
 
 This tutorial will be helpful to understand the query interface of Acquirium.
 
-The full code of this page is available as a [Python script](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/full-example/full_example.py) and as a [Jupyter notebook](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/full-example/full_example.ipynb), if you want to download or copy it.
+The full code of this page is available as a [Python script](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/5_a_full_example.py) and as a [Jupyter notebook](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/5_a_full_example.ipynb), if you want to download or copy it.
 
 ## Getting the example files
 
-Run this command in the command line (or PowerShell) while the working directory is an empty folder.
+Run this command in the command line (or PowerShell).
 If you're using conda or venv, make sure the environment is active:
 
 ```bash
@@ -34,7 +34,17 @@ It creates a folder named `example` with two files:
 - `model.ttl` is the plant model.
 - `data.csv` is the data of the plant for the year 2025, one row per hour. It has a `time` column and one column per stream.
 
+This example needs to start without the streams of the earlier pages.
+Run `acquirium clear` before the script, every time you run it:
+
+```bash
+acquirium clear
+```
+
+It erases the data Acquirium keeps in the current folder, after asking you to confirm.
+
 The rest of this page is one Python script, built step by step.
+In a script, wrap the lines that show a result in `print()`.
 It starts as usual:
 
 ```python
@@ -142,10 +152,9 @@ properties = acq.query().property(has_stream=False).metadata()["property"].to_li
 streams = acq.query().measurement().where(is_disconnected=True).metadata()["data.label"].to_list()
 
 matches = [
-    {"source_id": "csv-data", "stream_name": stream, "property_uri": prop}
-    for prop in properties
-    for stream in streams
-    if prop.split(":", 1)[1] == stream
+    {"source_id": "csv-data", "stream_name": name, "property_uri": "wbs:" + name}
+    for name in streams
+    if "wbs:" + name in properties
 ]
 ```
 
@@ -171,7 +180,21 @@ Query
 ```
 
 With your own data the names will rarely match like this.
-The matching is plain Python, so you can use a dictionary you write by hand, or a column of a spreadsheet.
+In that case, write down which stream belongs to which property, for example in a dictionary:
+
+```python
+tags = {
+    "PT-101": "wbs:P1-out-pressure-pa",
+    "FT-201": "wbs:RO-in-flow-mass-water",
+}
+
+matches = [
+    {"source_id": "scada", "stream_name": tag, "property_uri": prop}
+    for tag, prop in tags.items()
+]
+```
+
+The same two columns can also be kept in a spreadsheet and read with `pl.read_csv()`.
 
 ## 5. Query the plant
 
