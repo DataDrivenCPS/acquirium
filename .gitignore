@@ -226,7 +226,7 @@ dpr-trailer-data/
 scripts/dev/
 scripts/performance/
 
-paper/
-experiments/
+/paper/
+/experiments/
 
 tests/text_match_results/
