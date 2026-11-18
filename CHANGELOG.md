@@ -15,8 +15,39 @@ change in any release.
   one line per node, and does not contact the server. `print(q)` adds the
   number of matches and the first five rows of `q.metadata()`; a notebook
   cell ending in `q` shows the same. `q.summary()` returns the summary text.
+- A stream registered without a `property_uri` can be connected to a plant
+  property later: register it again with `property_uri`. The property
+  Acquirium generated for the stream is replaced by the given one, and its
+  metadata moves along. Its unit, quantity kind, medium, substance and data
+  source are added where the plant property has none; a unit that differs
+  but is convertible is kept on the stream as the unit its rows are stored
+  in, and reads convert. A unit that is not convertible, or a different
+  quantity kind or medium, raises `ValueError` and nothing is written, as
+  when a stream is registered with a `property_uri` from the start. The keys
+  of its own are written on the plant property. For any other key both have
+  with different values, the plant property keeps its own and a warning says
+  so; use `insert_metadata()` to change it. The label of the generated
+  property moves only when the plant property has none.
+- `Query.property()` selects properties whether or not a stream holds their
+  data. `acq.query().property(has_stream=False)` lists the properties of the
+  plant model no stream is connected to; after an entity it selects that
+  entity's properties, as in `entity("Pump").property()`.
+- `acquirium example init` creates a folder with the example plant: its
+  model (`model.ttl`) and the year 2025 of its data (`data.csv`, one row per
+  hour by default, `--step` to change it). It does not start a server.
+- `property_uri` in `register_streams()` accepts a CURIE with a prefix the
+  server binds, such as `"wbs:P1-out-pressure-pa"`, as `metadata()` prints
+  them. Before, a CURIE was taken as a URI of its own.
+- The property generated for a stream registered without a `property_uri`
+  carries `acq:isDisconnected true`, queryable as `is_disconnected`:
+  `acq.query().measurement().where(is_disconnected=True)` lists the streams
+  not connected to a plant property. Streams registered before this version
+  get the mark when they are registered again.
 
 ### Changed
+- Registering a connected stream again without a `property_uri` describes
+  the property it is connected to. Before, it generated a second property
+  for the stream.
 - `value_kind` is optional in `register_streams()` and `Driver.declare()`. A
   stream registered without it becomes numeric when it receives its first
   numeric value (a number, or a string that parses as one); until then its
