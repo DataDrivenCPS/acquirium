@@ -12,6 +12,11 @@ chapters:
   - file: tutorials/inserting-plant-model.md
   - file: tutorials/a-full-example.md
   - file: tutorials/acquirium-at-a-glance.md
+  - file: tutorials/advanced/_index.md
+    sections:
+    - file: tutorials/advanced/writing-a-driver.md
+    - file: tutorials/advanced/first-app.md
+    - file: tutorials/advanced/experiments.md
 - file: how-to/_index.md
   sections:
   - file: how-to/explore-a-model.md
