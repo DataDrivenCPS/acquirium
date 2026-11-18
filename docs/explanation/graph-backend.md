@@ -1,364 +1,171 @@
 ---
-title: Graph backend architecture
+title: The graph store
 ---
 
-This is a guide to the graph backend: the persistent graphs, the derived
-query views, the update rules, and the interfaces application and driver
-authors use.
-The graph backend is owned by the acquirium server.
-Drivers access it through the client and HTTP API; the materializer uses the
-same server-owned interface. Neither opens Oxigraph directly, and the graph
-store is not a Ray actor.
+In this article we'll describe how the server stores the graph: which graph a write goes to, what a query reads, and when that is updated.
+This is useful when you write a driver that inserts graph data, or when a query does not see what you inserted.
 
-## Design goals
+The graph store belongs to the server.
+Scripts, drivers and apps reach it through the client, and nothing else opens its files (see [Server internals](server-internals.md)).
 
-The backend separates three kinds of data:
+## Every write has an owner
 
-- **Deployment data** is the plant model and the RDF asserted by Acquirium and
-  drivers, including materialization output metadata, experiment metadata, and
-  lineage. It is persisted and is the input to inference and validation.
-- **Ontology and shape data** defines vocabulary, `owl:imports`, SHACL shapes,
-  and SHACL-AF rules. It is managed by OntoEnv, usually from bundled ontologies
-  and configured ontology sources.
-- **Derived query data** is disposable cache data created from the first two.
-  It is rebuilt rather than edited by callers.
+The store does not keep one big graph.
+It keeps one graph per owner, and the `source_id` of a write selects the graph:
 
-Note that callers only write deployment data.
-Never write a derived graph or an OntoEnv-managed ontology graph.
+| `source_id` | Graph | Written by |
+|---|---|---|
+| `"plant"` | the plant model | `insert_graph(..., source_id="plant")` |
+| the `source_id` of a driver or a script | the streams of that source and the graph data it inserts | `register_streams()`, `insert_graph()`, `self.insert_graph()` in a driver |
+| `"metadata"` | the values attached to nodes | `insert_metadata()` |
+| `"experiments"` | studies, runs and variables | the experiment methods |
 
-## Components and process boundary
+The server keeps two more kinds of graph that you do not write to: one for its own records, such as the outputs of apps and the logs, and one per ontology.
 
-`Manager` creates one `OxigraphGraphStore` in the FastAPI server process. The
-store uses a file-backed Oxigraph/RocksDB source dataset, a separate file-backed
-query dataset, and an in-process reentrant lock to coordinate writes and cache
-rebuilds. Oxigraph's files must be opened by this server process only.
+`replace=True` replaces the graph of one owner only.
+For instance, a script adds a pump under its own `source_id`:
 
-Ray actors are used for `DriverRunner`, not for the graph store; the actors
-talk to the server over the normal client API. Materialization execution uses
-the server's bounded in-process worker pool. This way there is a single
-authoritative graph writer, and a file-backed database handle is never shared
-with actor processes.
+```python
+import acquirium as aq
 
-## Persistent graph roles
+acq = aq.init()
 
-The source dataset contains both deployment and ontology named graphs.
-Deployment data graphs are recognized by URI shape, not tracked as separate
-persisted state: the plant and Acquirium graphs are two fixed URIs, and every
-source graph lives under the `urn:acquirium:graph:data:source:` prefix.
-Enumerating all named graphs by that shape is how the backend distinguishes
-them from ontology graphs, which live under unrelated, externally-defined
-namespaces (e.g. `https://qudt.org/...`).
+acq.insert_graph("""
+@prefix ex: <urn:ex/> .
+@prefix watr: <https://watermetadata.org/ontology/watr#> .
+ex:P8 a watr:Pump .
+""", source_id="lab-notes")
 
-| Role | Persistence | Contents | How it is written |
-| --- | --- | --- | --- |
-| Plant data graph | source dataset | The shared plant model; it is the reserved `plant` source. | `insert_graph(..., source_id="plant")` or `sparql_update(..., source_id="plant")`. |
-| Acquirium data graph | source dataset | Acquirium-owned bookkeeping, such as logs and materialization lineage. | Server internals only. |
-| Source data graph | source dataset | RDF owned by one driver or external metadata source. | `insert_graph(..., source_id="...")`; source-scoped SPARQL update. |
-| Metadata graph | source dataset | Values attached to nodes with `insert_metadata()`; the reserved `metadata` source, an ordinary source graph by URI. Pruned of triples whose subject no other graph mentions. | `insert_metadata()`, which sends one SPARQL update scoped to it. |
-| Experiment graph | source dataset | Authoritative Study, variable, run, and stream-annotation metadata documents and their attributes; the `experiments` source. | Experiment recording APIs through the transactional SQL outbox. |
-| Ontology/shape graph | source dataset | Ontologies, shapes, rules, and imports managed through OntoEnv. | Server configuration/startup; not application or driver writes. |
-| Dependency cache | memory | Imports closure minus asserted deployment data. | Backend only. |
-| Inferred-data graph | query dataset | `shifty.infer` output. Replaced after every derived rebuild. | Backend only. |
-| Dependency query graph | query dataset | Resolved ontology/shape dependency cache. Replaced only when its imports closure changes. | Backend only. |
-
-The plant graph URI is stable (`urn:acquirium#MainGraph`). Acquirium's graph is
-also stable. A source graph URI is a pure function of its `source_id`; asking
-for a source graph computes that URI without any lookup, and the graph itself
-comes into existence in Oxigraph on first write.
-This means a source ID is an ownership boundary, not just a timeseries label.
-
-Experiment metadata uses the shared value-map writer and query compiler.
-The ledger creates its graph nodes automatically. Complete metadata documents
-are authoritative in the source dataset; queryable attributes are written
-alongside them. The shared document reader uses source quads, so it does not
-wait for or read inferred projections. SQL retains pending resolved operations
-until graph delivery succeeds, then removes them. Backup and restore include
-both the graph and the SQL recording ledger.
-See [Experiments](experiments.md#storage) for storage behavior.
-
-### Public graph views
-
-Public reads expose exactly two views; neither exposes the legacy plant graph
-by itself:
-
-| View | Contents | Selector |
-| --- | --- | --- |
-| Deployment graph | Inferred union of every registered deployment/source graph. | `include_dependencies=false` for SPARQL and export. |
-| Deployment graph with dependencies | The same inferred deployment graph plus resolved ontology and shape triples. | `include_dependencies=true` for SPARQL and export. |
-
-The plant graph is the explicit reserved `source_id="plant"` write target. It
-is not a public read view.
-
-At present, deleting an app removes its registration triples from its source
-graph. There is no public API that removes a source graph; Oxigraph retains a
-named graph's identity even once every triple has been removed from it, so an
-empty source graph may remain around. Do not depend on unregistering a source
-as part of a normal driver shutdown.
-
-## Derived-graph pipeline
-
-The pipeline below shows what queries and validation see.
-
+print(acq.query().entity("pump").metadata())
+```
 ```text
-registered plant, Acquirium, and source data graphs
-                         │
-                         ▼
-          source_data = RDF set-union of all registered data graphs
-                         │
-                         │  owl:imports resolution through OntoEnv
-                         ▼
- dependency_cache = import closure minus source_data  (shapes/rules/vocabulary)
-                         │
-                         ├───────────────► validate(source_data, dependency_cache)
-                         │                  with graph_mode="union"
-                         ▼
-       shifty.infer(source_data, dependency_cache)
-                         │
-                         ▼
-              inferred_data query graph
-                         │
-                         ├───────────────► `include_dependencies=False`
-                         │
-                         ▼
- dependency_query_graph = dependency_cache
-                         │
-                         └──── Oxigraph default-graph union with inferred_data
-                                      │
-                                      └──► `include_dependencies=True` (the API default)
+shape: (4, 1)
+┌────────────┐
+│ pump       │
+│ ---        │
+│ str        │
+╞════════════╡
+│ wbs:intake │
+│ wbs:P2     │
+│ ex:P8      │
+│ wbs:P1     │
+└────────────┘
 ```
 
-The dependency cache contains only the triples added by resolving imports; it
-does not duplicate asserted data. Import declarations may live in the plant
-graph or in any registered source graph. This matters when a driver contributes
-a model that imports an ontology containing its SHACL rules.
+Replacing the graph of `lab-notes` removes `ex:P8`, and the pumps of the plant model stay:
 
-`shifty.infer` runs over the complete deployment-data union, not one source
-at a time.
-This means rules can relate the plant model to driver and app metadata, and
-inference and validation see the same full deployment boundary.
+```python
+acq.insert_graph("""
+@prefix ex: <urn:ex/> .
+@prefix watr: <https://watermetadata.org/ontology/watr#> .
+ex:P9 a watr:Pump .
+""", source_id="lab-notes", replace=True)
 
-## When derived data is refreshed
-
-The backend tracks a source-data version and a narrower closure version.
-It also maintains the versions represented by the published query cache and a
-`rebuild_in_progress` flag.
-Together they work like this:
-
+print(acq.query().entity("pump").metadata())
+```
 ```text
-write committed → source version advances → published cache is stale
-                                           │
-fresh query / refresh_union               ▼
-──────────────────────────────→ one rebuild owner snapshots inputs
-                                    │
-                       other fresh readers wait on a condition
-                                    │
-                                    ▼
-                 Shifty inference runs outside the store lock
-                                    │
-                                    ▼
-                 publish inferred data under the lock
-              (and dependencies only if the closure changed)
-                                    │
-                  generation changed while building?
-                           ├── no → wake waiting readers
-                           └── yes → rebuild once from latest snapshot
+shape: (4, 1)
+┌────────────┐
+│ pump       │
+│ ---        │
+│ str        │
+╞════════════╡
+│ ex:P9      │
+│ wbs:intake │
+│ wbs:P2     │
+│ wbs:P1     │
+└────────────┘
 ```
 
-At most one inference rebuild runs at a time.
-Writes arriving during a rebuild do not start competing rebuilds; the owner
-discards the stale result and makes one follow-up attempt from the newest
-generation.
-The default public query returns the last complete published graph immediately
-while this process runs. Pass `wait_for_fresh=True` when a caller must wait for
-the current generation. Neither mode ever exposes a partially replaced graph.
+This is why a driver can insert and replace its own graph data without touching the plant model or another driver.
+A driver calls `self.insert_graph()`, which always uses the `source_id` of the driver.
 
-| Event | Source version | Dependency cache | Inference/query graphs |
-| --- | --- | --- | --- |
-| Append ordinary data triples | increments | remains valid | stale; one background rebuild is scheduled. |
-| Replace a data graph | increments | marked stale | stale; one background rebuild is scheduled. |
-| Add data containing `owl:imports` or an `owl:Ontology` declaration | increments | marked stale | stale; one background rebuild is scheduled. |
-| SPARQL UPDATE of a data graph | increments | marked stale only when the graph's `owl:imports` or `owl:Ontology` triples changed | stale; one background rebuild is scheduled. |
-| SPARQL UPDATE or replace of a data graph, as a consequence | unchanged by the pruning itself | unchanged | the metadata graph is pruned in the same write: a triple whose subject no longer appears in any other graph of the source dataset is removed before the write is finalized. Only the subject is checked; a URI value may point anywhere. |
-| OntoEnv adds/removes/replaces an ontology graph | increments | invalidated and rebuilt when needed | stale; rebuilt on the next query that needs a query view. |
-| Call `validate_graph` | unchanged | brought current if needed | not required; validation uses source data and shapes directly. |
+**Note:** `acq.insert_graph()` replaces by default. Pass `replace=False` to add to the graph of the owner.
 
-Queries normally use eventual consistency: selecting either query view returns
-the last complete published graph and schedules the single rebuild owner when
-needed. `wait_for_fresh=True` instead waits for the current generation.
-`Manager.insert_graph` also synchronizes stream-reference registrations after
-the write. That synchronization deliberately waits for the fresh inferred view: a
-deployment may use ontology rules to complete a stream-to-point association.
+Be aware that a `source_id` says who owns the data, and is not a permission.
+Any client can write with any `source_id`.
 
-The query dataset is cache storage. It may safely be deleted/rebuilt by the
-backend; no caller may treat it as a system of record.
+## What a query reads
 
-For monitoring, `GET /graph_version` reports the store-owned
-`source_version`, the `published_version` contained in the last complete query
-cache, `is_current`, and `rebuild_in_progress`. Note that the status is a snapshot; it does not guarantee freshness for a
-subsequent request. Use `wait_for_fresh=True` when the query itself must be
-current.
+Queries do not read the graphs above directly.
+The server builds one graph for queries from them:
+
+- It joins the graphs of all owners. A query sees the plant model, the streams and the metadata together.
+- It applies the rules of the ontologies to the result, and adds what they infer.
+
+This graph is a copy.
+It is never edited, and it is built again when something changes.
+
+The ontologies that the plant model imports with `owl:imports` are kept ready next to it, so that a query can also read class hierarchies and definitions.
+
+## When the query graph is rebuilt
+
+Every write increases the version of the stored graphs and starts a rebuild of the query graph.
+
+- Only one rebuild runs at a time. Writes that arrive during a rebuild are covered by one more rebuild after it.
+- A query that arrives during a rebuild reads the last complete query graph. It never sees a half-built one.
+- `insert_graph()`, `register_streams()` and `sparql_update()` return after the rebuild, because the server reads the streams from the new query graph (see [The stream lifecycle](stream-lifecycle.md#registration-and-the-streams-table)). A query that follows one of these calls sees the change.
+
+`graph_status()` shows the two versions:
+
+```python
+print(acq.graph_status())
+```
+```text
+{'source_version': 18, 'published_version': 18, 'is_current': True, 'rebuild_in_progress': False}
+```
+
+- `source_version` increases with every write.
+- `published_version` is the version the query graph was built from.
+
+Be aware that each of these calls waits for one rebuild, and a rebuild goes over the whole graph.
+Insert a model in one call, and register many streams in one `register_streams()` call, instead of looping over small ones.
 
 ## Query and export semantics
 
-`include_dependencies` selects whether queries include ontology/shape triples
-along with inferred deployment data.
-Note that it does not mean an RDF dataset union of every stored graph.
+Queries have an `include_dependencies` option, which is `True` by default:
 
-| API setting | Default graph queried | Use it for |
-| --- | --- | --- |
-| `include_dependencies=False` | `inferred_data` | Operational queries over asserted and inferred deployment facts. |
-| `include_dependencies=True` | Native union of `inferred_data` and `dependency_query_graph` | The default; use when queries may need ontology hierarchy, definitions, shapes, or rules as well as inferred facts. |
+- `True`: the query reads the query graph together with the imported ontologies.
+- `False`: the query reads the query graph only. The inferred statements are still there.
 
-`export_graph(include_dependencies=False)` returns all registered deployment
-data. `export_graph(include_dependencies=True)` adds resolved import
-dependencies.
-Note that this is an export view; it is not the same thing as either query
-cache.
-
-The standards-compatible `/sparql` endpoint serializes every supported query
-form through Oxigraph. The compatibility `/sparql_json` endpoint retains its
-`{"columns": [...], "rows": [...]}` response contract.
-
-## How to program against the backend
-
-Use `Acquirium`/`AcquiriumClient` from drivers, apps, and external programs.
-Do not import `OxigraphGraphStore` or choose derived graph URIs outside server
-code.
-
-### Plant model owner
-
-Insert the shared plant model with the reserved `source_id="plant"`. Use
-`replace=True` only when the complete plant graph is being intentionally
-replaced.
+For instance, the parent class of `s223:Pump` is a statement of the ontology, so it is only found with the default:
 
 ```python
-aq.insert_graph(plant_turtle, format="turtle", replace=True, source_id="plant")
+q = """
+PREFIX s223: <http://data.ashrae.org/standard223#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?parent WHERE { s223:Pump rdfs:subClassOf ?parent }
+"""
+
+print(acq.client.sparql_query(q)["rows"])
+print(acq.client.sparql_query(q, include_dependencies=False)["rows"])
+```
+```text
+[['http://data.ashrae.org/standard223#Equipment']]
+[]
 ```
 
-### Driver lifecycle
+The server can also export the graph, with `GET /export_graph` (see the [HTTP API reference](../reference/server/http-api.md)).
+The export contains what was inserted by all owners, without the inferred statements.
+With `include_dependencies=true` the imported ontologies are added.
 
-Use one stable, non-empty `source_id` for the lifetime of a driver deployment.
-The typical lifecycle is:
+`acq.client.sparql_query()` has one more option, `wait_for_fresh=True`.
+It makes the query wait for a rebuild that is running.
 
-1. Assign `self.source_id` and call `self.declare(...)` for every stream during
-   setup or discovery. The platform registers the datasource and declarations
-   before observations are inserted.
-2. If the driver owns RDF metadata or a model fragment, append it with
-   `self.insert_graph(..., replace=False)`. The driver base class supplies
-   `self.source_id` automatically, so driver code cannot accidentally write to
-   another source graph. Use
-   `replace=True` only to replace that driver's own contribution; it cannot
-   replace the plant graph.
-3. Report observations with `add()` or return a canonical observation frame.
-   The platform batches insertion and retains accepted rows across recoverable
-   insertion failures.
-4. On shutdown, quiesce external producers in `stop()`; the platform performs
-   a final flush afterward.
+## Validation
 
-```python
-self.source_id = "weather-station-1"
-self.declare(
-    "air_temp",
-    property_uri=property_uri,
-    value_kind="numeric",
-)
-self.insert_graph(metadata_turtle, replace=False)
-self.add("air_temp", value, timestamp)
-```
+`acq.validate_graph()` checks everything that was inserted against the shapes of the ontologies.
+It returns `conforms`, a report and a readable text of the results (see the [graph reference](../reference/client/graph.md)).
+The check does not change the graph.
 
-External programs can still call `register_streams()` and `insert_timeseries()` directly. Those are lower-level client operations,
-not extra lifecycle work required of driver authors.
+## Limits
 
-### Apps
+- One server process owns the graph store. Do not start two servers on the same data folder.
+- There is no method that removes an owner. `insert_graph("", source_id=..., replace=True)` empties its graph.
+- Metadata written with `insert_metadata()` is removed when the node it describes is removed from the other graphs.
 
-The planner manages graph metadata for materialization apps. It publishes
-derived points, references, and structural lineage together in Acquirium's
-reserved internal graph, and replaces that generated view when the binding
-plan changes. App transforms do not write arbitrary graph data.
+## Next
 
-Each output reference uses `derived:<app-name>` as its timeseries `source_id`.
-This identifies the app's streams without creating a caller-owned graph. The
-planner records `acq:producedBy "<app name>"` on derived points, allowing
-queries to select them with the `app` attribute.
-
-When an output has no explicit label, the planner generates an `rdfs:label`
-from the measurement and producing app. It preserves labels on existing plant
-points supplied through `property_uri=`. See the
-[app reference](../reference/apps/outputs.md) for the complete output
-identity and metadata rules.
-
-### Updates, queries, and validation
-
-- Use `insert_graph` for whole RDF documents. Prefer append mode for additive
-  metadata; replacement is graph-owner scoped.
-- Use `sparql_update(update, source_id=...)` only for targeted changes to data
-  owned by that source. Use the reserved `source_id="plant"` for the shared
-  plant model.
-- Query with the default `include_dependencies=True` unless it is intentional to exclude
-  ontology/shape triples. Query results already include inference.
-- Call `validate_graph()` after loading/changing a model or metadata when the
-  caller needs a conformance decision. It returns `conforms`, a Turtle SHACL
-  report, and a human-readable result string.
-- Poll `graph_status()["source_version"]` only when maintaining a local cached
-  query plan or result. It is not required for ordinary one-shot API calls;
-  use `published_version`/`is_current` only for monitoring, not as a substitute
-  for `wait_for_fresh=True` on a query that must be current.
-- Prefer one complete RDF insert over several small ones. Each `insert_graph`
-  request synchronizes stream references against a fresh inferred view, so a
-  loop of small inserts runs one inference pass per request.
-
-## Concurrency and operational constraints
-
-The graph store lock protects source writes and cache publication. The
-rebuild owner snapshots the source inputs under that lock, releases it while
-Shifty performs inference, then reacquires it for publication.
-Query-cache selection is synchronized, then Oxigraph executes the query against
-a repeatable-read snapshot while publication is locked; result processing then
-continues without Acquirium's broad lock. A reader therefore observes a
-complete current cache, never the temporary empty graph during a rebuild.
-
-The derived rebuild path records separate debug timings for data snapshot,
-shape snapshot, Shifty inference, and serialization/bulk-load publication.
-Use these measurements before moving work to another language: Oxigraph and
-native SPARQL JSON serialization are already Rust-backed, while RDFLib graph
-copying and Python result materialization remain the likely Python-owned costs.
-
-Do not run two acquirium server processes against the same graph-store path;
-RocksDB/Oxigraph locking is treated as a fatal startup error rather than a
-silent fallback to a different store.
-Driver actors connect through the HTTP API. Apps execute inside the server's
-bounded worker pool; `materialization_workers` controls their concurrency.
-The graph backend scales by giving its single server process suitable
-resources, or by an explicit remote service boundary; never by sharing its
-database files.
-
-## Open questions and intentionally unsettled design choices
-
-The following are not guarantees of the current implementation. They are areas
-where the desired policy or mechanism has not been settled yet.
-
-- **Source deletion and retention.** There is no public source-deletion API,
-  and Oxigraph retains an empty source graph's identity once created. A
-  future lifecycle for deleting a source graph, its stream registrations,
-  and possibly its timeseries data still needs an explicit retention and
-  provenance policy.
-- **Inference cost and scheduling.** Rebuilds already run in one background,
-  single-flight worker and ordinary readers can use the last complete cache.
-  There is deliberately no write-batching mechanism: every graph write arrives
-  as its own HTTP request, so a process-local scope cannot span a multi-source
-  load, and coalescing one would first need a request carrying several graphs.
-  The remaining decisions are whether production workloads need such a bulk
-  insert, a bounded fresh-read deadline, a debounce policy for sustained
-  writes, or a separate worker/service boundary.
-- **Concurrency limits.** The current lock/snapshot behavior is correct for the
-  tested embedded-store setup, but operational reader/writer load testing at
-  representative production sizes is still needed before changing lock scope or
-  promising throughput targets.
-- **Remote graph service.** A separate service may be appropriate for
-  multi-host scaling, but it would need an explicit deployment, persistence,
-  failure-recovery, authentication, and API design. A Ray actor by itself does
-  not solve those concerns.
-- **Authorization by source.** `source_id` establishes ownership in the data
-  model, not access control. If multiple tenants or untrusted drivers can call
-  the API, authentication and authorization rules for source-scoped writes are
-  still required.
+- [Graph](../reference/client/graph.md) in the client reference has the methods that read and write the graph.
+- [The query model](query-model.md) explains how a query is built and executed.
+- [The stream lifecycle](stream-lifecycle.md) explains what registering a stream writes.

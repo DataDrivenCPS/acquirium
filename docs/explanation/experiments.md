@@ -1,199 +1,99 @@
 ---
-title: Experiments
+title: How experiments work
 ---
 
-A Study describes what an experiment records. Each Experiment is one run of
-that Study, with its own inputs, results, events, status, and errors.
+In this article we'll describe how Acquirium stores experiments, and why the experiment interface is built the way it is.
+The steps for using it are in the tutorial [Running experiments](../tutorials/advanced/experiments.md).
 
-## The four objects
+## Studies, variables, runs and observations
 
-- **Study:** the shared declarations for a set of runs.
-- **Variable:** a named input, output, or log, with a storage type and metadata.
-- **Experiment:** one run, including its status and scenario metadata.
-- **Observation:** one recording of a variable during a run.
+An experiment record has four parts.
 
-A variable's role says why you record it. Its type says how to store it:
-scalar, JSON, text, file, table, or time series. A scalar cost output, for
-example, records the number calculated by your model. The experiment interface
-stores that result; your code still builds and solves the model.
+- A **study** is one question. It holds the declarations that all its runs share.
+- A **variable** is a named input, output or log of the study. It has a kind, such as scalar, text or timeseries, and it can have a unit.
+- A **run** is one execution of the study. It has a status, a start time, an end time and a description of your own.
+- An **observation** is one value recorded for one variable in one run.
 
-Each type accepts one kind of value, so results stay comparable across runs: a
-scalar is always a finite number or boolean, and text is always a string. The
-server checks this too, for clients that bypass the Python API. Common
-scientific values such as NumPy numbers and arrays, tuples, and dates are
-converted to JSON before they are checked. You can
-[register a handler](../how-to/record-experiments.md#record-your-own-types)
-to convert your own classes the same way.
+The variables are declared on the study and not on the run.
+This is why runs can be compared: every run records the same variable under the same label, the same kind and the same unit.
+Declaring a label again with a different kind or unit is an error.
+Declaring a new variable while a run is active is allowed, but it gives a warning, because the earlier runs do not have a value for it.
 
-Runs reuse the same declarations so their results can be compared. Reusing a
-variable label with a different role, type, unit, or metadata raises an error.
-Adding a variable during a run emits a warning because earlier runs may lack it.
+A variable can be recorded several times in a run.
+Each `record()` call adds a new observation with a sequence number, and earlier observations are never changed.
+`latest()` gives the last one.
 
-One variable can have several observations in a run. A time-series output
-recorded in three batches has three observation records. Each record identifies
-the stream and interval for that batch.
+## The active run
 
-## Finding and reading results
+`variable.record(value)` does not take a run.
+The value goes to the active run of the study object, which is the run created by `study.start()` or `study.resume()`.
+This is useful for passing variables to your own functions without passing the run along.
 
-Studies, variables, runs, and stream annotations also have graph nodes created
-by the recording API. Their metadata uses the same registry, URI resolution,
-and query expressions as plant metadata. A scalar variable can have a semantic
-unit without creating a time-series stream.
+A study object has one active run at a time.
+Two runs can be open at the same time when each one is started from its own study object, for instance from two scripts.
 
-Select the runs to compare, find the variable, then read its observations.
-Filters stay within the selected Study. You can reopen a saved Study in another
-session to find its declarations and results.
-
-`.frame()` lists declarations, runs, or observation records. Scalar observation
-tables include the recorded values. `.scalars()` gives one row per run and
-one column per scalar variable, the usual starting point for comparing runs
-and computing formulas. Time-series observation tables contain
-stream references and intervals; `.dataframe()` fetches the samples.
-`.latest()` chooses the last recording, which may be just one batch of a run.
-
-## Metadata and recorded values
-
-Metadata describes a variable, run, or stream annotation. For example,
-`scenario="baseline"` makes a run searchable. Values passed to `record()` are
-the inputs, outputs, and events produced by the calculation.
-
-Metadata keys follow the [rules of `insert_metadata`](../reference/client/metadata.md#acquiriuminsert_metadata).
-Built-in keys such as `unit` have semantic meanings: `"kW"` and `"KiloW"`
-resolve to the same QUDT unit. Top-level nulls and empty containers omit run
-metadata fields. Variable user metadata, JSON observations, and log values
-retain nulls and empty containers.
-
-Variable `.metadata` contains its user JSON object for both hand and model
-declarations. Semantic fields have explicit properties such as `.unit`, which
-retains the supplied spelling. User query paths use `metadata.<field>`; run
-metadata keeps its existing paths.
-Graph metadata tables display resolved units as URIs and use a common struct
-schema across rows. A field missing from one row appears as null in that table.
-
-## Handles follow the active run
-
-A variable's `record()` method writes to its Study object's active run.
-You can pass variable handles to functions without passing a run ID.
-
-Each Study object allows one active Experiment. Use separate Study objects
-for concurrent runs. Assignment through `experiment.output` is restricted to
-that Experiment while it is active.
-
-Reopen a Study and call `resume(run_id)` to continue recording a running
-Experiment from another session.
-
-Observations are saved immediately, so recorded data survives a failed run.
-Sequence numbers preserve recording order when timestamps collide or events
-arrive late. `finish()` and `fail()` end the run; further variable writes are
-rejected. Stream annotations can still be added or closed afterward.
+An observation is saved at the moment it is recorded.
+If the script stops with an error, the values recorded so far are kept, and the run stays open until `fail()` or `finish()` is called on it.
+A run that has ended does not accept new values.
 
 ## Storage
 
-The SQL experiment ledger stores lifecycle state and observation order. Complete
-descriptive metadata documents live in the shared graph and use its read and
-filter APIs. A transactional SQL outbox retains pending, already-resolved graph
-updates until delivery succeeds; interrupted delivery replays those updates.
-Recording these objects creates their graph nodes automatically. Backups must
-include both the SQL store and its metadata graph.
+Experiments are stored on the server, next to the plant data.
 
-The ledger stores JSON, text, scalar, and log observations directly.
-For other data it stores references:
+- Scalar, text, JSON and log values are stored directly in the database of the server.
+- Files, tables and objects are stored as files in the same database. A table is saved as a Parquet file, and an object is saved by its codec. Each file is identified by the hash of its content, so two runs that record the same file share one copy.
+- Timeseries values are stored as streams, in the same place as the streams of the plant. The run keeps the `stream_uri` and the time range of what it recorded.
 
-- Files are copied to artifact storage and identified by SHA-256 digest.
-- Tables are saved the same way, as Parquet files, and read back as Polars.
-- Time-series samples go to Acquirium's time-series storage. The ledger records
-  their stream URI and time range.
-- A stream range, `stream.between(start, end)`, records an existing stream's
-  URI and interval without copying its samples.
+The descriptions of studies, variables and runs are also written to the metadata graph.
+This is why `where()` accepts the same expressions as a plant query, and why a unit such as `"kW"` is matched in the same way as the unit of a stream.
 
-File artifacts are fixed snapshots; identical bytes share one copy. Stream
-references read the current samples, including later corrections and data that
-arrives after the run. To keep a fixed copy of a range, record its rows,
-`interval.dataframe()`; they are stored under the run's own source.
+A backup of the experiments needs both the database and the metadata graph.
+With a local server started by `aq.init()`, both are in the `.acquirium` folder.
 
-## Deleting runs
+## Timeseries of a run and the plant
 
-Runs cannot be changed after they end, but they can be deleted. Deleting a run
-removes everything it recorded: its observations, its stream annotations, the
-samples and stream points under `experiment/<run_id>`, and files no other run
-uses. A shared file stays until the last run that uses it is deleted. Streams
-a run only read or annotated are not changed.
+Each run writes its timeseries to streams of its own, with the `source_id` `experiment/<run_id>`.
+Two runs can therefore record different values at the same times without overwriting each other.
 
-A running run cannot be deleted. Neither can a run whose recorded stream
-another run uses as an input, unless both are deleted together. Samples are
-removed the same way a stream replacement removes them, so streams derived
-from them are rebuilt. `clear()` deletes every Study and run, and nothing else.
+These streams are listed by `acq.find_all_data()`, and `acq.query().measurement(run_id=...)` selects the streams of one run.
 
-`usage()` reports file sizes exactly and counts a shared file once. Sample and
-ledger sizes are estimates of the stored values: 8 bytes per number or
-timestamp, and text by its length. They are not the compressed size on disk.
+`observed=` on a timeseries variable names the property of the plant model that the values describe.
+It is a description of the run's stream, and it does not connect the stream to the property.
+A plant query on the property returns only the measurements of the plant, so simulated values are never mixed with measured values.
+The runs that describe a property are found with `acq.query().measurement(observed=property_uri)`.
 
-## Stream annotations
+Scalar, text, JSON, file, table and object values are not streams.
+They are read through the study only.
 
-An annotation associates an existing stream interval with an Experiment.
-It stores the stream URI, start time, optional end time, and JSON metadata in
-the run's observation ledger. Intervals can overlap across Experiments.
+## Plant data used by a run
 
-Omit the end time for an ongoing trial, then close the interval later. You can
-add or close an annotation after the Experiment finishes. `created_at` records
-when the annotation was added; its interval describes the data's time range.
+A run can refer to data that is already in Acquirium in three ways.
 
-Find annotations by Experiment, Study, stream URI, or overlapping time window.
-Record `stream.between(start, end)` to a time-series variable to use a stream
-as a named input or output. Use `annotate_stream()` to associate an interval
-without declaring a variable, or to leave its end open.
+- `run.annotate_stream()` links a time range of a stream to the run. No variable is needed, and the end of the range can be left open and closed later.
+- Recording `stream.between(start, end)` to a timeseries variable stores the stream and the time range as a named input.
+- Recording the rows, such as `stream.between(start, end).dataframe()`, stores a copy of the values in a stream of the run.
 
-Metadata belongs to the object it describes. For example, `digester=A` can
-describe a run and `treatment=new membrane` one annotated interval. Read stream
-labels and units from stream metadata. Annotations require no plant model.
+The first two store a reference and not the values.
+Reading them later returns what the stream holds at that moment, including corrections made after the run.
+The third one is a fixed copy.
+Use it when the run must be reproducible with exactly the data it used.
 
-## Run streams and plant properties
+## Deleting
 
-Time-series results use source `experiment/<run_id>`. Two runs can therefore
-record different values at the same timestamps without overwriting each other.
+A run cannot be edited after it ends, but it can be deleted.
+Deleting a run removes its observations, its stream annotations, the streams it wrote and the files that no other run uses.
+The streams of the plant are not changed, including the ones the run annotated or referred to.
 
-Each run's time-series output is its own stream point, labeled with the
-variable name and carrying `study_id`, `run_id`, and `variable_id`. Stream
-queries such as `find_all_data()` and `ac.query().measurement()` list these
-points, and `ac.query().measurement(run_id=run.run_id)` selects one run's
-streams.
+Two cases are refused:
 
-The declaration's optional `observed` URI identifies the plant property being
-measured or simulated. It is an attribute of each run's point, not the point
-itself: plant queries on the property return the site's measurements only, so
-simulated runs never mix with them. Select the runs that simulate a property
-with `ac.query().measurement(observed=property_uri)`.
+- a run that is still running,
+- a run whose stream is recorded as an input of another run, unless both runs are deleted together.
 
-Stream queries list streams only. Scalar, JSON, text, log, and file values
-are stored in the experiment ledger, so they do not appear in
-`find_all_data()`; read them through the Study's variables and observations.
+`usage()` on a study or on a selection of runs counts what is stored and estimates its size.
+The size of files is exact.
+The size of samples and values is an estimate, and it is not the size on disk.
 
-To compare them, select a saved run's output and the site's stream. Read the
-same time range from each, convert units if needed, and match timestamps.
-[Record experiments](../how-to/record-experiments.md) shows these steps.
+## Next
 
-## Limits
-
-Complete metadata documents live in the graph alongside their queryable
-attributes. Saved experiment metadata preserves null positions, nested empty
-containers, original semantic strings, and ordered semantic lists. Native query
-tables retain their shared schemas and resolved semantic values.
-
-SQL owns lifecycle transitions, observation ordering, recorded values, intervals,
-and artifact ownership. Its transactional outbox carries pending, already-resolved
-graph writes. Delivery is idempotent: a crash before acknowledgment replays the
-write, and successful acknowledgment removes the pending payload. Lifecycle
-updates patch their own fields without replacing descriptive metadata. Backup
-and restore must include the authoritative graph as well as the SQL ledger.
-
-Stream annotations and stream ranges read live data. Record a range's rows for
-a fixed copy; an annotation has no copy form.
-
-Stream discovery, metadata editing, and derived-stream lineage belong to their
-respective APIs. The experiment interface uses the resulting stream references.
-A combined query across variable, run, and stream metadata is not yet defined.
-Recording every WaterTAP variable in large sweeps still needs a performance
-evaluation.
-
-See [Record experiments](../how-to/record-experiments.md) for examples and the
-[Experiment reference](../reference/experiments/_index.md) for the API.
+- [Record experiments](../how-to/record-experiments.md), [Record a whole model](../how-to/record-a-whole-model.md) and [Compare experiment runs](../how-to/compare-experiment-runs.md) show the steps.
+- The [experiment reference](../reference/experiments/_index.md) describes every method.

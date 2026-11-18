@@ -1,244 +1,168 @@
 ---
-title: The data stream lifecycle
+title: The stream lifecycle
 ---
 
-This is a guide to how a timeseries stream comes into existence, how its rows
-are stored, and how a query finds them again.
-It is background for driver authors and for anyone debugging ingestion; using
-the data is covered in the [querying tutorial](../tutorials/querying-data.md).
+In this article we'll describe what happens to a stream inside Acquirium: how it gets its identity, what registering it writes, how its rows are stored and how a query finds them.
+This is useful when you write a driver or when inserted data does not show up in a query.
 
-## The identifier model
+The examples use the plant of [5 - A Full Example](../tutorials/a-full-example.md).
 
-A stream has three identifiers.
+## Stream identity
 
-| identifier | meaning | example |
-|---|---|---|
-| `source_id` | who writes the stream | `watertap-seawater-ro` |
-| `stream_name` | which series, unique within the source | `P1-out-pressure` |
-| `stream_uri` | the canonical URI of the stream | `urn:acquirium#399ce39c-...` |
-
-`stream_uri` is computed from the other two.
-The same `(source_id, stream_name)` pair always produces the same URI, and two
-sources can use the same `stream_name` without colliding.
+A stream is identified by its `source_id` (who writes it) and its `stream_name` (which series).
+Acquirium computes the `stream_uri` from the two:
 
 ```python
-acq.reference_uri("watertap-seawater-ro", "P1-out-pressure")
-# urn:acquirium#399ce39c-e18d-5ad5-bd5c-9c9d053fe04d
+import acquirium as aq
+
+acq = aq.init()
+
+acq.reference_uri("csv-data", "P1-mechanical-power")
+```
+```text
+rdflib.term.URIRef('urn:acquirium#d19c4dbc-0ecd-5223-819c-dd7caba3f790')
 ```
 
-Since the URI is computable, no lookup is needed at insert time.
-A driver only needs its `source_id` and `stream_name` to insert rows.
-
-These stream URIs can be attached to `property_uri`s in the semantic model.
-A stream registered without a point gets a placeholder point, `<stream_uri>__point`, so that
-`measurement()` on an empty query finds it; nothing else in the model refers to it, so topology
-queries do not reach it.
+The same pair always gives the same `stream_uri`, on every server.
+This is why an insert only needs the `source_id` and the `stream_name`, and why two sources can use the same `stream_name`.
 
 ## What registration writes to the graph
 
-`register_streams()` writes two connected pieces of RDF.
-Each stream needs a `source_id`, and its triples go into that source's own
-graph.
-A stream's `metadata` key adds a third piece, in the same graph: one
-`attr:` predicate per leaf of each key, as
-[`insert_metadata()`](../reference/client/metadata.md) writes
-them.
+`register_streams()` writes the stream into the graph, in the graph that belongs to its `source_id`.
+The stream is a node with its two names:
 
-For the stream itself, a reference node under the computed `stream_uri`:
-
-```turtle
-<urn:acquirium#399ce39c-...>
-    acq:sourceId  "watertap-seawater-ro" ;
-    acq:refName   "P1-out-pressure" ;
-    acq:valueKind "numeric" ;
-    ref:storedAt  <urn:acquirium#TimescaleDB> .
+```text
+acq:d19c4dbc-0ecd-5223-819c-dd7caba3f790 ref:storedAt acq:TimescaleDB
+acq:d19c4dbc-0ecd-5223-819c-dd7caba3f790 acq:refName 'P1-mechanical-power'
+acq:d19c4dbc-0ecd-5223-819c-dd7caba3f790 acq:sourceId 'csv-data'
 ```
 
-And the point node with its semantic metadata and the link between the two.
-This is the given `property_uri`, or the placeholder `<stream_uri>__point` labelled
-with its `stream_name` when none was given:
+**Note:** `acq:TimescaleDB` is the name of the timeseries store in the graph. It is the same when the data is stored in DuckDB.
 
-```turtle
-<urn:swro/P1-out-pressure>
-    a                        acq:VirtualPoint ;
-    rdfs:label               "P1 outlet pressure" ;
-    qudt:hasUnit             unit:PA ;
-    qudt:hasQuantityKind     quantitykind:Pressure ;
-    ref:hasExternalReference <urn:acquirium#399ce39c-...> .
+A stream is always linked to a property, because queries find streams through properties.
+
+### A stream without `property_uri`
+
+When no `property_uri` is given, Acquirium generates a property for the stream.
+For instance, after registering `{"source_id": "lab", "stream_name": "feed-temp", "unit": "degC"}` the graph has:
+
+```text
+acq:48888c81-b720-5259-82b0-6d3a15ab213d__point qudt:hasUnit unit:DEG_C
+acq:48888c81-b720-5259-82b0-6d3a15ab213d__point rdf:type acq:VirtualPoint
+acq:48888c81-b720-5259-82b0-6d3a15ab213d__point rdfs:label 'feed-temp'
+acq:48888c81-b720-5259-82b0-6d3a15ab213d__point ref:hasExternalReference acq:48888c81-b720-5259-82b0-6d3a15ab213d
+acq:48888c81-b720-5259-82b0-6d3a15ab213d__point acq:isDisconnected 'true'
+acq:48888c81-b720-5259-82b0-6d3a15ab213d__point attr:unit.raw 'degC'
 ```
 
-Registration is idempotent and additive.
-Registering the same stream again with a `property_uri` does not erase metadata written earlier.
-Note that when the `property_uri` already exists in the graph, the metadata passed
-is checked against it before anything is inserted: a field the point lacks is
-added, and a conflicting value raises `ValueError`.
-Units are the exception.
-A unit that differs from the point's but converts to it is written on the
-reference node as the storage unit:
+- The label is the `stream_name`, unless a `label` is given.
+- The unit and the other metadata of the stream are written on the generated property. `attr:unit.raw` keeps the text as it was given.
+- `acq:isDisconnected` marks the property as not part of the plant model. `where(is_disconnected=True)` lists such streams.
 
-```turtle
-<urn:acquirium#399ce39c-...>
-    qudt:hasUnit  unit:PSI .          # the rows are stored in psi
+### A stream with `property_uri`
+
+When a `property_uri` is given, the link is written on that property of the plant model:
+
+```text
+wbs:P1-mechanical-power ref:hasExternalReference acq:d19c4dbc-0ecd-5223-819c-dd7caba3f790
 ```
 
-Reads convert from that unit to the point's automatically.
-A unit that does not convert raises `ValueError`.
+The metadata of the call is compared with the metadata the property already has.
+A key the property does not have is added, and a different value raises `ValueError` before anything is written.
+The unit is the exception: a different unit that can be converted is accepted, and it is recorded on the stream as the unit its values are stored in (see [Units](units.md)).
 
-Note that driver authors do not call `register_streams()` themselves.
-A driver calls `self.declare(...)` per stream, and the platform calls
-`register_streams()` for it just before the next
-insert.
-`register_streams()` is the direct form, for backfills, imports and notebooks.
-See the [driver reference](../reference/drivers/helpers.md).
+### Connecting a stream later
 
-**TODO:** We need to provide an interface to add, remove, replace streams. Also, auto register streams from a given graph.
+A stream registered without `property_uri` can be connected by registering it again with one.
+The generated property is removed and its metadata moves to the plant property.
+The `stream_uri` and the stored rows do not change, because they only depend on the `source_id` and the `stream_name`.
+
+The rules for the metadata that moves are in the [streams reference](../reference/client/streams.md#streams-without-a-property).
+
+Note that registration only adds.
+Registering a connected stream again without `property_uri` keeps the connection.
 
 ## Registration and the streams table
 
-The graph is the source of truth for streams, so the server keeps a derived
-index: a `streams` table in the timeseries store, with one row per reference
-node
-(`stream_uri`, `property_uri`, `source_id`, `stream_name`, `value_kind`).
-After every graph insert, the server scans for nodes carrying `acq:sourceId`
-and `acq:refName` and upserts them into the table.
-The scan reads the inferred graph together with the ontologies, not just the
-triples as written, so an ontology or SHACL rule can complete a stream-to-point
-link that no insert stated directly.
-This sync is why registration must precede insertion: the insert path checks
-the table, and a stream that was never registered has no row.
+The graph is where streams are defined.
+For fast checks the server also keeps a `streams` table next to the timeseries data, with one row per stream: `stream_uri`, `property_uri`, `source_id`, `stream_name` and `value_kind`.
+The table is filled from the graph after every graph insert, and again when the server starts.
 
-Note that this sync has two additional behaviors.
+An insert is checked against this table.
+This is why a stream has to be registered before its first row:
 
-A later registration never erases an earlier link.
-If a stream was first registered with a `property_uri` and later without one,
-the table keeps the point.
+```python
+from datetime import datetime, timezone
 
-The sync validates the canonical URI.
-A hand-written reference node whose URI does not equal
-`compute_stream_uri(source_id, stream_name)` fails the entire insert:
-
+acq.insert_timeseries("lab", "nope", [(datetime(2026, 1, 1, tzinfo=timezone.utc), 1.0)])
+```
 ```text
-Managed reference URI mismatch for point <...>: graph has <...>, expected
-<...> from source_id='...', stream_name='...'
+HTTPError: 400 Client Error: Bad Request for url: http://127.0.0.1:63792/insert_timeseries;
+response body: stream urn:acquirium#ad8a6aa9-2db9-528d-8928-fcf7fe2d954c is not registered
 ```
 
-The same scan runs at server startup, so a bad reference node in a model file
-prevents the server from starting.
-Do not mint reference URIs by hand; use `acq.reference_uri()` or let
-`register_streams()` compute them.
+Be aware that the server also checks the `stream_uri` of every stream it finds in the graph.
+A stream node written by hand whose URI is not the one computed from its `source_id` and `stream_name` makes the graph insert fail.
+Use `register_streams()` instead of writing stream nodes yourself.
 
-## The write path
+## How rows are written
 
-Note that driver authors do not call this path directly.
-A driver declares its streams with `self.declare(...)` and reports values with
-`self.add(...)`; the platform registers and inserts for it.
-See the [driver reference](../reference/drivers/helpers.md).
+An insert goes through these steps in the server:
 
-A row goes through five steps between a driver and the store.
+- The `stream_uri` of each row is computed from the `source_id` and the `stream_name`, and checked against the `streams` table.
+- Each value is stored as a number or as text, by the `value_kind` of the stream.
+- Rows are identified by stream and timestamp. A row that already exists is overwritten.
+- The rows of one request are written in one transaction.
 
-1. The client normalizes the observation frame (timestamps to UTC, values to
-   strings) and sends it as an Arrow table over HTTP.
-2. The server computes each row's `stream_uri` from `(source_id, stream_name)` and
-   checks it against the `streams` table.
-   An unregistered stream fails here, before anything is written.
-3. Each value is placed in one of two columns by the stream's
-   `value_kind`: numbers in `numeric_value`, everything else in `text_value`.
-   A stream registered without a `value_kind` becomes numeric here, when its
-   first numeric value arrives.
-   A value on a numeric stream that does not parse as a number falls back to
-   the text column instead of failing the batch.
-4. Rows are deduplicated on `(stream_uri, ts)`, keeping the last.
-5. The batch is written in one transaction. DuckDB deletes colliding pairs
-   and inserts the frame; TimescaleDB `COPY`s the frame to a temporary staging
-   table and merges it with `INSERT ... SELECT ... ON CONFLICT`, ordered by
-   `(stream_id, ts)`.
+When the `value_kind` was not given, the stream becomes numeric when it receives its first numeric value.
+Until then its values are read as text:
 
-Step 5 makes ingestion idempotent by stream and timestamp: re-inserting the
-same timestamps replaces those rows instead of duplicating them, so re-running
-an import or replaying a file is safe. An insert with changed values therefore
-overwrites the current values at those timestamps. Ordinary upserts retain omitted timestamps. Whole-stream replacement with
-`replace=True` keeps exactly the supplied rows; an empty replacement clears the
-stream. Replacement physically removes the old rows and records the stream's
-latest reset revision. Downstream apps rebuild their complete results, allowing
-removals to propagate without retaining deleted timestamps for replacement.
+```python
+acq.insert_timeseries("lab", "feed-temp", [(datetime(2026, 1, 1, 0, tzinfo=timezone.utc), "n/a")])
+acq.insert_timeseries("lab", "feed-temp", [(datetime(2026, 1, 1, 1, tzinfo=timezone.utc), 21.5)])
 
-Storage is one `timeseries` table holding `ts`, `numeric_value` and
-`text_value`, with one row per stream and timestamp and a check that only one
-of the two value columns is set.
-Both backends key rows by an integer `stream_id` and map it back through a
-`stream_ids` table, which keeps the column narrow; reads expose `stream_uri`.
+acq.stream("lab", "feed-temp").dataframe()
+```
+```text
+shape: (2, 2)
+┌─────────────────────────┬───────┐
+│ time                    ┆ value │
+│ ---                     ┆ ---   │
+│ datetime[μs, UTC]       ┆ f64   │
+╞═════════════════════════╪═══════╡
+│ 2026-01-01 00:00:00 UTC ┆ null  │
+│ 2026-01-01 01:00:00 UTC ┆ 21.5  │
+└─────────────────────────┴───────┘
+```
 
-## The read path
+The text value is still stored.
+A numeric stream returns it as null, and `value_mode="coalesce"` returns every value as text (see [Values](values.md)).
 
-A query follows the same links in reverse.
+Since rows are overwritten by stream and timestamp, running an import twice does not duplicate anything.
+`replace=True` goes further and makes the stream contain exactly the rows of the call (see [1 - Inserting Data](../tutorials/inserting-data.md#inserting-the-same-data-twice)).
 
-1. The query pattern compiles to SPARQL; each measurement node binds a point
-   and follows its `ref:hasExternalReference` to the reference node.
-   The point's unit and the reference node's unit both come along.
-2. The client collects the distinct `(property_uri, stream_uri)` pairs from the
-   result; these are the bindings a `DataObject` reports before fetching.
-3. Values are fetched per `stream_uri` from the timeseries store, streamed back
-   as Arrow batches.
-4. When the reference node's unit differs from the point's, the values are
-   converted during the fetch (see the
-   [units guide](units.md#automatic-conversion)).
+Note that a driver does not call these methods itself.
+It calls `declare()` and `add()`, and the registration and the insert are done for it (see [How drivers work](drivers.md)).
 
-The graph determines which streams to read, and the timeseries store returns
-their values. `stream_uri` is the logical join key at this boundary; the backend
-maps it to its internal integer `stream_id`.
-A point with no reference node yields metadata but no data.
-A reference node with no point stores data that semantic queries cannot find.
+## How a query reads them
 
-## How graph inserts behave
+A query follows the same links in the other direction:
 
-Everything above writes RDF through `insert_graph`, so this section
-describes how it behaves.
+- The query runs on the graph and finds the properties that match, with the `stream_uri` linked to each of them.
+- The rows of those streams are read from the timeseries store.
+- When the unit of the stream differs from the unit of the property, the values are converted while they are read (see [Units](units.md#automatic-conversion)).
 
-Every write names an owner.
-`insert_graph` requires a `source_id`, and the triples land in that owner's
-graph: the reserved `plant` source for the shared model, a driver's own source,
-or another source explicitly chosen by an external client.
-`replace=True` therefore replaces only that owner's graph, never the plant
-model or another driver's streams.
+A property without a stream gives metadata but no data.
+`acq.query().property(has_stream=False)` lists such properties.
 
-The ontologies (s223, the water ontology, QUDT, the reference schema) live in
-their own graphs, managed separately, and inserts never touch them.
-Queries run against the inferred deployment data plus the resolved ontology
-and shape triples by default.
-This is why a model containing `wbs:P1 a s223:Pump` matches a query for
-equipment: the subclass chain lives in the ontology graphs.
-The [graph backend guide](graph-backend.md) covers the ownership
-rules and the derived-graph pipeline in full.
+## Streams written by apps
 
-Be aware that a graph insert is not cheap.
-The sync from [Registration and the streams table](#registration-and-the-streams-table)
-waits for a fresh inferred view, so every `insert_graph` request pays for one
-inference pass.
-Register many streams in one call rather than looping over single ones.
+The outputs of an app are streams as well.
+The server registers them when the app is deployed, with `derived:<app name>` as the `source_id`, and queries find them like any other stream.
+See [Apps](apps.md).
 
-## App outputs are streams too
+## Next
 
-When the planner compiles an app's query, it creates references for the output
-streams and generates points for outputs that do not specify an existing
-`property_uri`. Each output uses `derived:<name>` as its timeseries `source_id`.
-
-With `output.stream`, the generated `stream_name` combines the app name, port name,
-and a stable hash of the bound input aliases and reference URIs. The `stream_uri`
-is derived from the source and reference name as usual. This keeps the stream
-identity stable when the app's code or a sensor's metadata changes. An app with
-`grouping="per_match"`, one generated output, and ten distinct sensor matches
-therefore owns ten derived streams.
-
-With `output.named`, the author supplies the reference name. The resulting
-stream keeps that identity when the set of inputs changes, which is useful
-for aggregates such as a plant-wide total. See the
-[app reference](../reference/apps/outputs.md) for ownership and
-metadata rules.
-
-Queries can select derived streams by the metadata in their output declarations,
-just as they select measured streams. For example, declaring a quantity kind
-makes an output discoverable alongside sensors measuring that quantity. The
-runtime also records the producing app on each derived point, so
-`measurement(quantity_kind="temperature", app="normalize-temperatures")`
-selects temperature outputs from that app. See
-[query matches](../reference/apps/app-class.md).
+- [Streams](../reference/client/streams.md) in the client reference has every key of `register_streams()`.
+- [The graph store](graph-backend.md) explains which graph a write goes to.
+- [Server internals](server-internals.md) describes the timeseries store.

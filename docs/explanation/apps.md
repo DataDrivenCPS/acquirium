@@ -1,117 +1,103 @@
 ---
-title: Apps
+title: How apps work
 ---
 
-An app calculates derived values from stored sensor readings and keeps those
-values up to date as the inputs change. For example, an app might convert
-temperatures to a common unit, calculate a plant-wide average, or identify
-readings that exceed a threshold. The same calculation handles new readings,
-late arrivals, and corrections to data already processed.
+In this article we'll describe what the server does with an app: how it runs the app, how the outputs are kept up to date, and what is stored.
+[Declaring and deploying Apps](../tutorials/advanced/first-app.md) shows how to write and deploy one.
 
-## Recomputed windows
+## What the server does with an app
 
-Consider a ten-minute rolling average. When a reading is corrected, the
-correction can affect averages for the following ten minutes. Recalculating
-those averages also requires readings before the corrected timestamp.
-Acquirium therefore distinguishes the interval of output being replaced from
-the wider interval of input needed to calculate it.
+An app is deployed with `deploy_app()`.
+The server does not receive the code of the app.
+It receives the name of the module and the class, the parameters and the settings of the app, and it imports the module itself.
+This is why the file of the app has to be in a folder the server can import from.
 
-Calculations use the readings currently available in storage. They do not wait
-for every sensor to report or for an interval to become final. A late arrival
-can revise an earlier result, just as a correction can.
+The server then runs `build_query()` on the plant model.
+The matches of the query decide how the app is called:
 
-An app declares these dependencies through `lookback` and `lookahead`, and uses
-`every` when it needs fixed time buckets. The runtime uses the declarations to
-select the affected output interval and load its input data. The app's
-`transform` method then calculates results from the latest available readings.
-It does not have to maintain a separate calculation for corrections.
+- With `grouping = "per_match"` each match is calculated on its own. Each match has its own input stream and its own output streams.
+- With `grouping = "all_matches"` all matches are calculated together, and there is one set of output streams.
 
-Each output value is identified by its stream and timestamp. Publishing a
-result replaces the previous values in the output interval, including removing
-values that no longer appear in the result. For example, if a corrected
-reading falls below an alarm threshold, the corresponding alarm disappears.
-Downstream apps receive that removal as an input change. Assigning an empty
-table removes the port's results in that interval; leaving the port unassigned
-preserves them. Results outside the output interval are left unchanged.
+The server calls each of these a binding.
+The `binding_count` of `list_apps()` is the number of bindings of an app.
 
-The database commits output changes and processing progress in the same
-transaction. If a process stops before the transaction commits, the runtime
-can repeat the calculation when it restarts. This requires `transform` to
-produce the same result for the same input batch. External side effects, such
-as sending a notification, cannot be rolled back with the database transaction
-and should be handled outside the transform. Repeated execution and different
-ingestion batch boundaries must converge to the same result.
+The query is run again when the plant model changes.
+For instance, when a third pump with a power stream is added to the model, a `per_match` app over the pump power streams gets a third binding and a third output stream.
 
-## Queries bind apps to the plant
+## How the outputs are kept up to date
 
-An app selects its inputs through `build_query`. The query might find every
-water-temperature measurement in a treatment tank, or pair flow and pressure
-measurements on each pump. The compiler resolves each query match to a set of
-input streams, called a *binding*.
+Every write to the stored data gets a number, the revision.
+For each binding the server remembers the revision it has processed.
+A few times per second the server compares the two.
+When an input stream has values that were written after the processed revision, the server does the following:
 
-With `grouping="per_match"`, the runtime calls the app separately for each
-match. This suits calculations such as converting every sensor's readings to
-Celsius. With `grouping="all_matches"`, one call receives all selected streams,
-which allows a calculation to combine readings from several sensors. Every app
-must explicitly choose one of these values; a missing or invalid grouping is
-rejected when the app is instantiated.
+- It finds the time range of the values that changed.
+- It reads the inputs for this time range. The settings `every`, `lookback` and `lookahead` make the range wider, see [Time windows of a call](../reference/apps/app-class.md#time-windows-of-a-call).
+- It calls `transform()` with these inputs.
+- It replaces the stored output values of this time range with the result, and saves the new revision of the binding. Both are saved together.
 
-When the plant model changes, the runtime compiles the queries again and
-compares each binding's match context with what it stored. A per-match
-binding is repaired only when its own row changed; an aggregate is repaired
-when any of its rows did. For example, adding a sensor to an aggregate may
-require recalculating that aggregate's earlier results, while the other
-sensors' per-match outputs are left as they are.
+New values, late values and corrected values all take this path.
+For instance, an app has `lookback = "10m"` for a ten-minute average, and a reading of 12:00 is corrected.
+The correction changes the averages from 12:00 to 12:10, and these averages need the readings from 11:50 on.
+The server reads the inputs from 11:50 to 12:10 and replaces the outputs from 12:00 to 12:10.
 
-## Two output identities
+The result of `transform()` replaces what was stored in the time range:
 
-After deciding which inputs a calculation should receive, you also need to
-choose how other queries will identify its output. Acquirium provides two
-output declarations for this purpose.
+- A value that was stored and is not in the new result is removed.
+- An empty table removes all values of the output in the time range.
+- An output that `transform()` does not assign is left as it is.
 
-For a conversion performed separately on each sensor, `output.stream` derives
-a name from the app, the output port, and the bound inputs. Each sensor gets
-its own derived stream, and recompiling the same inputs produces the same
-stream identity. You can therefore add sensors without assigning a new output
-name to each one.
+The calculation uses the values that are stored at that moment.
+The server does not wait until all inputs have reported.
+When a late value arrives, the same time range is calculated again.
 
-For a result such as a plant-wide total, `output.named` lets you choose a name
-that remains the same when sensors join or leave the calculation. The name is
-scoped to the app, under the source `derived:<app-name>`. Each named output
-must have a single owner: multiple per-match bindings cannot publish to the
-same named stream.
+**Note:** When a stream is written again with `replace=True`, the apps that read it calculate all of their outputs again.
 
-The naming declaration does not choose which inputs the app receives. An
-aggregate still needs `grouping="all_matches"`, whether its output name is
-generated or supplied by the author.
+### Data that was stored before the deployment
 
-Other apps can query derived streams in the same way as measured streams.
-These dependencies form a directed acyclic graph, which the scheduler uses
-to run producers before their consumers. Queries can select outputs by their
-declared metadata and by the app that produced them. For example,
-`measurement(quantity_kind="temperature", app="normalize-temperatures")`
-selects temperature outputs from that app.
+With `backfill = True` the first run of an app also processes the data that was already stored.
+A long time range is processed in pieces of about one day, and the server remembers which pieces are done.
+With `backfill = False` the app only processes values that are written after the deployment.
 
-## Deployment and recovery
+### Apps that read other apps
 
-Deployment validation completes before a new definition becomes active. Work
-prepared for an old definition cannot publish after the deployment is replaced
-or removed. Updating code preserves processing progress; use
-[explicit reprocessing](../how-to/check-deploy-apps.md#apply-code-changes-to-retained-history)
-to apply the changed calculation to retained history.
+The outputs of an app are streams, so another app can select them, for instance with `measurement(app="ro-recovery")`.
+The server runs an app before the apps that read its outputs.
+A deployment is rejected when two apps would write the same stream, or when apps read the outputs of each other in a circle.
 
-A failed calculation blocks its dependent branch, while independent branches
-can continue. The runtime stores processing progress in the database so it can
-resume after a restart. The
-[internals explanation](materialization-internals.md#scheduling-and-recovery)
-describes how snapshots, revisions, and transactions support this behavior.
+## When a calculation fails
 
-## Why "materialization"
+When `transform()` raises an error, nothing is saved for this binding.
+The stored outputs and the processed revision stay as they were, and the status of the binding becomes `failed`.
+The server tries the binding again in its next round.
+The other apps keep running.
+An app that reads the outputs of a failed binding waits until that binding succeeds.
 
-The documentation calls this process *incremental materialization*. The derived
-streams are stored calculation results, similar to materialized views in a
-database. The runtime updates the affected parts of those results as input
-revisions arrive, rather than recalculating the entire history for every write.
+Be aware that the server can call `transform()` more than once for the same data, for instance after a failure or a restart.
+`transform()` should only calculate.
+It should not write files or send messages.
 
-[Materialization internals](materialization-internals.md) explains revision
-tracking, scheduling, publication, recovery, and the storage backends.
+## What is stored
+
+- **The output values.** They are in the same store as all other streams, under the `source_id` `derived:<app name>`. Only the current values are kept. Earlier results are overwritten.
+- **The description of the output streams.** The label, the unit and the name of the app are written to the graph. This is what `where(app=...)` uses.
+- **The deployment.** The module and class name, the parameters and the settings. With this the server starts the app again after a restart.
+- **The progress.** The processed revision of each binding, and the unfinished pieces of a long time range. With this the server continues after a restart where it stopped.
+
+The code of the app is not stored.
+The server keeps a fingerprint of the file of the app and compares it each time it loads the app.
+When the file was changed after the deployment, the app stops with a `digest mismatch` error until it is deployed again.
+
+Deploying an app again keeps the progress.
+The new code is used for the values that are written from then on, and the stored outputs are not calculated again.
+`reprocess_app()` calculates a time range again with the new code.
+
+`remove_app()` deletes the deployment and the progress.
+The output values stay in the store.
+
+## Next
+
+- [Calculate derived streams](../how-to/calculate-derived-streams.md) has apps with several inputs, parameters and a rolling window.
+- [Check, deploy, and repair an app](../how-to/check-deploy-apps.md) shows what to do when a check or a deployment fails.
+- [Materialization internals](materialization-internals.md) describes the tables, the scheduling and the storage backends.
+- The [app reference](../reference/apps/_index.md) lists every setting.

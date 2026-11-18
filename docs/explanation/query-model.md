@@ -2,229 +2,250 @@
 title: The query model
 ---
 
-This is an explanation of the ideas behind the `Query` interface: what a
-query is, why we built it this way, how free text turns into ontology terms,
-and how a query is executed.
-Using the interface is covered in the [querying tutorial](../tutorials/querying-data.md).
+In this article we'll describe the ideas behind the query interface: what a query is, how it sees the plant model, and how it is run.
+Using the interface is covered in the tutorial, starting from [2 - Querying Data](../tutorials/querying-data.md).
+The examples use the plant of [5 - A Full Example](../tutorials/a-full-example.md).
 
-## The mental model of Querying in Acquirium
+## A query is a pattern
 
-A `Query` is a description of what you are looking for.
-You chain verbs to describe a pattern (a pump, a tank near it, the measurements on either one, etc.), and the server finds every place in the plant model where that
-pattern matches.
+A query describes a pattern of nodes in the plant model.
+The server finds every place in the model where the pattern matches, and each match is one row of the result.
 
-`acq.query()` starts an empty `Query`.
-Every verb returns a new immutable `Query`, so you can hold on to a partial
-query and extend it in different directions.
+There are three kinds of nodes:
 
-The `Query` interface is an opinionated view over the underlying plant knowledge graph.
-It is different from querying a raw RDF graph.
-This view treats certain edges as attributes of the source nodes.
-For instance a measurement's unit is a separate triple in RDF: `:source qudt:hasUnit :unit`, but here, it is just the measurement's `unit` attribute.
-For the same reason, edges whose meaning is not plant topology (class hierarchies, external references etc.) are hidden from generic traversal.
+- An **entity** node is a part of the plant, such as a pump, a tank or a pipe. It is added with `entity()` and `related()`.
+- A **property** node is one measured quantity of the plant. It is added with `property()`.
+- A **measurement** node is a property that has a stream connected. It is added with `measurement()`, and it is the only kind of node that returns data.
 
-This interface classifies nodes into two main categories.
-Every concept, system, equipment and connection is treated as an `Entity` node,
-while every measurement (i.e. `s223:Property`) is treated as a `Data` node.
-
-The `Query` interface is lazy.
-The actual query execution will happen after the user executes certain functions like `.metadata()`, `.dataframe()` or `.facets()`.
-This is what lets you build a query step by step and check `.metadata()` after every step, without paying for data you do not need yet.
-
-### Why?
-
-The main reasons we designed this interface are:
-- SPARQL and other declarative languages are not designed for incremental querying, where users can visualize intermediate results while building queries
-- We see the advantages of *dataframe* systems compared to SQL databases for data science and data exploration tasks
-- Previous systems that combine data and metadata access (e.g. Mortar, Energon, Chrontext) all depend on declarative languages and do not focus on data-metadata co-exploration
-- We do not expect our intended users to be familiar with RDF and SPARQL
-
-Read [our paper](https://dl.acm.org/doi/abs/10.1145/3744256.3812557) for more info.
-
-
-## Free text and what it resolves to
-
-Every place that takes a class, a predicate or an attribute value also takes
-free text.
-This is a design element for us towards our goal to avoid/reduce RDF exposure to our users.
-The server matches it against the ontologies (exact match on a label first,
-then semantic similarity) and picks the best hit.
-`"ozone unit"` becomes `watr:OzonationUnit`, `"mg/L"` becomes `unit:MilliGM-PER-L`.
-Each slot is matched against its own vocabulary, so `unit="PSI"` searches
-units, not classes.
-
-Be aware that free text queries might result in incorrect results.
-The match is a best guess, and a wrong guess would still generate a working query but with
-the wrong answer.
-In such case, try to change the text you enter, use the exact URI of the equipment you're searching or check the text matching results:
+For instance, the pattern below has two nodes: a pump, and a power measurement of that pump.
 
 ```python
-acq.client.resolve("ro membrane", "class", top_k=3, min_score=0.3)
+pumps = acq.query().entity("pump")
+power = pumps.measurement(quantity_kind="power")
+print(power)
 ```
 ```text
-[{'uri': 'https://watermetadata.org/ontology/watr#ReverseOsmosisMembrane',        'score': 0.839, ...},
- {'uri': 'https://watermetadata.org/ontology/watr#ElectricallyConductingMembrane', 'score': 0.788, ...},
- {'uri': 'https://watermetadata.org/ontology/watr#MolybdenumSulfideBasedMembrane', 'score': 0.786, ...}]
+Query
+  pump: entity, Pump
+  pump_data: measurement, of pump, quantity_kind=Power
+2 matches:
+┌────────┬─────────────────────────┬─────────────────────┐
+│ pump   ┆ pump_data               ┆ pump_data.label     │
+│ ---    ┆ ---                     ┆ ---                 │
+│ str    ┆ str                     ┆ str                 │
+╞════════╪═════════════════════════╪═════════════════════╡
+│ wbs:P2 ┆ wbs:P2-mechanical-power ┆ P2 mechanical power │
+│ wbs:P1 ┆ wbs:P1-mechanical-power ┆ P1 mechanical power │
+└────────┴─────────────────────────┴─────────────────────┘
 ```
 
-Note that only the ontologies are searchable this way, not your plant's own
-instance labels.
-`entity("pump")` resolves the *class* `Pump`; it will not find the item named "pump-1" in the plant by
-its label.
-
-
-## How Queries are executed
-
-The Acquirium `Query` object converts its content to an optimized SPARQL query (or queries) and runs that in the graph database embedded in the server.
-Completely removing this step and executing `Query` objects on the graph database directly is our current research area.
-
-`to_sparql()` returns the SPARQL the query compiles to, without running it.
-It is the surest way to see what a chain actually asks for, and to check that a filter applies to the node you intended.
-
-`execute()` runs that query and returns the raw bindings as `{"columns": [...], "rows": [[...]]}`.
-`metadata()` is this plus the alias-to-column naming, so you rarely need it directly.
-
-Traversal queries (i.e. finding the *nearest* related equipment or measurement point) are executed at both the Python level and the SPARQL level:
-
-### How traversal runs
-
-SPARQL handles multi-hop wildcard traversal poorly: every hop multiplies joins, and an unbounded path can stall the store.
-Acquirium therefore resolves these steps client side.
-When a step uses `via="any"` or a repeatable predicate, the client resolves it at execute time with a breadth-first walk: fetch one layer of neighbors, step, repeat, up to `max_depth`.
-The walk also makes `nearest` exact: distance is counted per source, and ties survive.
-The final SPARQL only ever receives the concrete pairs the walk found.
-Predicate lists and `direction=` compile to SPARQL directly, without the walk.
-`nearest` along a direction is a walk of its own: the flow is divided into places (the source's own connection points, then alternately the connection and the entity with all its connection points), the one-step neighbours are fetched once and cached, frontiers advance per source with a visited set, and the candidates of each place are checked against the full pattern, filters included, as paired `VALUES`.
-A source stops at the first place that returns a row.
-`max_depth=0` continues until every pending source's frontier is empty, so loops end.
-Layer results are cached until the graph changes, so repeating a query is cheap.
-You can always inspect what will run with `.to_sparql()`.
-
-
-### Hidden Predicates
-
-We use [s223](https://open223.info/) to model the connections in WaTr graphs.
-However, s223 graphs contain some predicates that are not useful or meaningful for our querying.
-Additionally, certain edges in our graphs are attributes of the node.
-These predicates describe a node rather than connect the plant, and walking them returns ontology terms instead of nearby equipment.
-That's why we hide these during traversals.
-
-A measurement edge does not walk predicates at all: `measurement()` follows
-the `entity` relation of `acquirium.Client.explore.relations` read forwards
-(`hasProperty`, directly or through a connection point, and
-`actuatedByProperty` for an actuator), and `context()` follows it backwards,
-so the two are exact inverses.
-Sensors are not part of it: a point a sensor `observes` is reached through
-the equipment or connection point that has it, not through the sensor.
-A deployment that attaches points with another predicate registers it on
-that relation once and both verbs follow it.
-
-`via="any"` walks every predicate except a default hidden set: the ones backing
-the attributes (`rdf:type`, `hasUnit`, `hasQuantityKind`, `ofMedium`,
-`hasMedium`, `ofSubstance`, `hasEnumerationKind`, `hasProcess`, `dataSource`,
-`producedBy`),
-plus `rdfs:subClassOf`, `s223:hasProperty`, `s223:hasConnectionPoint`,
-`s223:cnx` and `ref:hasExternalReference`, and the whole
-`urn:acquirium:attr#` namespace, which holds the attributes written with
-`insert_metadata()`.
+Every method returns a new query and leaves the original unchanged.
+This is useful for keeping a part of a query in a variable and extending it in several ways.
+For instance, `pumps` is still the query with one node, and it can be extended again:
 
 ```python
-from acquirium.Client.explore import hidden_predicates, hide, unhide
-
-sorted(hidden_predicates())
+tanks = pumps.related("tank", direction="downstream")
+print(tanks)
+```
+```text
+Query
+  pump: entity, Pump
+  tank: entity, Tank, downstream of pump
+2 matches:
+┌────────┬────────────────────┐
+│ pump   ┆ tank               │
+│ ---    ┆ ---                │
+│ str    ┆ str                │
+╞════════╪════════════════════╡
+│ wbs:P1 ┆ wbs:storage-tank-2 │
+│ wbs:P2 ┆ wbs:storage-tank-2 │
+└────────┴────────────────────┘
 ```
 
-The set is global and adjustable: `hide(uri)` adds to it, `unhide(uri)` takes
-one out, and a bare `unhide()` resets to the defaults.
-Naming a predicate in `via=` always overrides the set, so hiding never blocks
-an explicit request.
-Measurement edges are exempt too, which is why `measurement()` still reaches
-points through `hasProperty` and `hasConnectionPoint`.
+Building a query does not search the plant model.
+The search runs when a result is asked for, with `print()`, `metadata()`, `dataframe()` or `options()`.
+So a query can be built step by step and checked after every step, and the data is read only at the end.
 
-### The step patterns behind direction=
+**Note:** The result of a search is kept on the query object.
+If the plant model or the streams change, build the query again to see the change.
 
-`direction="upstream"` and `"downstream"` are shorthand for four fixed step
-patterns each, exported as constants:
+## Attributes and links
+
+The plant model is an RDF graph, where every fact is a link between two nodes.
+A query does not show the graph this way.
+It sorts the links into two groups:
+
+- **Attributes** describe one node: its class, label, unit, quantity kind, medium, and the keys written with `insert_metadata()`. They are used with `where()`, `include()` and `options()`.
+- **Links** connect the parts of the plant, such as a pipe between a pump and a tank. They are followed with `related()`.
+
+For instance, the unit of a property is a separate node in the graph.
+In a query it is a value of the property:
 
 ```python
-from acquirium.Client.explore import (
-    UPSTREAM_EQUIPMENT, DOWNSTREAM_EQUIPMENT,
-    UPSTREAM_PROPERTY, DOWNSTREAM_PROPERTY,
-)
+power.include("unit").metadata()
+```
+```text
+shape: (2, 4)
+┌────────┬─────────────────────────┬─────────────────────┬────────────────┐
+│ pump   ┆ pump_data               ┆ pump_data.label     ┆ pump_data.unit │
+│ ---    ┆ ---                     ┆ ---                 ┆ ---            │
+│ str    ┆ str                     ┆ str                 ┆ str            │
+╞════════╪═════════════════════════╪═════════════════════╪════════════════╡
+│ wbs:P2 ┆ wbs:P2-mechanical-power ┆ P2 mechanical power ┆ unit:W         │
+│ wbs:P1 ┆ wbs:P1-mechanical-power ┆ P1 mechanical power ┆ unit:W         │
+└────────┴─────────────────────────┴─────────────────────┴────────────────┘
 ```
 
-The `EQUIPMENT` pair walks equipment to equipment through connection points and
-connections; the `PROPERTY` pair ends on the measurements attached along the
-way.
-`related()` and `measurement()` pick the right one for you.
-Each constant is a readable tuple of chains.
-Passing one to `via=` runs the same traversal as a client-side walk, so
-`nearest=True` follows the process flow instead of raw graph hops:
+For the same reason, `related()` does not follow the attributes.
+Otherwise two pumps would be related because they have the same class or the same unit.
+The links that `related()` skips are called hidden predicates, and the list can be changed (see [Traversal settings](../reference/query/traversal.md)).
+
+## Why not SPARQL
+
+RDF graphs are normally queried with SPARQL.
+We designed this interface for the following reasons:
+
+- SPARQL and other declarative languages are not designed for building a query step by step and looking at the results in between.
+- Dataframe libraries work better than SQL databases for data exploration, and we wanted the same for plant models.
+- Earlier systems that combine data and metadata (Mortar, Energon, Chrontext) depend on declarative languages, and do not focus on exploring the data and the metadata together.
+- We do not expect our users to know RDF and SPARQL.
+
+See [our paper](https://dl.acm.org/doi/abs/10.1145/3744256.3812557) for more.
+
+## Plain text in a query
+
+Classes and attribute values can be written as plain text, such as "pump" or "power" above.
+The text matcher of the server turns the text into a term of the ontologies when the method is called.
+A text that matches nothing raises a `ValueError`:
 
 ```python
-q.related("pump", via=UPSTREAM_EQUIPMENT, nearest=True)
+acq.query().entity("pmp")
+```
+```text
+ValueError: Could not resolve 'pmp' as class
 ```
 
-The module docstring of `acquirium.Client.explore.directions` documents
-every step.
+Note that the text matcher only knows the ontologies.
+It does not search the names in your plant model, so `entity("High-pressure Pump P1")` does not find the pump with that label.
+Use `where(label=...)` or `uri=` for that.
+See [Text matcher](text-resolution.md) for how the matching works.
 
-### The relations behind context()
+## How a query is run
 
-`context()` is the reverse of `measurement()`: from a measurement it adds the
-entity the measurement is about.
-Which entity is decided by a named relation from
-`acquirium.Client.explore.relations.RELATIONS`, a registry of step chains in
-the same form as the direction constants above.
-A relation compiles to one fixed SPARQL step, so it never triggers the
-client-side walk.
-
-| relation | chains, read from the measurement |
-|---|---|
-| `entity` | `^hasProperty`; `^hasProperty/^hasConnectionPoint` |
-| `upstream` | `DOWNSTREAM_PROPERTY` read backwards |
-| `downstream` | `UPSTREAM_PROPERTY` read backwards |
-
-`upstream` and `downstream` are not written by hand.
-`DOWNSTREAM_PROPERTY` lists where an entity's downstream measurements live;
-followed from the measurement back to the entity, the same four chains say
-which entity the measurement is downstream of.
-`reverse_chains()` does that flip, keeping each class constraint on the node
-it constrains.
-For a point on a pipe the chain that fires is `^hasProperty` to the
-connection, then `connectsFrom` (upstream) or `connectsTo` (downstream).
-
-`register_relation(name, chains)` adds one, `unregister_relation(name)`
-removes one, and `reset_relations()` restores the defaults.
-Wildcard steps are not allowed in a relation.
-
-Be aware that `entity` names its predicates while `measurement()` follows any
-predicate for one hop, so a model that attaches points with a predicate
-other than `hasProperty` is reached by `measurement()` but not by
-`context()` until that predicate is added to the relation.
-
-
-
-## Miscellaneous
-
-`measurement(frm=...)` also accepts a list of aliases, attaching one
-measurement node per named entity.
-This is the middle ground between a single `frm=` and `frm="*"`:
+The client turns the query into SPARQL and sends it to the server, which runs it on the graph store.
+`to_sparql()` shows this text:
 
 ```python
-(acq.query().entity(uri="wbs:P1", alias="p1").related("Pressure Exchanger", alias="px")
- .measurement(frm=["p1", "px"], quantity_kind="pressure"))
-# columns: p1, px, p1_data, px_data
+print(pumps.to_sparql())
+```
+```text
+SELECT DISTINCT ?v0
+WHERE {
+  ?v0 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> ?v0_typ .
+  { SELECT DISTINCT ?v0_typ WHERE { ?v0_typ <http://www.w3.org/2000/01/rdf-schema#subClassOf>* <https://watermetadata.org/ontology/watr#Pump> . } }
+}
 ```
 
-`alias()` renames the current node, but the previous alias keeps working as
-an alternative handle in `target=`, `frm=` and `of=`; display uses the latest
-name.
-Note that the previous alias stays reserved for that node, so giving it to
-another node raises a `ValueError`.
+The second line of the pattern is the reason a class also matches its subclasses.
+The query reads the plant model together with the ontologies it imports, so it knows which classes are a kind of pump.
 
-The terminals take `include_dependencies=` (default `True`).
-`True` queries the deployment data together with the resolved ontology and
-shape triples, which is what makes subclass matching work.
-`False` restricts the query to the deployment data alone; it is faster and
-correct only for queries that need no ontology terms.
-See the [graph backend guide](graph-backend.md#query-and-export-semantics).
+### Searching over links
+
+A search that follows any link for several steps is slow in SPARQL.
+For this reason the client does this part itself.
+With `related()` and no `direction`, the client reads the links one step at a time, starting from the nodes found so far.
+It stops after `max_depth` steps, which is 3 by default.
+By default it keeps only the nearest matches of each start node:
+
+```python
+p1 = acq.query().entity(uri="wbs:P1", alias="p1")
+p1.related("pump", alias="other").metadata()
+```
+```text
+shape: (1, 2)
+┌────────┬────────┐
+│ p1     ┆ other  │
+│ ---    ┆ ---    │
+│ str    ┆ str    │
+╞════════╪════════╡
+│ wbs:P1 ┆ wbs:P2 │
+└────────┴────────┘
+```
+
+With `nearest=False` and `max_depth=0`, which means no limit, the same query also returns the intake pump `wbs:intake`.
+
+The links that were read are kept in the client until the graph changes, so the next search is faster.
+
+### Searching along the flow
+
+With `direction="upstream"` or `direction="downstream"`, only the connections of the plant are followed: from an entity to its connection points, to the pipe, and to the next entity.
+
+When the nearest match is wanted, the client searches place by place.
+For a measurement, the first place is the inlets or outlets of the entity itself.
+The next places are the connected pipe, then the next entity with its connection points, and so on.
+The search of a start node stops at the first place that has a match.
+For instance, the nearest pressure upstream of the reverse osmosis stage is at its own inlet:
+
+```python
+ro = acq.query().entity(uri="wbs:RO", alias="ro")
+ro.measurement(direction="upstream", quantity_kind="pressure").metadata()
+```
+```text
+shape: (1, 4)
+┌────────┬────────────────────┬───────────────────────┬────────────────────────┐
+│ ro     ┆ ro_upstream_entity ┆ ro_upstream_data      ┆ ro_upstream_data.label │
+│ ---    ┆ ---                ┆ ---                   ┆ ---                    │
+│ str    ┆ str                ┆ str                   ┆ str                    │
+╞════════╪════════════════════╪═══════════════════════╪════════════════════════╡
+│ wbs:RO ┆ wbs:RO-in          ┆ wbs:RO-in-pressure-pa ┆ RO in pressure pa      │
+└────────┴────────────────────┴───────────────────────┴────────────────────────┘
+```
+
+With `nearest=False`, the places further upstream are included as well:
+
+```python
+ro.measurement(direction="upstream", quantity_kind="pressure", nearest=False).metadata()
+```
+```text
+shape: (3, 4)
+┌────────┬────────────────────┬───────────────────────────────┬───────────────────────────┐
+│ ro     ┆ ro_upstream_entity ┆ ro_upstream_data              ┆ ro_upstream_data.label    │
+│ ---    ┆ ---                ┆ ---                           ┆ ---                       │
+│ str    ┆ str                ┆ str                           ┆ str                       │
+╞════════╪════════════════════╪═══════════════════════════════╪═══════════════════════════╡
+│ wbs:RO ┆ wbs:P1             ┆ wbs:P1-out-pressure-pa        ┆ P1 out pressure pa        │
+│ wbs:RO ┆ wbs:PXR            ┆ wbs:PXR-brine-out-pressure-pa ┆ PXR brine out pressure pa │
+│ wbs:RO ┆ wbs:RO-in          ┆ wbs:RO-in-pressure-pa         ┆ RO in pressure pa         │
+└────────┴────────────────────┴───────────────────────────────┴───────────────────────────┘
+```
+
+### From an entity to its measurements
+
+`measurement()` after an entity does not search over links.
+It matches the properties that the model puts on the entity or on one of its connection points.
+`context()` is the reverse: it starts from a measurement and adds the entity it belongs to.
+
+```python
+acq.query().measurement(quantity_kind="power").context().metadata()
+```
+```text
+shape: (2, 3)
+┌─────────────────────────┬─────────────────────┬─────────────┐
+│ data                    ┆ data.label          ┆ data_entity │
+│ ---                     ┆ ---                 ┆ ---         │
+│ str                     ┆ str                 ┆ str         │
+╞═════════════════════════╪═════════════════════╪═════════════╡
+│ wbs:P2-mechanical-power ┆ P2 mechanical power ┆ wbs:P2      │
+│ wbs:P1-mechanical-power ┆ P1 mechanical power ┆ wbs:P1      │
+└─────────────────────────┴─────────────────────┴─────────────┘
+```
+
+Note that a sensor is not the entity of a property.
+A property that a sensor observes is found through the equipment or the connection point that has it.
+
+## Further reading
+
+- [Query reference](../reference/query/_index.md): every method of a query, with its parameters.
+- [Traversal settings](../reference/query/traversal.md): the hidden predicates and the relations of `context()`.
+- [Text matcher](text-resolution.md): how plain text is matched to the terms of the ontologies.
+- [Units](units.md) and [Values](values.md): what happens to the data when it is read.
