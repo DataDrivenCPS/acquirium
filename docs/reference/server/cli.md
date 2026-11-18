@@ -16,6 +16,7 @@ With uv, run it as `uv run acquirium ...`.
 | [`acquirium app check`](#acquirium-app-check) | run an app on stored data without saving anything |
 | [`acquirium config init`](#acquirium-config-init) | write a starter `acquirium.toml` |
 | [`acquirium example init`](#acquirium-example-init) | create the files of the example plant |
+| [`acquirium clear`](#acquirium-clear) | erase the stored data of a data folder |
 
 Every command accepts `--help`.
 
@@ -186,3 +187,37 @@ Wrote example/data.csv (8760 rows, 32 streams)
 ```
 
 The files are used in [5 - A Full Example](../../tutorials/a-full-example.md).
+
+## `acquirium clear`
+
+```bash
+acquirium clear [PATH] [--all] [--yes] [--config PATH]
+```
+
+Erases the stored data of a data folder: the graph, the readings and everything else in it.
+The embeddings of the text matcher are kept, because they take long to build and do not depend on your data.
+It does not start a server.
+
+| argument or option | meaning |
+|---|---|
+| `PATH` | the data folder to clear. Default: `server.data_dir` of the config, else `.acquirium` in the current folder |
+| `--all` | also erase the embeddings, by removing the whole folder |
+| `--yes`, `-y` | do not ask for confirmation |
+| `--config`, `-c` `<path>` | an `acquirium.toml`; without it, `./acquirium.toml` is used if it exists |
+
+The command exits with status 1 and erases nothing when:
+
+- a server is using the folder. Stop it first.
+- the folder does not look like an Acquirium data folder.
+- the confirmation is declined.
+
+```bash
+acquirium clear
+```
+```text
+Erase the stored data in /home/you/my-plant/.acquirium? [y/N]: y
+Cleared /home/you/my-plant/.acquirium
+```
+
+Note that with the `timescale` backend the readings are stored in Postgres, and this command keeps them.
+To erase them, start the server once with `recreate = true` (see [server configuration](configuration.md)).

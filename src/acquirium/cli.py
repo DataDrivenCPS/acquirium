@@ -727,6 +727,103 @@ def config_init(
 
 
 # ---------------------------------------------------------------------------
+# Clearing stored data
+# ---------------------------------------------------------------------------
+
+# What an Acquirium data folder holds. ``clear`` refuses a folder with none of
+# these, so a mistyped path cannot erase unrelated files.
+_DATA_DIR_MARKERS = (".oxigraph", "timeseries.duckdb", ".runtime", ".ontoenv", "embedding_cache")
+_EMBEDDING_CACHE = "embedding_cache"
+
+
+def _server_uses(data_dir: Path) -> bool:
+    """True when a server has the stores of ``data_dir`` open."""
+    from acquirium.runtime import _running
+
+    runtime = data_dir / ".runtime"
+    if runtime.is_dir() and _running(runtime):
+        return True
+    graph = data_dir / ".oxigraph"
+    if graph.is_dir():
+        # A standalone server has no runtime lock, but the graph store can
+        # only be opened by one process.
+        import pyoxigraph
+
+        try:
+            store = pyoxigraph.Store(str(graph))
+        except OSError:
+            return True
+        del store
+    return False
+
+
+@app.command("clear")
+def clear_cmd(
+    path: Annotated[Optional[Path], typer.Argument(help="Data folder to clear. Default: data_dir of the config, else .acquirium")] = None,
+    everything: Annotated[bool, typer.Option("--all", help="Also erase the embeddings")] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Do not ask for confirmation")] = False,
+    config: Annotated[Optional[Path], typer.Option("--config", "-c", help="Path to acquirium.toml")] = None,
+) -> None:
+    """Erase the stored data of a data folder, keeping the embeddings.
+
+    Removes the graph, the readings and everything else in the folder except
+    the embeddings, which take long to build and do not depend on your data.
+    With --all the whole folder is removed. Does not start a server, and
+    refuses while one is using the folder.
+    """
+    import shutil
+
+    loaded = load_local_config(config, discover=True)
+    server = loaded.data["server"]
+    target = path if path is not None else loaded.directory / Path(server["data_dir"]).expanduser()
+    target = target.expanduser().resolve()
+
+    if not target.exists():
+        typer.echo(f"Nothing to clear: {target} does not exist.")
+        return
+    if not target.is_dir():
+        typer.echo(f"{target} is not a folder.", err=True)
+        raise typer.Exit(1)
+    entries = list(target.iterdir())
+    if entries and not any((target / name).exists() for name in _DATA_DIR_MARKERS):
+        typer.echo(f"{target} does not look like an Acquirium data folder; nothing was erased.", err=True)
+        raise typer.Exit(1)
+    if _server_uses(target):
+        typer.echo(f"A server is using {target}. Stop it first; nothing was erased.", err=True)
+        raise typer.Exit(1)
+
+    what = "everything" if everything else "the stored data"
+    if not yes and not typer.confirm(f"Erase {what} in {target}?"):
+        typer.echo("Nothing was erased.")
+        raise typer.Exit(1)
+
+    if everything:
+        shutil.rmtree(target)
+        typer.echo(f"Removed {target}")
+    else:
+        for entry in entries:
+            if entry.name == _EMBEDDING_CACHE:
+                continue
+            if entry.is_dir() and not entry.is_symlink():
+                shutil.rmtree(entry)
+            else:
+                entry.unlink()
+        kept = " (kept the embeddings)" if (target / _EMBEDDING_CACHE).exists() else ""
+        typer.echo(f"Cleared {target}{kept}")
+
+    if server.get("timeseries_backend") == "timescale":
+        typer.echo(
+            "Note: this config uses the timescale backend. The readings in "
+            "Postgres are kept; start the server once with recreate = true to erase them."
+        )
+    for key in ("duckdb_path", "graph_path"):
+        if server.get(key):
+            outside = (loaded.directory / Path(server[key]).expanduser()).resolve()
+            if target not in outside.parents and outside.exists():
+                typer.echo(f"Note: {key} is outside the data folder and was kept: {outside}")
+
+
+# ---------------------------------------------------------------------------
 # Example data
 # ---------------------------------------------------------------------------
 

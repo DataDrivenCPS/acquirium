@@ -11,6 +11,12 @@ change in any release.
 ## [Unreleased]
 
 ### Added
+
+- **`acquirium clear`** erases the stored data of a data folder without
+  starting a server, and keeps the embeddings of the text matcher.
+  `--all` removes the whole folder. It asks for confirmation (`--yes` skips
+  it) and refuses while a server is using the folder. With the `timescale`
+  backend the readings in Postgres are kept.
 - `Query` objects display themselves. `repr(q)` is a summary of the pattern,
   one line per node, and does not contact the server. `print(q)` adds the
   number of matches and the first five rows of `q.metadata()`; a notebook
