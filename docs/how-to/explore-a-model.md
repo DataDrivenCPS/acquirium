@@ -52,17 +52,19 @@ The full list is in [built-in attributes](../reference/query/filtering.md#built-
 acq.query().measurement().context().options("type")
 ```
 ```text
-shape: (9, 2)
+shape: (11, 2)
 ┌─────────────────────────────┬───────┐
 │ type                        ┆ count │
 │ ---                         ┆ ---   │
 │ str                         ┆ i64   │
 ╞═════════════════════════════╪═══════╡
 │ s223:OutletConnectionPoint  ┆ 5     │
+│ s223:Pump                   ┆ 3     │
 │ watr:Pump                   ┆ 3     │
 │ watr:Reactor                ┆ 3     │
 │ s223:InletConnectionPoint   ┆ 2     │
-│ s223:Connection             ┆ 1     │
+│ …                           ┆ …     │
+│ s223:Filter                 ┆ 1     │
 │ s223:Pipe                   ┆ 1     │
 │ watr:PressureExchanger      ┆ 1     │
 │ watr:ReverseOsmosisMembrane ┆ 1     │
@@ -179,39 +181,41 @@ The filter can also be added later with `where()`.
 With `direction`, it follows the flow of the plant `"upstream"` or `"downstream"`:
 
 ```python
-pumps.related("tank", direction="downstream").include("label").metadata()
+pumps.related("reverse osmosis membrane", direction="downstream").include("label").metadata()
 ```
 ```text
 shape: (2, 3)
-┌────────┬────────────────────┬────────────────┐
-│ pump   ┆ tank               ┆ tank.label     │
-│ ---    ┆ ---                ┆ ---            │
-│ str    ┆ str                ┆ str            │
-╞════════╪════════════════════╪════════════════╡
-│ wbs:P1 ┆ wbs:storage-tank-2 ┆ Storage Tank 2 │
-│ wbs:P2 ┆ wbs:storage-tank-2 ┆ Storage Tank 2 │
-└────────┴────────────────────┴────────────────┘
+┌────────┬──────────────────────────┬────────────────────────────────┐
+│ pump   ┆ reverse osmosis membrane ┆ reverse osmosis membrane.label │
+│ ---    ┆ ---                      ┆ ---                            │
+│ str    ┆ str                      ┆ str                            │
+╞════════╪══════════════════════════╪════════════════════════════════╡
+│ wbs:P1 ┆ wbs:RO                   ┆ Reverse Osmosis Stage          │
+│ wbs:P2 ┆ wbs:RO                   ┆ Reverse Osmosis Stage          │
+└────────┴──────────────────────────┴────────────────────────────────┘
 ```
 
 Note that the intake pump is not in the table.
-`related()` looks at most three steps away by default, and the first tank after the intake is further.
-`max_depth=0` removes the limit, and `nearest=True` keeps only the closest match of each pump:
+`related()` looks at most three steps away by default, and the membrane is further from the intake.
+`max_depth=0` removes the limit:
 
 ```python
-pumps.related("tank", direction="downstream", max_depth=0, nearest=True).include("label").metadata()
+pumps.related("reverse osmosis membrane", direction="downstream", max_depth=0).include("label").metadata()
 ```
 ```text
 shape: (3, 3)
-┌────────────┬────────────────────┬────────────────┐
-│ pump       ┆ tank               ┆ tank.label     │
-│ ---        ┆ ---                ┆ ---            │
-│ str        ┆ str                ┆ str            │
-╞════════════╪════════════════════╪════════════════╡
-│ wbs:P1     ┆ wbs:storage-tank-2 ┆ Storage Tank 2 │
-│ wbs:P2     ┆ wbs:storage-tank-2 ┆ Storage Tank 2 │
-│ wbs:intake ┆ wbs:storage-tank-1 ┆ Storage Tank 1 │
-└────────────┴────────────────────┴────────────────┘
+┌────────────┬──────────────────────────┬────────────────────────────────┐
+│ pump       ┆ reverse osmosis membrane ┆ reverse osmosis membrane.label │
+│ ---        ┆ ---                      ┆ ---                            │
+│ str        ┆ str                      ┆ str                            │
+╞════════════╪══════════════════════════╪════════════════════════════════╡
+│ wbs:P1     ┆ wbs:RO                   ┆ Reverse Osmosis Stage          │
+│ wbs:P2     ┆ wbs:RO                   ┆ Reverse Osmosis Stage          │
+│ wbs:intake ┆ wbs:RO                   ┆ Reverse Osmosis Stage          │
+└────────────┴──────────────────────────┴────────────────────────────────┘
 ```
+
+When several pieces of equipment match, `nearest=True` keeps only the closest one for each pump.
 
 `measurement()` takes `direction` as well, to find the nearest streams along the flow.
 For instance, the pressure streams upstream of the reverse osmosis membrane:

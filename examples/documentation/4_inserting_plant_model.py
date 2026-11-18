@@ -24,7 +24,7 @@ model = """
 @prefix wbs:    <urn:swro/> .
 
 wbs: a owl:Ontology ;
-    owl:imports <urn:nawi-water-ontology> .
+    owl:imports <https://watermetadata.org/ontology/watr> .
 
 wbs:P1 a watr:Pump ;
     rdfs:label "High-pressure Pump P1" ;

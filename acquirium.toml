@@ -47,7 +47,7 @@ materialization_workers = 2
 #
 # The acquirium package ships these ontologies bundled, registered at
 # these canonical IRIs (the QUDT files are version-collapsed at load):
-#   - NAWI Water           urn:nawi-water-ontology
+#   - NAWI Water           https://watermetadata.org/ontology/watr
 #   - ASHRAE 223P          http://data.ashrae.org/standard223/1.0/model/all
 #   - QUDT units           https://qudt.org/vocab/unit
 #   - QUDT quantitykind    https://qudt.org/vocab/quantitykind

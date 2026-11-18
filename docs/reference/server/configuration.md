@@ -116,7 +116,7 @@ startup:
 
 | ontology | canonical IRI |
 |---|---|
-| NAWI Water | `urn:nawi-water-ontology` |
+| NAWI Water | `https://watermetadata.org/ontology/watr` |
 | ASHRAE 223P | `http://data.ashrae.org/standard223/1.0/model/all` |
 | QUDT units | `https://qudt.org/vocab/unit` |
 | QUDT quantity kinds | `https://qudt.org/vocab/quantitykind` |

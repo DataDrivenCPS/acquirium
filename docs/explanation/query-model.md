@@ -51,16 +51,21 @@ print(tanks)
 Query
   pump: entity, Pump
   tank: entity, Tank, downstream of pump
-2 matches:
-┌────────┬────────────────────┐
-│ pump   ┆ tank               │
-│ ---    ┆ ---                │
-│ str    ┆ str                │
-╞════════╪════════════════════╡
-│ wbs:P1 ┆ wbs:storage-tank-2 │
-│ wbs:P2 ┆ wbs:storage-tank-2 │
-└────────┴────────────────────┘
+5 matches:
+┌────────────┬──────────────────────────────┐
+│ pump       ┆ tank                         │
+│ ---        ┆ ---                          │
+│ str        ┆ str                          │
+╞════════════╪══════════════════════════════╡
+│ wbs:intake ┆ wbs:static-mixer             │
+│ wbs:P1     ┆ wbs:storage-tank-2           │
+│ wbs:P2     ┆ wbs:storage-tank-2           │
+│ wbs:intake ┆ wbs:ferric-chloride-addition │
+│ wbs:intake ┆ wbs:chlorination             │
+└────────────┴──────────────────────────────┘
 ```
+
+Note that the table includes reactors and the static mixer, which are kinds of tank in the water ontology.
 
 Building a query does not search the plant model.
 The search runs when a result is asked for, with `print()`, `metadata()`, `dataframe()` or `options()`.
