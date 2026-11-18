@@ -30,7 +30,7 @@ timeseries_backend = "duckdb"        # or "timescale" (requires pg_dsn)
 | `pg_dsn` | none | Postgres DSN; required for the timescale backend |
 | `duckdb_path` | `data_dir/timeseries.duckdb` | duckdb file location |
 | `graph_path` | `data_dir/.oxigraph` | graph store location |
-| `embedding_model` | `"BAAI/bge-small-en-v1.5-fp32"` | model for the text-resolution index |
+| `embedding_model` | `"BAAI/bge-small-en-v1.5-fp32"` | model for the text matcher index |
 | `exact_only` | `false` | index concepts without embedding them; see below |
 | `recreate` | `false` | wipe the data directory and start fresh; see below |
 | `read_batch_size` | `50000` | rows per Arrow batch on timeseries reads |
@@ -45,7 +45,7 @@ Relative paths resolve against the config file's directory.
 These are the standalone `acquirium server` defaults. The managed local
 runtime started by `aq.init()` uses `host="127.0.0.1"`, `port=0`, one worker,
 and `exact_only=true`. A supplied config can override supported settings such
-as the port, storage backend, paths, and resolution mode; the managed runtime
+as the port, storage backend, paths, and matching mode; the managed runtime
 still enforces loopback, persistence, and a single worker.
 
 `recreate = true` clears the local data directory at startup. With the
@@ -55,25 +55,27 @@ tables and views.
 With `recreate = false`, supported SQL schema upgrades run automatically using
 the [versioned migration ledger](storage-migrations.md); existing data is retained.
 
-### Exact-only resolution
+### Exact-only matching
 
     [server]
     exact_only = true
 
 The two concept indexes are built as usual, but their surfaces are never
 embedded. No model is downloaded or loaded, nothing is written under
-`data_dir/embedding_cache`, and the 5-10 minute first-start index build
-drops to seconds — useful for a small deployment, an air-gapped host, or CI.
+`data_dir/embedding_cache`, and the first-start index build takes seconds
+instead of several minutes. This is useful for a small deployment, a host
+without internet access, or CI.
 
-The cost is fuzzy matching. Text resolution still answers exact names,
-labels and unit symbols (`"aeration basin"`, `"mg/L"`), and returns the same
-URIs and kinds it would with embeddings on; near-misses (`"basin for
-aeration"`) resolve to nothing instead of to the closest concept.
+Close matches are not found in this mode. The text matcher still answers
+exact names, labels and unit symbols (`"aeration basin"`, `"mg/L"`), and
+returns the same URIs and kinds it would with embeddings on. A text that is
+only close (`"basin for aeration"`) matches nothing instead of the closest
+concept.
 `GET /embedding_status` reports `"semantic": false`.
 
 The flag is a start-time choice, not a property of the data directory. A later
 standalone server start without it builds the embeddings normally; zero-config
-`aq.init()` continues to default to exact-only resolution.
+`aq.init()` continues to default to exact-only matching.
 
 ### Environment variables
 

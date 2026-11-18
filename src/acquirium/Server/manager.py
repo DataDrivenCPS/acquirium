@@ -512,10 +512,8 @@ class Manager:
         """
         Insert RDF graph into one explicitly owned deployment data graph.
 
-        The embedding index is refreshed synchronously before returning, so
-        once this call completes the just-inserted concepts are resolvable.
-        The refresh is incremental (only new concepts are embedded) unless
-        ``replace=True``, which triggers a full rebuild.
+        The embedding indexes cover the bundled ontologies only, so an insert
+        does not rebuild them.
 
         Args:
             :param rdf_graph: An `xml.sax.xmlreader.InputSource`, file-like object,

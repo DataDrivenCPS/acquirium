@@ -117,8 +117,8 @@ class Acquirium:
         """
         Insert RDF graph into an explicitly owned deployment data graph.
 
-        The server refreshes the embedding index synchronously before
-        responding, so inserted concepts are resolvable once this returns.
+        The text matcher searches the bundled ontologies only, so an insert
+        does not change what text is matched to.
 
         Args:
             rdf_graph: RDF graph content as text.

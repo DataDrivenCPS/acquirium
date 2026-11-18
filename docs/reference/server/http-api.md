@@ -57,7 +57,7 @@ Returns the current state of the semantic embedding indexes.
 `state` is one of `"idle"`, `"building"`, `"ready"`, or `"error"`.
 
 `semantic` is `false` when the server runs with
-[`exact_only`](configuration.md#exact-only-resolution): both indexes still
+[`exact_only`](configuration.md#exact-only-matching): both indexes still
 build and report `"ready"`, but they answer exact matches only.
 
 ---
