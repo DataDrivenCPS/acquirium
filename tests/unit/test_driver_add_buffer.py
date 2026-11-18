@@ -24,7 +24,7 @@ from acquirium.Drivers.Driver import (
 def make_aq() -> MagicMock:
     aq = MagicMock()
     aq.client = MagicMock()
-    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0}
+    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0, "receipts": []}
     return aq
 
 
@@ -111,7 +111,7 @@ def test_flush_clears_the_buffer(tmp_path):
 
 def test_flush_with_empty_buffer_does_not_insert(tmp_path):
     driver = make_driver(AddDriver, tmp_path)
-    assert driver.flush() == {"ok": True, "rows_inserted": 0}
+    assert driver.flush() == {"ok": True, "rows_inserted": 0, "receipts": []}
     driver.aq.insert_timeseries_arrow.assert_not_called()
 
 
@@ -304,7 +304,7 @@ def test_false_insert_result_keeps_rows_for_retry(tmp_path):
     with pytest.raises(RuntimeError, match="reported failure"):
         driver.flush()
 
-    driver.aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 1}
+    driver.aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 1, "receipts": []}
     driver.flush()
     assert inserted(driver)[1][1]["value"] == [21.5]
 

@@ -14,7 +14,7 @@ from acquirium.Drivers.BuiltInDrivers.parquet_ingest import ParquetIngestDriver
 def make_driver(cfg_overrides: dict | None = None, tmp_path: Path | None = None) -> ParquetIngestDriver:
     aq = MagicMock()
     aq.register_datasource.return_value = None
-    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0}
+    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0, "receipts": []}
     watch = str(tmp_path) if tmp_path else "/tmp/parquet_test_watch"
     # Per-test driver state: the default <cwd>/.acquirium is shared across runs,
     # and a stale cursor for a reused tmp path makes tick() skip the file.

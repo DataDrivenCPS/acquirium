@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Iterator, Sequence, TYPE_CHECKING
 import polars as pl
 import warnings
 
-from acquirium.Client.streams import Stream, _after_ns
+from acquirium.Client.streams import Stream, inclusive_bounds
 from acquirium.ExperimentValues import timestamp as _utc
 from acquirium.replacements import VIEWS
 
@@ -255,13 +255,6 @@ def _restore_single_value_column(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(pl.col("value_numeric").alias("value"))
 
 
-def _as_utc_datetime(v: "datetime | str | None") -> datetime | None:
-    if v is None:
-        return None
-    dt = v if isinstance(v, datetime) else datetime.fromisoformat(str(v))
-    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
-
-
 def _apply_window(
     tall: pl.DataFrame,
     start: "datetime | str | None",
@@ -274,8 +267,8 @@ def _apply_window(
     Mirrors the server-side fetch bounds: ``limit`` keeps the first
     ``limit`` rows *per stream* in ``order`` direction.
     """
-    start = _as_utc_datetime(start)
-    end = _as_utc_datetime(end)
+    start = _utc(start) if start is not None else None
+    end = _utc(end) if end is not None else None
     if start is not None:
         tall = tall.filter(pl.col("time") >= start)
     if end is not None:
@@ -733,10 +726,7 @@ class DataObject:
 
         # Every stream is read at one epoch, so the frame is one consistent view.
         epoch = self._client.engine_snapshot()["epoch"]
-        # Bounds are inclusive, as on Stream.dataframe: a string without an
-        # offset is UTC, and reads are half-open, so read up to just after end.
-        start = _utc(start).isoformat() if start is not None else None
-        end_ns = _after_ns(end) if end is not None else None
+        bounds = inclusive_bounds(start, end)
         # One request per stream. A stream matched by several data nodes
         # (a pump's measurement node and its connection point's, say) has one
         # binding per node; they share the fetched frame and differ only in
@@ -747,8 +737,7 @@ class DataObject:
             if key not in fetched:
                 fetched[key] = self._client.timeseries_df(
                     binding.ref_uri,
-                    start=start,
-                    end_ns=end_ns,
+                    **bounds,
                     limit=limit,
                     order=order,
                     value_mode=value_mode,
@@ -1407,13 +1396,7 @@ class DataObject:
         stored, annotated = b.ref_unit, b.property_unit
         if not stored or not annotated or stored == annotated:
             return
-        try:
-            compatible = bool(
-                self._client.get_conversion_factors(stored, annotated).get("compatible", False)
-            )
-        except Exception:
-            compatible = False
-        if not compatible:
+        if not self._client._units_compatible(stored, annotated):
             raise ValueError(
                 f"convert_to: point <{b.point_uri}> (alias '{b.alias}') is annotated "
                 f"{annotated} but its stream is stored in {stored}, which does not convert, "

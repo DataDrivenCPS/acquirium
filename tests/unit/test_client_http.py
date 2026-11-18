@@ -324,7 +324,7 @@ def test_large_inserts_are_split_in_order_and_only_the_last_waits(offline):
     assert len(result["receipts"]) == 2
 
 
-def test_replace_keeps_exactly_the_supplied_rows(client, ns):
+def test_replace_keeps_exactly_the_supplied_rows(client):
     source, start = f"replace-{uuid4().hex[:8]}", datetime(2026, 1, 1, tzinfo=timezone.utc)
     client.register_datasource(source)
     client.register_streams([{"source_id": source, "ref_name": "s", "value_kind": "numeric"}])

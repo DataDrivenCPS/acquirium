@@ -238,12 +238,14 @@ class Acquirium:
             wait=wait, timeout=timeout, retry_for=retry_for,
         )
 
-    def insert_timeseries_batch(self, source_id, streams, *, request_id=None, wait=30, timeout=60,
-                                retry_for=CAPACITY_RETRY_S):
-        """Upsert ``{ref_name: rows}``. Large inputs are split into requests of
-        at most 10,000 rows, each atomic; pass the whole dataset in one call."""
+    def insert_timeseries_batch(self, source_id, streams, *, request_id=None, replace=(), wait=30,
+                                timeout=60, retry_for=CAPACITY_RETRY_S):
+        """Upsert ``{ref_name: rows}``; each stream named in ``replace`` holds
+        exactly its supplied rows. Large inputs are split into requests of at
+        most 10,000 rows, each atomic; pass the whole dataset in one call."""
         return self.client.insert_timeseries_batch(source_id, streams, request_id=request_id,
-                                                  wait=wait, timeout=timeout, retry_for=retry_for)
+                                                  replace=replace, wait=wait, timeout=timeout,
+                                                  retry_for=retry_for)
 
     def insert_timeseries_arrow(
         self, source_id: str, table: "pa.Table", *, request_id: str | None = None,

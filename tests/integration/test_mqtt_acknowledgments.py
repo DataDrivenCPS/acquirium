@@ -46,7 +46,7 @@ def server(topic: str, source_id: str, *, refuse: bool) -> MagicMock:
         if refuse:
             raise ConnectionError("server down")
         aq.stored.extend(pl.from_arrow(table)["value"].to_list())
-        return {"ok": True, "rows_inserted": table.num_rows}
+        return {"ok": True, "rows_inserted": table.num_rows, "receipts": []}
 
     aq.insert_timeseries_arrow.side_effect = insert
     return aq

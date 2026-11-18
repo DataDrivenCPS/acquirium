@@ -38,18 +38,22 @@ def _insert_chunks(streams, replace, size=MAX_REQUEST_ROWS):
     """Split ``{ref_name: rows}`` into requests of at most ``size`` rows, as
     ``(ref_name, rows, replace)`` items. A replaced stream's clear counts as a
     row and travels with its first piece, so it lands before that stream's
-    rows; an empty replacement is a clear alone."""
+    rows. Every stream appears at least once, so the server checks the name
+    of a stream with no rows too."""
     chunk, used = [], 0
     for name, rows in streams.items():
-        rows, clear = list(rows), name in replace
-        while rows or clear:
-            if used + clear >= size:
+        start, clear = 0, name in replace
+        while True:
+            if chunk and used + clear >= size:
                 yield chunk
                 chunk, used = [], 0
-            piece, rows = rows[:size - used - clear], rows[size - used - clear:]
+            room = size - used - clear
+            piece = rows[start:start + room]
             chunk.append((name, piece, clear))
             used += len(piece) + clear
-            clear = False
+            start, clear = start + room, False
+            if start >= len(rows):
+                break
     if chunk:
         yield chunk
 
@@ -1040,8 +1044,7 @@ class AcquiriumClient:
         replace = set(replace)
         if replace - streams.keys():
             raise ValueError(f"replace names streams not in the insert: {sorted(replace - streams.keys())}")
-        # Nothing to split still sends one request, as an empty insert did.
-        chunks = list(_insert_chunks(streams, replace)) or [[(name, [], False) for name in streams]]
+        chunks = list(_insert_chunks(streams, replace))
 
         def send(chunk, request_id, wait):
             payload = [StreamInsert(source_id=source_id, ref_name=name, values=rows, replace=clear,
@@ -1108,11 +1111,11 @@ class AcquiriumClient:
         most ``MAX_REQUEST_ROWS`` rows as ``insert_timeseries_batch`` splits."""
         import io
         import pyarrow as pa
-        table = table.append_column("source_id", pa.repeat(source_id, len(table)))
         chunks = [table.slice(offset, MAX_REQUEST_ROWS)
-                  for offset in range(0, max(len(table), 1), MAX_REQUEST_ROWS)]
+                  for offset in range(0, len(table), MAX_REQUEST_ROWS)]
 
         def send(chunk, request_id, wait):
+            chunk = chunk.append_column("source_id", pa.repeat(source_id, len(chunk)))
             buf = io.BytesIO()
             with ipc.new_stream(buf, chunk.schema) as writer:
                 writer.write_table(chunk)

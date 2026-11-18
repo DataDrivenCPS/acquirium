@@ -30,7 +30,7 @@ def make_driver(cfg_overrides: dict | None = None, tmp_path: Path | None = None)
     aq.client = MagicMock()
     aq.register_datasource.return_value = "csv_files"
     aq.register_streams.side_effect = lambda streams: AcquiriumClient.register_streams(aq.client, streams)
-    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0}
+    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0, "receipts": []}
     watch = str(tmp_path) if tmp_path else "/tmp/csv_test_watch"
     # Per-test driver state: the default <cwd>/.acquirium is shared across runs,
     # and a stale cursor for a reused tmp path makes tick() skip the file.
@@ -385,7 +385,7 @@ def test_loop_registers_streams_before_insert(tmp_path):
 
     def assert_registered_first(source_id, table, **_):
         assert driver.aq.client.insert_graph.called
-        return {"ok": True, "rows_inserted": table.num_rows}
+        return {"ok": True, "rows_inserted": table.num_rows, "receipts": []}
 
     driver.aq.insert_timeseries_arrow.side_effect = assert_registered_first
     driver.tick()

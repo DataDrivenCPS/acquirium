@@ -83,10 +83,9 @@ def test_client_inserts_round_trip_without_request_ids(tmp_path):
         # Frames over the per-request cap go up as several requests.
         driver = _BulkDriver(client, {"server": {"data_dir": str(tmp_path)}})
         driver.setup()
-        driver.tick()
-        # Drivers do not wait for publication; a write that waits publishes
-        # every request accepted before it.
-        client.insert_timeseries("gateway", "flow", [(START, 1.5)])
+        result = driver.insert_observations(driver.collect())
+        assert len(result["receipts"]) == 3
+        client.client.wait(result["receipts"][-1])
         level = client.client.timeseries_df("urn:test:bulk-level")
         assert level.height == _BulkDriver.rows
     finally:

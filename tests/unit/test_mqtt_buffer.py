@@ -17,7 +17,7 @@ from acquirium.Drivers.BuiltInDrivers.mqtt_ingestion import (
 def driver(tmp_path, monkeypatch):
     monkeypatch.setattr(MQTTIngestDriver, "_sync_subscriptions", lambda self: None)
     aq = Mock()
-    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 1}
+    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 1, "receipts": []}
     driver = MQTTIngestDriver(aq, {
         "driver": {"source_id": "mqtt"}, "server": {"data_dir": str(tmp_path)},
     })

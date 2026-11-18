@@ -523,7 +523,11 @@ class TestConvertToStoredUnitMismatch:
                          entity_contexts=[{}], property_unit=annotated, ref_unit=stored)],
             [("p", "urn:t#p1", "urn:t#r1")],
         )
+        from acquirium.Client.client import AcquiriumClient
+
         client = data._client
+        # The real check, over the mocked conversion factors.
+        client._units_compatible = lambda a, b: AcquiriumClient._units_compatible(client, a, b)
         client.get_conversion_factors.return_value = {"compatible": compatible}
         client.resolve_conversion.side_effect = lambda src, tgt: {
             "factors": {"from_uri": src, "to_uri": tgt, "from_multiplier": 2.0,

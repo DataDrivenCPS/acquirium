@@ -122,7 +122,7 @@ class Core:
         replace = sorted(set(replace))
         if frame.height + len(replace) > MAX_REQUEST_ROWS:
             raise ValueError(
-                f"a request may contain at most {MAX_REQUEST_ROWS:,} rows; chunk imports explicitly"
+                f"a request may contain at most {MAX_REQUEST_ROWS:,} rows"
             )
         dtype = frame.schema["ts"]
         if not isinstance(dtype, pl.Datetime) or dtype.time_zone is None:

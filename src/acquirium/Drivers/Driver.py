@@ -507,7 +507,7 @@ class IngestDriver(Driver):
                 self._inflight_rows = len(rows)
             if not rows:
                 self._accepted(callbacks)
-                return {"ok": True, "rows_inserted": 0}
+                return {"ok": True, "rows_inserted": 0, "receipts": []}
 
             if self._last_failed_batch is not None and self._last_failed_batch[1] == rows:
                 request_id = self._last_failed_batch[0]
@@ -564,7 +564,7 @@ class IngestDriver(Driver):
             df = self.normalize_observations(observations)
         if df.is_empty():
             logger.debug("%s.insert_observations: empty after normalize, skipping", self.__class__.__name__)
-            return {"ok": True, "rows_inserted": 0}
+            return {"ok": True, "rows_inserted": 0, "receipts": []}
 
         self.register_declared(df)
 
@@ -580,7 +580,7 @@ class IngestDriver(Driver):
                 for (source,), source_df in df.partition_by("source_id", as_dict=True).items()
             ]
 
-        total = 0
+        total, receipts = 0, []
         for source, payload, source_request_id in batches:
             # A stable ID lets a request refused for capacity be resent as-is.
             # Acceptance is durable; a full inbox pushes back with 503.
@@ -593,7 +593,9 @@ class IngestDriver(Driver):
             if not result.get("ok", True):
                 raise RuntimeError(f"observation insertion reported failure: {result!r}")
             total += int(result.get("rows_inserted", len(payload)))
-        return {"ok": True, "rows_inserted": total}
+            receipts += result["receipts"]
+        # Drivers do not wait for publication; client.wait(receipts[-1]) does.
+        return {"ok": True, "rows_inserted": total, "receipts": receipts}
 
     def normalize_observations(self, observations: "pl.DataFrame | None") -> "pl.DataFrame":
         import polars as pl

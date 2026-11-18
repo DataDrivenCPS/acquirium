@@ -16,6 +16,14 @@ def _after_ns(value: datetime | str) -> int:
     return time_ns(_utc(value)) + 1000
 
 
+def inclusive_bounds(start: datetime | str | None, end: datetime | str | None) -> dict[str, Any]:
+    """``timeseries_df`` arguments that read from ``start`` to ``end``,
+    inclusive. A string without an offset is UTC; reads are half-open, so
+    the read goes up to just after ``end``."""
+    return {"start": _utc(start).isoformat() if start is not None else None,
+            "end_ns": _after_ns(end) if end is not None else None}
+
+
 def samples_frame(frame: pl.DataFrame) -> pl.DataFrame:
     """Return time-series samples as ``time`` and ``value`` columns."""
     if frame.is_empty() and "ts" not in frame.columns:
@@ -53,9 +61,7 @@ class Stream:
             raise RuntimeError("this stream handle is not bound to a client")
         frame = self._client.timeseries_df(
             self.ref_uri,
-            start=_utc(start).isoformat() if start is not None else None,
-            # Reads are half-open, so read up to just after the end.
-            end_ns=_after_ns(end) if end is not None else None,
+            **inclusive_bounds(start, end),
             **({"after": self._after} if self._after is not None else {}),
             **options,
         )
