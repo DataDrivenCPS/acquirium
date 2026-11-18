@@ -62,11 +62,11 @@ acq.register_streams([{
 
 ### Your own keys
 
-You can also attach any keys of your own with `insert_metadata()`.
-It takes the URI of the property of the stream, which is the `data` column of `metadata()`:
+After a stream is registered, `insert_metadata()` adds metadata to it.
+It takes the stream and a dictionary of keys, which can be keys of your own:
 
 ```python
-ph = acq.query().measurement().where(label="effluent-ph").metadata()["data"][0]
+ph = acq.stream("lab-import", "effluent-ph")
 
 acq.insert_metadata(ph, {"sampled_by": "day shift"})
 ```
@@ -74,11 +74,13 @@ acq.insert_metadata(ph, {"sampled_by": "day shift"})
 {'ok': True, 'message': 'update applied', 'changed': True, 'nodes': 1}
 ```
 
+`acq.stream()` selects the stream, as in the previous page.
+
 The values can be text, numbers, booleans, dates, lists and nested dictionaries (see [`insert_metadata`](../reference/client/metadata.md)).
 Writing a key of your own again replaces its value.
 Note that a key describes the stream as a whole, not single readings.
 
-The same can be done at registration, with the `metadata` key:
+Your own keys can also be given at registration, with the `metadata` key:
 
 ```python
 acq.register_streams([{

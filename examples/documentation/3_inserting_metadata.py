@@ -35,11 +35,11 @@ acq.register_streams([{
 
 # Your own keys
 
-ph = acq.query().measurement().where(label="effluent-ph").metadata()["data"][0]
+ph = acq.stream("lab-import", "effluent-ph")
 
 print(acq.insert_metadata(ph, {"sampled_by": "day shift"}))
 
-# The same at registration, with the metadata key:
+# Your own keys can also be given at registration, with the metadata key:
 
 acq.register_streams([{
     "source_id": "lab-import",
