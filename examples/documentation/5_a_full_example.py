@@ -51,15 +51,46 @@ print(acq.query().measurement().where(is_disconnected=True))
 
 # 4. Connect the streams to the model
 #
-# The column headers of the file are the names of the properties, so the two lists are matched by name.
+# The mapping below says which property of the model each stream belongs to.
 
-properties = acq.query().property(has_stream=False).metadata()["property"].to_list()
-streams = acq.query().measurement().where(is_disconnected=True).metadata()["data.label"].to_list()
+mapping = {
+    "intake-in-flow-rate-m3s":                         "wbs:intake-in-flow-rate-m3s",
+    "intake-in-tds-concentration":                     "wbs:intake-in-tds-concentration",
+    "intake-in-tss-concentration-kgm3":                "wbs:intake-in-tss-concentration-kgm3",
+    "conn-cartridge-filtration-to-S1-temperature-k":   "wbs:conn-cartridge-filtration-to-S1-temperature-k",
+    "conn-cartridge-filtration-to-S1-flow-mass-water": "wbs:conn-cartridge-filtration-to-S1-flow-mass-water",
+    "conn-cartridge-filtration-to-S1-flow-mass-tds":   "wbs:conn-cartridge-filtration-to-S1-flow-mass-tds",
+    "P1-mechanical-power":                             "wbs:P1-mechanical-power",
+    "P2-mechanical-power":                             "wbs:P2-mechanical-power",
+    "RO-in-temperature-k":                             "wbs:RO-in-temperature-k",
+    "RO-in-flow-mass-water":                           "wbs:RO-in-flow-mass-water",
+    "RO-in-flow-mass-tds":                             "wbs:RO-in-flow-mass-tds",
+    "RO-out-flow-mass-water":                          "wbs:RO-out-flow-mass-water",
+    "RO-out-flow-mass-tds":                            "wbs:RO-out-flow-mass-tds",
+    "RO-out-retentate-pressure-pa":                    "wbs:RO-out-retentate-pressure-pa",
+    "RO-out-retentate-flow-mass-water":                "wbs:RO-out-retentate-flow-mass-water",
+    "RO-out-retentate-flow-mass-tds":                  "wbs:RO-out-retentate-flow-mass-tds",
+    "PXR-brine-out-flow-mass-water":                   "wbs:PXR-brine-out-flow-mass-water",
+    "PXR-brine-out-flow-mass-tds":                     "wbs:PXR-brine-out-flow-mass-tds",
+    "storage-tank-3-out-flow-rate-m3s":                "wbs:storage-tank-3-out-flow-rate-m3s",
+    "storage-tank-3-out-tds-concentration":            "wbs:storage-tank-3-out-tds-concentration",
+    "conn-cartridge-filtration-to-S1-pressure-pa":     "wbs:conn-cartridge-filtration-to-S1-pressure-pa",
+    "P1-efficiency":                                   "wbs:P1-efficiency",
+    "P1-out-pressure-pa":                              "wbs:P1-out-pressure-pa",
+    "P2-efficiency":                                   "wbs:P2-efficiency",
+    "PXR-efficiency":                                  "wbs:PXR-efficiency",
+    "RO-membrane-area":                                "wbs:RO-membrane-area",
+    "RO-in-pressure-pa":                               "wbs:RO-in-pressure-pa",
+    "RO-out-pressure-pa":                              "wbs:RO-out-pressure-pa",
+    "PXR-brine-out-pressure-pa":                       "wbs:PXR-brine-out-pressure-pa",
+    "ferric-chloride-addition-ferric-chloride-dose":   "wbs:ferric-chloride-addition-ferric-chloride-dose",
+    "anti-scalant-addition-anti-scalant-dose":         "wbs:anti-scalant-addition-anti-scalant-dose",
+    "lime-addition-lime-dose":                         "wbs:lime-addition-lime-dose",
+}
 
 matches = [
-    {"source_id": "csv-data", "stream_name": name, "property_uri": "wbs:" + name}
-    for name in streams
-    if "wbs:" + name in properties
+    {"source_id": "csv-data", "stream_name": name, "property_uri": prop}
+    for name, prop in mapping.items()
 ]
 
 acq.register_streams(matches)

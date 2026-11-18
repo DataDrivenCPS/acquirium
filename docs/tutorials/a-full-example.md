@@ -144,23 +144,56 @@ Query
 
 ## 4. Connect the streams to the model
 
-In this example the column headers of the file are the names of the properties: the stream `P1-efficiency` belongs to the property `wbs:P1-efficiency`.
-So the two lists can be matched by name:
+The connection is written down as a mapping: for every stream, the property of the model it belongs to.
+The key is the `stream_name`, and the value is the URI of the property:
 
 ```python
-properties = acq.query().property(has_stream=False).metadata()["property"].to_list()
-streams = acq.query().measurement().where(is_disconnected=True).metadata()["data.label"].to_list()
-
-matches = [
-    {"source_id": "csv-data", "stream_name": name, "property_uri": "wbs:" + name}
-    for name in streams
-    if "wbs:" + name in properties
-]
+mapping = {
+    "intake-in-flow-rate-m3s":                         "wbs:intake-in-flow-rate-m3s",
+    "intake-in-tds-concentration":                     "wbs:intake-in-tds-concentration",
+    "intake-in-tss-concentration-kgm3":                "wbs:intake-in-tss-concentration-kgm3",
+    "conn-cartridge-filtration-to-S1-temperature-k":   "wbs:conn-cartridge-filtration-to-S1-temperature-k",
+    "conn-cartridge-filtration-to-S1-flow-mass-water": "wbs:conn-cartridge-filtration-to-S1-flow-mass-water",
+    "conn-cartridge-filtration-to-S1-flow-mass-tds":   "wbs:conn-cartridge-filtration-to-S1-flow-mass-tds",
+    "P1-mechanical-power":                             "wbs:P1-mechanical-power",
+    "P2-mechanical-power":                             "wbs:P2-mechanical-power",
+    "RO-in-temperature-k":                             "wbs:RO-in-temperature-k",
+    "RO-in-flow-mass-water":                           "wbs:RO-in-flow-mass-water",
+    "RO-in-flow-mass-tds":                             "wbs:RO-in-flow-mass-tds",
+    "RO-out-flow-mass-water":                          "wbs:RO-out-flow-mass-water",
+    "RO-out-flow-mass-tds":                            "wbs:RO-out-flow-mass-tds",
+    "RO-out-retentate-pressure-pa":                    "wbs:RO-out-retentate-pressure-pa",
+    "RO-out-retentate-flow-mass-water":                "wbs:RO-out-retentate-flow-mass-water",
+    "RO-out-retentate-flow-mass-tds":                  "wbs:RO-out-retentate-flow-mass-tds",
+    "PXR-brine-out-flow-mass-water":                   "wbs:PXR-brine-out-flow-mass-water",
+    "PXR-brine-out-flow-mass-tds":                     "wbs:PXR-brine-out-flow-mass-tds",
+    "storage-tank-3-out-flow-rate-m3s":                "wbs:storage-tank-3-out-flow-rate-m3s",
+    "storage-tank-3-out-tds-concentration":            "wbs:storage-tank-3-out-tds-concentration",
+    "conn-cartridge-filtration-to-S1-pressure-pa":     "wbs:conn-cartridge-filtration-to-S1-pressure-pa",
+    "P1-efficiency":                                   "wbs:P1-efficiency",
+    "P1-out-pressure-pa":                              "wbs:P1-out-pressure-pa",
+    "P2-efficiency":                                   "wbs:P2-efficiency",
+    "PXR-efficiency":                                  "wbs:PXR-efficiency",
+    "RO-membrane-area":                                "wbs:RO-membrane-area",
+    "RO-in-pressure-pa":                               "wbs:RO-in-pressure-pa",
+    "RO-out-pressure-pa":                              "wbs:RO-out-pressure-pa",
+    "PXR-brine-out-pressure-pa":                       "wbs:PXR-brine-out-pressure-pa",
+    "ferric-chloride-addition-ferric-chloride-dose":   "wbs:ferric-chloride-addition-ferric-chloride-dose",
+    "anti-scalant-addition-anti-scalant-dose":         "wbs:anti-scalant-addition-anti-scalant-dose",
+    "lime-addition-lime-dose":                         "wbs:lime-addition-lime-dose",
+}
 ```
+
+**Note:** In this example the stream and the property have the same name. With your own data they will rarely match, and an entry looks like `"PT-101": "wbs:P1-out-pressure-pa"`.
 
 Registering a stream again with a `property_uri` connects it to that property:
 
 ```python
+matches = [
+    {"source_id": "csv-data", "stream_name": name, "property_uri": prop}
+    for name, prop in mapping.items()
+]
+
 acq.register_streams(matches)
 ```
 
@@ -179,22 +212,15 @@ Query
 0 matches
 ```
 
-With your own data the names will rarely match like this.
-In that case, write down which stream belongs to which property, for example in a dictionary:
+The mapping can also be kept in a file, which is useful when another script or a driver needs it.
+The mapping of this example is available as [mapping.json](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/driver/mapping.json), and is read with:
 
 ```python
-tags = {
-    "PT-101": "wbs:P1-out-pressure-pa",
-    "FT-201": "wbs:RO-in-flow-mass-water",
-}
+import json
 
-matches = [
-    {"source_id": "scada", "stream_name": tag, "property_uri": prop}
-    for tag, prop in tags.items()
-]
+with open("mapping.json") as f:
+    mapping = json.load(f)
 ```
-
-The same two columns can also be kept in a spreadsheet and read with `pl.read_csv()`.
 
 ## 5. Query the plant
 

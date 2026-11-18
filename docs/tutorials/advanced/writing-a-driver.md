@@ -209,28 +209,45 @@ shape: (4, 2)
 
 ## Connecting to the plant model
 
-A driver connects its streams to a plant model the same way as step 4 of the full example: with `property_uri`.
+A driver can also insert the plant model, and connect its streams to it.
+The streams are connected the same way as in step 4 of the full example: with `property_uri`.
 
-First insert the model, from a script:
+The driver needs to know which property each stream belongs to.
+We'll use the mapping of [5 - A Full Example](../a-full-example.md#4-connect-the-streams-to-the-model), kept in a file.
+Download [mapping.json](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/driver/mapping.json) and save it next to `acquirium.toml`.
+It has one entry per stream:
 
-```python
-acq.insert_graph_file("example/model.ttl", source_id="plant")
+```json
+{
+  "intake-in-flow-rate-m3s": "wbs:intake-in-flow-rate-m3s",
+  "intake-in-tds-concentration": "wbs:intake-in-tds-concentration",
+  ...
+}
 ```
 
-In the example, the column headers of the file are the names of the properties.
-So a small driver on top of the CSV driver is enough.
+The driver below is the CSV driver with two additions.
 Save it as `plant_driver.py`:
 
 ```python
+import json
+
 import acquirium as aq
 
 
 class PlantCSV(aq.CSVIngestDriver):
+    def setup(self):
+        super().setup()
+        self.insert_graph_file("example/model.ttl")
+        with open("mapping.json") as f:
+            self.mapping = json.load(f)
+
     def declare_stream(self, stream_name):
-        self.declare(stream_name, property_uri="urn:swro/" + stream_name)
+        self.declare(stream_name, property_uri=self.mapping[stream_name])
 ```
 
-`declare_stream()` is called by the CSV driver for every column it finds.
+- `setup()` inserts the model and reads the mapping when the driver starts. `super().setup()` keeps the setup of the CSV driver, which reads the config.
+- `insert_graph_file()` of a driver writes with the `source_id` of the driver, so it takes no `source_id`.
+- `declare_stream()` is called by the CSV driver for every column it finds. It declares the stream with the property from the mapping.
 
 Stop the CSV driver, which this one replaces:
 
