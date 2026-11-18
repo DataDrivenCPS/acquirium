@@ -13,3 +13,14 @@ The code of the tutorial pages, as Python scripts and Jupyter notebooks.
 | 3 - Inserting Metadata | `3_inserting_metadata.py` | `3_inserting_metadata.ipynb` |
 | 4 - Inserting a Plant Model | `4_inserting_plant_model.py` | `4_inserting_plant_model.ipynb` |
 | 5 - A Full Example | `5_a_full_example.py` | `5_a_full_example.ipynb` |
+
+## Advanced topics
+
+| page | files |
+|---|---|
+| Writing a driver | the `driver/` folder, with its own README |
+| Declaring and deploying Apps | `plant_apps.py`, `advanced_apps.py`, `advanced_apps.ipynb` |
+| Running experiments | `advanced_experiments.py`, `advanced_experiments.ipynb` |
+
+- The apps and experiments pages continue from page 5. Run them in the same folder, after `5_a_full_example`.
+- The driver page uses a server of its own. Run it in the `driver/` folder.

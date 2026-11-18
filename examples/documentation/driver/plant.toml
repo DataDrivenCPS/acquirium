@@ -1,0 +1,9 @@
+# Start on the running server with: acquirium driver start plant.toml
+# Stop the CSV driver first: acquirium driver stop --name CSVIngestDriver
+
+[[drivers]]
+spec      = "plant_driver.py:PlantCSV"
+source_id = "csv-data"
+watch_dir = "example"
+glob      = "*.csv"
+format    = "wide"
