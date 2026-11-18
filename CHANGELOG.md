@@ -160,9 +160,12 @@ change in any release.
   server. A driver stops when its server stops, including when the server is
   killed. `/drivers/list` now includes each driver's `pid`. The `[ray]`
   config section is gone.
-- `IngestDriver.insert_observations` splits frames into requests of at most
-  `MAX_INSERT_ROWS` (10,000) rows, the server's per-request cap, so file
-  drivers can ingest large files.
+- A write request carries at most 10,000 rows. `insert_timeseries_batch`,
+  `insert_timeseries_arrow` and driver inserts split larger inputs into
+  requests in order, each atomic, and list every request's receipt; only the
+  last waits for publication.
+- `insert_timeseries(replace=True)` keeps only the supplied rows, removing the
+  stream's readings at other timestamps, in the same request as the new rows.
 - Client HTTP errors include the server's error message for every endpoint
   (previously some, including `insert_timeseries_arrow`, reported only the
   status code).
@@ -193,6 +196,11 @@ change in any release.
 - `Stream.dataframe(end=...)` and stream intervals include samples at `end`
   again; reads are half-open underneath, so the client reads up to just after
   it.
+- Query and `DataObject` reads include readings at `end` again, and read a
+  bound without an offset as UTC, as `Stream.dataframe` does.
+- The test suite runs with plain `pytest`, starting servers in-process with
+  `aq.init()`; `compose.testing.yaml`, `acquirium.testing.toml` and the
+  `testing-up`, `testing-down` and `integration-test` Make targets are gone.
 
 ## [0.4.0a9] - 2026-11-09
 

@@ -18,7 +18,8 @@ import pytest
 import requests
 
 import acquirium as aq
-from acquirium.Drivers.Driver import MAX_REQUEST_ROWS, PollingIngestDriver
+from acquirium.Drivers.Driver import PollingIngestDriver
+from acquirium.internals.models import MAX_REQUEST_ROWS
 
 pytestmark = pytest.mark.usefixtures("separate_server")
 
@@ -76,15 +77,16 @@ def test_client_inserts_round_trip_without_request_ids(tmp_path):
         assert pressure["value"].to_list() == [0.0, 1.0, 2.0]
 
         # The server's reason must reach the caller, not just the status code.
-        with pytest.raises(requests.HTTPError, match="at most 10,000 rows"):
-            client.insert_timeseries_arrow(
-                "gateway", _frame(MAX_REQUEST_ROWS + 1, "pressure").to_arrow()
-            )
+        with pytest.raises(requests.HTTPError, match="is not registered"):
+            client.insert_timeseries_arrow("gateway", _frame(1, "unregistered").to_arrow())
 
-        # Drivers split frames over the cap into several requests.
+        # Frames over the per-request cap go up as several requests.
         driver = _BulkDriver(client, {"server": {"data_dir": str(tmp_path)}})
         driver.setup()
         driver.tick()
+        # Drivers do not wait for publication; a write that waits publishes
+        # every request accepted before it.
+        client.insert_timeseries("gateway", "flow", [(START, 1.5)])
         level = client.client.timeseries_df("urn:test:bulk-level")
         assert level.height == _BulkDriver.rows
     finally:

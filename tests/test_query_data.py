@@ -4,7 +4,7 @@ from acquirium import Acquirium
 from acquirium.internals.internals_namespaces import *
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from conftest import ACQUIRIUM_TEST_SERVER_HOST, ACQUIRIUM_TEST_SERVER_PORT, _CSV_SOURCE_ID
+from conftest import _CSV_SOURCE_ID
 
 ##### Find all data tests #####
 

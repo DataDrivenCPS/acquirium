@@ -1,46 +1,42 @@
-"""Shared fixtures for integration tests.
+"""Shared fixtures.
 
-These fixtures require an Acquirium server; MQTT tests also need Mosquitto.
-Start services with `make testing-up` before running integration tests.
+Every test runs with plain ``pytest``: servers are started in-process with
+aq.init(), as scripts start them. Tests that need PostgreSQL skip unless
+ACQUIRIUM_TEST_PG_DSN is set, and MQTT tests unless ACQUIRIUM_TEST_MQTT is.
 """
-
-import os
 
 import polars as pl
 import pytest
 
-from acquirium import Acquirium
-from acquirium.Storage.values import assign_stream_value_kind
 from tests.local_server import acquirium_without_experiments, local_server_storage
-
-
-ACQUIRIUM_TEST_SERVER_HOST = os.getenv("ACQUIRIUM_TEST_SERVER_HOST", "localhost")
-ACQUIRIUM_TEST_SERVER_PORT = int(os.getenv("ACQUIRIUM_TEST_SERVER_PORT", "8000"))
-TEST_POINT_URI = "urn:test:integration_point"
-TEST_REF_URI = "urn:test:integration_ref"
-SAMPLE_SOURCE_ID = "LAB"
-
-
-@pytest.fixture(scope="session")
-def acquirium_server_url():
-    return f"http://{ACQUIRIUM_TEST_SERVER_HOST}:{ACQUIRIUM_TEST_SERVER_PORT}"
-
-
-@pytest.fixture(scope="session")
-def acquirium_client_kwargs():
-    return {
-        "server_url": ACQUIRIUM_TEST_SERVER_HOST,
-        "server_port": ACQUIRIUM_TEST_SERVER_PORT,
-        "use_ssl": False,
-    }
 
 
 _CSV_SOURCE_ID = "test-csv-data"
 
 
 @pytest.fixture(scope="module")
-def acquirium_client_csv(acquirium_client_kwargs):
-    acq = Acquirium(**acquirium_client_kwargs)
+def own_acquirium(tmp_path_factory):
+    """A server for this module alone, on empty storage.
+
+    For tests that query the whole model or use fixed URIs, which would see
+    or clobber other tests' data on the shared server. aq.init() runs one
+    server per process, so this stops the shared one; the next test that uses
+    it starts it again on the same data.
+    """
+    import acquirium as aq
+
+    aq.shutdown()
+    with local_server_storage(tmp_path_factory.mktemp("module")) as (options, _):
+        try:
+            yield aq.init(**options)
+        finally:
+            aq.shutdown()
+
+
+@pytest.fixture(scope="module")
+def acquirium_client_csv(own_acquirium):
+    """The module's own server with the CSV test model and its readings."""
+    acq = own_acquirium
     acq.insert_graph_file("tests/test_model_csv.ttl", source_id="plant")
     acq.register_datasource(_CSV_SOURCE_ID)
     acq.register_streams([
@@ -64,27 +60,6 @@ def acquirium_client_csv(acquirium_client_kwargs):
     )
     acq.insert_timeseries_arrow(_CSV_SOURCE_ID, long.to_arrow())
     return acq
-
-
-def insert_sample_csv_streams(acq, *, source_id: str = SAMPLE_SOURCE_ID) -> None:
-    """Insert the sample CSV rows through the public timeseries API."""
-    import polars as pl
-
-    df = pl.read_csv("tests/sample_data.csv", try_parse_dates=True)
-    stream_specs = []
-    stream_rows: dict = {}
-    for i in range(1, 11):
-        ref_name = f"point_{i}"
-        rows = list(df.select("Timestamp", ref_name).iter_rows())
-        stream_specs.append({
-            "source_id": source_id,
-            "ref_name": ref_name,
-            "point_uri": f"urn:ex/point_{i}",
-            "value_kind": assign_stream_value_kind(value for _, value in rows),
-        })
-        stream_rows[ref_name] = rows
-    acq.register_streams(stream_specs)
-    acq.insert_timeseries_batch(source_id, stream_rows)
 
 
 @pytest.fixture

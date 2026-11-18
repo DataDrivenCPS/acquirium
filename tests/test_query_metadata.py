@@ -4,20 +4,14 @@ Row counts are properties of ``tests/test_model.ttl``; each test says which
 shape it exercises.
 """
 import pytest
-from conftest import ACQUIRIUM_TEST_SERVER_HOST, ACQUIRIUM_TEST_SERVER_PORT
 from acquirium import Acquirium
 from acquirium.internals.internals_namespaces import *
 
 
 @pytest.fixture
-def acquirium_client():
-    acq = Acquirium(
-        server_url=ACQUIRIUM_TEST_SERVER_HOST,
-        server_port=ACQUIRIUM_TEST_SERVER_PORT,
-        use_ssl=False,
-    )
-    acq.insert_graph_file("tests/test_model.ttl", source_id="plant")
-    return acq
+def acquirium_client(own_acquirium):
+    own_acquirium.insert_graph_file("tests/test_model.ttl", source_id="plant")
+    return own_acquirium
 
 
 #### ENTITY ####

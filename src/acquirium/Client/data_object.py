@@ -6,7 +6,8 @@ from typing import Any, Iterator, Sequence, TYPE_CHECKING
 import polars as pl
 import warnings
 
-from acquirium.Client.streams import Stream
+from acquirium.Client.streams import Stream, _after_ns
+from acquirium.ExperimentValues import timestamp as _utc
 from acquirium.replacements import VIEWS
 
 if TYPE_CHECKING:
@@ -732,6 +733,10 @@ class DataObject:
 
         # Every stream is read at one epoch, so the frame is one consistent view.
         epoch = self._client.engine_snapshot()["epoch"]
+        # Bounds are inclusive, as on Stream.dataframe: a string without an
+        # offset is UTC, and reads are half-open, so read up to just after end.
+        start = _utc(start).isoformat() if start is not None else None
+        end_ns = _after_ns(end) if end is not None else None
         # One request per stream. A stream matched by several data nodes
         # (a pump's measurement node and its connection point's, say) has one
         # binding per node; they share the fetched frame and differ only in
@@ -743,7 +748,7 @@ class DataObject:
                 fetched[key] = self._client.timeseries_df(
                     binding.ref_uri,
                     start=start,
-                    end=end,
+                    end_ns=end_ns,
                     limit=limit,
                     order=order,
                     value_mode=value_mode,

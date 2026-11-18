@@ -145,18 +145,9 @@ class TestConvert:
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def acquirium_client():
-    """Fixture to create an Acquirium client for unit conversion integration tests."""
-    from acquirium import Acquirium
-    from conftest import ACQUIRIUM_TEST_SERVER_HOST, ACQUIRIUM_TEST_SERVER_PORT
-
-    acq = Acquirium(
-        server_url=ACQUIRIUM_TEST_SERVER_HOST,
-        server_port=ACQUIRIUM_TEST_SERVER_PORT,
-        use_ssl=False,
-    )
-    acq.insert_graph_file("tests/test_model_units.ttl", source_id="plant")
-    return acq
+def acquirium_client(own_acquirium):
+    own_acquirium.insert_graph_file("tests/test_model_units.ttl", source_id="plant")
+    return own_acquirium
 
 
 class TestServerEndpoints:

@@ -53,6 +53,21 @@ def _insert_chunks(streams, replace, size=MAX_REQUEST_ROWS):
     if chunk:
         yield chunk
 
+
+def _send_in_order(chunks, request_id, wait, send):
+    """Send each chunk as its own request with ``send(chunk, request_id, wait)``
+    and combine the replies. Several chunks get ``request_id:index``, so a
+    retry resends the same requests; only the last waits for publication,
+    which covers the ones before it."""
+    result = {"ok": True, "rows_inserted": 0, "receipts": []}
+    for index, chunk in enumerate(chunks):
+        last = index == len(chunks) - 1
+        reply = send(chunk, request_id if len(chunks) == 1 else f"{request_id}:{index}",
+                     wait if last else 0)
+        result["rows_inserted"] += reply["rows_inserted"]
+        result["receipts"] += reply["receipts"]
+    return result
+
 if TYPE_CHECKING:
     import pyarrow as pa
 
@@ -1022,24 +1037,19 @@ class AcquiriumClient:
         publication, and the result lists every request's receipt. Retrying
         with the same ``request_id`` and streams resends the same requests.
         """
-        request_id = request_id or str(uuid.uuid4())
         replace = set(replace)
         if replace - streams.keys():
             raise ValueError(f"replace names streams not in the insert: {sorted(replace - streams.keys())}")
         # Nothing to split still sends one request, as an empty insert did.
         chunks = list(_insert_chunks(streams, replace)) or [[(name, [], False) for name in streams]]
-        result = {"ok": True, "rows_inserted": 0, "receipts": []}
-        for index, chunk in enumerate(chunks):
-            last = index == len(chunks) - 1
+
+        def send(chunk, request_id, wait):
             payload = [StreamInsert(source_id=source_id, ref_name=name, values=rows, replace=clear,
-                                    request_id=request_id if len(chunks) == 1 else f"{request_id}:{index}")
+                                    request_id=request_id).model_dump(mode="json")
                        for name, rows, clear in chunk]
-            response = self._post_admitted("/insert_timeseries", retry_for=retry_for,
-                                           json=[item.model_dump(mode="json") for item in payload],
-                                           params={"wait": wait if last else 0}, timeout=timeout).json()
-            result["rows_inserted"] += response["rows_inserted"]
-            result["receipts"] += response["receipts"]
-        return result
+            return self._post_admitted("/insert_timeseries", retry_for=retry_for, json=payload,
+                                       params={"wait": wait}, timeout=timeout).json()
+        return _send_in_order(chunks, request_id or str(uuid.uuid4()), wait, send)
 
     def wait(self, receipt, *, timeout=30):
         """Wait for a database-scoped sequence returned by an accepted request."""
@@ -1094,18 +1104,22 @@ class AcquiriumClient:
         self, source_id: str, table: "pa.Table", *, request_id: Optional[str] = None,
         wait=30, timeout=60, retry_for=CAPACITY_RETRY_S,
     ) -> dict[str, Any]:
+        """Insert a ``(ts, ref_name, value)`` table, split into requests of at
+        most ``MAX_REQUEST_ROWS`` rows as ``insert_timeseries_batch`` splits."""
         import io
         import pyarrow as pa
-        table_with_sid = table.append_column("source_id", pa.repeat(source_id, len(table)))
-        buf = io.BytesIO()
-        with ipc.new_stream(buf, table_with_sid.schema) as writer:
-            writer.write_table(table_with_sid)
-        headers = {"Content-Type": "application/vnd.apache.arrow.stream"}
-        headers["X-Acquirium-Request-Id"] = request_id or str(uuid.uuid4())
-        # Bytes rather than the buffer, so a resend sends the whole body again.
-        return self._post_admitted(
-            "/insert_timeseries_arrow", retry_for=retry_for,
-            data=buf.getvalue(),
-            headers=headers,
-            params={"wait": wait}, timeout=timeout,
-        ).json()
+        table = table.append_column("source_id", pa.repeat(source_id, len(table)))
+        chunks = [table.slice(offset, MAX_REQUEST_ROWS)
+                  for offset in range(0, max(len(table), 1), MAX_REQUEST_ROWS)]
+
+        def send(chunk, request_id, wait):
+            buf = io.BytesIO()
+            with ipc.new_stream(buf, chunk.schema) as writer:
+                writer.write_table(chunk)
+            headers = {"Content-Type": "application/vnd.apache.arrow.stream",
+                       "X-Acquirium-Request-Id": request_id}
+            # Bytes rather than the buffer, so a resend sends the whole body again.
+            return self._post_admitted("/insert_timeseries_arrow", retry_for=retry_for,
+                                       data=buf.getvalue(), headers=headers,
+                                       params={"wait": wait}, timeout=timeout).json()
+        return _send_in_order(chunks, request_id or str(uuid.uuid4()), wait, send)

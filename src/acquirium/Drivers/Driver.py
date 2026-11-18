@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from rdflib import URIRef
 
 from acquirium.DriverState import DriverState
-from acquirium.internals.models import MAX_REQUEST_ROWS, compute_ref_uri
+from acquirium.internals.models import compute_ref_uri
 from acquirium.Storage.values import assign_stream_value_kind
 from acquirium.internals._log import timed_debug
 
@@ -555,8 +555,9 @@ class IngestDriver(Driver):
 
         ``request_id`` is set by :meth:`flush` and identifies the request, so
         a resent one is deduplicated within Escapement's retry window. A frame
-        spanning multiple ``source_id`` values makes one request per source
-        (and per chunk), so the identifier is namespaced accordingly.
+        spanning multiple ``source_id`` values makes one insert per source, so
+        the identifier is namespaced accordingly. The client splits a large
+        frame (a whole file, say) into requests the server accepts.
         """
 
         with timed_debug(logger, "%s.normalize_observations", self.__class__.__name__):
@@ -579,27 +580,19 @@ class IngestDriver(Driver):
                 for (source,), source_df in df.partition_by("source_id", as_dict=True).items()
             ]
 
-        # The server rejects requests over MAX_REQUEST_ROWS, so a large frame
-        # (e.g. a whole file) goes up as several requests.
         total = 0
         for source, payload, source_request_id in batches:
-            for index, chunk in enumerate(payload.iter_slices(MAX_REQUEST_ROWS)):
-                chunk_request_id = (
-                    f"{source_request_id}:{index * MAX_REQUEST_ROWS}"
-                    if source_request_id and len(payload) > MAX_REQUEST_ROWS
-                    else source_request_id
+            # A stable ID lets a request refused for capacity be resent as-is.
+            # Acceptance is durable; a full inbox pushes back with 503.
+            with timed_debug(logger, "%s.aq.insert_timeseries_arrow source=%s rows=%d",
+                             self.__class__.__name__, source, len(payload)):
+                result = self.aq.insert_timeseries_arrow(
+                    source, payload.to_arrow(), request_id=source_request_id or str(uuid.uuid4()),
+                    wait=0, retry_for=CAPACITY_RETRY_S,
                 )
-                # A stable ID lets a chunk refused for capacity be resent as-is.
-                # Acceptance is durable; a full inbox pushes back with 503.
-                with timed_debug(logger, "%s.aq.insert_timeseries_arrow source=%s rows=%d",
-                                 self.__class__.__name__, source, len(chunk)):
-                    result = self.aq.insert_timeseries_arrow(
-                        source, chunk.to_arrow(), request_id=chunk_request_id or str(uuid.uuid4()),
-                        wait=0, retry_for=CAPACITY_RETRY_S,
-                    )
-                if not result.get("ok", True):
-                    raise RuntimeError(f"observation insertion reported failure: {result!r}")
-                total += int(result.get("rows_inserted", len(chunk)))
+            if not result.get("ok", True):
+                raise RuntimeError(f"observation insertion reported failure: {result!r}")
+            total += int(result.get("rows_inserted", len(payload)))
         return {"ok": True, "rows_inserted": total}
 
     def normalize_observations(self, observations: "pl.DataFrame | None") -> "pl.DataFrame":

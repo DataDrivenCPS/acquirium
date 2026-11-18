@@ -1,24 +1,17 @@
-"""Integration tests for FastAPI endpoints — talks to the running server.
+"""The HTTP API, called with requests against a server started with aq.init()."""
 
-Requires: All services running via `make testing-up`.
-Server at localhost:8000 and Mosquitto at localhost:1883 by default.
-"""
-
-import os
-import pytest
-import requests
+import uuid
 from datetime import datetime, timezone
 
 import pyarrow.ipc as ipc
-import pyarrow as pa
+import pytest
+import requests
 
-from acquirium.internals.models import compute_ref_uri
 
+@pytest.fixture(scope="module")
+def url(own_acquirium):
+    return own_acquirium.client.base_url
 
-BASE_URL = (
-    f"http://{os.getenv('ACQUIRIUM_TEST_SERVER_HOST', 'localhost')}:"
-    f"{os.getenv('ACQUIRIUM_TEST_SERVER_PORT', '8000')}"
-)
 
 MINIMAL_TURTLE = """\
 @prefix ex: <http://example.org/api_test/> .
@@ -37,13 +30,13 @@ ex:point1 a ex:DataPoint ;
 
 
 class TestHealthStatus:
-    def test_health(self):
-        resp = requests.get(f"{BASE_URL}/health")
+    def test_health(self, url):
+        resp = requests.get(f"{url}/health")
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
 
-    def test_embedding_status(self):
-        resp = requests.get(f"{BASE_URL}/embedding_status")
+    def test_embedding_status(self, url):
+        resp = requests.get(f"{url}/embedding_status")
         assert resp.status_code == 200
         data = resp.json()
         assert "graph" in data
@@ -55,8 +48,8 @@ class TestHealthStatus:
 
 
 class TestGraphEndpoints:
-    def test_insert_and_sparql(self):
-        resp = requests.post(f"{BASE_URL}/insert_graph", json={
+    def test_insert_and_sparql(self, url):
+        resp = requests.post(f"{url}/insert_graph", json={
             "rdf_graph": MINIMAL_TURTLE,
             "format": "turtle",
             "replace": False,
@@ -64,15 +57,15 @@ class TestGraphEndpoints:
         })
         assert resp.status_code == 200
 
-        resp = requests.get(f"{BASE_URL}/sparql_json", params={
+        resp = requests.get(f"{url}/sparql_json", params={
             "query": "SELECT ?s WHERE { ?s a <http://example.org/api_test/Pump> }",
         })
         assert resp.status_code == 200
         data = resp.json()
         assert len(data["rows"]) >= 1
 
-    def test_insert_replace(self):
-        resp = requests.post(f"{BASE_URL}/insert_graph", json={
+    def test_insert_replace(self, url):
+        resp = requests.post(f"{url}/insert_graph", json={
             "rdf_graph": MINIMAL_TURTLE,
             "format": "turtle",
             "replace": True,
@@ -80,19 +73,19 @@ class TestGraphEndpoints:
         })
         assert resp.status_code == 200
 
-    def test_export_graph(self):
-        requests.post(f"{BASE_URL}/insert_graph", json={
+    def test_export_graph(self, url):
+        requests.post(f"{url}/insert_graph", json={
             "rdf_graph": MINIMAL_TURTLE,
             "format": "turtle",
             "replace": True,
             "source_id": "plant",
         })
-        resp = requests.get(f"{BASE_URL}/export_graph", params={"format": "turtle"})
+        resp = requests.get(f"{url}/export_graph", params={"format": "turtle"})
         assert resp.status_code == 200
         assert len(resp.text) > 0
 
-    def test_insert_malformed(self):
-        resp = requests.post(f"{BASE_URL}/insert_graph", json={
+    def test_insert_malformed(self, url):
+        resp = requests.post(f"{url}/insert_graph", json={
             "rdf_graph": "this is {{{ not valid turtle",
             "format": "turtle",
             "replace": False,
@@ -110,72 +103,31 @@ class TestTimeseriesEndpoints:
     TEST_POINT = "urn:test:api_ts_point"
 
     @pytest.fixture(scope="class", autouse=True)
-    def _cleanup_registered_stream(self):
-        # The registered stream makes TEST_POINT a first-class data point,
-        # visible to any test that queries across all sources (e.g.
-        # find_all_data). Remove it once this class is done so it doesn't
-        # leak into unrelated tests.
-        yield
-        ref_uri = compute_ref_uri(self.TEST_SOURCE, self.TEST_REF_NAME)
-        update = f"""\
-PREFIX acq: <urn:acquirium#>
-PREFIX ref: <https://brickschema.org/schema/Brick/ref#>
-DELETE DATA {{
-  <{self.TEST_POINT}> ref:hasExternalReference <{ref_uri}> .
-  <{ref_uri}> a acq:Stream ;
-      acq:sourceId "{self.TEST_SOURCE}" ;
-      acq:refName "{self.TEST_REF_NAME}" ;
-      acq:valueKind "numeric" .
-}}
-"""
-        requests.post(f"{BASE_URL}/sparql_update", json={
-            "update": update,
-            "source_id": "test-source",
-        })
+    def _register_stream(self, own_acquirium):
+        own_acquirium.register_datasource(self.TEST_SOURCE)
+        own_acquirium.register_streams([{"source_id": self.TEST_SOURCE, "ref_name": self.TEST_REF_NAME,
+                                         "point_uri": self.TEST_POINT, "value_kind": "numeric"}])
 
-    def _register_stream(self):
-        ref_uri = compute_ref_uri(self.TEST_SOURCE, self.TEST_REF_NAME)
-        graph = f"""\
-@prefix acq: <urn:acquirium#> .
-@prefix ref: <https://brickschema.org/schema/Brick/ref#> .
+    def _post_rows(self, url, values, *, replace=False):
+        return requests.post(f"{url}/insert_timeseries", json=[{
+            "source_id": self.TEST_SOURCE,
+            "ref_name": self.TEST_REF_NAME,
+            "request_id": str(uuid.uuid4()),
+            "replace": replace,
+            "values": values,
+        }])
 
-<{self.TEST_POINT}> ref:hasExternalReference <{ref_uri}> .
-<{ref_uri}> a acq:Stream ;
-    acq:sourceId "{self.TEST_SOURCE}" ;
-    acq:refName "{self.TEST_REF_NAME}" ;
-    acq:valueKind "numeric" .
-"""
-        resp = requests.post(f"{BASE_URL}/insert_graph", json={
-            "rdf_graph": graph,
-            "format": "turtle",
-            "replace": False,
-            "source_id": "test-source",
-        })
-        assert resp.status_code == 200
-
-    def _insert_data(self, n=5):
-        self._register_stream()
-        values = [
+    def _insert_data(self, url, n=5):
+        return self._post_rows(url, [
             [datetime(2025, 1, 1, h, 0, tzinfo=timezone.utc).isoformat(), float(h)]
             for h in range(n)
-        ]
-        resp = requests.post(
-            f"{BASE_URL}/insert_timeseries",
-            json=[{
-                "source_id": self.TEST_SOURCE,
-                "ref_name": self.TEST_REF_NAME,
-                "point_uri": self.TEST_POINT,
-                "replace": False,
-                "values": values,
-            }],
-        )
-        return resp
+        ])
 
-    def test_insert_and_query(self):
-        resp = self._insert_data(5)
+    def test_insert_and_query(self, url):
+        resp = self._insert_data(url, 5)
         assert resp.status_code == 200
 
-        resp = requests.get(f"{BASE_URL}/timeseries", params={
+        resp = requests.get(f"{url}/timeseries", params={
             "uri": self.TEST_POINT,
         })
         assert resp.status_code == 200
@@ -184,9 +136,9 @@ DELETE DATA {{
         table = reader.read_all()
         assert table.num_rows >= 5
 
-    def test_time_range(self):
-        self._insert_data(24)
-        resp = requests.get(f"{BASE_URL}/timeseries", params={
+    def test_time_range(self, url):
+        self._insert_data(url, 24)
+        resp = requests.get(f"{url}/timeseries", params={
             "uri": self.TEST_POINT,
             "start": "2025-01-01T05:00:00Z",
             "end": "2025-01-01T10:00:00Z",
@@ -196,9 +148,9 @@ DELETE DATA {{
         table = reader.read_all()
         assert table.num_rows <= 6
 
-    def test_order(self):
-        self._insert_data(5)
-        resp = requests.get(f"{BASE_URL}/timeseries", params={
+    def test_order(self, url):
+        self._insert_data(url, 5)
+        resp = requests.get(f"{url}/timeseries", params={
             "uri": self.TEST_POINT,
             "order": "desc",
         })
@@ -209,9 +161,9 @@ DELETE DATA {{
             ts_col = table.column("ts")
             assert ts_col[0].as_py() >= ts_col[1].as_py()
 
-    def test_timeseries_info(self):
-        self._insert_data(3)
-        resp = requests.post(f"{BASE_URL}/timeseries_info", json={
+    def test_timeseries_info(self, url):
+        self._insert_data(url, 3)
+        resp = requests.post(f"{url}/timeseries_info", json={
             "uris": [self.TEST_POINT],
         })
         assert resp.status_code == 200
@@ -219,30 +171,18 @@ DELETE DATA {{
         assert self.TEST_POINT in data
         assert data[self.TEST_POINT]["row_count"] >= 3
 
-    def test_replace_rows(self):
-        self._insert_data(10)
-        self._register_stream()
-        values = [
-            [datetime(2025, 6, 1, tzinfo=timezone.utc).isoformat(), 999.0],
-        ]
-        resp = requests.post(
-            f"{BASE_URL}/insert_timeseries",
-            json=[{
-                "source_id": self.TEST_SOURCE,
-                "ref_name": self.TEST_REF_NAME,
-                "point_uri": self.TEST_POINT,
-                "replace": True,
-                "values": values,
-            }],
-        )
+    def test_replace_rows(self, url):
+        self._insert_data(url, 10)
+        resp = self._post_rows(url, [[datetime(2025, 6, 1, tzinfo=timezone.utc).isoformat(), 999.0]],
+                               replace=True)
         assert resp.status_code == 200
-        assert resp.json() == {"ok": True, "rows_inserted": 1}
-        result = requests.get(f"{BASE_URL}/timeseries", params={"uri": self.TEST_POINT})
+        assert resp.json()["rows_inserted"] == 1
+        result = requests.get(f"{url}/timeseries", params={"uri": self.TEST_POINT})
         assert result.status_code == 200
         assert ipc.open_stream(result.content).read_all().column("value").to_pylist() == [999.0]
 
-    def test_empty_uri(self):
-        resp = requests.get(f"{BASE_URL}/timeseries", params={
+    def test_empty_uri(self, url):
+        resp = requests.get(f"{url}/timeseries", params={
             "uri": "urn:test:api_nonexistent",
         })
         assert resp.status_code == 200
@@ -255,8 +195,8 @@ DELETE DATA {{
 
 class TestSparqlEndpoints:
     @staticmethod
-    def _insert_graph():
-        response = requests.post(f"{BASE_URL}/insert_graph", json={
+    def _insert_graph(url):
+        response = requests.post(f"{url}/insert_graph", json={
             "rdf_graph": MINIMAL_TURTLE,
             "format": "turtle",
             "replace": True,
@@ -264,9 +204,9 @@ class TestSparqlEndpoints:
         })
         assert response.status_code == 200
 
-    def test_select(self):
-        self._insert_graph()
-        resp = requests.get(f"{BASE_URL}/sparql_json", params={
+    def test_select(self, url):
+        self._insert_graph(url)
+        resp = requests.get(f"{url}/sparql_json", params={
             "query": "SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10",
         })
         assert resp.status_code == 200
@@ -274,49 +214,49 @@ class TestSparqlEndpoints:
         assert "columns" in data
         assert "rows" in data
 
-    def test_with_union(self):
-        resp = requests.get(f"{BASE_URL}/sparql_json", params={
+    def test_with_union(self, url):
+        resp = requests.get(f"{url}/sparql_json", params={
             "query": "SELECT (COUNT(*) AS ?c) WHERE { ?s ?p ?o }",
             "include_dependencies": True,
         })
         assert resp.status_code == 200
 
-    def test_malformed(self):
-        resp = requests.get(f"{BASE_URL}/sparql_json", params={
+    def test_malformed(self, url):
+        resp = requests.get(f"{url}/sparql_json", params={
             "query": "SELEKT * WERE { broken }",
         })
         assert resp.status_code >= 400
 
-    def test_protocol_select_returns_standard_json(self):
-        self._insert_graph()
-        resp = requests.get(f"{BASE_URL}/sparql", params={
+    def test_protocol_select_returns_standard_json(self, url):
+        self._insert_graph(url)
+        resp = requests.get(f"{url}/sparql", params={
             "query": "SELECT ?s WHERE { ?s ?p ?o } LIMIT 1",
         }, headers={"Accept": "application/sparql-results+json"})
         assert resp.status_code == 200
         assert resp.headers["content-type"].startswith("application/sparql-results+json")
         assert "head" in resp.json()
 
-    def test_protocol_ask_returns_standard_json(self):
-        self._insert_graph()
-        resp = requests.get(f"{BASE_URL}/sparql", params={
+    def test_protocol_ask_returns_standard_json(self, url):
+        self._insert_graph(url)
+        resp = requests.get(f"{url}/sparql", params={
             "query": "ASK { ?s ?p ?o }",
         })
         assert resp.status_code == 200
         assert resp.headers["content-type"].startswith("application/sparql-results+json")
         assert resp.json()["boolean"] is True
 
-    def test_protocol_construct_negotiates_turtle(self):
-        self._insert_graph()
-        resp = requests.get(f"{BASE_URL}/sparql", params={
+    def test_protocol_construct_negotiates_turtle(self, url):
+        self._insert_graph(url)
+        resp = requests.get(f"{url}/sparql", params={
             "query": "CONSTRUCT { ?s ?p ?o } WHERE { ?s ?p ?o } LIMIT 1",
         }, headers={"Accept": "text/turtle"})
         assert resp.status_code == 200
         assert resp.headers["content-type"].startswith("text/turtle")
         assert resp.text
 
-    def test_protocol_describe_negotiates_ntriples(self):
-        self._insert_graph()
-        resp = requests.get(f"{BASE_URL}/sparql", params={
+    def test_protocol_describe_negotiates_ntriples(self, url):
+        self._insert_graph(url)
+        resp = requests.get(f"{url}/sparql", params={
             "query": "DESCRIBE <urn:example:Thing>",
         }, headers={"Accept": "application/n-triples"})
         assert resp.status_code == 200
@@ -327,8 +267,8 @@ class TestSparqlEndpoints:
 
 
 class TestResolveText:
-    def test_basic(self):
-        resp = requests.get(f"{BASE_URL}/resolve_text", params={
+    def test_basic(self, url):
+        resp = requests.get(f"{url}/resolve_text", params={
             "text": "pump",
             "min_score": 0.1,
         })
@@ -336,8 +276,8 @@ class TestResolveText:
         data = resp.json()
         assert "matches" in data
 
-    def test_kind_filter(self):
-        resp = requests.get(f"{BASE_URL}/resolve_text", params={
+    def test_kind_filter(self, url):
+        resp = requests.get(f"{url}/resolve_text", params={
             "text": "temperature",
             "kind": "class",
             "min_score": 0.1,
@@ -347,8 +287,8 @@ class TestResolveText:
         for match in data.get("matches", []):
             assert match["kind"] == "class"
 
-    def test_no_match(self):
-        resp = requests.get(f"{BASE_URL}/resolve_text", params={
+    def test_no_match(self, url):
+        resp = requests.get(f"{url}/resolve_text", params={
             "text": "xyzzynonexistent42",
             "min_score": 0.9,
         })

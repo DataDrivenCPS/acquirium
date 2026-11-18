@@ -72,10 +72,12 @@ To record experiments, see [your first experiment](docs/tutorials/first-experime
 [experiment reference](docs/reference/experiments.md).
 
 ```sh
-uv run pytest tests/unit
+uv run pytest
 ```
 
-The integration tests use temporary local engine databases and
-require no Docker services. MQTT service tests still need a broker.
+Every test starts its server in-process with `aq.init()` on temporary
+storage, so no Docker services are needed. PostgreSQL tests run when
+`ACQUIRIUM_TEST_PG_DSN` is set, and MQTT tests when a broker answers at
+`ACQUIRIUM_TEST_MQTT` (default `localhost:1883`); otherwise they skip.
 The optional Docker configuration runs Acquirium and Mosquitto; native builds
 forward your SSH agent with BuildKit.

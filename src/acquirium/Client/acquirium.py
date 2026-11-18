@@ -249,7 +249,8 @@ class Acquirium:
         self, source_id: str, table: "pa.Table", *, request_id: str | None = None,
         wait: float = 30, timeout: float = 60, retry_for: float = CAPACITY_RETRY_S,
     ) -> dict[str, Any]:
-        """Insert a ``(ts, ref_name, value)`` Arrow table.
+        """Insert a ``(ts, ref_name, value)`` Arrow table. Tables over 10,000
+        rows are split into requests in order, each atomic.
 
         Reuse ``request_id`` and the exact normalized payload on retry.
         Deduplication follows Escapement's bounded native retry window.

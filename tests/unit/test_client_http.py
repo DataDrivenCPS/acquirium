@@ -287,8 +287,8 @@ def test_arrow_insert_is_resent_whole_with_its_request_id(offline):
     table = pa.table({"ts": pa.array([datetime(2026, 1, 1, tzinfo=timezone.utc)], pa.timestamp("us", tz="UTC")),
                       "ref_name": ["temp"], "value": [1.0]})
     with patch.object(offline._http, "post", side_effect=[_response(503, b'{"detail": "full"}'),
-                                                          _response(200, b'{"ok": true}')]) as post:
-        assert offline.insert_timeseries_arrow("src", table, request_id="r1") == {"ok": True}
+                                                          _response(200, b'{"rows_inserted": 1, "receipts": []}')]) as post:
+        assert offline.insert_timeseries_arrow("src", table, request_id="r1")["rows_inserted"] == 1
     first, second = post.call_args_list
     assert first.kwargs["data"] == second.kwargs["data"] and len(first.kwargs["data"]) > 0
     assert first.kwargs["headers"]["X-Acquirium-Request-Id"] == "r1"
