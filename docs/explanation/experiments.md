@@ -57,7 +57,7 @@ Metadata describes a variable, run, or stream annotation. For example,
 `scenario="baseline"` makes a run searchable. Values passed to `record()` are
 the inputs, outputs, and events produced by the calculation.
 
-Metadata keys follow the [shared metadata rules](../how-to/attach-metadata.md).
+Metadata keys follow the [rules of `insert_metadata`](../reference/client/metadata.md#acquiriuminsert_metadata).
 Built-in keys such as `unit` have semantic meanings: `"kW"` and `"KiloW"`
 resolve to the same QUDT unit. Top-level nulls and empty containers omit run
 metadata fields. Variable user metadata, JSON observations, and log values

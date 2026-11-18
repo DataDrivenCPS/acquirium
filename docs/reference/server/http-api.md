@@ -19,6 +19,8 @@ and experiment runs return 404.
 
 Returns `{"ok": true}` when the server is running.
 
+Note that the drivers and apps of the config file are started after this endpoint answers, so they may still be starting. [`GET /drivers/list`](#get-driverslist) lists the drivers and [`GET /materialization/dag`](#get-materializationdag) shows the state of the apps.
+
 ### `GET /graph_version`
 
 Returns the store-owned source-data generation and the state of the derived

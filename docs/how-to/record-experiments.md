@@ -504,8 +504,8 @@ compared = run_samples.join_asof(
 ).rename({"value": "run", "flow": "site"})
 ```
 
-See [Load a plant model](load-a-plant-model.md) and
-[A driver against an existing plant model](../tutorials/driver-with-a-plant-model.md)
+See [Inserting a plant model](../tutorials/inserting-plant-model.md) and
+[Explore a model](explore-a-model.md)
 for ways to find the available properties.
 
 ## Refer to stored input data

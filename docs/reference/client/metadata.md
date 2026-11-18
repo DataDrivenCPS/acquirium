@@ -22,7 +22,7 @@ Note that text is matched exactly by default: `"gal/min"` and `"degC"` match bec
 Acquirium.insert_metadata(uri, values)
 ```
 
-Attaches metadata to one node. Writing a key replaces its previous value. Keys that are not mentioned stay as they are. The metadata is removed when the node is removed from the graph.
+Attaches metadata to one node. Writing a key replaces its previous value, including every nested value under it. Keys that are not mentioned stay as they are. The metadata is removed when the node is removed from the graph.
 
 **Parameters**
 
@@ -32,6 +32,7 @@ Attaches metadata to one node. Writing a key replaces its previous value. Keys t
   - A value is a `str`, `int`, `float`, `bool`, `date`, `datetime` or `URIRef`, or a `dict` or `list` of those. A nested value is addressed with dots: `{"product_info": {"year": 2019}}` gives `product_info.year`, and the first item of a list `tags` is `tags.0`.
   - `None`, an empty `dict` or an empty `list` removes the key.
   - A built-in key, such as `unit`, `quantity_kind`, `medium`, `substance`, `label` or `type`, is written as the graph statement that key stands for. Text given for a built-in key that holds a URI is matched to one, so `{"unit": "gal/min"}` stores the unit's URI.
+  - Be aware that a built-in key written here does not replace a value that the plant model or `register_streams` gave. Writing `unit` on a property that already has a unit leaves the property with two units, and `metadata()` returns one row for each. Writing `None` removes only the value that `insert_metadata` wrote.
   - A string that is a URI is stored as a link when it starts with a namespace the graph knows. Otherwise it is stored as text. Pass a `URIRef` to store a link in every case.
 
 **Returns**
