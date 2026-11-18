@@ -1821,7 +1821,10 @@ class Query:
         lines = ["Query"]
         for node in graph.nodes.values():
             data = graph.data_nodes.get(node.id)
-            parts = ["measurement" if node.constraints.get("is_data_node") else "entity"]
+            parts = ["measurement" if node.constraints.get("is_data_node")
+                     else "property" if node.constraints.get("is_property_node") else "entity"]
+            if node.constraints.get("has_stream") is not None:
+                parts.append("with a stream" if node.constraints["has_stream"] else "without a stream")
             if node.constraints.get("rdf_class"):
                 parts.append(_local_name(node.constraints["rdf_class"]))
             if node.constraints.get("instance_uri"):
@@ -1831,7 +1834,7 @@ class Query:
                 source = graph.aliases_reverse.get(edge.source_id, edge.source_id)
                 if edge.direction:
                     parts.append(f"{edge.direction} of {source}")
-                elif node.constraints.get("is_data_node"):
+                elif node.constraints.get("is_data_node") or node.constraints.get("is_property_node"):
                     parts.append(f"of {source}")
                 else:
                     parts.append(f"related to {source}")
@@ -2098,6 +2101,70 @@ class Query:
             return self.client.compact_uri(uri)
         except Exception:
             return str(uri)
+
+
+def _property(self, *, frm: Optional[str] = None, alias: Optional[str] = None,
+              has_stream: Optional[bool] = None, include_connection_points: bool = True,
+              uri: "str | URIRef | None" = None, **attrs: Any) -> "Query":
+    """Add a property node to the pattern and point at it.
+
+    A property is one measured quantity of the plant, whether or not a
+    stream holds its data. On an **empty query** this is the root form,
+    every property the graph knows (default alias ``"property"``)::
+
+        aq.query().property()                    # every property
+        aq.query().property(has_stream=False)    # the ones without a stream
+
+    After an entity it selects the properties of that entity, on the
+    entity itself and on its connection points (pass
+    ``include_connection_points=False`` for the entity's own only)::
+
+        aq.query().entity("Pump").property(has_stream=False)
+
+    ``has_stream=True`` keeps the properties a stream is connected to,
+    ``False`` the ones without, ``None`` (default) both. ``uri`` pins one
+    property; extra keyword arguments are attribute filters, same as
+    ``where()``. A property node carries no data; use ``measurement()``
+    to read streams.
+    """
+    from acquirium.Client.explore.relations import reverse_chains
+
+    if has_stream is not None and not isinstance(has_stream, bool):
+        raise ValueError(f"property: has_stream must be True, False or None, got {has_stream!r}")
+    g = self.query_graph
+    instance_uri = self._normalize_instance_uri(uri)
+    constraints: Dict[str, Any] = {"is_property_node": True}
+    if has_stream is not None:
+        constraints["has_stream"] = has_stream
+    new_id = self._next_id()
+    if frm is None and not g.nodes:
+        if alias is not None:
+            self._require_free_alias(g, alias, verb="property")
+        g = g.with_node(QueryNode(id=new_id, alias=alias if alias is not None else "property",
+                                  constraints=constraints))
+    else:
+        src_id = self._source_id(frm, verb="property")
+        if src_id in g.data_nodes:
+            raise ValueError("property: the source node is a measurement; start from an entity")
+        a = (self._require_free_alias(g, alias, verb="property") if alias is not None
+             else self._unique_alias(g, f"{self._src_alias(src_id)}_property"))
+        chains = reverse_chains(RELATIONS["entity"])
+        if not include_connection_points:
+            chains = tuple(c for c in chains
+                           if not any(p.lstrip("^") == str(S223.hasConnectionPoint) for p, _ in c))
+        g = g.with_node(QueryNode(id=new_id, alias=a, constraints=constraints))
+        g = g.with_edge(QueryEdge(source_id=src_id, target_id=new_id, hops=1,
+                                  relation=chains, relation_name="property"),
+                        new_pointer=new_id)
+    g = self._pin_uri(g, [new_id], instance_uri)
+    if attrs:
+        g = self._apply_attrs(g, [new_id], self._resolve_attr_values(attrs))
+    return self._with_graph(g)
+
+
+# Assigned here, not defined in the class body, where the name would shadow
+# the ``property`` builtin for every decorator after it.
+Query.property = _property
 
 
 def _local_name(value: Any) -> str:

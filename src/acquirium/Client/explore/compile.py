@@ -554,6 +554,26 @@ def _node_constraint_clauses(v: str, node, registry: Mapping = REGISTRY) -> List
             f"{typ} <http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{rdf_class}> . "
             f"}} }}"
         )
+    if (node.constraints or {}).get("is_property_node"):
+        # A property: typed as one (subclass-closed, fenced like rdf_class
+        # above), the object of s223:hasProperty, or a node with a stream.
+        # The last two cover a model whose ontology is not loaded and the
+        # property Acquirium generates for a stream.
+        typ, owner, ext = f"{v}_ptyp", f"{v}_pown", f"{v}_pext"
+        clauses.append(
+            f"{{ {{ {v} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> {typ} . "
+            f"{{ SELECT DISTINCT {typ} WHERE {{ "
+            f"{typ} <http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{S223.Property}> . }} }} }} "
+            f"UNION {{ {owner} <{S223.hasProperty}> {v} . }} "
+            f"UNION {{ {v} <{HAS_EXTERNAL_REFERENCE}> {ext} . }} }}"
+        )
+        clauses.append(f"FILTER(isIRI({v}))")
+        has_stream = node.constraints.get("has_stream")
+        if has_stream is not None:
+            clauses.append(
+                f"FILTER {'EXISTS' if has_stream else 'NOT EXISTS'} "
+                f"{{ {v} <{HAS_EXTERNAL_REFERENCE}> {v}_pstream . }}"
+            )
     for name, aval in ((node.constraints or {}).get("attrs") or {}).items():
         clauses.extend(_attr_clauses(v, registry[name], aval))
     clauses.extend(_expr_clauses(v, (node.constraints or {}).get("exprs"), registry))

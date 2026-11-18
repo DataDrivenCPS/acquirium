@@ -443,6 +443,64 @@ class TestMetadataCompaction:
         assert client.compact_uri.call_count == 4          # a1, a2, p1, p2, not 8 cells
 
 
+class TestProperty:
+    HAS_REF = "<https://brickschema.org/schema/Brick/ref#hasExternalReference>"
+    HAS_PROPERTY = "<http://data.ashrae.org/standard223#hasProperty>"
+
+    def test_root_form_selects_every_property(self):
+        b = q().property()
+        g = b.query_graph
+        assert g.nodes[0].constraints == {"is_property_node": True}
+        assert g.aliases["property"] == 0 and not g.data_nodes and not g.edges
+        sparql = b.to_sparql()
+        prepareQuery(sparql)
+        assert "subClassOf>* <http://data.ashrae.org/standard223#Property>" in sparql
+        assert f"?v0_pown {self.HAS_PROPERTY} ?v0" in sparql
+        assert f"?v0 {self.HAS_REF} ?v0_pext" in sparql
+        assert "FILTER(isIRI(?v0))" in sparql
+        assert "EXISTS" not in sparql
+
+    @pytest.mark.parametrize("has_stream, clause", [(True, "FILTER EXISTS"), (False, "FILTER NOT EXISTS")])
+    def test_has_stream_filters_on_the_stream_link(self, has_stream, clause):
+        b = q().property(has_stream=has_stream)
+        assert b.query_graph.nodes[0].constraints == {"is_property_node": True, "has_stream": has_stream}
+        sparql = b.to_sparql()
+        prepareQuery(sparql)
+        assert f"{clause} {{ ?v0 {self.HAS_REF} ?v0_pstream . }}" in sparql
+
+    def test_has_stream_must_be_a_bool(self):
+        with pytest.raises(ValueError, match="has_stream must be True, False or None"):
+            q().property(has_stream="no")
+
+    def test_after_an_entity_selects_its_properties(self):
+        b = q().entity(CLS_A, alias="a").property(has_stream=False)
+        g = b.query_graph
+        assert g.aliases["a_property"] == 1 and g.current_pointer == 1
+        assert g.edges[0].relation_name == "property"
+        sparql = b.to_sparql()
+        prepareQuery(sparql)
+        assert f"?v0 {self.HAS_PROPERTY} ?v1" in sparql
+        assert "hasConnectionPoint" in sparql
+
+    def test_include_connection_points_false_keeps_own_properties(self):
+        sparql = q().entity(CLS_A, alias="a").property(include_connection_points=False).to_sparql()
+        prepareQuery(sparql)
+        assert "hasConnectionPoint" not in sparql
+
+    def test_uri_pins_one_property(self):
+        sparql = q().property(uri=INST).to_sparql()
+        assert f"VALUES ?v0 {{ <{INST}> }}" in sparql
+
+    def test_a_measurement_cannot_be_the_source(self):
+        with pytest.raises(ValueError, match="source node is a measurement"):
+            q().measurement().property()
+
+    def test_summary_names_the_node(self):
+        assert repr(q().property(has_stream=False)) == "Query\n  property: property, without a stream"
+        assert repr(q().entity(CLS_A, alias="a").property()) == (
+            "Query\n  a: entity, TypeA\n  a_property: property, of a")
+
+
 class TestDisplay:
     def _client(self, rows):
         from unittest.mock import MagicMock
