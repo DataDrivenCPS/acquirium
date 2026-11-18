@@ -1010,6 +1010,15 @@ def metadata_documents(subjects: Annotated[list[str], Body()]) -> dict[str, str]
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
+@app.post("/metadata/asserted")
+def metadata_asserted(subjects: Annotated[list[str], Body()]) -> dict[str, list[list[str]]]:
+    """What each source wrote on the given nodes, the metadata graph left out."""
+    try:
+        return app.state.manager.graph_store.asserted_values(subjects)
+    except (TypeError, ValueError, RuntimeError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
 class ResolveStorageKeysRequest(BaseModel):
     uris: list[str]
 

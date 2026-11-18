@@ -32,7 +32,9 @@ Attaches metadata to one node. Writing a key replaces its previous value, includ
   - A value is a `str`, `int`, `float`, `bool`, `date`, `datetime` or `URIRef`, or a `dict` or `list` of those. A nested value is addressed with dots: `{"product_info": {"year": 2019}}` gives `product_info.year`, and the first item of a list `tags` is `tags.0`.
   - `None`, an empty `dict` or an empty `list` removes the key.
   - A built-in key, such as `unit`, `quantity_kind`, `medium`, `substance`, `label` or `type`, is written as the graph statement that key stands for. Text given for a built-in key that holds a URI is matched to one, so `{"unit": "gal/min"}` stores the unit's URI.
-  - Be aware that a built-in key written here does not replace a value that the plant model or `register_streams` gave. Writing `unit` on a property that already has a unit leaves the property with two units, and `metadata()` returns one row for each. Writing `None` removes only the value that `insert_metadata` wrote.
+  - On a property, `unit`, `quantity_kind`, `medium` and `substance` follow the same rule as [`register_streams`](streams.md#acquiriumregister_streams):
+    - A property that Acquirium generated for a stream holds one value. The new value replaces the old one, also when `register_streams` wrote it. `None` removes it. The same holds for `label`.
+    - On a property of the plant model, a value that the model or a stream registration wrote stays. A different value raises `ValueError`, and nothing is written. A key the property does not have yet is added.
   - A string that is a URI is stored as a link when it starts with a namespace the graph knows. Otherwise it is stored as text. Pass a `URIRef` to store a link in every case.
 
 **Returns**

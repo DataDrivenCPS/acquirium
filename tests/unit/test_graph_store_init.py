@@ -265,3 +265,25 @@ def test_a_generated_name_is_never_bound(tmp_path, monkeypatch):
         assert bound["acq"] == "urn:acquirium#"
     finally:
         store.close()
+
+
+def test_asserted_values_name_the_source_and_leave_the_metadata_graph_out(tmp_path, monkeypatch):
+    """insert_metadata needs to tell a value the plant model or a stream
+    registration wrote from one it wrote itself."""
+    store = _real_store(tmp_path, monkeypatch)
+    try:
+        def write(source_id: str, value: str) -> None:
+            store.source_dataset.graph(store.source_graph_uri(source_id)).parse(
+                data=f"<urn:t:n> <urn:t:p> <urn:t:{value}> .", format="turtle"
+            )
+
+        write("plant", "a")
+        write("scada", "b")
+        write("metadata", "c")
+        assert sorted(store.asserted_values(["urn:t:n", "urn:t:missing"])["urn:t:n"]) == [
+            ["urn:t:p", "urn:t:a", "plant"],
+            ["urn:t:p", "urn:t:b", "scada"],
+        ]
+        assert store.asserted_values(["urn:t:missing"]) == {"urn:t:missing": []}
+    finally:
+        store.close()

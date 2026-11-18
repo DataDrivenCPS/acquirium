@@ -17,8 +17,8 @@ from acquirium.internals.models import (
     looks_like_uri,
 )
 from acquirium.internals.internals_namespaces import *
-from acquirium.Client.explore.attributes import ATTR_NS, RESOLVE_MIN_SCORE
-from acquirium.Client.metadata import plan_write, update_text
+from acquirium.Client.explore.attributes import ATTR_NS, REGISTRY, RESOLVE_MIN_SCORE, raw_predicate
+from acquirium.Client.metadata import is_uri, plan_write, update_text
 from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
 from acquirium.Storage.values import normalize_value_kind, normalize_value_mode
 from rdflib import Graph, URIRef, Literal
@@ -69,6 +69,25 @@ from acquirium.StreamMetadata import (
 # Fields a stream registration already takes at top level; a ``metadata``
 # key naming one of them is merged into the stream.
 STREAM_FIELDS = frozenset({"unit", "quantity_kind", "medium", "substance", "data_source", "label"})
+
+
+# Built-in keys of a property that hold one value: see ``_settle_builtins``.
+SETTLED_KEYS = ("unit", "quantity_kind", "medium", "substance", "label")
+
+
+def _builtin_removal(nodes: Mapping[str, Iterable[str]]) -> str:
+    """A SPARQL update removing built-in keys from nodes, ``{node: [key]}``:
+    every predicate the key is read from, and the text it was resolved from."""
+    ops = []
+    for node, keys in nodes.items():
+        predicates = [
+            pred for key in dict.fromkeys(keys)
+            for pred in (*REGISTRY[key].predicates, raw_predicate(key))
+        ]
+        if predicates:
+            terms = " || ".join(f"?p = <{pred}>" for pred in predicates)
+            ops.append(f"DELETE {{ <{node}> ?p ?o }}\nWHERE {{\n  <{node}> ?p ?o .\n  FILTER({terms})\n}}")
+    return " ;\n".join(ops)
 
 
 def _split_stream_metadata(stream: dict) -> tuple[dict, dict]:
@@ -276,6 +295,7 @@ class AcquiriumClient:
         Fetch the full timeseries payload and return a single Polars DataFrame.
         Best for small to medium responses.
         """
+        value_mode = normalize_value_mode(value_mode)
         url = f"{self.base_url}/timeseries"
         params = {
             "uri": uri,
@@ -295,7 +315,6 @@ class AcquiriumClient:
                 reader = ipc.RecordBatchStreamReader(r.raw)
                 # Collect all batches into a single table
                 tables = [pl.from_arrow(batch) for batch in reader]
-        value_mode = normalize_value_mode(value_mode)
                 # The Arrow reader stops at the IPC end-of-stream marker and
                 # leaves the HTTP chunked terminator unread, so urllib3 would
                 # close the socket instead of returning it to the pool. Drain
@@ -327,6 +346,7 @@ class AcquiriumClient:
         This requires the server to return a *single* Arrow IPC stream that contains
         multiple record batches (not multiple concatenated streams).
         """
+        value_mode = normalize_value_mode(value_mode)
         url = f"{self.base_url}/timeseries"
         params = {
             "uri": uri,
@@ -346,7 +366,6 @@ class AcquiriumClient:
             reader = ipc.RecordBatchStreamReader(r.raw)
 
             for batch in reader:
-        value_mode = normalize_value_mode(value_mode)
                 # batch is a pyarrow.RecordBatch; convert to Polars
                 yield pl.from_arrow(batch)
             # Drain to EOF so the pooled connection is reused (see timeseries_df).
@@ -834,6 +853,24 @@ class AcquiriumClient:
             return {}
         return dict(zip(result["columns"], rows[0]))
 
+    def _builtin_values(self, property_uri: str) -> dict[str, set[str]]:
+        """``{key: {value, ...}}`` for the unit, quantity kind, medium and
+        substance of a property, read from every predicate the key has
+        (``insert_metadata`` writes the medium of a property with another
+        predicate than a registration does)."""
+        keys = {
+            pred: key for key in POINT_FIELD_PREDICATES for pred in REGISTRY[key].predicates
+        }
+        terms = " ".join(f"<{pred}>" for pred in keys)
+        result = self.sparql_query(
+            f"SELECT ?p ?o WHERE {{ VALUES ?p {{ {terms} }} <{property_uri}> ?p ?o . }}",
+            include_dependencies=False,
+        )
+        found: dict[str, set[str]] = {}
+        for pred, value in result.get("rows") or []:
+            found.setdefault(keys[str(pred)], set()).add(str(value))
+        return found
+
     def _stream_properties(self, stream_uris: Iterable[str]) -> dict[str, list[str]]:
         """``{stream_uri: [property_uri, ...]}`` for the streams the graph
         links to a property; a stream without one is left out."""
@@ -962,6 +999,9 @@ class AcquiriumClient:
         relabeled: dict[str, list[str]] = {}
         # generated properties replaced by a plant property, per source
         replaced: dict[str, list[str]] = {}
+        # built-in keys of a generated property that get a new value, per
+        # source: {source_id: {node: [key, ...]}}
+        rewritten: dict[str, dict[str, list[str]]] = {}
         for stream, extra in items:
             source_id = stream["source_id"]
             graph = graphs.setdefault(source_id, Graph())
@@ -999,6 +1039,19 @@ class AcquiriumClient:
             }
             resolved = self.resolve_property_metadata(meta) if meta else {}
             existing = self._property_metadata(str(property_uri)) if property_uri is not None else {}
+            if property_uri is None and generated in properties:
+                # Registered before, still on its own. The property is
+                # Acquirium's, so a new value replaces the old one (as
+                # insert_metadata does) instead of being checked against it.
+                held = self._builtin_values(generated)
+                changed = [
+                    f for f in POINT_FIELD_PREDICATES
+                    if held.get(f)
+                    and (resolved.get(f) is not None or is_uri(stream.get(f)))
+                    and held[f] != {str(_coerce_resolved(resolved, f, stream.get(f)))}
+                ]
+                if changed:
+                    rewritten.setdefault(source_id, {})[generated] = changed
             # A property keeps one label per source: a given label replaces
             # the ones this source wrote, and the stream_name default is
             # only used while the generated property has no label.
@@ -1031,6 +1084,23 @@ class AcquiriumClient:
                     ),
                     source_id=source_id,
                 )
+            removal = _builtin_removal(rewritten.get(source_id, {}))
+            if removal:
+                self.sparql_update(removal, source_id=source_id)
+        # A value insert_metadata wrote on a generated property is replaced
+        # as well, so the property is left with the one value of this call.
+        own = {
+            node: keys for nodes in rewritten.values() for node, keys in nodes.items()
+        }
+        for source_id, nodes in relabeled.items():
+            for node in nodes:
+                if node.endswith("__point"):
+                    own.setdefault(node, [])
+                    own[node] = [*own[node], "label"]
+        removal = _builtin_removal(own)
+        if removal:
+            self.sparql_update(removal, source_id=METADATA_SOURCE_ID)
+        for source_id, graph in graphs.items():
             if len(graph):
                 self.insert_graph(
                     graph.serialize(format="turtle"),
@@ -1168,7 +1238,66 @@ class AcquiriumClient:
         if missing:
             raise ValueError(f"unknown node(s), not in any data graph: {missing}")
         writes = self._plan_metadata(subjects, roles)
+        for owner, nodes in self._settle_builtins(subjects, roles, writes).items():
+            self.sparql_update(_builtin_removal(nodes), source_id=owner)
         return {**self._write_metadata(writes), "nodes": len(writes)}
+
+    def asserted_values(self, subjects: Iterable[str]) -> dict[str, list[list[str]]]:
+        """``{node: [[predicate, value, source_id], ...]}``: what the plant
+        model and the stream registrations wrote on nodes, without what
+        ``insert_metadata`` wrote."""
+        response = self._http.post(f"{self.base_url}/metadata/asserted", json=list(subjects))
+        _raise_for_status(response)
+        return response.json()
+
+    def _settle_builtins(self, subjects: Mapping[str, Mapping[str, Any]],
+                         roles: Mapping[str, str], writes: list) -> dict[str, dict[str, list[str]]]:
+        """Apply the rule of ``register_streams`` to the built-in keys of a
+        property: unit, quantity kind, medium, substance and label.
+
+        - A property Acquirium generated for a stream holds one value: the
+          value another source wrote is removed. Returned as
+          ``{source_id: {node: [key, ...]}}`` for the caller to delete.
+        - On any other property the value of the plant model, or of the
+          stream registration that wrote it, stays. A different value
+          raises ``ValueError``. The label is left out of this check: a
+          property has one label per source.
+        """
+        wanted = {
+            uri: [key for key in SETTLED_KEYS if key in values]
+            for uri, values in subjects.items() if roles.get(uri) == "data"
+        }
+        wanted = {uri: keys for uri, keys in wanted.items() if keys}
+        if not wanted:
+            return {}
+        asserted = self.asserted_values(wanted)
+        planned = {str(w.subject): w for w in writes}
+        removals: dict[str, dict[str, list[str]]] = {}
+        for uri, keys in wanted.items():
+            rows = asserted.get(uri, [])
+            generated = any(pred == str(IS_DISCONNECTED) for pred, _, _ in rows)
+            for key in keys:
+                predicates = set(REGISTRY[key].predicates)
+                if generated:
+                    for pred, _, owner in rows:
+                        if pred in predicates or pred == raw_predicate(key):
+                            kept = removals.setdefault(owner, {}).setdefault(uri, [])
+                            if key not in kept:
+                                kept.append(key)
+                    continue
+                if key == "label" or subjects[uri][key] is None:
+                    continue
+                held = {value: owner for pred, value, owner in rows if pred in predicates}
+                given = [str(o) for s, p, o in planned[uri].triples if str(p) in predicates]
+                different = [value for value in given if value not in held]
+                if held and different:
+                    value, owner = next(iter(held.items()))
+                    raise ValueError(
+                        f"{key} mismatch for <{uri}>: it has <{value}>, written by "
+                        f"source {owner!r}, and insert_metadata gave <{different[0]}>. "
+                        "Change it where it was written"
+                    )
+        return removals
 
     def _plan_metadata(self, records: Mapping[str, Mapping[str, Any]],
                        roles: Mapping[str, str]) -> list:

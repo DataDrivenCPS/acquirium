@@ -140,9 +140,12 @@ def test_register_again_with_a_label_replaces_the_old_label():
     client.register_streams([{"source_id": "demo-source", "stream_name": "temp", "label": "Temperature"}])
 
     point = f"{compute_stream_uri('demo-source', 'temp')}__point"
-    update, kwargs = client.sparql_update.call_args[0][0], client.sparql_update.call_args[1]
-    assert update == f"DELETE WHERE {{ <{point}> <{RDFS.label}> ?label }}"
-    assert kwargs == {"source_id": "demo-source"}
+    own, metadata = client.sparql_update.call_args_list
+    assert own[0][0] == f"DELETE WHERE {{ <{point}> <{RDFS.label}> ?label }}"
+    assert own[1] == {"source_id": "demo-source"}
+    # the label insert_metadata may have written on the generated property goes too
+    assert f"?p = <{RDFS.label}>" in metadata[0][0] and f"<{point}>" in metadata[0][0]
+    assert metadata[1] == {"source_id": "metadata"}
     assert _registered_labels(client) == ["Temperature"]
 
 
@@ -467,3 +470,36 @@ def test_a_property_uri_given_as_a_curie_is_expanded():
     client._expand_curie.assert_called_once_with("plant:pressure")
     g = Graph().parse(data=client.insert_graph.call_args[0][0], format="turtle")
     assert (URIRef(_PLANT), HAS_EXTERNAL_REFERENCE, compute_stream_uri("demo-source", "pt")) in g
+
+
+def test_register_again_replaces_the_unit_of_a_generated_property():
+    """A stream registered on its own holds one unit: the new one replaces
+    the old one in its own graph and in the metadata graph."""
+    client = _client()
+    point = _point("temp")
+    stream_uri = str(compute_stream_uri("demo-source", "temp"))
+    client._stream_properties = MagicMock(return_value={stream_uri: [point]})
+    client._node_labels = MagicMock(return_value={point: ["temp"]})
+    client._builtin_values = MagicMock(return_value={"unit": {_MG_L}})
+
+    client.register_streams([{"source_id": "demo-source", "stream_name": "temp", "unit": _DEG_C}])
+
+    own, metadata = client.sparql_update.call_args_list
+    assert own[1] == {"source_id": "demo-source"} and metadata[1] == {"source_id": "metadata"}
+    for update in (own[0][0], metadata[0][0]):
+        assert f"DELETE {{ <{point}> ?p ?o }}" in update
+        assert "?p = <http://qudt.org/schema/qudt/hasUnit>" in update
+    client._units_compatible.assert_not_called()
+
+
+def test_register_again_with_the_same_unit_removes_nothing():
+    client = _client()
+    point = _point("temp")
+    stream_uri = str(compute_stream_uri("demo-source", "temp"))
+    client._stream_properties = MagicMock(return_value={stream_uri: [point]})
+    client._node_labels = MagicMock(return_value={point: ["temp"]})
+    client._builtin_values = MagicMock(return_value={"unit": {_MG_L}})
+
+    client.register_streams([{"source_id": "demo-source", "stream_name": "temp", "unit": _MG_L}])
+
+    client.sparql_update.assert_not_called()

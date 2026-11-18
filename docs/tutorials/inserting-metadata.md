@@ -22,7 +22,7 @@ Without a plant model, Acquirium creates this property when the stream is regist
 The values can be plain text, such as "mg/L" or "mass concentration".
 Acquirium matches the text to a standard unit or quantity kind.
 
-Registering a stream again adds to what is already there.
+Registering a stream again adds the new keys and replaces the ones that changed.
 The data of the stream is not touched.
 
 ```python

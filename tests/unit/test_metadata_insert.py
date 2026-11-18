@@ -236,6 +236,7 @@ def make_client(roles_rows, resolved=None):
     client.expand_uri = MagicMock(side_effect=expand)
     client.graph_version = MagicMock(return_value=1)
     client._namespace_uris = MagicMock(return_value=("urn:x#",))
+    client.asserted_values = MagicMock(return_value={})
     return client
 
 
@@ -529,3 +530,39 @@ class TestStore:
         store._prune_orphan_metadata.assert_not_called()
         store.insert_graph("<urn:x#new> a <urn:w#Valve> .", replace=True, graph_uri=PLANT)
         store._prune_orphan_metadata.assert_called_once()
+
+
+class TestBuiltinsHoldOneValue:
+    """insert_metadata follows the rule of register_streams for the unit,
+    quantity kind, medium, substance and label of a property."""
+
+    OTHER = "http://qudt.org/vocab/unit/KiloW"
+    DISCONNECTED = "urn:acquirium#isDisconnected"
+
+    def test_a_generated_property_loses_the_value_its_source_wrote(self):
+        client = make_client([[NODE, "urn:x#ref"]], resolved={"kW": self.OTHER})
+        client.asserted_values.return_value = {NODE: [
+            [self.DISCONNECTED, "true", "scada"],
+            [str(HAS_UNIT), UNIT, "scada"],
+        ]}
+        client.insert_metadata({NODE: {"unit": "kW"}})
+        first, second = client.sparql_update.call_args_list
+        assert first[1] == {"source_id": "scada"}
+        assert f"DELETE {{ <{NODE}> ?p ?o }}" in first[0][0] and f"?p = <{HAS_UNIT}>" in first[0][0]
+        assert second[1] == {"source_id": METADATA_SOURCE_ID}
+        assert f"<{NODE}> <{HAS_UNIT}> <{self.OTHER}>" in second[0][0]
+
+    def test_a_plant_property_keeps_its_value_and_a_different_one_raises(self):
+        client = make_client([[NODE, "urn:x#ref"]], resolved={"kW": self.OTHER, "mg/L": UNIT})
+        client.asserted_values.return_value = {NODE: [[str(HAS_UNIT), UNIT, "plant"]]}
+        with pytest.raises(ValueError, match="unit mismatch"):
+            client.insert_metadata({NODE: {"unit": "kW"}})
+        client.sparql_update.assert_not_called()
+        client.insert_metadata({NODE: {"unit": "mg/L"}})          # the same value is fine
+        assert client.sparql_update.call_count == 1
+
+    def test_a_plant_property_without_a_value_takes_one(self):
+        client = make_client([[NODE, "urn:x#ref"]], resolved={"kW": self.OTHER})
+        client.asserted_values.return_value = {NODE: []}
+        client.insert_metadata({NODE: {"unit": "kW"}})
+        assert client.sparql_update.call_args[1] == {"source_id": METADATA_SOURCE_ID}

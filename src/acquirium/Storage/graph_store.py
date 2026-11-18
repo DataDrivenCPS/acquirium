@@ -30,7 +30,7 @@ from acquirium._ontologies import (
     rename_ontology_iri,
 )
 from acquirium.Server.config import OntologySource
-from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI, METADATA_SOURCE_ID, SOURCE_GRAPH_PREFIX
+from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI, METADATA_SOURCE_ID, PLANT_SOURCE_ID, SOURCE_GRAPH_PREFIX
 from acquirium.Storage.graph_registry import source_graph_uri as _compute_source_graph_uri
 
 _logger = logging.getLogger("acquirium.graph_store")
@@ -1003,6 +1003,38 @@ class OxigraphGraphStore:
         from acquirium.Metadata import scan_subject_triples
         with self._lock:
             return scan_subject_triples(self.source_dataset.store._inner, subjects, graph_uri)
+
+    def asserted_values(self, subjects) -> dict[str, list[list[str]]]:
+        """What the data graphs other than the metadata graph say about nodes.
+
+        ``{subject: [[predicate, value, source_id], ...]}``, read from the
+        source quads without inference. It tells a value the plant model or
+        a stream registration wrote from one ``insert_metadata`` wrote, which
+        the query view cannot: there the graphs are one.
+        """
+        from urllib.parse import unquote
+
+        from pyoxigraph import NamedNode
+
+        metadata_graph = str(self.source_graph_uri(METADATA_SOURCE_ID))
+        owners = {str(self.main_graph_uri): PLANT_SOURCE_ID}
+        found: dict[str, list[list[str]]] = {}
+        with self._lock:
+            store = self.source_dataset.store._inner
+            for subject in subjects:
+                rows = found.setdefault(str(subject), [])
+                for quad in store.quads_for_pattern(NamedNode(str(subject)), None, None, None):
+                    graph = getattr(quad.graph_name, "value", None)
+                    if graph is None or graph == metadata_graph:
+                        continue
+                    if graph.startswith(SOURCE_GRAPH_PREFIX):
+                        owner = unquote(graph[len(SOURCE_GRAPH_PREFIX):])
+                    elif graph in owners:
+                        owner = owners[graph]
+                    else:
+                        continue
+                    rows.append([quad.predicate.value, quad.object.value, owner])
+        return found
 
     def flush_metadata(self):
         """Persist source writes before the recording ledger acknowledges them."""

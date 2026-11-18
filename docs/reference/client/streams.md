@@ -63,6 +63,8 @@ Keys of a stream dictionary:
 
 The old key `point_uri` is accepted for `property_uri`. The old key `ref_name` is deprecated: it is accepted for `stream_name` with a `FutureWarning`.
 
+A stream registered without `property_uri` holds one `unit`, `quantity_kind`, `medium` and `substance`. Registering it again with another value replaces the old one.
+
 When `property_uri` already has metadata in the graph, the values in the call are compared with it:
 
 - A key the property does not have yet is added.
