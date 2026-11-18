@@ -4,8 +4,6 @@ The code of the tutorial page "Running experiments".
 Run 5_a_full_example first, in the same folder. Every run of this script adds new runs to the study.
 """
 
-from datetime import datetime, timezone
-
 import acquirium as aq
 
 acq = aq.init()
@@ -56,8 +54,8 @@ run = study.start({"operator": "ana", "pump": "P1"})
 
 measured = run.annotate_stream(
     p1_power.stream_uri,
-    start=datetime(2025, 7, 1, tzinfo=timezone.utc),
-    end=datetime(2025, 7, 1, 3, tzinfo=timezone.utc),
+    start="2025-07-01",
+    end="2025-07-01 03:00",
 )
 df = measured.dataframe()
 

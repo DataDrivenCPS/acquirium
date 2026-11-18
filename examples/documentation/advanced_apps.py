@@ -5,8 +5,6 @@ Run 5_a_full_example first, in the same folder. The app itself is in plant_apps.
 """
 
 import time
-from datetime import datetime, timezone
-
 import acquirium as aq
 from plant_apps import PumpPowerKW
 
@@ -42,11 +40,11 @@ print(q.dataframe(limit=3))
 # Insert a new reading into one of the inputs, and give the app a few seconds.
 
 acq.insert_timeseries("csv-data", "P1-mechanical-power", [
-    (datetime(2026, 1, 1, tzinfo=timezone.utc), 1_200_000.0),
+    ("2026-01-01", 1_200_000.0),
 ])
 time.sleep(8)
 
-print(q.dataframe(start=datetime(2026, 1, 1, tzinfo=timezone.utc)))
+print(q.dataframe(start="2026-01-01"))
 
 # Changing and removing an app
 #
@@ -56,8 +54,8 @@ acq.deploy_app(PumpPowerKW)
 
 print(acq.reprocess_app(
     "pump-power-kw",
-    datetime(2025, 1, 1, tzinfo=timezone.utc),
-    datetime(2026, 1, 2, tzinfo=timezone.utc),
+    "2025-01-01",
+    "2026-01-02",
 ))
 
 # Remove the app.

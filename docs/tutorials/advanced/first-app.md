@@ -148,17 +148,15 @@ shape: (3, 3)
 Now insert a new reading into one of the inputs:
 
 ```python
-from datetime import datetime, timezone
-
 acq.insert_timeseries("csv-data", "P1-mechanical-power", [
-    (datetime(2026, 1, 1, tzinfo=timezone.utc), 1_200_000.0),
+    ("2026-01-01", 1_200_000.0),
 ])
 ```
 
 A few seconds later the output has the new value, in kilowatts:
 
 ```python
-q.dataframe(start=datetime(2026, 1, 1, tzinfo=timezone.utc))
+q.dataframe(start="2026-01-01")
 ```
 ```text
 shape: (1, 2)
@@ -185,8 +183,8 @@ To apply the new code to the old data as well, use `reprocess_app()` with a time
 ```python
 acq.reprocess_app(
     "pump-power-kw",
-    datetime(2025, 1, 1, tzinfo=timezone.utc),
-    datetime(2026, 1, 2, tzinfo=timezone.utc),
+    "2025-01-01",
+    "2026-01-02",
 )
 ```
 ```text

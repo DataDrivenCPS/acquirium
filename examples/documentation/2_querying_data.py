@@ -4,8 +4,6 @@ The code of the tutorial page "2 - Querying Data".
 Run 1_inserting_data first, in the same folder.
 """
 
-from datetime import datetime, timezone
-
 import acquirium as aq
 
 acq = aq.init()
@@ -41,8 +39,8 @@ print(acq.query().measurement(stream=tds).dataframe())
 # Selecting a time range
 
 print(q.dataframe(
-    start=datetime(2026, 8, 8, 10, 5, tzinfo=timezone.utc),
-    end=datetime(2026, 8, 8, 10, 10, tzinfo=timezone.utc),
+    start="2026-08-08 10:05",
+    end="2026-08-08 10:10",
 ))
 
 # The latest reading:

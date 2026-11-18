@@ -97,8 +97,6 @@ The model is kept in the `.acquirium` folder, so it is still there when you run 
 To connect a stream to the model, pass the URI of the property as `property_uri` when registering the stream:
 
 ```python
-from datetime import datetime, timezone
-
 acq.register_streams([{
     "source_id": "scada",
     "stream_name": "PT-101",
@@ -106,8 +104,8 @@ acq.register_streams([{
 }])
 
 acq.insert_timeseries("scada", "PT-101", [
-    (datetime(2026, 8, 8, 10, 0, tzinfo=timezone.utc), 5.1e6),
-    (datetime(2026, 8, 8, 10, 5, tzinfo=timezone.utc), 5.2e6),
+    ("2026-08-08 10:00", 5.1e6),
+    ("2026-08-08 10:05", 5.2e6),
 ])
 ```
 

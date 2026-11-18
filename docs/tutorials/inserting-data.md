@@ -64,10 +64,8 @@ response body: stream urn:acquirium#a98759dd-... is not registered
 Then insert rows as `(timestamp, value)` pairs:
 
 ```python
-from datetime import datetime, timezone
-
-rows = [(datetime(2026, 8, 8, 10, 0, tzinfo=timezone.utc), 412.0),
-        (datetime(2026, 8, 8, 10, 5, tzinfo=timezone.utc), 415.3)]
+rows = [("2026-08-08 10:00", 412.0),
+        ("2026-08-08 10:05", 415.3)]
 
 acq.insert_timeseries("lab-import", "effluent-tds", rows)
 ```
@@ -75,14 +73,15 @@ acq.insert_timeseries("lab-import", "effluent-tds", rows)
 {'ok': True, 'rows_inserted': 2}
 ```
 
+A timestamp is a text such as "2026-08-08 10:00", or a Python `datetime`.
 Timestamps without a timezone are taken as UTC.
 
 To insert into several streams at once, use `insert_timeseries_batch()` with a dictionary of `stream_name` to rows:
 
 ```python
 acq.insert_timeseries_batch("lab-import", {
-    "effluent-tds": [(datetime(2026, 8, 8, 10, 10, tzinfo=timezone.utc), 418.1)],
-    "effluent-ph":  [(datetime(2026, 8, 8, 10, 10, tzinfo=timezone.utc), 7.2)],
+    "effluent-tds": [("2026-08-08 10:10", 418.1)],
+    "effluent-ph":  [("2026-08-08 10:10", 7.2)],
 })
 ```
 ```text
@@ -90,6 +89,9 @@ acq.insert_timeseries_batch("lab-import", {
 ```
 
 Large inputs are split into several requests automatically, so you can pass the whole dataset in one call.
+
+To insert a CSV file, read it with a dataframe library such as Polars or pandas, and turn its columns into this dictionary.
+This is shown in [5 - A Full Example](a-full-example.md#inserting-the-data-of-the-file).
 
 For large inputs from dataframes or database connections, you can insert Arrow tables directly with `insert_timeseries_arrow()` for higher performance (see the [client reference](../reference/client/timeseries.md)).
 

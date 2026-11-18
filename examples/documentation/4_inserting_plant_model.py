@@ -3,8 +3,6 @@
 The code of the tutorial page "4 - Inserting a Plant Model".
 """
 
-from datetime import datetime, timezone
-
 import acquirium as aq
 
 acq = aq.init()
@@ -60,8 +58,8 @@ acq.register_streams([{
 }])
 
 acq.insert_timeseries("scada", "PT-101", [
-    (datetime(2026, 8, 8, 10, 0, tzinfo=timezone.utc), 5.1e6),
-    (datetime(2026, 8, 8, 10, 5, tzinfo=timezone.utc), 5.2e6),
+    ("2026-08-08 10:00", 5.1e6),
+    ("2026-08-08 10:05", 5.2e6),
 ])
 
 # The stream gets its unit and quantity kind from the model:

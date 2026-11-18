@@ -4,8 +4,6 @@ The code of the tutorial page "1 - Inserting Data".
 Run acquirium clear first, so the results match the page.
 """
 
-from datetime import datetime, timezone
-
 import acquirium as aq
 
 acq = aq.init()
@@ -27,16 +25,16 @@ acq.register_streams([
 
 # Insert timeseries data
 
-rows = [(datetime(2026, 8, 8, 10, 0, tzinfo=timezone.utc), 412.0),
-        (datetime(2026, 8, 8, 10, 5, tzinfo=timezone.utc), 415.3)]
+rows = [("2026-08-08 10:00", 412.0),
+        ("2026-08-08 10:05", 415.3)]
 
 print(acq.insert_timeseries("lab-import", "effluent-tds", rows))
 
 # Several streams at once:
 
 batch = {
-    "effluent-tds": [(datetime(2026, 8, 8, 10, 10, tzinfo=timezone.utc), 418.1)],
-    "effluent-ph":  [(datetime(2026, 8, 8, 10, 10, tzinfo=timezone.utc), 7.2)],
+    "effluent-tds": [("2026-08-08 10:10", 418.1)],
+    "effluent-ph":  [("2026-08-08 10:10", 7.2)],
 }
 
 print(acq.insert_timeseries_batch("lab-import", batch))

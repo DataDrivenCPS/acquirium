@@ -132,16 +132,14 @@ Run that page first, and run this page in the same folder.
 It records which data the run used, and gives that data back as a dataframe:
 
 ```python
-from datetime import datetime, timezone
-
 p1_power = acq.stream("csv-data", "P1-mechanical-power")
 
 run = study.start({"operator": "ana", "pump": "P1"})
 
 measured = run.annotate_stream(
     p1_power.stream_uri,
-    start=datetime(2025, 7, 1, tzinfo=timezone.utc),
-    end=datetime(2025, 7, 1, 3, tzinfo=timezone.utc),
+    start="2025-07-01",
+    end="2025-07-01 03:00",
 )
 df = measured.dataframe()
 df

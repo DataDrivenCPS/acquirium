@@ -82,7 +82,15 @@ acq.register_streams([
 ])
 ```
 
-Then insert the data, one list of `(timestamp, value)` pairs per stream:
+### Inserting the data of the file
+
+`insert_timeseries_batch()` takes a dictionary with one entry per stream: the `stream_name`, and the rows of the stream as a list of `(timestamp, value)` pairs.
+
+The file is a table with one column per stream, so each column is paired with the `time` column:
+
+- `data["time"].to_list()` is the list of the timestamps.
+- `data[name].to_list()` is the list of the values of one column.
+- `zip()` pairs the two lists row by row.
 
 ```python
 times = data["time"].to_list()
@@ -94,6 +102,9 @@ acq.insert_timeseries_batch("csv-data", {
 ```text
 {'ok': True, 'rows_inserted': 280320, 'batches': 6}
 ```
+
+[`read_csv()`](https://docs.pola.rs/api/python/stable/reference/api/polars.read_csv.html) and [`to_list()`](https://docs.pola.rs/api/python/stable/reference/series/api/polars.Series.to_list.html) are described in the Polars documentation.
+The same can be done with pandas, with [`pd.read_csv()`](https://pandas.pydata.org/docs/reference/api/pandas.read_csv.html) and `data[name].tolist()`.
 
 ## 3. Find what is not connected
 
@@ -309,11 +320,9 @@ shape: (1, 4)
 `dataframe()` works the same way as in [2 - Querying Data](querying-data.md):
 
 ```python
-from datetime import datetime, timezone
-
 q.dataframe(
-    start=datetime(2025, 7, 1, tzinfo=timezone.utc),
-    end=datetime(2025, 7, 1, 3, tzinfo=timezone.utc),
+    start="2025-07-01",
+    end="2025-07-01 03:00",
 )
 ```
 ```text

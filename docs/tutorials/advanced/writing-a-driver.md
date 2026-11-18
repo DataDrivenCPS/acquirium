@@ -217,7 +217,7 @@ We'll use the mapping of [5 - A Full Example](../a-full-example.md#4-connect-the
 Download [mapping.json](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/driver/mapping.json) and save it next to `acquirium.toml`.
 It has one entry per stream:
 
-```json
+```text
 {
   "intake-in-flow-rate-m3s": "wbs:intake-in-flow-rate-m3s",
   "intake-in-tds-concentration": "wbs:intake-in-tds-concentration",

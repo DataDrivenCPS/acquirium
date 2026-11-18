@@ -121,11 +121,9 @@ acq.query().measurement(stream=tds).dataframe()
 Both ends are included:
 
 ```python
-from datetime import datetime, timezone
-
 q.dataframe(
-    start=datetime(2026, 8, 8, 10, 5, tzinfo=timezone.utc),
-    end=datetime(2026, 8, 8, 10, 10, tzinfo=timezone.utc),
+    start="2026-08-08 10:05",
+    end="2026-08-08 10:10",
 )
 ```
 ```text

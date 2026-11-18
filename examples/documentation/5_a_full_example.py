@@ -8,8 +8,6 @@ Before each run, erase the stored data and create the example files:
     acquirium example init --force
 """
 
-from datetime import datetime, timezone
-
 import polars as pl
 
 import acquirium as aq
@@ -126,8 +124,8 @@ print(ro.measurement(direction="upstream", quantity_kind="pressure").metadata())
 # The pump power of the first three hours of July:
 
 print(q.dataframe(
-    start=datetime(2025, 7, 1, tzinfo=timezone.utc),
-    end=datetime(2025, 7, 1, 3, tzinfo=timezone.utc),
+    start="2025-07-01",
+    end="2025-07-01 03:00",
 ))
 
 # The same streams in kilowatts:
