@@ -46,6 +46,7 @@ import pyarrow.ipc as ipc
 import pyarrow as pa
 import polars as pl
 
+from acquirium.Storage.values import normalize_value_mode
 from acquirium.Server.insert_stats import insert_stats, start_insert_summary_thread
 from acquirium.Drivers.supervisor import DriverSupervisor
 
@@ -1115,7 +1116,11 @@ def get_timeseries(
     try:
         if order not in ("asc", "desc"):
             raise ValueError("order must be 'asc' or 'desc'")
-    
+        # Checked here, before the response starts. The store checks it too,
+        # but only once the stream is being read, where an error can no
+        # longer become a 400 and cuts the response instead.
+        normalize_value_mode(value_mode)
+
         start_dt = _parse_dt(start)
         end_dt = _parse_dt(end)
 

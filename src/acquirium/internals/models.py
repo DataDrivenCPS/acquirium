@@ -90,7 +90,9 @@ class StreamInsert(BaseModel):
     stream_name: str
     property_uri: str | None = None
     replace: bool = False
-    values: list[tuple[datetime, float | int | str | None]]
+    # ``bool`` is listed so a boolean reaches the store as one. Without it
+    # pydantic turns True into 1.0 here, and a text stream stores "1.0".
+    values: list[tuple[datetime, bool | float | int | str | None]]
     publication_id: str | None = None
 
 

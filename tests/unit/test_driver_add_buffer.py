@@ -434,3 +434,26 @@ def test_graceful_shutdown_flushes_after_stopping_producer(tmp_path):
     driver._shutdown()
     assert driver.stopped is True
     assert inserted(driver)[0][1]["value"] == ["ON"]
+
+
+class BooleanDriver(PollingIngestDriver):
+    def setup(self) -> None:
+        self.source_id = "sensors"
+        self.declare("running")
+        self.declare("alarm", value_kind="text")
+
+    def read(self) -> None:
+        pass
+
+
+def test_a_boolean_is_sent_as_a_number_unless_the_stream_is_text(tmp_path) -> None:
+    driver = make_driver(BooleanDriver, tmp_path)
+    ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    driver.add("running", True, ts)
+    driver.add("running", 3.5, ts)
+    driver.add("alarm", False, ts)
+    frame = driver.normalize_observations(driver._pending_frame(driver._pending))
+    assert frame["value"].to_list() == ["1.0", "3.5", "False"]
+
+    typed = pl.DataFrame({"ts": [ts, ts], "stream_name": ["running", "alarm"], "value": [True, True]})
+    assert driver.normalize_observations(typed)["value"].to_list() == ["1.0", "True"]

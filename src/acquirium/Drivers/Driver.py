@@ -572,6 +572,7 @@ class IngestDriver(Driver):
             columns.insert(0, "source_id")
         df = observations.select(columns).drop_nulls(subset=["ts", "stream_name"])
 
+        df = self._booleans_as_text(df)
         exprs = [
             self.to_timestamp(df["ts"]).alias("ts"),
             pl.col("stream_name").cast(pl.Utf8),
@@ -580,6 +581,42 @@ class IngestDriver(Driver):
         if "source_id" in df.columns:
             exprs.insert(0, pl.col("source_id").cast(pl.Utf8))
         return df.with_columns(exprs).drop_nulls(subset=["ts"])
+
+    def _booleans_as_text(self, df: "pl.DataFrame") -> "pl.DataFrame":
+        """Spell the booleans of ``value`` the way the server stores them.
+
+        Values travel as text. A boolean is the number 1 or 0, so it is sent
+        as "1.0"/"0.0", which a numeric or undeclared stream stores as a
+        number. A stream declared with ``value_kind="text"`` keeps
+        "True"/"False".
+        """
+        import polars as pl
+
+        from acquirium.Storage.values import normalize_value_kind
+
+        dtype = df["value"].dtype
+        if dtype == pl.Object:
+            if not any(isinstance(v, bool) for v in df["value"].to_list()):
+                return df
+        elif dtype != pl.Boolean:
+            return df
+
+        with self._declaration_lock:
+            text_streams = {
+                key for key, meta in self._declarations.items()
+                if normalize_value_kind(meta.get("value_kind") or "numeric") == "text"
+            }
+        sources = (
+            df["source_id"].to_list() if "source_id" in df.columns
+            else [self.source_id] * len(df)
+        )
+        values = [
+            value if not isinstance(value, bool)
+            else str(value) if (str(source), str(name)) in text_streams
+            else str(float(value))
+            for source, name, value in zip(sources, df["stream_name"].to_list(), df["value"].to_list())
+        ]
+        return df.with_columns(pl.Series("value", values, dtype=pl.Object))
 
     def to_timestamp(
         self,

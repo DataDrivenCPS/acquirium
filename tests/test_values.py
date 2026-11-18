@@ -10,7 +10,10 @@ import pytest
 
 from acquirium.Storage.values import (
     _prepare_value_columns_rowwise,
+    assign_stream_value_kind,
     prepare_value_columns,
+    split_value,
+    streams_with_numeric_values,
     typed_value_series,
 )
 
@@ -116,10 +119,11 @@ def test_typed_value_series_dtypes():
     assert typed_value_series([True, False]).dtype == pl.Boolean
     assert typed_value_series([]).dtype == pl.String
     assert typed_value_series([None, None]).dtype == pl.String
-    # Exact type scan: a bool among ints must NOT collapse to Int64 (True -> 1).
+    # A bool among other types takes the row-wise path: it is 1.0 under
+    # numeric kind and "True" under text kind, which no single string can be.
     s = typed_value_series([1, 2, True])
-    assert s.dtype == pl.String
-    assert s.to_list() == ["1", "2", "True"]
+    assert s.dtype == pl.Object
+    assert s.to_list() == [1, 2, True]
     # Mixed int/float stringifies so ints keep str() spelling ("2", not "2.0").
     s = typed_value_series([1.5, None, 2])
     assert s.dtype == pl.String
@@ -210,3 +214,21 @@ def test_presplit_frame_passes_through():
     )
     out = prepare_value_columns(df)
     assert out.columns == ["stream_uri", "ts", "numeric_value", "text_value"]
+
+
+@pytest.mark.unit
+def test_a_boolean_is_a_number_in_a_numeric_stream_and_text_in_a_text_stream():
+    assert split_value(True, "numeric") == (1.0, None)
+    assert split_value(False, "numeric") == (0.0, None)
+    assert split_value(True, "text") == (None, "True")
+    assert assign_stream_value_kind([True, False]) == "numeric"
+    frame = pl.DataFrame({
+        "stream_uri": ["a", "b"],
+        "ts": [0, 0],
+        "value": [True, False],
+        "value_kind": ["numeric", "text"],
+    })
+    assert prepare_value_columns(frame).select("numeric_value", "text_value").rows() == [
+        (1.0, None), (None, "False"),
+    ]
+    assert streams_with_numeric_values(frame) == {"a", "b"}

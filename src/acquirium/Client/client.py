@@ -20,7 +20,7 @@ from acquirium.internals.internals_namespaces import *
 from acquirium.Client.explore.attributes import ATTR_NS, RESOLVE_MIN_SCORE
 from acquirium.Client.metadata import plan_write, update_text
 from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
-from acquirium.Storage.values import normalize_value_kind
+from acquirium.Storage.values import normalize_value_kind, normalize_value_mode
 from rdflib import Graph, URIRef, Literal
 from rdflib.namespace import NamespaceManager, RDF, RDFS
 import logging
@@ -288,13 +288,14 @@ class AcquiriumClient:
         headers = {"Accept": "application/vnd.apache.arrow.stream"}
 
         with self._http.get(url, params=params, headers=headers, stream=True, timeout=timeout) as r:
-            r.raise_for_status()
+            _raise_for_status(r)
 
             try:
                 # r.raw is a file-like object
                 reader = ipc.RecordBatchStreamReader(r.raw)
                 # Collect all batches into a single table
                 tables = [pl.from_arrow(batch) for batch in reader]
+        value_mode = normalize_value_mode(value_mode)
                 # The Arrow reader stops at the IPC end-of-stream marker and
                 # leaves the HTTP chunked terminator unread, so urllib3 would
                 # close the socket instead of returning it to the pool. Drain
@@ -339,12 +340,13 @@ class AcquiriumClient:
 
         # stream=True means requests won't buffer the full body into memory
         with self._http.get(url, params=params, headers=headers, stream=True, timeout=timeout) as r:
-            r.raise_for_status()
+            _raise_for_status(r)
 
             # r.raw is a file-like object
             reader = ipc.RecordBatchStreamReader(r.raw)
 
             for batch in reader:
+        value_mode = normalize_value_mode(value_mode)
                 # batch is a pyarrow.RecordBatch; convert to Polars
                 yield pl.from_arrow(batch)
             # Drain to EOF so the pooled connection is reused (see timeseries_df).

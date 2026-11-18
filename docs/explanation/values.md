@@ -18,6 +18,7 @@ It decides where a value goes:
 
 - In a numeric stream, a value that can be read as a number is stored as a number. This includes text such as "13.0", for example from a CSV file. Any other text is stored as text.
 - In a text stream, every value is stored as text, numbers included.
+- A boolean is stored as the number `1.0` or `0.0` in a numeric stream, and as the text "True" or "False" in a text stream.
 - A missing value (`None`) is stored as a row with no value. In a numeric stream, an empty text and the texts "NaN" and "inf" are stored the same way.
 
 You do not have to give the value kind.

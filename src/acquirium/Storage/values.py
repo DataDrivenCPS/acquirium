@@ -54,9 +54,9 @@ def normalize_value_mode(value_mode: Any = None) -> ValueMode:
 
 
 def _is_numeric_value(value: Any, *, parse_numeric_strings: bool = True) -> bool:
-    if value is None or isinstance(value, bool):
+    if value is None:
         return False
-    if isinstance(value, (Real, Decimal)):
+    if isinstance(value, (Real, Decimal)):  # bool included: True is 1.0
         return True
     if not parse_numeric_strings or not isinstance(value, str):
         return False
@@ -97,8 +97,8 @@ def split_value(value: Any, value_kind: str | None = None) -> tuple[float | None
     if kind == "numeric":
         if isinstance(value, str) and not value.strip():
             return None, None
-        if isinstance(value, bool):
-            return None, str(value)
+        # A boolean is the number 1 or 0 in a numeric stream, and the text
+        # "True"/"False" in a text stream (the last line of this function).
         try:
             numeric_value = float(value)
         except (TypeError, ValueError, OverflowError):
@@ -123,7 +123,9 @@ def streams_with_numeric_values(df: pl.DataFrame) -> set[str]:
         numeric = value.str.strip_chars().cast(pl.Float64, strict=False).is_finite()
     elif dtype.is_numeric() or isinstance(dtype, pl.Decimal):
         numeric = value.cast(pl.Float64).is_finite()
-    elif dtype in (pl.Null, pl.Boolean):
+    elif dtype == pl.Boolean:
+        numeric = value.is_not_null()
+    elif dtype == pl.Null:
         return set()
     else:
         return {
@@ -139,15 +141,17 @@ def typed_value_series(values: list[Any]) -> pl.Series:
 
     Decides by an exact scan of the Python types rather than polars inference,
     which silently coerces bools mixed into ints (True -> 1) where
-    ``split_value`` stores text "True", and rejects a type mismatch that falls
-    outside its inference window.
+    ``split_value`` stores text "True" under text kind, and rejects a type
+    mismatch that falls outside its inference window.
 
     Only homogeneous batches get a native dtype. A batch mixing scalar types —
     e.g. one manager call spanning numeric and text streams — is stringified
     rather than sent to Object: ``str()`` is exactly what ``split_value``
     stores under text kind, and floats round-trip through repr under numeric
-    kind. Non-scalar types, and any batch holding an int too large for Int64,
-    take the Object (row-wise) path where their semantics are preserved
+    kind. Non-scalar types, a batch mixing booleans with other types (a boolean
+    is 1.0 under numeric kind and "True" under text kind, which no single
+    string can be), and any batch holding an int too large for Int64, take the
+    Object (row-wise) path where their semantics are preserved
     exactly.
     """
     types = {type(v) for v in values}
@@ -169,7 +173,7 @@ def typed_value_series(values: list[Any]) -> pl.Series:
         return pl.Series("value", values, dtype=pl.String)
     if types == {bool}:
         return pl.Series("value", values, dtype=pl.Boolean)
-    if types <= {str, float, int, bool}:
+    if types <= {str, float, int}:
         return pl.Series(
             "value",
             [None if v is None else str(v) for v in values],
@@ -208,9 +212,9 @@ def _prepare_value_columns_vectorized(df: pl.DataFrame) -> pl.DataFrame | None:
         numeric = pl.lit(None, dtype=pl.Float64)
         text = pl.lit(None, dtype=pl.String)
     elif dtype == pl.Boolean:
-        # Bools are never numeric; both kinds store str(value) ("True"/"False").
-        numeric = pl.lit(None, dtype=pl.Float64)
-        text = value.cast(pl.String).str.to_titlecase()
+        # 1.0/0.0 under numeric kind, str(value) ("True"/"False") under text.
+        numeric = pl.when(kind.eq("numeric")).then(value.cast(pl.Float64))
+        text = pl.when(kind.eq("text")).then(value.cast(pl.String).str.to_titlecase())
     elif dtype.is_numeric() or isinstance(dtype, pl.Decimal):
         parsed = value.cast(pl.Float64)
         numeric = pl.when(kind.eq("numeric") & parsed.is_finite()).then(parsed)
