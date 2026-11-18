@@ -27,9 +27,9 @@ They take the same three options to find it:
 
 | option | meaning |
 |---|---|
-| `--config`, `-c` `<path>` | an `acquirium.toml`; the address is read from its `[driver]` section (`server_url`, `server_port`) |
-| `--server-url` `<str>` | server host. Default: `driver.server_url` of the config, else `127.0.0.1` |
-| `--server-port` `<int>` | server port. Default: `driver.server_port` of the config, else `8000` |
+| `--config`, `-c` `<path>` | an `acquirium.toml`; the address is read from its `[driver]` section (`server_url`, `server_port`), else from its `[server]` section (`host`, `port`). Without the option, `./acquirium.toml` is used if it exists |
+| `--server-url` `<str>` | server host. Default: `driver.server_url` of the config, else `server.host`, else `127.0.0.1` |
+| `--server-port` `<int>` | server port. Default: `driver.server_port` of the config, else `server.port`, else `8000` |
 
 ## `acquirium server`
 

@@ -15,8 +15,8 @@ The `acquirium app` commands check an app and report on deployed apps from a ter
 | Option | Type | Default | Meaning |
 |---|---|---|---|
 | `--config`, `-c` | path | `./acquirium.toml` when it exists | Configuration file to read the server address from |
-| `--server-url` | text | `[driver] server_url`, else `127.0.0.1` | Host of the server |
-| `--server-port` | integer | `[driver] server_port`, else `8000` | Port of the server |
+| `--server-url` | text | `[driver] server_url`, else `[server] host`, else `127.0.0.1` | Host of the server |
+| `--server-port` | integer | `[driver] server_port`, else `[server] port`, else `8000` | Port of the server |
 | `--json` | flag | off | Print the full result as JSON |
 | `--help` | flag | | Show the help text |
 

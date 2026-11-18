@@ -142,11 +142,28 @@ def _server_base_url(
     server_url: Optional[str] = None,
     server_port: Optional[int] = None,
 ) -> str:
-    """Build the server base URL from CLI options, falling back to [driver] config."""
-    host, port, use_ssl, _ = _driver_connect_cfg(cfg.get("driver", {}))
+    """Build the server base URL from CLI options, falling back to the config."""
+    host, port, use_ssl = _config_server_address(cfg)
     host = server_url or host
     port = server_port or port
     return f"{'https' if use_ssl else 'http'}://{host}:{port}"
+
+
+def _config_server_address(cfg: dict) -> tuple[str, int, bool]:
+    """Where the server of a config is reached: (host, port, use_ssl).
+
+    ``[driver] server_url`` / ``server_port`` win. Without them the address
+    the server listens on, ``[server] host`` / ``port``, is used, so a config
+    that only sets ``[server] port`` reaches its own server.
+    """
+    server_cfg = cfg.get("server", {})
+    host, port, use_ssl, _ = _driver_connect_cfg(
+        cfg.get("driver", {}),
+        fallback_host=server_cfg.get("host") or "127.0.0.1",
+        # port 0 asks for any free port, which cannot be known from the file
+        fallback_port=int(server_cfg.get("port") or 8000),
+    )
+    return host, port, use_ssl
 
 
 def _push_drivers_to_server(
@@ -212,8 +229,8 @@ def _push_drivers_to_server(
 driver_app = typer.Typer(help="Manage drivers running on an Acquirium server.", add_completion=False)
 app.add_typer(driver_app, name="driver")
 
-_ServerUrlOpt = Annotated[Optional[str], typer.Option("--server-url", help="Server host (default: driver.server_url or 127.0.0.1)")]
-_ServerPortOpt = Annotated[Optional[int], typer.Option("--server-port", help="Server port (default: driver.server_port or 8000)")]
+_ServerUrlOpt = Annotated[Optional[str], typer.Option("--server-url", help="Server host (default: driver.server_url, else server.host, else 127.0.0.1)")]
+_ServerPortOpt = Annotated[Optional[int], typer.Option("--server-port", help="Server port (default: driver.server_port, else server.port, else 8000)")]
 
 
 @driver_app.command("start")
@@ -448,7 +465,7 @@ def app_check(
         from acquirium.Client.acquirium import Acquirium
         from acquirium.Materialization import local as local_check
 
-        host, port, use_ssl, _ = _driver_connect_cfg(cfg.get("driver", {}))
+        host, port, use_ssl = _config_server_address(cfg)
         client = Acquirium(server_url=server_url or host, server_port=server_port or port,
                            use_ssl=use_ssl)
         result = local_check.check_app(client, target, parameters=parameters,

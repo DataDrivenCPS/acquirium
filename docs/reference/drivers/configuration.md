@@ -80,7 +80,7 @@ These keys are read from the `[driver]` table only.
 | `server_port` | `int` | the port the server listens on | Port of the server |
 | `use_ssl` | `bool` | `false` | Use `https` |
 
-The server uses them as the address its drivers connect back to. The commands `acquirium driver ...` and `acquirium app ...` use them as the address of the server, with port `8000` when `server_port` is not set. See [the server CLI reference](../server/cli.md).
+The server uses them as the address its drivers connect back to. The commands `acquirium driver ...` and `acquirium app ...` use them as the address of the server. When they are not set, `[server] host` and `port` are used, and port `8000` when neither is set. See [the server CLI reference](../server/cli.md).
 
 ## The `spec` value
 
