@@ -150,8 +150,11 @@ class Acquirium:
             source_id=source_id,
         )
 
-    def insert_metadata(self, uri: str | URIRef, values: Mapping[str, Any]) -> dict[str, Any]:
+    def insert_metadata(self, uri: "str | URIRef | Stream", values: Mapping[str, Any]) -> dict[str, Any]:
         """Attach metadata to one node (entity or measurement) by URI or CURIE.
+
+        A stream handle from ``aq.stream()`` is accepted in place of the URI:
+        the metadata is written on the property the stream is linked to.
 
         ``values`` is a plain map. A key that names a built-in attribute
         (``unit``, ``medium``, ``label``, ``type``, ...) is written with that
@@ -171,6 +174,8 @@ class Acquirium:
         Writing a key replaces its previous value; ``None`` removes it. Keys
         not mentioned stay. Metadata lives as long as the node does.
         """
+        if isinstance(uri, Stream):
+            uri = self.client.stream_property(uri.stream_uri)
         return self.client.insert_metadata({str(uri): values})
 
     def sparql_update(self, update: str, *, source_id: str) -> dict[str, Any]:
@@ -453,8 +458,11 @@ class Acquirium:
     def remove_app(self, name: str) -> dict[str, Any]:
         return self.client.remove_app(name)
 
-    def reprocess_app(self, name: str, start: datetime, end: datetime) -> dict[str, Any]:
-        """Recompute a retained output interval without resetting ingestion progress."""
+    def reprocess_app(self, name: str, start: "datetime | str", end: "datetime | str") -> dict[str, Any]:
+        """Recompute a retained output interval without resetting ingestion progress.
+
+        ``start`` and ``end`` are datetimes or texts such as ``"2025-01-01"``;
+        a time without a timezone is read as UTC."""
         return self.client.reprocess_app(name, start, end)
 
     def check_app(

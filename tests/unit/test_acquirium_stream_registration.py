@@ -503,3 +503,22 @@ def test_register_again_with_the_same_unit_removes_nothing():
     client.register_streams([{"source_id": "demo-source", "stream_name": "temp", "unit": _MG_L}])
 
     client.sparql_update.assert_not_called()
+
+
+def test_metadata_on_a_stream_is_written_on_its_property():
+    from acquirium.Client.streams import Stream
+
+    client = _client()
+    stream_uri = str(compute_stream_uri("demo-source", "temp"))
+    client._stream_properties = MagicMock(return_value={stream_uri: [_point("temp")]})
+    client.insert_metadata = MagicMock(return_value={"ok": True})
+
+    Stream(stream_uri, client).insert_metadata({"sampled_by": "day shift"})
+    client.insert_metadata.assert_called_once_with({_point("temp"): {"sampled_by": "day shift"}})
+
+    client._stream_properties = MagicMock(return_value={})
+    with pytest.raises(ValueError, match="is not registered"):
+        client.stream_property(stream_uri)
+    client._stream_properties = MagicMock(return_value={stream_uri: ["urn:a", "urn:b"]})
+    with pytest.raises(ValueError, match="several properties"):
+        client.stream_property(stream_uri)

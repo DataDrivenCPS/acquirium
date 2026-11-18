@@ -26,7 +26,7 @@ Attaches metadata to one node. Writing a key replaces its previous value, includ
 
 **Parameters**
 
-- `uri` (`str` or `URIRef`): the node, as a full URI or as a short form such as `"ex:pump-1"` whose prefix the graph defines. The node must already be in the graph.
+- `uri` (`str`, `URIRef` or [`Stream`](streams.md#stream)): the node, as a full URI or as a short form such as `"ex:pump-1"` whose prefix the graph defines. The node must already be in the graph. With a `Stream` from [`Acquirium.stream`](streams.md#acquiriumstream), the metadata is written on the property of the stream.
 - `values` (`dict`): the keys and values to write.
   - A key is made of letters, digits, underscores and hyphens, and starts with a letter or an underscore.
   - A value is a `str`, `int`, `float`, `bool`, `date`, `datetime` or `URIRef`, or a `dict` or `list` of those. A nested value is addressed with dots: `{"product_info": {"year": 2019}}` gives `product_info.year`, and the first item of a list `tags` is `tags.0`.

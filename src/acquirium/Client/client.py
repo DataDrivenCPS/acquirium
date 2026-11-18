@@ -785,10 +785,13 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
-    def reprocess_app(self, name: str, start: datetime, end: datetime) -> dict:
+    def reprocess_app(self, name: str, start: "datetime | str", end: "datetime | str") -> dict:
+        from acquirium.ExperimentValues import timestamp
+
+        # A text such as "2025-01-01" is accepted, as in dataframe(start=...).
         response = self._http.post(
             f"{self.base_url}/apps/{name}/reprocess",
-            params={"start": start.isoformat(), "end": end.isoformat()},
+            params={"start": timestamp(start).isoformat(), "end": timestamp(end).isoformat()},
         )
         _raise_for_status(response)
         return response.json()
@@ -886,6 +889,18 @@ class AcquiriumClient:
             for stream_uri, property_uri in result.get("rows") or []:
                 found.setdefault(str(stream_uri), []).append(str(property_uri))
         return {uri: sorted(properties) for uri, properties in found.items()}
+
+    def stream_property(self, stream_uri: str) -> str:
+        """The property a stream is linked to: where its metadata is written."""
+        properties = self._stream_properties([str(stream_uri)]).get(str(stream_uri), [])
+        if not properties:
+            raise ValueError(f"stream <{stream_uri}> is not registered")
+        if len(properties) > 1:
+            raise ValueError(
+                f"stream <{stream_uri}> is connected to several properties "
+                f"({', '.join(properties)}); pass the URI of one of them"
+            )
+        return properties[0]
 
     def _node_labels(self, node_uris: Iterable[str]) -> dict[str, list[str]]:
         """``{node_uri: [label, ...]}``, sorted; a node without a label is

@@ -119,8 +119,8 @@ Recomputes the output of a deployed app for a time range. Values that arrive lat
 **Parameters**
 
 - `name` (`str`): name of the deployed app.
-- `start` (`datetime`): start of the range. A string is not accepted.
-- `end` (`datetime`): end of the range.
+- `start` (`datetime` or `str`): start of the range. A text such as `"2025-01-01"` is accepted. A time without a timezone is read as UTC.
+- `end` (`datetime` or `str`): end of the range.
 
 **Returns**
 

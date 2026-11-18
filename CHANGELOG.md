@@ -12,6 +12,11 @@ change in any release.
 
 ### Added
 
+- Metadata can be written on a stream without looking up its property:
+  `acq.stream(source_id, stream_name).insert_metadata({...})`, or
+  `acq.insert_metadata(stream, {...})` with the stream handle in place of
+  the URI.
+
 - **`acquirium clear`** erases the stored data of a data folder without
   starting a server, and keeps the embeddings of the text matcher.
   `--all` removes the whole folder. It asks for confirmation (`--yes` skips
@@ -51,6 +56,9 @@ change in any release.
   get the mark when they are registered again.
 
 ### Changed
+- `reprocess_app()` takes its `start` and `end` as text such as
+  `"2025-01-01"` as well as `datetime`, like `dataframe(start=...)`. The
+  tutorial writes every timestamp as text.
 - Registering a connected stream again without a `property_uri` describes
   the property it is connected to. Before, it generated a second property
   for the stream.

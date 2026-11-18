@@ -89,3 +89,18 @@ def test_the_server_answers_400_to_a_bad_value_mode(monkeypatch):
         module.get_timeseries(Request(), uri="urn:ref:1", value_mode="x")
     assert error.value.status_code == 400
     assert "value_mode must be" in error.value.detail
+
+
+def test_reprocess_app_takes_text_timestamps():
+    from unittest.mock import MagicMock
+
+    from acquirium.Client.client import AcquiriumClient
+
+    client = AcquiriumClient.__new__(AcquiriumClient)
+    client.base_url = "http://test:8000"
+    client._http = MagicMock()
+    client._http.post.return_value = MagicMock(status_code=200, json=lambda: {"ok": True})
+    client.reprocess_app("app", "2025-01-01", datetime(2026, 1, 2, tzinfo=timezone.utc))
+    assert client._http.post.call_args[1]["params"] == {
+        "start": "2025-01-01T00:00:00+00:00", "end": "2026-01-02T00:00:00+00:00",
+    }

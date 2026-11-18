@@ -12,6 +12,7 @@ A stream is one series of timestamped values. It is identified by a `source_id` 
 | [`Stream`](#stream) | Handle for one stream |
 | [`Stream.between`](#streambetween) | Select a time range of a stream |
 | [`Stream.dataframe`](#streamdataframe) | Read the values of a stream |
+| [`Stream.insert_metadata`](#streaminsert_metadata) | Attach metadata to a stream |
 | [`StreamInterval`](#streaminterval) | A stream between two times |
 | [`StreamInterval.dataframe`](#streamintervaldataframe) | Read the values in the interval |
 
@@ -315,6 +316,36 @@ shape: (1, 2)
 ╞═════════════════════════╪═══════╡
 │ 2026-01-01 02:00:00 UTC ┆ 3.5   │
 └─────────────────────────┴───────┘
+```
+
+## `Stream.insert_metadata`
+
+```python
+Stream.insert_metadata(values)
+```
+
+Attaches metadata to the stream. It is written on the property of the stream, with the rules of [`Acquirium.insert_metadata`](metadata.md#acquiriuminsert_metadata). `acq.insert_metadata(stream, values)` does the same.
+
+**Parameters**
+
+- `values` (`dict`): the keys and values to write.
+
+**Returns**
+
+A `dict`, as [`Acquirium.insert_metadata`](metadata.md#acquiriuminsert_metadata) returns.
+
+**Raises**
+
+- `ValueError`: when the stream is not registered, or when it is connected to several properties. In the second case pass the URI of one property to `Acquirium.insert_metadata`.
+
+**Example**
+
+```python
+acq.stream("lab-import", "effluent-ph").insert_metadata({"sampled_by": "day shift"})
+```
+
+```text
+{'ok': True, 'message': 'update applied', 'changed': True, 'nodes': 1}
 ```
 
 ## `StreamInterval`

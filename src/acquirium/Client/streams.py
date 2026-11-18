@@ -50,6 +50,18 @@ class Stream:
         )
         return samples_frame(frame)
 
+    def insert_metadata(self, values: Any) -> dict[str, Any]:
+        """Attach metadata to the stream: ``{key: value}``.
+
+        Written on the property the stream is linked to, with the rules of
+        ``Acquirium.insert_metadata``.
+        """
+        if self._client is None:
+            raise RuntimeError("this stream handle is not bound to a client")
+        return self._client.insert_metadata(
+            {self._client.stream_property(self.stream_uri): values}
+        )
+
     def __str__(self) -> str:
         return self.stream_uri
 
