@@ -71,6 +71,34 @@ change in any release.
 
 ### Fixed
 
+- The bundled water ontology is registered under its own IRI,
+  `https://watermetadata.org/ontology/watr`, in place of
+  `urn:nawi-water-ontology`. A model that imports the public IRI, as the
+  example plant does, now gets the class hierarchy: `entity("Equipment")`
+  returns every piece of equipment, where it returned only two sensors.
+  **A model that imports `urn:nawi-water-ontology` has to import the new
+  IRI.**
+- `entity(type=Not(...))` returns the nodes of every other type. It returned
+  nothing when the negated type was the only filter.
+- `entity(uri=...)` and the other `uri=` filters match nothing when the URI
+  is not in the graph. A mistyped URI used to count as one match.
+- A boolean is stored as `1.0`/`0.0` in a numeric or undeclared stream and
+  as "True"/"False" in a text stream, on every insert path. Before, the
+  client stored `1.0` (and "1.0" in a text stream) while a driver stored the
+  text "True", which a numeric stream returned as null.
+- A wrong `value_mode` raises a `ValueError` in the client, and the server
+  answers 400. Before, the read returned an empty table and the next
+  request failed with a connection error.
+- A stream registered without a `property_uri` holds one `unit`,
+  `quantity_kind`, `medium` and `substance`. Registering it again with
+  another value replaces the old one, as it already did for the label.
+  Before, the new value was added next to the old one and the unit was not
+  checked.
+- `insert_metadata()` follows the same rule for these keys. On a generated
+  property the new value replaces the one `register_streams()` wrote. On a
+  property of the plant model a value that differs from the one the model
+  or a stream registration wrote raises `ValueError`. Before, both cases
+  left the property with two values.
 - The prefixes a plant model declares (`wbs:`) are kept across a restart.
   They used to be lost, so results showed `ns1:P1` and
   `entity(uri="wbs:P1")` failed with "Prefix "wbs" not bound to any
