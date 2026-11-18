@@ -2,298 +2,356 @@
 title: Query cookbook
 ---
 
-This page shows how to write acquirum queries based on common questions a plant engineer may ask. 
+In this article we'll list queries for common questions about a plant.
+Each question has one query and its output.
 
-This tutorial uses data from the WaterTAP seawater-RO model, 
-so start the server against `deployments/WATERTAP/models/seawater-ro/acquirium.toml`
-and connect to acquirium:
-
-```python
-from acquirium import Acquirium
-
-acq = Acquirium(server_url="127.0.0.1", server_port=8000)
-```
-
-## How salty is the brine we discharge, compared to the seawater we take in?
-
-**How to phrase it.**
-The question is about two measurements, not two pieces of equipment: a salt
-concentration in brine and a salt concentration in seawater.
-So start from `measurement()` on an empty query, which matches every point in
-the plant, and narrow it by what is measured: the substance (`salt`) and the
-quantity kind (`mass concentration`).
-Which stream is which comes from the `medium` attribute, so include it as a
-column.
+The examples use the seawater desalination plant of [5 - A Full Example](../tutorials/a-full-example.md).
+Run that example first, in the same folder.
 
 ```python
-salt = (acq.query()
-        .measurement(alias="salt", substance="constituent salt", quantity_kind="mass concentration")
-        .include("medium"))
-salt.metadata()
-```
-```text
-shape: (3, 2)
-┌──────────────────────────────────────────┬─────────────────────┐
-│ salt                                     ┆ salt.medium         │
-╞══════════════════════════════════════════╪═════════════════════╡
-│ wbs:PXR-brine-out-tds-concentration      ┆ watr:Water-Brine    │
-│ wbs:storage-tank-3-out-tds-concentration ┆ s223:Fluid-Water    │
-│ wbs:intake-in-tds-concentration          ┆ watr:Water-Seawater │
-└──────────────────────────────────────────┴─────────────────────┘
-```
+import polars as pl
 
-Three points: the brine leaving the pressure exchanger, the seawater at the
-intake, and the product water.
-The wide frame has one column per point, so the ratio is one polars
-expression:
-
-```python
-df = salt.dataframe()
-df.with_columns(
-    ratio=pl.col("salt__wbs:PXR-brine-out-tds-concentration")
-        / pl.col("salt__wbs:intake-in-tds-concentration")
-).select("time", "ratio").tail(3)
-```
-```text
-┌────────────────────────────────┬──────────┐
-│ time                           ┆ ratio    │
-╞════════════════════════════════╪══════════╡
-│ 2026-08-15 06:24:59.610773 UTC ┆ 1.731381 │
-│ 2026-08-15 06:26:45.916347 UTC ┆ 1.709988 │
-│ 2026-08-15 06:27:00.574609 UTC ┆ 1.742583 │
-└────────────────────────────────┴──────────┘
-```
-
-The brine is about 1.7 times as salty as the intake.
-
-## What is the pressure drop across the RO?
-
-**How to phrase it.**
-This time the equipment is the anchor: the pressures we want are the ones
-measured *on* the RO, at its inlet and its outlets.
-So pin the RO with `entity(uri=...)`, attach its measurements, and keep the
-pressures.
-`measurement()` includes the points on the connection points (inlet and
-outlets), which is where the pressures live.
-
-```python
-p = (acq.query().entity(uri="wbs:RO", alias="ro")
-     .measurement(alias="p", quantity_kind="pressure"))
-p.metadata()
-```
-```text
-shape: (3, 2)
-┌────────┬───────────────────────────────┐
-│ ro     ┆ p                             │
-╞════════╪═══════════════════════════════╡
-│ wbs:RO ┆ wbs:RO-in-pressure            │
-│ wbs:RO ┆ wbs:RO-out-pressure           │
-│ wbs:RO ┆ wbs:RO-out-retentate-pressure │
-└────────┴───────────────────────────────┘
-```
-
-The drop across the membrane is inlet minus retentate:
-
-```python
-p.dataframe().with_columns(
-    drop=pl.col("p__wbs:RO-in-pressure") - pl.col("p__wbs:RO-out-retentate-pressure")
-).select("time", "drop").tail(3)
-```
-```text
-┌────────────────────────────────┬───────────────┐
-│ time                           ┆ drop          │
-╞════════════════════════════════╪═══════════════╡
-│ 2026-08-15 06:24:59.610773 UTC ┆ 198691.953202 │
-│ 2026-08-15 06:26:45.916347 UTC ┆ 207048.129224 │
-│ 2026-08-15 06:27:00.574609 UTC ┆ 192383.477345 │
-└────────────────────────────────┴───────────────┘
-```
-
-About 2 bar.
-Note that `p.data().units()` returns `{'p': None}`: these pressure points
-carry no unit in the model (the values are pascals), which is the last
-question in this cookbook.
-
-## What is the RO recovery?
-
-Recovery is permeate flow over feed flow.
-
-**How to phrase it.**
-Both are mass flows of water on the RO, so the filters are the same as
-before, plus `substance=Not("constituent salt")` to leave out the salt mass
-flows that sit next to them.
-What separates feed from permeate is *where* the flow is measured: on the
-inlet connection point (medium seawater) or on the permeate outlet (medium
-fluid water).
-So walk from the RO to its connection points, filter each by medium, and
-attach one measurement node to each.
-`hasConnectionPoint` is a structural predicate that generic traversal skips,
-so it is named in `via=`.
-
-To leave out the salt mass flow in our query, we import `Not` from acquirium 
-
-```python
+import acquirium as aq
 from acquirium.Client.explore import Not
+
+acq = aq.init()
+```
+
+## Which pumps does the plant have?
+
+```python
+acq.query().entity("pump").include("label").metadata()
+```
+```text
+shape: (3, 2)
+┌────────────┬─────────────────────────┐
+│ pump       ┆ pump.label              │
+│ ---        ┆ ---                     │
+│ str        ┆ str                     │
+╞════════════╪═════════════════════════╡
+│ wbs:intake ┆ Seawater Onshore Intake │
+│ wbs:P2     ┆ Booster Pump P2         │
+│ wbs:P1     ┆ High-pressure Pump P1   │
+└────────────┴─────────────────────────┘
+```
+
+## What is measured on the high-pressure pump?
+
+`entity(uri=...)` selects one piece of equipment, and `measurement()` adds its streams.
+
+```python
+p1 = acq.query().entity(uri="wbs:P1", alias="p1")
+p1.measurement(alias="m").include("quantity_kind", "unit").metadata()
+```
+```text
+shape: (3, 5)
+┌────────┬─────────────────────────┬─────────────────────┬─────────────────────────┬───────────────┐
+│ p1     ┆ m                       ┆ m.label             ┆ m.quantity_kind         ┆ m.unit        │
+│ ---    ┆ ---                     ┆ ---                 ┆ ---                     ┆ ---           │
+│ str    ┆ str                     ┆ str                 ┆ str                     ┆ str           │
+╞════════╪═════════════════════════╪═════════════════════╪═════════════════════════╪═══════════════╡
+│ wbs:P1 ┆ wbs:P1-efficiency       ┆ P1 efficiency       ┆ quantitykind:Efficiency ┆ unit:UNITLESS │
+│ wbs:P1 ┆ wbs:P1-mechanical-power ┆ P1 mechanical power ┆ quantitykind:Power      ┆ unit:W        │
+│ wbs:P1 ┆ wbs:P1-out-pressure-pa  ┆ P1 out pressure pa  ┆ quantitykind:Pressure   ┆ unit:PA       │
+└────────┴─────────────────────────┴─────────────────────┴─────────────────────────┴───────────────┘
+```
+
+## How much power did the pumps draw on the first hours of July, in kilowatts?
+
+The streams are stored in watts.
+`convert_to()` converts the values when they are read.
+
+```python
+power = acq.query().entity("pump").measurement(alias="power", quantity_kind="power")
+power.data().convert_to("kW").dataframe(start="2025-07-01", end="2025-07-01T03:00:00")
+```
+```text
+shape: (4, 3)
+┌─────────────────────────┬────────────────────────────┬────────────────────────────┐
+│ time                    ┆ power__P1 mechanical power ┆ power__P2 mechanical power │
+│ ---                     ┆ ---                        ┆ ---                        │
+│ datetime[μs, UTC]       ┆ f64                        ┆ f64                        │
+╞═════════════════════════╪════════════════════════════╪════════════════════════════╡
+│ 2025-07-01 00:00:00 UTC ┆ 1065.809783                ┆ 108.456097                 │
+│ 2025-07-01 01:00:00 UTC ┆ 1091.32405                 ┆ 116.73533                  │
+│ 2025-07-01 02:00:00 UTC ┆ 1029.535151                ┆ 96.421121                  │
+│ 2025-07-01 03:00:00 UTC ┆ 1042.124925                ┆ 103.118663                 │
+└─────────────────────────┴────────────────────────────┴────────────────────────────┘
+```
+
+## What was the average pump power on each day of a week?
+
+The result of `dataframe()` is a polars dataframe, so the daily average is one polars step.
+
+```python
+df = power.data().convert_to("kW").dataframe(start="2025-07-01", end="2025-07-07T23:00:00")
+df.group_by_dynamic("time", every="1d").agg(pl.all().exclude("time").mean())
+```
+```text
+shape: (7, 3)
+┌─────────────────────────┬────────────────────────────┬────────────────────────────┐
+│ time                    ┆ power__P1 mechanical power ┆ power__P2 mechanical power │
+│ ---                     ┆ ---                        ┆ ---                        │
+│ datetime[μs, UTC]       ┆ f64                        ┆ f64                        │
+╞═════════════════════════╪════════════════════════════╪════════════════════════════╡
+│ 2025-07-01 00:00:00 UTC ┆ 1091.299082                ┆ 124.34938                  │
+│ 2025-07-02 00:00:00 UTC ┆ 1096.988257                ┆ 124.845055                 │
+│ 2025-07-03 00:00:00 UTC ┆ 1098.484659                ┆ 125.641056                 │
+│ 2025-07-04 00:00:00 UTC ┆ 1091.334641                ┆ 124.788923                 │
+│ 2025-07-05 00:00:00 UTC ┆ 1094.654196                ┆ 123.808746                 │
+│ 2025-07-06 00:00:00 UTC ┆ 1092.088617                ┆ 123.005782                 │
+│ 2025-07-07 00:00:00 UTC ┆ 1096.54999                 ┆ 126.38584                  │
+└─────────────────────────┴────────────────────────────┴────────────────────────────┘
+```
+
+## What are the latest pressures at the reverse osmosis membrane, in bar?
+
+`latest()` returns the newest reading of each stream.
+
+```python
+ro = acq.query().entity(uri="wbs:RO", alias="ro")
+ro.measurement(alias="p", quantity_kind="pressure").data().convert_to("bar").latest()
+```
+```text
+shape: (3, 4)
+┌────────────┬─────────────────────────────────┬─────────────────────────┬───────────┐
+│ data_alias ┆ property_uri                    ┆ time                    ┆ value     │
+│ ---        ┆ ---                             ┆ ---                     ┆ ---       │
+│ str        ┆ str                             ┆ datetime[μs, UTC]       ┆ f64       │
+╞════════════╪═════════════════════════════════╪═════════════════════════╪═══════════╡
+│ p          ┆ urn:swro/RO-in-pressure-pa      ┆ 2025-12-31 23:00:00 UTC ┆ 70.0      │
+│ p          ┆ urn:swro/RO-out-pressure-pa     ┆ 2025-12-31 23:00:00 UTC ┆ 1.01325   │
+│ p          ┆ urn:swro/RO-out-retentate-pres… ┆ 2025-12-31 23:00:00 UTC ┆ 67.871345 │
+└────────────┴─────────────────────────────────┴─────────────────────────┴───────────┘
+```
+
+## What is the pressure drop across the reverse osmosis membrane?
+
+The drop is the inlet pressure minus the retentate pressure.
+Both streams are in the same query, so they are two columns of one table.
+
+```python
+df = ro.measurement(alias="p", quantity_kind="pressure").data().convert_to("bar").dataframe(limit=3)
+df.select("time", drop=pl.col("p__RO in pressure pa") - pl.col("p__RO out retentate pressure pa"))
+```
+```text
+shape: (3, 2)
+┌─────────────────────────┬──────────┐
+│ time                    ┆ drop     │
+│ ---                     ┆ ---      │
+│ datetime[μs, UTC]       ┆ f64      │
+╞═════════════════════════╪══════════╡
+│ 2025-01-01 00:00:00 UTC ┆ 2.169838 │
+│ 2025-01-01 01:00:00 UTC ┆ 2.103855 │
+│ 2025-01-01 02:00:00 UTC ┆ 2.026713 │
+└─────────────────────────┴──────────┘
+```
+
+## What is the recovery of the reverse osmosis membrane?
+
+Recovery is the permeate flow divided by the feed flow.
+The membrane has mass flow streams for water and for dissolved solids.
+`Not` leaves out the streams of dissolved solids.
+The stream `RO out flow mass water` is the permeate, and `RO in flow mass water` is the feed.
+
+```python
+flow = ro.measurement(alias="flow", quantity_kind="mass flow rate", substance=Not("dissolved solids"))
+df = flow.dataframe(limit=3)
+df.select("time", recovery=pl.col("flow__RO out flow mass water") / pl.col("flow__RO in flow mass water"))
+```
+```text
+shape: (3, 2)
+┌─────────────────────────┬──────────┐
+│ time                    ┆ recovery │
+│ ---                     ┆ ---      │
+│ datetime[μs, UTC]       ┆ f64      │
+╞═════════════════════════╪══════════╡
+│ 2025-01-01 00:00:00 UTC ┆ 0.476323 │
+│ 2025-01-01 01:00:00 UTC ┆ 0.48358  │
+│ 2025-01-01 02:00:00 UTC ┆ 0.486428 │
+└─────────────────────────┴──────────┘
+```
+
+## How salty is the product water compared to the seawater?
+
+This question is about streams, not about one piece of equipment, so the query starts from `measurement()`.
+`include("medium")` shows which stream is the seawater and which is the product water.
+
+```python
+tds = acq.query().measurement(alias="tds", substance="dissolved solids", quantity_kind="mass concentration")
+tds.include("medium").metadata().select("tds", "tds.medium")
+```
+```text
+shape: (2, 2)
+┌─────────────────────────────────┬───────────────────────┐
+│ tds                             ┆ tds.medium            │
+│ ---                             ┆ ---                   │
+│ str                             ┆ str                   │
+╞═════════════════════════════════╪═══════════════════════╡
+│ wbs:storage-tank-3-out-tds-con… ┆ watr:Water-Freshwater │
+│ wbs:intake-in-tds-concentratio… ┆ watr:Water-Seawater   │
+└─────────────────────────────────┴───────────────────────┘
 ```
 
 ```python
-S223 = "http://data.ashrae.org/standard223#"
-CP = [S223 + "hasConnectionPoint"]
-
-rec = (acq.query().entity(uri="wbs:RO", alias="ro")
-       .related("connection point", alias="feed_cp", via=CP).where(medium="seawater")
-       .measurement(alias="feed", quantity_kind="mass flow rate", substance=Not("constituent salt"))
-       .related("connection point", alias="permeate_cp", frm="ro", via=CP).where(medium="fluid water")
-       .measurement(alias="permeate", quantity_kind="mass flow rate", substance=Not("constituent salt")))
-rec.metadata()
+tds.dataframe(limit=3)
 ```
 ```text
-shape: (2, 5)
-┌────────┬───────────┬───────────────────────────┬─────────────┬────────────────────────────┐
-│ ro     ┆ feed_cp   ┆ feed                      ┆ permeate_cp ┆ permeate                   │
-╞════════╪═══════════╪═══════════════════════════╪═════════════╪════════════════════════════╡
-│ wbs:RO ┆ wbs:RO-in ┆ null                      ┆ wbs:RO-out  ┆ wbs:RO-out-flow-mass-water │
-│ wbs:RO ┆ wbs:RO-in ┆ wbs:RO-in-flow-mass-water ┆ wbs:RO-out  ┆ null                       │
-└────────┴───────────┴───────────────────────────┴─────────────┴────────────────────────────┘
+shape: (3, 3)
+┌─────────────────────────┬─────────────────────────────────┬─────────────────────────────────┐
+│ time                    ┆ tds__intake in tds concentrati… ┆ tds__storage tank 3 out tds co… │
+│ ---                     ┆ ---                             ┆ ---                             │
+│ datetime[μs, UTC]       ┆ f64                             ┆ f64                             │
+╞═════════════════════════╪═════════════════════════════════╪═════════════════════════════════╡
+│ 2025-01-01 00:00:00 UTC ┆ 33.428505                       ┆ 0.217005                        │
+│ 2025-01-01 01:00:00 UTC ┆ 33.303636                       ┆ 0.218916                        │
+│ 2025-01-01 02:00:00 UTC ┆ 33.484903                       ┆ 0.223305                        │
+└─────────────────────────┴─────────────────────────────────┴─────────────────────────────────┘
 ```
 
-Each alias matched exactly one point, so the wide columns are simply `feed`
-and `permeate`:
+## What was the feed temperature of the reverse osmosis membrane, in Celsius?
 
 ```python
-rec.dataframe().with_columns(recovery=pl.col("permeate") / pl.col("feed")).tail(3)
+ro.measurement(alias="t", quantity_kind="temperature").data().convert_to("degC").dataframe(start="2025-07-01", limit=3)
 ```
 ```text
-┌────────────────────────────────┬────────────┬────────────┬──────────┐
-│ time                           ┆ feed       ┆ permeate   ┆ recovery │
-╞════════════════════════════════╪════════════╪════════════╪══════════╡
-│ 2026-08-15 06:24:59.610773 UTC ┆ 290.491228 ┆ 124.645078 ┆ 0.429084 │
-│ 2026-08-15 06:26:45.916347 UTC ┆ 298.795226 ┆ 126.066582 ┆ 0.421916 │
-│ 2026-08-15 06:27:00.574609 UTC ┆ 286.678595 ┆ 124.154369 ┆ 0.433079 │
-└────────────────────────────────┴────────────┴────────────┴──────────┘
+shape: (3, 2)
+┌─────────────────────────┬────────────────────────┐
+│ time                    ┆ t__RO in temperature k │
+│ ---                     ┆ ---                    │
+│ datetime[μs, UTC]       ┆ f64                    │
+╞═════════════════════════╪════════════════════════╡
+│ 2025-07-01 00:00:00 UTC ┆ 30.691354              │
+│ 2025-07-01 01:00:00 UTC ┆ 30.703025              │
+│ 2025-07-01 02:00:00 UTC ┆ 30.959595              │
+└─────────────────────────┴────────────────────────┘
 ```
 
-Recovery is around 43 %.
-
-## What is downstream of the cartridge filter, and what is measured there?
-
-**How to phrase it.**
-First find the filter.
-`entity("cartridge filter")` returns nothing here: the text resolves to
-`watr:CartridgeFiltrationUnit`, but this plant types its filters as plain
-`watr:Filter`.
-`options("type")` on the equipment shows what classes the model actually
-uses, and `entity("filter")` finds three of them, one of which is the RO
-itself.
-So pin the one we mean by URI.
+## Which chemicals are dosed, and where?
 
 ```python
-acq.query().entity("filter").metadata()
+dose = acq.query().entity("reactor").measurement(alias="dose").include("substance", "unit")
+dose.metadata().select("reactor", "dose.substance", "dose.unit")
 ```
 ```text
-┌──────────────────────────┐
-│ filter                   │
-╞══════════════════════════╡
-│ wbs:media-filtration     │
-│ wbs:cartridge-filtration │
-│ wbs:RO                   │
-└──────────────────────────┘
+shape: (3, 3)
+┌──────────────────────────────┬─────────────────────────────────┬────────────────────┐
+│ reactor                      ┆ dose.substance                  ┆ dose.unit          │
+│ ---                          ┆ ---                             ┆ ---                │
+│ str                          ┆ str                             ┆ str                │
+╞══════════════════════════════╪═════════════════════════════════╪════════════════════╡
+│ wbs:lime-addition            ┆ watr:pHAdjuster-Lime            ┆ unit:MilliGM-PER-L │
+│ wbs:anti-scalant-addition    ┆ watr:WastewaterTreatmentChemic… ┆ unit:MilliGM-PER-L │
+│ wbs:ferric-chloride-addition ┆ watr:Coagulant-FerricChloride   ┆ unit:MilliGM-PER-L │
+└──────────────────────────────┴─────────────────────────────────┴────────────────────┘
 ```
 
-"Downstream" is the piping topology, so `direction="downstream"`.
-For the equipment, `related()`; for what is measured there,
-`measurement(direction=..., nearest=True)`, which stops at the first points
-found along the flow.
+## Which pumps feed the reverse osmosis membrane?
+
+`related()` with `direction="upstream"` follows the connections of the plant against the flow.
+
+```python
+ro.related("pump", direction="upstream").include("label").metadata()
+```
+```text
+shape: (2, 3)
+┌────────┬────────┬───────────────────────┐
+│ ro     ┆ pump   ┆ pump.label            │
+│ ---    ┆ ---    ┆ ---                   │
+│ str    ┆ str    ┆ str                   │
+╞════════╪════════╪═══════════════════════╡
+│ wbs:RO ┆ wbs:P2 ┆ Booster Pump P2       │
+│ wbs:RO ┆ wbs:P1 ┆ High-pressure Pump P1 │
+└────────┴────────┴───────────────────────┘
+```
+
+**Note:** `related()` looks at most three steps away by default.
+`max_depth=0` removes the limit, and then the intake pump is listed as well.
+
+## Which tank comes after each pump?
+
+```python
+pumps = acq.query().entity("pump")
+pumps.related("tank", direction="downstream", max_depth=0, nearest=True).include("label").metadata()
+```
+```text
+shape: (3, 3)
+┌────────────┬────────────────────┬────────────────┐
+│ pump       ┆ tank               ┆ tank.label     │
+│ ---        ┆ ---                ┆ ---            │
+│ str        ┆ str                ┆ str            │
+╞════════════╪════════════════════╪════════════════╡
+│ wbs:P1     ┆ wbs:storage-tank-2 ┆ Storage Tank 2 │
+│ wbs:P2     ┆ wbs:storage-tank-2 ┆ Storage Tank 2 │
+│ wbs:intake ┆ wbs:storage-tank-1 ┆ Storage Tank 1 │
+└────────────┴────────────────────┴────────────────┘
+```
+
+## What is measured right after the cartridge filter?
+
+`measurement()` with `direction="downstream"` selects the first streams along the flow.
+The column `cf_downstream_entity` is the place where they were found, here the pipe that leaves the filter.
 
 ```python
 cf = acq.query().entity(uri="wbs:cartridge-filtration", alias="cf")
-
-cf.related("equipment", direction="downstream").metadata()
+after = cf.measurement(alias="after", direction="downstream").include("quantity_kind")
+after.metadata().select("cf_downstream_entity", "after.label", "after.quantity_kind")
 ```
 ```text
-┌──────────────────────────┬───────────┐
-│ cf                       ┆ equipment │
-╞══════════════════════════╪═══════════╡
-│ wbs:cartridge-filtration ┆ wbs:P2    │
-│ wbs:cartridge-filtration ┆ wbs:PXR   │
-│ wbs:cartridge-filtration ┆ wbs:P1    │
-└──────────────────────────┴───────────┘
+shape: (4, 3)
+┌─────────────────────────────────┬─────────────────────────────────┬───────────────────────────┐
+│ cf_downstream_entity            ┆ after.label                     ┆ after.quantity_kind       │
+│ ---                             ┆ ---                             ┆ ---                       │
+│ str                             ┆ str                             ┆ str                       │
+╞═════════════════════════════════╪═════════════════════════════════╪═══════════════════════════╡
+│ wbs:conn-cartridge-filtration-… ┆ conn cartridge filtration to S… ┆ quantitykind:Pressure     │
+│ wbs:conn-cartridge-filtration-… ┆ conn cartridge filtration to S… ┆ quantitykind:Temperature  │
+│ wbs:conn-cartridge-filtration-… ┆ conn cartridge filtration to S… ┆ quantitykind:MassFlowRate │
+│ wbs:conn-cartridge-filtration-… ┆ conn cartridge filtration to S… ┆ quantitykind:MassFlowRate │
+└─────────────────────────────────┴─────────────────────────────────┴───────────────────────────┘
 ```
 
+## Which pressure streams are on a pump?
+
+`context()` adds the equipment a stream belongs to.
+With a class, only the streams on equipment of that class are kept.
+
 ```python
-(cf.measurement(alias="after", direction="downstream", nearest=True)
-   .include("quantity_kind")
-   .metadata())
+pressure = acq.query().measurement(alias="p", quantity_kind="pressure")
+pressure.context("pump", alias="pump").metadata()
 ```
 ```text
-shape: (5, 3)
-┌──────────────────────────┬─────────────────────────────────────────────────────┬────────────────────────────────┐
-│ cf                       ┆ after                                               ┆ after.quantity_kind            │
-╞══════════════════════════╪═════════════════════════════════════════════════════╪════════════════════════════════╡
-│ wbs:cartridge-filtration ┆ wbs:cartridge-filtration-out-toc-concentration      ┆ quantitykind:MassConcentration │
-│ wbs:cartridge-filtration ┆ wbs:conn-cartridge-filtration-to-S1-temperature     ┆ quantitykind:Temperature       │
-│ wbs:cartridge-filtration ┆ wbs:conn-cartridge-filtration-to-S1-flow-mass-tds   ┆ quantitykind:MassFlowRate      │
-│ wbs:cartridge-filtration ┆ wbs:conn-cartridge-filtration-to-S1-flow-mass-wate… ┆ quantitykind:MassFlowRate      │
-│ wbs:cartridge-filtration ┆ wbs:conn-cartridge-filtration-to-S1-pressure        ┆ quantitykind:Pressure          │
-└──────────────────────────┴─────────────────────────────────────────────────────┴────────────────────────────────┘
+shape: (1, 3)
+┌────────────────────────┬────────────────────┬────────┐
+│ p                      ┆ p.label            ┆ pump   │
+│ ---                    ┆ ---                ┆ ---    │
+│ str                    ┆ str                ┆ str    │
+╞════════════════════════╪════════════════════╪════════╡
+│ wbs:P1-out-pressure-pa ┆ P1 out pressure pa ┆ wbs:P1 │
+└────────────────────────┴────────────────────┴────────┘
 ```
 
-The filter feeds the two high-pressure pumps and the pressure exchanger, and
-the first thing measured after it is the connection to the splitter: TOC,
-temperature, mass flows and pressure.
+## Where does the data of a stream come from?
 
-## Which pump feeds each pressure reading on a pipe?
-
-**How to phrase it.**
-Start from the readings, not the pumps.
-`context()` adds the entity a measurement is about; with the default
-relation that is the pipe itself, so ask for `via="upstream"`, the entity the
-reading is directly downstream of.
+`stream_info()` lists the `source_id` and the `stream_name` of each selected stream.
 
 ```python
-(acq.query().measurement(quantity_kind="pressure", alias="p")
- .context("pump", via="upstream", alias="pump")
- .metadata())
-```
-<!-- TODO: capture output against seawater-ro -->
-
-Readings on a pump's own outlet connection point appear too, because the
-outlet pressure is downstream of the pump.
-To keep only the pipe readings, add `.context("pipe", frm="p")` before the
-upstream step, or `where(target="p", ...)` with an attribute that
-distinguishes them.
-
-## Which measurement points carry no unit?
-
-**How to phrase it.**
-This is a question about the model rather than the plant.
-`unit` is an attribute, and attributes are optional: `include("unit")` keeps
-a point with no unit and shows `null`.
-So ask for every point with its unit, and keep the nulls in polars.
-
-```python
-m = acq.query().measurement(alias="m").include("unit", "quantity_kind")
-m.metadata().filter(pl.col("m.unit").is_null()).select("m", "m.quantity_kind")
+power.data().stream_info().select("property_uri", "source_id", "stream_name")
 ```
 ```text
-shape: (10, 2)
-┌───────────────────────────────────────────┬─────────────────────────────┐
-│ m                                         ┆ m.quantity_kind             │
-╞═══════════════════════════════════════════╪═════════════════════════════╡
-│ wbs:P1-out-pressure                       ┆ quantitykind:Pressure       │
-│ wbs:intake-in-flow-rate                   ┆ quantitykind:VolumeFlowRate │
-│ wbs:RO-out-pressure                       ┆ quantitykind:Pressure       │
-│ wbs:RO-in-pressure                        ┆ quantitykind:Pressure       │
-│ wbs:conn-cartridge-filtration-to-S1-pres… ┆ quantitykind:Pressure       │
-│ wbs:storage-tank-3-out-flow-rate          ┆ quantitykind:VolumeFlowRate │
-│ wbs:conn-cartridge-filtration-to-S1-temp… ┆ quantitykind:Temperature    │
-│ wbs:PXR-brine-out-pressure                ┆ quantitykind:Pressure       │
-│ wbs:RO-out-retentate-pressure             ┆ quantitykind:Pressure       │
-│ wbs:RO-in-temperature                     ┆ quantitykind:Temperature    │
-└───────────────────────────────────────────┴─────────────────────────────┘
+shape: (2, 3)
+┌──────────────────────────────┬───────────┬─────────────────────┐
+│ property_uri                 ┆ source_id ┆ stream_name         │
+│ ---                          ┆ ---       ┆ ---                 │
+│ str                          ┆ str       ┆ str                 │
+╞══════════════════════════════╪═══════════╪═════════════════════╡
+│ urn:swro/P1-mechanical-power ┆ csv-data  ┆ P1-mechanical-power │
+│ urn:swro/P2-mechanical-power ┆ csv-data  ┆ P2-mechanical-power │
+└──────────────────────────────┴───────────┴─────────────────────┘
 ```
 
-Ten of the 32 points have no unit: every pressure and temperature, and the
-two volume flow rates.
-Their quantity kinds are set, so a unit is the only thing missing;
-`convert_to()` on any of them needs `from_unit=`.
+## Moving on
+
+- [Explore a plant model](explore-a-model.md): find the classes and values to use in a query.
+- [Debug an empty or unexpected query result](debug-an-empty-query.md): what to check when a query selects nothing.
+- [Query reference](../reference/query/_index.md): every method, with all parameters.

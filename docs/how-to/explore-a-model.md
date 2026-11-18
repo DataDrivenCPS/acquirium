@@ -1,206 +1,274 @@
 ---
-title: Explore a model
+title: Explore a plant model
 ---
 
-This is a guide to exploring a plant model you do not know yet: building a query step by step, and using `options()` and `facets()` to see which values occur in the matches.
+In this article we'll describe how to explore a plant model you do not know yet.
+The steps go from the whole plant to one stream: list what is measured, find the equipment, filter, and read the data.
 
-## Building a query step by step
-
-A `Query` is immutable and lazy, so you can build it the way you build a
-dataframe pipeline: keep a partial query in a variable, look at what it
-matches, and extend it.
-Every step below is a complete query you can run, and `.metadata()` shows what
-it matches without fetching any data.
-
-Start wide and check what is there:
+The examples use the seawater desalination plant of [5 - A Full Example](../tutorials/a-full-example.md).
+Run that example first, in the same folder.
 
 ```python
-pumps = acq.query().entity("pump")
-pumps.metadata()
-```
-```text
-shape: (3, 1)
-┌────────────┐
-│ pump       │
-╞════════════╡
-│ wbs:intake │
-│ wbs:P2     │
-│ wbs:P1     │
-└────────────┘
+import acquirium as aq
+
+acq = aq.init()
 ```
 
-Extend it and check again.
-`pumps` is untouched, so you can branch off it as many times as you like:
+## Listing what is measured
 
-```python
-with_tanks = pumps.related("tank")
-with_tanks.metadata()
-```
-```text
-shape: (4, 2)
-┌────────────┬──────────────────────────────┐
-│ pump       ┆ tank                         │
-╞════════════╪══════════════════════════════╡
-│ wbs:P1     ┆ wbs:storage-tank-2           │
-│ wbs:P2     ┆ wbs:storage-tank-2           │
-│ wbs:intake ┆ wbs:ferric-chloride-addition │
-│ wbs:P1     ┆ wbs:anti-scalant-addition    │
-└────────────┴──────────────────────────────┘
-```
-
-Attach the measurements, and before filtering them, ask what kinds there are:
-
-```python
-readings = pumps.measurement(alias="m")
-readings.options("quantity_kind")
-```
-```text
-shape: (6, 2)
-┌────────────────────────────────┬───────┐
-│ quantity_kind                  ┆ count │
-╞════════════════════════════════╪═══════╡
-│ quantitykind:Efficiency        ┆ 2     │
-│ quantitykind:MassConcentration ┆ 2     │
-│ quantitykind:Power             ┆ 2     │
-│ quantitykind:Density           ┆ 1     │
-│ quantitykind:Pressure          ┆ 1     │
-│ quantitykind:VolumeFlowRate    ┆ 1     │
-└────────────────────────────────┴───────┘
-```
-
-Narrow with `where()`, using one of the values `options()` reported, and check
-that the right points are left:
-
-```python
-power = readings.where(quantity_kind="power")
-power.metadata()
-```
-```text
-shape: (2, 2)
-┌────────┬─────────────────────────┐
-│ pump   ┆ m                       │
-╞════════╪═════════════════════════╡
-│ wbs:P2 ┆ wbs:P2-mechanical-power │
-│ wbs:P1 ┆ wbs:P1-mechanical-power │
-└────────┴─────────────────────────┘
-```
-
-Only now fetch the data.
-`.data()` gives a lazy `DataObject` that reports the row count and time range
-before pulling anything; `.dataframe()` pulls it:
-
-```python
-d = power.data()
-d
-d.dataframe().tail(3)
-```
-```text
-DataObject(lazy, ~12 rows, range=2026-08-15T06:24:14.709710+00:00 to 2026-08-15T06:27:00.574609+00:00, aliases=['m'], entities=['pump'])
-
-shape: (3, 3)
-┌────────────────────────────────┬────────────────────────────┬────────────────────────────┐
-│ time                           ┆ m__wbs:P1-mechanical-power ┆ m__wbs:P2-mechanical-power │
-╞════════════════════════════════╪════════════════════════════╪════════════════════════════╡
-│ 2026-08-15 06:24:59.610773 UTC ┆ 1.0787e6                   ┆ 113111.712331              │
-│ 2026-08-15 06:26:45.916347 UTC ┆ 1.0913e6                   ┆ 119558.460613              │
-│ 2026-08-15 06:27:00.574609 UTC ┆ 1.0748e6                   ┆ 109642.612541              │
-└────────────────────────────────┴────────────────────────────┴────────────────────────────┘
-```
-
-The pattern is the same at every size: extend, `metadata()`, `options()` when
-you are not sure what to filter on, `where()`, and `data()` last.
-Note that repeating `metadata()` on a partial query costs one graph query and
-no data transfer, so checking often is cheap.
-
-## Exploring what is there
-
-In a new plant, the hard part is knowing what to ask for.
-`options()` and `facets()` answer that: they report the attribute values that
-actually occur in your current matches, so you can narrow down step by step.
-Both run immediately and return values rather than a new query.
-
-### options()
-
-`options(attr)` lists the distinct values of one attribute across the matched
-nodes, with counts.
-It reads the node the pointer is on; `of=` reads another one by alias.
+`options()` lists the values of one attribute on the nodes a query selects, with a count for each value.
+On `measurement()` with no filter, it counts over every stream of the plant:
 
 ```python
 acq.query().measurement().options("quantity_kind")
 ```
 ```text
-shape: (9, 2)
+shape: (8, 2)
 ┌────────────────────────────────┬───────┐
 │ quantity_kind                  ┆ count │
+│ ---                            ┆ ---   │
+│ str                            ┆ i64   │
 ╞════════════════════════════════╪═══════╡
 │ quantitykind:MassFlowRate      ┆ 10    │
+│ quantitykind:MassConcentration ┆ 6     │
 │ quantitykind:Pressure          ┆ 6     │
-│ quantitykind:MassConcentration ┆ 5     │
 │ quantitykind:Efficiency        ┆ 3     │
 │ quantitykind:Power             ┆ 2     │
 │ quantitykind:Temperature       ┆ 2     │
 │ quantitykind:VolumeFlowRate    ┆ 2     │
 │ quantitykind:Area              ┆ 1     │
-│ quantitykind:Density           ┆ 1     │
 └────────────────────────────────┴───────┘
 ```
 
-The count is the number of matched nodes carrying that value, so it also tells
-you how much a filter would leave behind.
-Add a filter and ask again; the options narrow with the pattern:
+The same works for the other attributes of a stream, such as `unit`, `medium` and `substance`.
+The full list is in [built-in attributes](../reference/query/filtering.md#built-in-attributes).
+
+## Finding where the streams are
+
+`context()` adds the part of the plant each stream belongs to.
+`options("type")` then counts the classes of these parts:
 
 ```python
-acq.query().measurement(quantity_kind="mass flow rate").options("unit")
+acq.query().measurement().context().options("type")
 ```
 ```text
-shape: (1, 2)
-┌─────────────────────┬───────┐
-│ unit                ┆ count │
-╞═════════════════════╪═══════╡
-│ unit:KiloGM-PER-SEC ┆ 10    │
-└─────────────────────┴───────┘
+shape: (9, 2)
+┌─────────────────────────────┬───────┐
+│ type                        ┆ count │
+│ ---                         ┆ ---   │
+│ str                         ┆ i64   │
+╞═════════════════════════════╪═══════╡
+│ s223:OutletConnectionPoint  ┆ 5     │
+│ watr:Pump                   ┆ 3     │
+│ watr:Reactor                ┆ 3     │
+│ s223:InletConnectionPoint   ┆ 2     │
+│ s223:Connection             ┆ 1     │
+│ s223:Pipe                   ┆ 1     │
+│ watr:PressureExchanger      ┆ 1     │
+│ watr:ReverseOsmosisMembrane ┆ 1     │
+│ watr:Tank                   ┆ 1     │
+└─────────────────────────────┴───────┘
 ```
 
-### facets()
+The connection points are the inlets and outlets of the equipment.
 
-`facets()` does the same for every attribute that applies to a node, in one
-call.
-It prints compactly and indexes like a dict, so you can pull the full frame
-for any attribute.
+## Listing the equipment of one class
+
+`entity()` selects the parts of the plant by their class.
+The class is written as text, and the text matcher finds the term of the ontology.
+`include("label")` adds the label of each match as a column:
 
 ```python
-f = acq.query().entity(uri="wbs:RO", alias="RO").measurement().facets()
+pumps = acq.query().entity("pump")
+print(pumps.include("label"))
+```
+```text
+Query
+  pump: entity, Pump
+3 matches:
+┌────────────┬─────────────────────────┐
+│ pump       ┆ pump.label              │
+│ ---        ┆ ---                     │
+│ str        ┆ str                     │
+╞════════════╪═════════════════════════╡
+│ wbs:intake ┆ Seawater Onshore Intake │
+│ wbs:P2     ┆ Booster Pump P2         │
+│ wbs:P1     ┆ High-pressure Pump P1   │
+└────────────┴─────────────────────────┘
+```
+
+The first lines of the output show how the query was understood.
+Here the text `pump` was matched to the class `Pump`.
+
+**Note:** Every method returns a new query and leaves the original unchanged.
+`pumps` can be kept in a variable and extended in several ways, as in the next steps.
+
+## Seeing the values you can filter on
+
+`facets()` does what `options()` does, for every attribute of a node in one call.
+This is useful for choosing a filter:
+
+```python
+f = pumps.measurement(alias="m").facets()
 f
 ```
 ```text
-FacetSummary('RO_data')
-  type [matched]: s223:QuantifiableObservableProperty (11), ns1:VirtualPoint (11)
-  medium [matched]: s223:Fluid-Water (3), watr:Water-Seawater (2), watr:Water-Brine (1)
-  substance [matched]: watr:Constituent-Salt (3)
-  quantity_kind [matched]: quantitykind:MassFlowRate (6), quantitykind:Pressure (3), quantitykind:Area (1), quantitykind:Temperature (1)
-  unit [matched]: unit:KiloGM-PER-SEC (6), unit:M2 (1)
+FacetSummary('m')
+  type [matched]: acq:VirtualPoint (8), s223:QuantifiableObservableProperty (8)
+  medium [matched]: watr:Water-Seawater (2)
+  substance [matched]: watr:Constituent-DissolvedSolids (1), watr:Constituent-SuspendedSolids (1)
+  quantity_kind [matched]: quantitykind:Efficiency (2), quantitykind:MassConcentration (2), quantitykind:Power (2), quantitykind:Pressure (1), quantitykind:VolumeFlowRate (1)
+  unit [matched]: unit:KiloGM-PER-M3 (2), unit:UNITLESS (2), unit:W (2), unit:M3-PER-SEC (1), unit:PA (1)
   enumeration_kind: (no values)
   data_source: (no values)
   app: (no values)
+  is_disconnected: (no values)
+  label [matched]: P1 efficiency (1), P1 mechanical power (1), P1 out pressure pa (1), P2 efficiency (1), P2 mechanical power (1), … +3
+  generation: (no values)
 ```
+
+Each line shows an attribute and its first five values, with counts.
+`[matched]` means the values are counted on the nodes the query selects.
+The full table of one attribute is read by its name:
 
 ```python
-f["quantity_kind"]
+f["unit"]
 ```
 ```text
-shape: (4, 2)
-┌───────────────────────────┬───────┐
-│ quantity_kind             ┆ count │
-╞═══════════════════════════╪═══════╡
-│ quantitykind:MassFlowRate ┆ 6     │
-│ quantitykind:Pressure     ┆ 3     │
-│ quantitykind:Area         ┆ 1     │
-│ quantitykind:Temperature  ┆ 1     │
-└───────────────────────────┴───────┘
+shape: (5, 2)
+┌────────────────────┬───────┐
+│ unit               ┆ count │
+│ ---                ┆ ---   │
+│ str                ┆ i64   │
+╞════════════════════╪═══════╡
+│ unit:KiloGM-PER-M3 ┆ 2     │
+│ unit:UNITLESS      ┆ 2     │
+│ unit:W             ┆ 2     │
+│ unit:M3-PER-SEC    ┆ 1     │
+│ unit:PA            ┆ 1     │
+└────────────────────┴───────┘
 ```
 
-The `[matched]` tag is the scope of those counts.
-When the pattern matches nothing for an attribute, `facets()` falls back:
-first to how the attribute is used model-wide (`[model]`), then to the
-ontology's own vocabulary (`[vocabulary]`, values only, no counts).
-So an empty query still tells you which filters exist to try.
+## Filtering and checking the result
+
+A value from these lists can be used as a filter.
+`metadata()` shows what the query selects without reading any data:
+
+```python
+power = pumps.measurement(alias="m", quantity_kind="power")
+power.include("unit").metadata()
+```
+```text
+shape: (2, 4)
+┌────────┬─────────────────────────┬─────────────────────┬────────┐
+│ pump   ┆ m                       ┆ m.label             ┆ m.unit │
+│ ---    ┆ ---                     ┆ ---                 ┆ ---    │
+│ str    ┆ str                     ┆ str                 ┆ str    │
+╞════════╪═════════════════════════╪═════════════════════╪════════╡
+│ wbs:P2 ┆ wbs:P2-mechanical-power ┆ P2 mechanical power ┆ unit:W │
+│ wbs:P1 ┆ wbs:P1-mechanical-power ┆ P1 mechanical power ┆ unit:W │
+└────────┴─────────────────────────┴─────────────────────┴────────┘
+```
+
+The filter can also be added later with `where()`.
+`pumps.measurement(alias="m").where(quantity_kind="power")` is the same query.
+
+## Following the connections
+
+`related()` adds the equipment connected to the current node.
+With `direction`, it follows the flow of the plant `"upstream"` or `"downstream"`:
+
+```python
+pumps.related("tank", direction="downstream").include("label").metadata()
+```
+```text
+shape: (2, 3)
+┌────────┬────────────────────┬────────────────┐
+│ pump   ┆ tank               ┆ tank.label     │
+│ ---    ┆ ---                ┆ ---            │
+│ str    ┆ str                ┆ str            │
+╞════════╪════════════════════╪════════════════╡
+│ wbs:P1 ┆ wbs:storage-tank-2 ┆ Storage Tank 2 │
+│ wbs:P2 ┆ wbs:storage-tank-2 ┆ Storage Tank 2 │
+└────────┴────────────────────┴────────────────┘
+```
+
+Note that the intake pump is not in the table.
+`related()` looks at most three steps away by default, and the first tank after the intake is further.
+`max_depth=0` removes the limit, and `nearest=True` keeps only the closest match of each pump:
+
+```python
+pumps.related("tank", direction="downstream", max_depth=0, nearest=True).include("label").metadata()
+```
+```text
+shape: (3, 3)
+┌────────────┬────────────────────┬────────────────┐
+│ pump       ┆ tank               ┆ tank.label     │
+│ ---        ┆ ---                ┆ ---            │
+│ str        ┆ str                ┆ str            │
+╞════════════╪════════════════════╪════════════════╡
+│ wbs:P1     ┆ wbs:storage-tank-2 ┆ Storage Tank 2 │
+│ wbs:P2     ┆ wbs:storage-tank-2 ┆ Storage Tank 2 │
+│ wbs:intake ┆ wbs:storage-tank-1 ┆ Storage Tank 1 │
+└────────────┴────────────────────┴────────────────┘
+```
+
+`measurement()` takes `direction` as well, to find the nearest streams along the flow.
+For instance, the pressure streams upstream of the reverse osmosis membrane:
+
+```python
+ro = acq.query().entity(uri="wbs:RO", alias="ro")
+ro.measurement(direction="upstream", quantity_kind="pressure").metadata()
+```
+```text
+shape: (1, 4)
+┌────────┬────────────────────┬───────────────────────┬────────────────────────┐
+│ ro     ┆ ro_upstream_entity ┆ ro_upstream_data      ┆ ro_upstream_data.label │
+│ ---    ┆ ---                ┆ ---                   ┆ ---                    │
+│ str    ┆ str                ┆ str                   ┆ str                    │
+╞════════╪════════════════════╪═══════════════════════╪════════════════════════╡
+│ wbs:RO ┆ wbs:RO-in          ┆ wbs:RO-in-pressure-pa ┆ RO in pressure pa      │
+└────────┴────────────────────┴───────────────────────┴────────────────────────┘
+```
+
+## Reading the data
+
+`data()` returns an object that describes the data of the selected streams.
+It reads the values only when asked.
+This is useful for checking the size and the time range before a large read:
+
+```python
+d = power.data()
+print(d.total_rows)
+start, end = d.time_range
+print(start, end)
+```
+```text
+17520
+2025-01-01 00:00:00+00:00 2025-12-31 23:00:00+00:00
+```
+
+`dataframe()` reads the values.
+`limit` keeps the first rows of each stream:
+
+```python
+power.dataframe(limit=3)
+```
+```text
+shape: (3, 3)
+┌─────────────────────────┬────────────────────────┬────────────────────────┐
+│ time                    ┆ m__P1 mechanical power ┆ m__P2 mechanical power │
+│ ---                     ┆ ---                    ┆ ---                    │
+│ datetime[μs, UTC]       ┆ f64                    ┆ f64                    │
+╞═════════════════════════╪════════════════════════╪════════════════════════╡
+│ 2025-01-01 00:00:00 UTC ┆ 1.1874e6               ┆ 106089.85853           │
+│ 2025-01-01 01:00:00 UTC ┆ 1.1816e6               ┆ 101473.943758          │
+│ 2025-01-01 02:00:00 UTC ┆ 1.1653e6               ┆ 97750.261488           │
+└─────────────────────────┴────────────────────────┴────────────────────────┘
+```
+
+## Moving on
+
+- [Query cookbook](query-cookbook.md): queries for common questions about a plant.
+- [Debug an empty or unexpected query result](debug-an-empty-query.md): what to check when a query selects nothing.
+- [Query reference](../reference/query/_index.md): every method, with all parameters.
