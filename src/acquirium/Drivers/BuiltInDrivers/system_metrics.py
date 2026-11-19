@@ -42,7 +42,7 @@ _QK_RATIO = "http://qudt.org/vocab/quantitykind/DimensionlessRatio"
 _QK_INFO = "http://qudt.org/vocab/quantitykind/InformationEntropy"
 
 _METRICS: list[tuple[str, str, str, str]] = [
-    # (ref_name,            label,                    unit,       quantity_kind)
+    # (stream_name,            label,                    unit,       quantity_kind)
     ("cpu_percent",       "CPU usage",              _U_PERCENT, _QK_RATIO),
     ("memory_percent",    "RAM usage",              _U_PERCENT, _QK_RATIO),
     ("memory_used_bytes", "RAM used",               _U_BYTE,    _QK_INFO),
@@ -64,7 +64,7 @@ class SystemMetricsDriver(PollingIngestDriver):
         for ref, _, unit, quantity_kind in _METRICS:
             self.declare(
                 ref,
-                point_uri=str(self._stream_uri(ref)),
+                property_uri=str(self._stream_uri(ref)),
                 unit=unit,
                 quantity_kind=quantity_kind,
                 value_kind="numeric",
@@ -90,7 +90,7 @@ class SystemMetricsDriver(PollingIngestDriver):
         )
         return pl.DataFrame({
             "ts": [ts] * len(sample),
-            "ref_name": list(sample.keys()),
+            "stream_name": list(sample.keys()),
             "value": list(sample.values()),
         })
 

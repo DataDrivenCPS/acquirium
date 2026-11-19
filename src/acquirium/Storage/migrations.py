@@ -119,9 +119,77 @@ def _duckdb_drop_timeseries_unique(conn) -> None:
     conn.execute("ALTER TABLE timeseries_migration_v2 RENAME TO timeseries")
 
 
+def _columns(conn, table: str, placeholder: str) -> set[str]:
+    return {row[0] for row in conn.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() "
+        f"AND table_name={placeholder}", [table]
+    ).fetchall()}
+
+
+# ``ref`` became ``stream`` and ``point`` became ``property``. Each entry is a
+# table and the columns to rename in it. Index names are kept, so startup
+# finds the indexes that already exist.
+_NAME_RENAMES = (
+    ("stream_ids", (("ref_id", "stream_id"), ("ref_uri", "stream_uri"))),
+    ("timeseries", (("ref_id", "stream_id"),)),
+    ("streams", (("ref_uri", "stream_uri"), ("point_uri", "property_uri"), ("ref_name", "stream_name"))),
+    ("logs", (("point_uri", "property_uri"),)),
+    ("stream_resets", (("ref_uri", "stream_uri"),)),
+    ("materialization_lineage", (("input_ref_uri", "input_stream_uri"), ("output_ref_uri", "output_stream_uri"))),
+)
+
+
+def _rename_stream_and_property_columns(conn, placeholder: str) -> None:
+    # The view is dropped because it names the old columns; startup recreates
+    # it after migrations.
+    conn.execute("DROP VIEW IF EXISTS timeseries_streams")
+    if _columns(conn, "ref_ids", placeholder):
+        # Startup has just created an empty ``stream_ids``; the populated
+        # ``ref_ids`` takes its place.
+        if conn.execute("SELECT count(*) FROM stream_ids").fetchone()[0]:
+            raise RuntimeError("both ref_ids and stream_ids hold rows; cannot rename ref_ids")
+        conn.execute("DROP TABLE stream_ids")
+        conn.execute("ALTER TABLE ref_ids RENAME TO stream_ids")
+    for table, renames in _NAME_RENAMES:
+        columns = _columns(conn, table, placeholder)
+        for old, new in renames:
+            if old in columns and new not in columns:
+                conn.execute(f"ALTER TABLE {table} RENAME COLUMN {old} TO {new}")
+
+
+def _duckdb_stream_and_property_names(conn) -> None:
+    # DuckDB cannot alter a table that has secondary indexes. They are dropped
+    # here and startup recreates them after migrations.
+    tables = [table for table, _ in _NAME_RENAMES] + ["ref_ids"]
+    marks = ", ".join("?" for _ in tables)
+    for (index,) in conn.execute(
+        f"SELECT index_name FROM duckdb_indexes() WHERE schema_name=current_schema() AND table_name IN ({marks})", tables
+    ).fetchall():
+        conn.execute(f'DROP INDEX "{index}"')
+    _rename_stream_and_property_columns(conn, "?")
+
+
+def _postgres_stream_and_property_names(conn) -> None:
+    _rename_stream_and_property_columns(conn, "%s")
+
+
+def _experiment_stream_uri_column(conn) -> None:
+    postgres = conn.__class__.__module__.startswith("psycopg")
+    columns = _columns(conn, "experiment_observations", "%s" if postgres else "?")
+    if "ref_uri" not in columns or "stream_uri" in columns:
+        return
+    # DuckDB cannot alter a table that has secondary indexes; startup
+    # recreates them after migrations.
+    for index in ("experiment_observations_ref_idx", "experiment_observations_variable_idx"):
+        conn.execute(f"DROP INDEX IF EXISTS {index}")
+    conn.execute("ALTER TABLE experiment_observations RENAME COLUMN ref_uri TO stream_uri")
+
+
+TIMESERIES_MIGRATIONS += (Migration(2, "stream_and_property_names", _postgres_stream_and_property_names),)
 DUCKDB_TIMESERIES_MIGRATIONS = (
     Migration(1, "publication_columns", _duckdb_publication_columns),
     Migration(2, "drop_timeseries_unique", _duckdb_drop_timeseries_unique),
+    Migration(3, "stream_and_property_names", _duckdb_stream_and_property_names),
 )
 EXPERIMENT_MIGRATIONS = (
     Migration(1, "observation_keys", (
@@ -137,3 +205,5 @@ EXPERIMENT_MIGRATIONS += (Migration(3, "declaration_upgrade_frontier", (
     "ALTER TABLE experiment_metadata_state ADD COLUMN declaration_format INTEGER DEFAULT 0",
     "ALTER TABLE experiment_metadata_state ADD COLUMN declaration_upgrade_version BIGINT",
 )),)
+
+EXPERIMENT_MIGRATIONS += (Migration(4, "stream_uri_column", _experiment_stream_uri_column),)

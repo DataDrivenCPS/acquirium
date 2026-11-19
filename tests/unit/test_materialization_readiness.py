@@ -96,11 +96,11 @@ def test_a_write_landing_after_the_index_is_not_skipped(tmp_path, monkeypatch):
         store.upsert_rows("urn:a", [(NOW + timedelta(minutes=1), 3.0)], value_kind="numeric")
         assert runtime.run_once()
         monkeypatch.setattr(RevisionStore, "change_index", original)
-        binding_b = next(b for b in runtime._dag.bindings if b.inputs["input"][0].ref_uri == "urn:b")
+        binding_b = next(b for b in runtime._dag.bindings if b.inputs["input"][0].stream_uri == "urn:b")
         # b's frontier stopped at the index snapshot, below the slipped write.
         assert _progress(store)[binding_b.progress_key] < RevisionStore(store).current_revision()
         assert runtime.run_once()
-        ref = binding_b.outputs["out"].ref_uri
+        ref = binding_b.outputs["out"].stream_uri
         rows = pl.from_arrow(next(store.timeseries(ref, value_mode="numeric")))
         assert rows["value"].to_list() == [1.0, 2.0]
     finally:
@@ -118,7 +118,7 @@ def test_a_failing_read_marks_only_its_binding(tmp_path, monkeypatch):
         original = RevisionStore.next_batch
 
         def broken_for_b(self, binding):
-            if binding.inputs["input"][0].ref_uri == "urn:b":
+            if binding.inputs["input"][0].stream_uri == "urn:b":
                 raise RuntimeError("disk gone")
             return original(self, binding)
         monkeypatch.setattr(RevisionStore, "next_batch", broken_for_b)

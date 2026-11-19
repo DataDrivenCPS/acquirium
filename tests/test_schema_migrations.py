@@ -13,6 +13,26 @@ def timeseries_history(store):
     return [(migration.version, migration.name) for migration in migrations]
 
 
+def restore_old_names(conn, store):
+    """Give the tables the ``ref``/``point`` names they had before the rename migration."""
+    from acquirium.Storage.migrations import _NAME_RENAMES
+    conn.execute("DROP VIEW IF EXISTS timeseries_streams")
+    if isinstance(store, DuckDBStore):
+        # DuckDB cannot alter a table that has secondary indexes; reopening recreates them.
+        tables = [table for table, _ in _NAME_RENAMES]
+        marks = ", ".join("?" for _ in tables)
+        for (index,) in conn.execute(f"SELECT index_name FROM duckdb_indexes() WHERE table_name IN ({marks})", tables).fetchall():
+            conn.execute(f'DROP INDEX "{index}"')
+    existing = {row[0] for row in conn.execute(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema()").fetchall()}
+    for table, renames in _NAME_RENAMES:
+        if table not in existing:
+            continue
+        for old, new in renames:
+            conn.execute(f"ALTER TABLE {table} RENAME COLUMN {new} TO {old}")
+    conn.execute("ALTER TABLE stream_ids RENAME TO ref_ids")
+
+
 def reopen(store, *, recreate=False):
     if isinstance(store, DuckDBStore):
         return DuckDBStore(store.db_path, recreate=recreate)
@@ -34,6 +54,7 @@ def test_upgrade_integer_keyed_database_preserves_samples(materialization_store)
             conn.execute("ALTER TABLE timeseries DROP COLUMN last_stream_version")
         for table in ("stream_resets", "binding_progress", "system_state", "schema_migrations"):
             conn.execute(f"DROP TABLE {table}")
+        restore_old_names(conn, store)
         conn.execute("""CREATE VIEW timeseries_streams AS
             SELECT r.ref_uri, s.point_uri, s.source_id, s.ref_name,
                    COALESCE(s.value_kind, 'text') AS value_kind,
@@ -46,6 +67,9 @@ def test_upgrade_integer_keyed_database_preserves_samples(materialization_store)
         try:
             with upgraded._own_conn() as conn:
                 assert conn.execute("SELECT numeric_value, deleted FROM timeseries ORDER BY ts LIMIT 1").fetchone() == (3., False)
+                # the ``ref``/``point`` names were renamed, and the stream kept its row
+                assert conn.execute("SELECT s.stream_name, s.property_uri FROM timeseries t JOIN stream_ids r USING (stream_id) "
+                                    "JOIN streams s USING (stream_uri) ORDER BY t.ts LIMIT 1").fetchone() == ("flow", None)
                 assert conn.execute("SELECT count(*) FROM timeseries_streams").fetchone()[0] == attempt + 1
                 assert conn.execute("SELECT version, name FROM schema_migrations WHERE component='timeseries' ORDER BY version").fetchall() == timeseries_history(store)
             upgraded.upsert_rows(ref, [(stamp + timedelta(hours=attempt + 1), 4. + attempt)], value_kind="numeric")
@@ -64,7 +88,7 @@ def test_upgrade_drops_duckdb_timeseries_unique_constraint(tmp_path):
                    "WHERE table_name='timeseries' AND constraint_type='UNIQUE'")
     # Reproduce schema version 1: the same table with UNIQUE (ref_id, ts).
     with store._lock, store._own_conn() as conn:
-        conn.execute("DROP VIEW timeseries_streams")
+        restore_old_names(conn, store)
         conn.execute("""CREATE TABLE timeseries_v1 (
             ref_id INTEGER NOT NULL, ts TIMESTAMP NOT NULL,
             numeric_value DOUBLE, text_value VARCHAR,
@@ -77,7 +101,7 @@ def test_upgrade_drops_duckdb_timeseries_unique_constraint(tmp_path):
         conn.execute("INSERT INTO timeseries_v1 SELECT * FROM timeseries")
         conn.execute("DROP TABLE timeseries")
         conn.execute("ALTER TABLE timeseries_v1 RENAME TO timeseries")
-        conn.execute("DELETE FROM schema_migrations WHERE component='timeseries' AND version=2")
+        conn.execute("DELETE FROM schema_migrations WHERE component='timeseries' AND version>=2")
         assert conn.execute(constraints).fetchone()[0] == 1
     store.close()
     for attempt in range(2):

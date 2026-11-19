@@ -1,4 +1,4 @@
-"""measurement(ref=) and lazy stream statistics against a real server.
+"""measurement(stream=) and lazy stream statistics against a real server.
 
 Runs on the shared local DuckDB server (see ``tests/conftest.py``).
 """
@@ -16,11 +16,10 @@ SOURCE = "refstats"
 def hist(local_acquirium):
     """Two streams on two points, three rows in one and two in the other."""
     ac = acquirium_without_experiments(local_acquirium)
-    ac.register_datasource(SOURCE)
     ac.register_streams([
-        {"point_uri": "urn:test:refstats#feed", "source_id": SOURCE, "ref_name": "FT_feed",
+        {"property_uri": "urn:test:refstats#feed", "source_id": SOURCE, "stream_name": "FT_feed",
          "value_kind": "numeric"},
-        {"point_uri": "urn:test:refstats#perm", "source_id": SOURCE, "ref_name": "FT_perm",
+        {"property_uri": "urn:test:refstats#perm", "source_id": SOURCE, "stream_name": "FT_perm",
          "value_kind": "numeric"},
     ])
     ac.insert_timeseries_batch(SOURCE, {
@@ -60,37 +59,37 @@ def exists_calls(hist, monkeypatch):
 
 def test_ref_selects_one_stream_by_source_and_name(hist):
     feed = hist.stream(SOURCE, "FT_feed")
-    df = hist.query().measurement(ref=feed).dataframe(shape="narrow", compact=False)
-    assert df["ref_uri"].unique().to_list() == [feed.ref_uri]
+    df = hist.query().measurement(stream=feed).dataframe(shape="narrow", compact=False)
+    assert df["stream_uri"].unique().to_list() == [feed.stream_uri]
     assert df["value_numeric"].to_list() == [0.0, 1.0, 2.0]
 
 
 def test_ref_list_selects_each_stream(hist):
     refs = [hist.stream(SOURCE, "FT_feed"), str(hist.stream(SOURCE, "FT_perm"))]
-    info = hist.query().measurement(ref=refs).data().stream_info()
-    assert sorted(info["ref_name"].to_list()) == ["FT_feed", "FT_perm"]
+    info = hist.query().measurement(stream=refs).data().stream_info()
+    assert sorted(info["stream_name"].to_list()) == ["FT_feed", "FT_perm"]
     assert info["source_id"].unique().to_list() == [SOURCE]
 
 
 def test_streams_takes_the_same_stream_handles(hist):
     feed, perm = hist.stream(SOURCE, "FT_feed"), hist.stream(SOURCE, "FT_perm")
-    data = hist.query().measurement(ref=[feed, perm]).data()
+    data = hist.query().measurement(stream=[feed, perm]).data()
     narrow = data.dataframe(shape="narrow", compact=False, streams=feed)
-    assert narrow["ref_uri"].unique().to_list() == [feed.ref_uri]
+    assert narrow["stream_uri"].unique().to_list() == [feed.stream_uri]
     latest = data.latest(streams=[perm])
     assert latest["value"].to_list() == [11.0]
 
 
 @pytest.mark.parametrize("ref", [[], "urn:acquirium:no-such-stream"])
 def test_ref_without_a_match_is_empty(hist, ref):
-    data = hist.query().measurement(ref=ref).data()
+    data = hist.query().measurement(stream=ref).data()
     assert data.aliases == ["data"]
     assert data.bindings == []
     assert data.is_empty()
 
 
 def test_reading_values_skips_the_stats(hist, stats_calls):
-    q = hist.query().measurement(ref=hist.stream(SOURCE, "FT_feed"))
+    q = hist.query().measurement(stream=hist.stream(SOURCE, "FT_feed"))
     data = q.data()
     assert data["data"]["value"].to_list() == [0.0, 1.0, 2.0]
     q.dataframe()
@@ -99,32 +98,32 @@ def test_reading_values_skips_the_stats(hist, stats_calls):
 
 def test_stats_are_fetched_once_on_first_read(hist, stats_calls):
     refs = [hist.stream(SOURCE, "FT_feed"), hist.stream(SOURCE, "FT_perm")]
-    data = hist.query().measurement(ref=refs).data()
+    data = hist.query().measurement(stream=refs).data()
     assert stats_calls == []
     assert data.total_rows == 5
     assert data.time_range == (T0, T0 + timedelta(minutes=2))
     assert not data.is_empty()
-    assert {b.ref_name: b.row_count for b in data.bindings} == {"FT_feed": 3, "FT_perm": 2}
+    assert {b.stream_name: b.row_count for b in data.bindings} == {"FT_feed": 3, "FT_perm": 2}
     assert len(stats_calls) == 1
-    assert sorted(stats_calls[0]) == sorted(r.ref_uri for r in refs)
+    assert sorted(stats_calls[0]) == sorted(r.stream_uri for r in refs)
 
 
 def test_is_empty_asks_which_streams_have_rows(hist, stats_calls, exists_calls):
-    hist.register_streams([{"point_uri": "urn:test:refstats#none", "source_id": SOURCE,
-                            "ref_name": "FT_none", "value_kind": "numeric"}])
+    hist.register_streams([{"property_uri": "urn:test:refstats#none", "source_id": SOURCE,
+                            "stream_name": "FT_none", "value_kind": "numeric"}])
     feed, perm, none = (hist.stream(SOURCE, n) for n in ("FT_feed", "FT_perm", "FT_none"))
-    data = hist.query().measurement(ref=[feed, perm, none]).data()
+    data = hist.query().measurement(stream=[feed, perm, none]).data()
     assert not data.is_empty()
-    assert hist.query().measurement(ref=none).data().is_empty()
+    assert hist.query().measurement(stream=none).data().is_empty()
     assert stats_calls == []
     assert len(exists_calls) == 2
-    assert sorted(exists_calls[0]) == sorted(s.ref_uri for s in (feed, perm, none))
+    assert sorted(exists_calls[0]) == sorted(s.stream_uri for s in (feed, perm, none))
 
 
 def test_refresh_stats_sees_new_rows(hist, stats_calls, exists_calls):
-    hist.register_streams([{"point_uri": "urn:test:refstats#extra", "source_id": SOURCE,
-                            "ref_name": "FT_extra", "value_kind": "numeric"}])
-    data = hist.query().measurement(ref=hist.stream(SOURCE, "FT_extra")).data()
+    hist.register_streams([{"property_uri": "urn:test:refstats#extra", "source_id": SOURCE,
+                            "stream_name": "FT_extra", "value_kind": "numeric"}])
+    data = hist.query().measurement(stream=hist.stream(SOURCE, "FT_extra")).data()
     assert data.is_empty()
     assert data.total_rows == 0
     hist.insert_timeseries_batch(SOURCE, {"FT_extra": [(T0, 1.0)]})

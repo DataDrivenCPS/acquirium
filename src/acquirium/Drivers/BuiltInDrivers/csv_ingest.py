@@ -10,6 +10,7 @@ import polars as pl
 
 from acquirium.Drivers.Driver import FileBatch, FileIngestDriver
 from acquirium.Drivers.tabular import to_observations
+from acquirium.internals._names import accepts_old_names
 
 logger = logging.getLogger("acquirium.csv_ingest")
 
@@ -18,6 +19,7 @@ HEADER_SCAN_LIMIT = 100
 RAGGED_MODES = ("ignore", "skip", "error")
 
 
+@accepts_old_names
 class CSVIngestDriver(FileIngestDriver):
     """Watches a directory for CSV and TSV files and ingests new rows.
 
@@ -92,16 +94,16 @@ class CSVIngestDriver(FileIngestDriver):
         """
         return df
 
-    def declare_stream(self, ref_name: str) -> None:
+    def declare_stream(self, stream_name: str) -> None:
         """Hook: declare one stream discovered in the file.
 
-        Called once per distinct ``ref_name`` in each batch. Default declares
+        Called once per distinct ``stream_name`` in each batch. Default declares
         the bare identity; override to attach metadata::
 
-            def declare_stream(self, ref_name):
-                self.declare(ref_name, **self.mapping.declaration(ref_name))
+            def declare_stream(self, stream_name):
+                self.declare(stream_name, **self.mapping.declaration(stream_name))
         """
-        self.declare(ref_name)
+        self.declare(stream_name)
 
     def read(self, path: Path, cursor: Any) -> FileBatch:
         offset = cursor or 0
@@ -165,7 +167,7 @@ class CSVIngestDriver(FileIngestDriver):
             timezone=cfg.get("timezone", "UTC"),
             day_first=bool(cfg.get("day_first", False)),
         )
-        for name in observations["ref_name"].unique():
+        for name in observations["stream_name"].unique():
             self.declare_stream(name)
         return FileBatch(observations, offset + len(df))
 

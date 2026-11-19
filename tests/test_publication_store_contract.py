@@ -14,7 +14,7 @@ def test_publication_assigns_one_new_global_revision_per_write(tmp_path):
     store = DuckDBStore(tmp_path / "publication.duckdb", recreate=True)
     try:
         publisher = RevisionPublisher(store)
-        mutations = pa.table({"operation": ["upsert"], "ref_uri": ["urn:input"],
+        mutations = pa.table({"operation": ["upsert"], "stream_uri": ["urn:input"],
             "ts": pa.array([datetime(2026, 1, 1, tzinfo=timezone.utc)], type=pa.timestamp("us", tz="UTC")),
             "numeric_value": [1.0], "text_value": [None]}, schema=MUTATION_SCHEMA)
         assert publisher.publish(PublicationRequest("publication", mutations)).row_count == 1
@@ -27,7 +27,7 @@ def test_publication_assigns_one_new_global_revision_per_write(tmp_path):
 
 
 def test_publication_rejects_deletion(tmp_path):
-    base = {"operation": "delete", "ref_uri": "urn:input",
+    base = {"operation": "delete", "stream_uri": "urn:input",
             "ts": datetime(2026, 1, 1, tzinfo=timezone.utc),
             "numeric_value": None, "text_value": None}
     store = DuckDBStore(tmp_path / "delete.duckdb")
@@ -52,7 +52,7 @@ def test_batch_reset_uses_one_revision_and_joins_caller_transaction(materializat
         store.upsert_rows(ref, [(stamp, ref)])
     # Tombstones must be physically cleared, although deletion counts exclude them.
     with store._lock, store._write_conn() as conn:
-        execute(conn, "UPDATE timeseries SET deleted=TRUE WHERE ref_id=(SELECT ref_id FROM ref_ids WHERE ref_uri=?)", [refs[1]])
+        execute(conn, "UPDATE timeseries SET deleted=TRUE WHERE stream_id=(SELECT stream_id FROM stream_ids WHERE stream_uri=?)", [refs[1]])
     before = _snapshot(store)
     with store._lock, store._write_conn() as conn:
         assert publisher.reset(conn, []) is None
@@ -82,7 +82,7 @@ def test_publication_preserves_instants_in_non_utc_session(materialization_store
     # Both sides of the spring transition and the repeated autumn hour.
     stamps = [datetime(2026, 3, 8, hour, tzinfo=timezone.utc) for hour in (8, 9)]
     stamps += [datetime(2026, 11, 1, hour, tzinfo=timezone.utc) for hour in (7, 8)]
-    rows = [dict(operation="upsert", ref_uri="urn:timezone", ts=stamp,
+    rows = [dict(operation="upsert", stream_uri="urn:timezone", ts=stamp,
                  numeric_value=float(index), text_value=None) for index, stamp in enumerate(stamps)]
     publisher = RevisionPublisher(store)
     request = PublicationRequest("timezone", pa.Table.from_pylist(rows, schema=MUTATION_SCHEMA))
@@ -111,12 +111,12 @@ def test_replacement_publication_validation_and_empty(materialization_store):
     store = materialization_store
     publisher = RevisionPublisher(store)
     stamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    row = dict(operation='upsert', ref_uri='urn:input', ts=stamp, numeric_value=2., text_value=None)
+    row = dict(operation='upsert', stream_uri='urn:input', ts=stamp, numeric_value=2., text_value=None)
     def request(rows):
         return PublicationRequest('replacement', pa.Table.from_pylist(rows, schema=MUTATION_SCHEMA))
     assert publisher.replace(request([row, dict(row, numeric_value=3.)]), 'urn:input').row_count == 1
     original = _snapshot(store)
-    for invalid in [dict(row, operation='delete'), dict(row, ref_uri='urn:other'),
+    for invalid in [dict(row, operation='delete'), dict(row, stream_uri='urn:other'),
                     dict(row, ts=None), dict(row, text_value='invalid'), dict(row, operation=None)]:
         with pytest.raises(ValueError):
             publisher.replace(request([invalid, row]), 'urn:input')
@@ -141,7 +141,7 @@ def test_http_replacement_preserves_ingestion_contract(materialization_store, mo
     monkeypatch.setattr(app.state, 'manager', manager, raising=False)
     client = TestClient(app)
     def send(values, replace=False):
-        return client.post('/insert_timeseries', json=[dict(source_id='source', ref_name='sensor',
+        return client.post('/insert_timeseries', json=[dict(source_id='source', stream_name='sensor',
                           values=values, replace=replace)])
     a, b = '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z'
     assert send([[a, 1.], [b, 2.]], True).json() == {'ok': True, 'rows_inserted': 2}

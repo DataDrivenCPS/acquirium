@@ -10,7 +10,10 @@ import pytest
 
 from acquirium.Storage.values import (
     _prepare_value_columns_rowwise,
+    assign_stream_value_kind,
     prepare_value_columns,
+    split_value,
+    streams_with_numeric_values,
     typed_value_series,
 )
 
@@ -24,7 +27,7 @@ def _frame(values: pl.Series, kinds: list[str | None]) -> pl.DataFrame:
     n = len(values)
     return pl.DataFrame(
         {
-            "ref_uri": pl.Series("ref_uri", [f"urn:v:{i % 3}" for i in range(n)], dtype=pl.Utf8),
+            "stream_uri": pl.Series("stream_uri", [f"urn:v:{i % 3}" for i in range(n)], dtype=pl.Utf8),
             "ts": pl.Series("ts", _ts(n), dtype=pl.Datetime("us", "UTC")),
             "value": values,
             "value_kind": pl.Series("value_kind", kinds, dtype=pl.Utf8),
@@ -116,10 +119,11 @@ def test_typed_value_series_dtypes():
     assert typed_value_series([True, False]).dtype == pl.Boolean
     assert typed_value_series([]).dtype == pl.String
     assert typed_value_series([None, None]).dtype == pl.String
-    # Exact type scan: a bool among ints must NOT collapse to Int64 (True -> 1).
+    # A bool among other types takes the row-wise path: it is 1.0 under
+    # numeric kind and "True" under text kind, which no single string can be.
     s = typed_value_series([1, 2, True])
-    assert s.dtype == pl.String
-    assert s.to_list() == ["1", "2", "True"]
+    assert s.dtype == pl.Object
+    assert s.to_list() == [1, 2, True]
     # Mixed int/float stringifies so ints keep str() spelling ("2", not "2.0").
     s = typed_value_series([1.5, None, 2])
     assert s.dtype == pl.String
@@ -174,7 +178,7 @@ def test_fallback_warning_logged(caplog):
 def test_no_value_kind_column_defaults_to_text():
     df = pl.DataFrame(
         {
-            "ref_uri": pl.Series(["urn:v:0"], dtype=pl.Utf8),
+            "stream_uri": pl.Series(["urn:v:0"], dtype=pl.Utf8),
             "ts": pl.Series(_ts(1), dtype=pl.Datetime("us", "UTC")),
             "value": typed_value_series([1.5]),
         }
@@ -192,7 +196,7 @@ def test_unknown_value_kind_raises():
 
 @pytest.mark.unit
 def test_missing_value_column_raises():
-    df = pl.DataFrame({"ref_uri": ["a"], "ts": _ts(1)})
+    df = pl.DataFrame({"stream_uri": ["a"], "ts": _ts(1)})
     with pytest.raises(ValueError):
         prepare_value_columns(df)
 
@@ -201,7 +205,7 @@ def test_missing_value_column_raises():
 def test_presplit_frame_passes_through():
     df = pl.DataFrame(
         {
-            "ref_uri": ["a"],
+            "stream_uri": ["a"],
             "ts": _ts(1),
             "numeric_value": [1.0],
             "text_value": [None],
@@ -209,4 +213,22 @@ def test_presplit_frame_passes_through():
         }
     )
     out = prepare_value_columns(df)
-    assert out.columns == ["ref_uri", "ts", "numeric_value", "text_value"]
+    assert out.columns == ["stream_uri", "ts", "numeric_value", "text_value"]
+
+
+@pytest.mark.unit
+def test_a_boolean_is_a_number_in_a_numeric_stream_and_text_in_a_text_stream():
+    assert split_value(True, "numeric") == (1.0, None)
+    assert split_value(False, "numeric") == (0.0, None)
+    assert split_value(True, "text") == (None, "True")
+    assert assign_stream_value_kind([True, False]) == "numeric"
+    frame = pl.DataFrame({
+        "stream_uri": ["a", "b"],
+        "ts": [0, 0],
+        "value": [True, False],
+        "value_kind": ["numeric", "text"],
+    })
+    assert prepare_value_columns(frame).select("numeric_value", "text_value").rows() == [
+        (1.0, None), (None, "False"),
+    ]
+    assert streams_with_numeric_values(frame) == {"a", "b"}

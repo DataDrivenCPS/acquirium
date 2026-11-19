@@ -236,6 +236,7 @@ def make_client(roles_rows, resolved=None):
     client.expand_uri = MagicMock(side_effect=expand)
     client.graph_version = MagicMock(return_value=1)
     client._namespace_uris = MagicMock(return_value=("urn:x#",))
+    client.asserted_values = MagicMock(return_value={})
     return client
 
 
@@ -342,9 +343,9 @@ class TestQueryInsert:
 class TestRegisterStreamsMetadata:
     def test_split_merges_stream_fields_and_keeps_the_rest(self):
         stream, rest = _split_stream_metadata({
-            "source_id": "s", "ref_name": "r", "unit": UNIT,
+            "source_id": "s", "stream_name": "r", "unit": UNIT,
             "metadata": {"label": "Flow", "unit": UNIT, "tags": ["a"]}})
-        assert stream == {"source_id": "s", "ref_name": "r", "unit": UNIT, "label": "Flow"}
+        assert stream == {"source_id": "s", "stream_name": "r", "unit": UNIT, "label": "Flow"}
         assert rest == {"tags": ["a"]}
 
     def test_conflict_raises(self):
@@ -354,11 +355,11 @@ class TestRegisterStreamsMetadata:
     def test_register_streams_keeps_resolved_text(self):
         client = make_client([])
         client.insert_graph = MagicMock()
-        client.resolve_point_metadata = MagicMock(return_value={"unit": UNIT})
-        client._point_metadata = MagicMock(return_value={})
+        client.resolve_property_metadata = MagicMock(return_value={"unit": UNIT})
+        client._property_metadata = MagicMock(return_value={})
         client._units_compatible = MagicMock(return_value=True)
-        client.register_streams([{"source_id": "src", "ref_name": "flow", "point_uri": NODE, "unit": "mg/L"},
-                                 {"source_id": "src", "ref_name": "f2", "point_uri": "urn:x#p2", "unit": UNIT}])
+        client.register_streams([{"source_id": "src", "stream_name": "flow", "property_uri": NODE, "unit": "mg/L"},
+                                 {"source_id": "src", "stream_name": "f2", "property_uri": "urn:x#p2", "unit": UNIT}])
         g = Graph().parse(data=client.insert_graph.call_args[0][0], format="turtle")
         assert (URIRef(NODE), URIRef(f"{ATTR_NS}unit.raw"), Literal("mg/L")) in g
         assert not list(g.triples((URIRef("urn:x#p2"), URIRef(f"{ATTR_NS}unit.raw"), None)))  # a URI has no text
@@ -366,10 +367,10 @@ class TestRegisterStreamsMetadata:
     def test_register_streams_keeps_text_that_did_not_resolve(self):
         client = make_client([])
         client.insert_graph = MagicMock()
-        client.resolve_point_metadata = MagicMock(return_value={"quantity_kind": None})
-        client._point_metadata = MagicMock(return_value={})
+        client.resolve_property_metadata = MagicMock(return_value={"quantity_kind": None})
+        client._property_metadata = MagicMock(return_value={})
         with pytest.warns(UserWarning, match="Could not resolve"):
-            client.register_streams([{"source_id": "src", "ref_name": "f", "point_uri": NODE,
+            client.register_streams([{"source_id": "src", "stream_name": "f", "property_uri": NODE,
                                       "quantity_kind": "VolumeFlowRate"}])
         g = Graph().parse(data=client.insert_graph.call_args[0][0], format="turtle")
         assert (URIRef(NODE), URIRef(f"{ATTR_NS}quantity_kind.raw"), Literal("VolumeFlowRate")) in g
@@ -377,11 +378,11 @@ class TestRegisterStreamsMetadata:
     def test_register_streams_writes_the_extra_triples(self):
         client = make_client([])
         client.insert_graph = MagicMock()
-        client.resolve_point_metadata = MagicMock(return_value={"unit": UNIT})
-        client._point_metadata = MagicMock(return_value={})
+        client.resolve_property_metadata = MagicMock(return_value={"unit": UNIT})
+        client._property_metadata = MagicMock(return_value={})
         client._units_compatible = MagicMock(return_value=True)
         client.register_streams([{
-            "source_id": "src", "ref_name": "flow", "point_uri": NODE,
+            "source_id": "src", "stream_name": "flow", "property_uri": NODE,
             "metadata": {"unit": UNIT, "product_info": {"year": 2019}},
         }])
         turtle, kwargs = client.insert_graph.call_args[0][0], client.insert_graph.call_args[1]
@@ -400,10 +401,10 @@ class TestRegisterStreamsMetadata:
     def test_register_streams_merges_metadata_per_point(self):
         client = make_client([])
         client.insert_graph = MagicMock()
-        client._point_metadata = MagicMock(return_value={})
+        client._property_metadata = MagicMock(return_value={})
         client.register_streams([
-            {"source_id": "src", "ref_name": "a", "point_uri": NODE, "metadata": {"year": 2019, "loop": "L1"}},
-            {"source_id": "src", "ref_name": "b", "point_uri": NODE, "metadata": {"year": 2020}},
+            {"source_id": "src", "stream_name": "a", "property_uri": NODE, "metadata": {"year": 2019, "loop": "L1"}},
+            {"source_id": "src", "stream_name": "b", "property_uri": NODE, "metadata": {"year": 2020}},
         ])
         update = client.sparql_update.call_args[0][0]
         assert f'<{NODE}> <{ATTR_NS}year> "2020"^^<{XSD_INTEGER}>' in update and "2019" not in update
@@ -412,9 +413,9 @@ class TestRegisterStreamsMetadata:
     def test_register_streams_bad_metadata_writes_nothing(self):
         client = make_client([])
         client.insert_graph = MagicMock()
-        client._point_metadata = MagicMock(return_value={})
+        client._property_metadata = MagicMock(return_value={})
         with pytest.raises(ValueError, match="invalid metadata key"):
-            client.register_streams([{"source_id": "src", "ref_name": "a", "point_uri": NODE,
+            client.register_streams([{"source_id": "src", "stream_name": "a", "property_uri": NODE,
                                       "metadata": {"bad key": 1}}])
         client.insert_graph.assert_not_called()
         client.sparql_update.assert_not_called()
@@ -529,3 +530,39 @@ class TestStore:
         store._prune_orphan_metadata.assert_not_called()
         store.insert_graph("<urn:x#new> a <urn:w#Valve> .", replace=True, graph_uri=PLANT)
         store._prune_orphan_metadata.assert_called_once()
+
+
+class TestBuiltinsHoldOneValue:
+    """insert_metadata follows the rule of register_streams for the unit,
+    quantity kind, medium, substance and label of a property."""
+
+    OTHER = "http://qudt.org/vocab/unit/KiloW"
+    DISCONNECTED = "urn:acquirium#isDisconnected"
+
+    def test_a_generated_property_loses_the_value_its_source_wrote(self):
+        client = make_client([[NODE, "urn:x#ref"]], resolved={"kW": self.OTHER})
+        client.asserted_values.return_value = {NODE: [
+            [self.DISCONNECTED, "true", "scada"],
+            [str(HAS_UNIT), UNIT, "scada"],
+        ]}
+        client.insert_metadata({NODE: {"unit": "kW"}})
+        first, second = client.sparql_update.call_args_list
+        assert first[1] == {"source_id": "scada"}
+        assert f"DELETE {{ <{NODE}> ?p ?o }}" in first[0][0] and f"?p = <{HAS_UNIT}>" in first[0][0]
+        assert second[1] == {"source_id": METADATA_SOURCE_ID}
+        assert f"<{NODE}> <{HAS_UNIT}> <{self.OTHER}>" in second[0][0]
+
+    def test_a_plant_property_keeps_its_value_and_a_different_one_raises(self):
+        client = make_client([[NODE, "urn:x#ref"]], resolved={"kW": self.OTHER, "mg/L": UNIT})
+        client.asserted_values.return_value = {NODE: [[str(HAS_UNIT), UNIT, "plant"]]}
+        with pytest.raises(ValueError, match="unit mismatch"):
+            client.insert_metadata({NODE: {"unit": "kW"}})
+        client.sparql_update.assert_not_called()
+        client.insert_metadata({NODE: {"unit": "mg/L"}})          # the same value is fine
+        assert client.sparql_update.call_count == 1
+
+    def test_a_plant_property_without_a_value_takes_one(self):
+        client = make_client([[NODE, "urn:x#ref"]], resolved={"kW": self.OTHER})
+        client.asserted_values.return_value = {NODE: []}
+        client.insert_metadata({NODE: {"unit": "kW"}})
+        assert client.sparql_update.call_args[1] == {"source_id": METADATA_SOURCE_ID}

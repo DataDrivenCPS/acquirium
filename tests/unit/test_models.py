@@ -93,7 +93,7 @@ class TestTimeIntervalSerialization:
 class TestLogEntry:
     def test_to_dict_full(self):
         entry = LogEntry(
-            point_uri="urn:test:point1",
+            property_uri="urn:test:point1",
             timestamp=datetime(2025, 6, 15, 10, 0, tzinfo=timezone.utc),
             period=TimeIntervalModel(
                 start=datetime(2025, 6, 15, 9, 0, tzinfo=timezone.utc),
@@ -102,7 +102,7 @@ class TestLogEntry:
             message="test message",
         )
         d = entry.to_dict()
-        assert d["point_uri"] == "urn:test:point1"
+        assert d["property_uri"] == "urn:test:point1"
         assert d["message"] == "test message"
         assert d["log_time"] is not None
         assert d["observation_start"] is not None
@@ -110,7 +110,7 @@ class TestLogEntry:
 
     def test_to_dict_none_period(self):
         entry = LogEntry(
-            point_uri="urn:test:point1",
+            property_uri="urn:test:point1",
             timestamp=datetime(2025, 6, 15, 10, 0, tzinfo=timezone.utc),
             period=TimeIntervalModel(),
             message="test",
@@ -127,7 +127,7 @@ class TestPoint:
     def test_defaults(self):
         p = Point(uri="urn:test:point1")
         assert p.uri == "urn:test:point1"
-        assert p.ref_uri is None
+        assert p.stream_uri is None
         assert p.types == []
         assert p.unit is None
         assert p.last_reported is None
@@ -136,11 +136,11 @@ class TestPoint:
     def test_full(self):
         p = Point(
             uri="urn:test:point1",
-            ref_uri="h1",
+            stream_uri="h1",
             types=["TypeA"],
             unit="degC",
         )
-        assert p.ref_uri == "h1"
+        assert p.stream_uri == "h1"
         assert p.types == ["TypeA"]
         assert p.unit == "degC"
 

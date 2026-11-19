@@ -17,42 +17,42 @@ def acquirium_client_nodata():
     )
     acq.insert_graph_file("tests/test_model_nodata.ttl", source_id="plant")
     time.sleep(1)
-    for point_uri in ("urn:ex/Pump1-out", "urn:ex/Pump1", "urn:ex/Pump1-in"):
-        assert acq.client.delete_logs(point_uri=point_uri)["ok"] is True
+    for property_uri in ("urn:ex/Pump1-out", "urn:ex/Pump1", "urn:ex/Pump1-in"):
+        assert acq.client.delete_logs(property_uri=property_uri)["ok"] is True
     try:
         yield acq
     finally:
-        for point_uri in ("urn:ex/Pump1-out", "urn:ex/Pump1", "urn:ex/Pump1-in"):
-            acq.client.delete_logs(point_uri=point_uri)
+        for property_uri in ("urn:ex/Pump1-out", "urn:ex/Pump1", "urn:ex/Pump1-in"):
+            acq.client.delete_logs(property_uri=property_uri)
 
 ##### Log tests backend #####
 def test_log_1(acquirium_client_nodata):
     '''
     No period specified
     '''
-    result = acquirium_client_nodata.client.delete_logs(point_uri="urn:ex/Pump1-out")
+    result = acquirium_client_nodata.client.delete_logs(property_uri="urn:ex/Pump1-out")
     assert result["ok"] is True
-    result = acquirium_client_nodata.client.delete_logs(point_uri="urn:ex/Pump1")
+    result = acquirium_client_nodata.client.delete_logs(property_uri="urn:ex/Pump1")
     assert result["ok"] is True
-    result = acquirium_client_nodata.client.delete_logs(point_uri="urn:ex/Pump1-in")
+    result = acquirium_client_nodata.client.delete_logs(property_uri="urn:ex/Pump1-in")
     assert result["ok"] is True
 
 
     acquirium_client_nodata.client.insert_log(
-        point_uri="urn:ex/Pump1",
+        property_uri="urn:ex/Pump1",
         log_time="2024-06-10T12:00:00Z",
         log_message="Pump started successfully."
     )
     # Q the logs
     logs = acquirium_client_nodata.client.query_logs(
-        point_uri="urn:ex/Pump1",
+        property_uri="urn:ex/Pump1",
         log_time_start="2024-06-10T11:00:00Z"
     )
     assert len(logs) == 1
     assert logs[0].message == "Pump started successfully."
 
     logs = acquirium_client_nodata.client.query_logs(
-        point_uri="urn:ex/Pump1",
+        property_uri="urn:ex/Pump1",
         log_time_end="2024-06-11T11:00:00Z"
     )
     assert len(logs) == 1
@@ -71,7 +71,7 @@ def test_log_1(acquirium_client_nodata):
     assert result['rows'][0][0] == "urn:ex/Pump1"
     assert result['rows'][0][1] == "urn:ex/Pump1_log"
 
-    result = acquirium_client_nodata.client.delete_logs(point_uri="urn:ex/Pump1")
+    result = acquirium_client_nodata.client.delete_logs(property_uri="urn:ex/Pump1")
     assert result["ok"] is True
 
 ##### Log tests backend #####
@@ -79,50 +79,50 @@ def test_log_2(acquirium_client_nodata):
     '''
     Period specified, multiple logs
     '''
-    result = acquirium_client_nodata.client.delete_logs(point_uri="urn:ex/Pump1-out")
+    result = acquirium_client_nodata.client.delete_logs(property_uri="urn:ex/Pump1-out")
     assert result["ok"] is True
-    result = acquirium_client_nodata.client.delete_logs(point_uri="urn:ex/Pump1")
+    result = acquirium_client_nodata.client.delete_logs(property_uri="urn:ex/Pump1")
     assert result["ok"] is True
-    result = acquirium_client_nodata.client.delete_logs(point_uri="urn:ex/Pump1-in")
+    result = acquirium_client_nodata.client.delete_logs(property_uri="urn:ex/Pump1-in")
     assert result["ok"] is True
 
     acquirium_client_nodata.client.insert_log(
-        point_uri="urn:ex/Pump1-in",
+        property_uri="urn:ex/Pump1-in",
         log_time="2024-06-17T12:00:00Z",
         observation_start="2024-06-15T12:00:00Z",
         observation_end="2024-06-15T12:30:00Z",
         log_message="Pump started successfully. - log 1"
     )
     acquirium_client_nodata.client.insert_log(
-        point_uri="urn:ex/Pump1-in",
+        property_uri="urn:ex/Pump1-in",
         log_time="2024-06-16T12:00:00Z",
         observation_start="2024-06-14T12:00:00Z",
         observation_end="2024-06-14T12:30:00Z",
         log_message="Pump started successfully. - log 2"
     )
     acquirium_client_nodata.client.insert_log(
-        point_uri="urn:ex/Pump1-in",
+        property_uri="urn:ex/Pump1-in",
         log_time="2024-06-18T12:00:00Z",
         observation_start="2024-06-14T12:00:00Z",
         observation_end="2024-06-16T12:30:00Z",
         log_message="Pump started successfully. - log 3"
     )
     acquirium_client_nodata.client.insert_log(
-        point_uri="urn:ex/Pump1-in",
+        property_uri="urn:ex/Pump1-in",
         log_time="2024-06-20T12:00:00Z",
         observation_start="2024-06-15T12:20:00Z",
         observation_end="2024-06-15T12:25:00Z",
         log_message="Pump started successfully. - log 4"
     )
     acquirium_client_nodata.client.insert_log(
-        point_uri="urn:ex/Pump1-in",
+        property_uri="urn:ex/Pump1-in",
         log_time="2024-06-30T12:00:00Z",
         log_message="Pump started successfully. - log 5"
     )
     
     # Q the logs
     logs = acquirium_client_nodata.client.query_logs(
-        point_uri="urn:ex/Pump1-in",
+        property_uri="urn:ex/Pump1-in",
         log_time_start="2024-06-10T11:00:00Z"
     )
     assert len(logs) == 5
@@ -130,26 +130,26 @@ def test_log_2(acquirium_client_nodata):
     assert logs[4].message == "Pump started successfully. - log 5"
 
     logs = acquirium_client_nodata.client.query_logs(
-        point_uri="urn:ex/Pump1-in",
+        property_uri="urn:ex/Pump1-in",
         log_time_end="2024-06-21T11:00:00Z"
     )
     assert len(logs) == 4
     assert logs[0].message == "Pump started successfully. - log 2"
 
     logs = acquirium_client_nodata.client.query_logs(
-        point_uri="urn:ex/Pump1-in",
+        property_uri="urn:ex/Pump1-in",
         observation_start="2024-06-14T12:45:00Z"
     )
     assert len(logs) == 3
 
     logs = acquirium_client_nodata.client.query_logs(
-        point_uri="urn:ex/Pump1-in",
+        property_uri="urn:ex/Pump1-in",
         observation_end="2023-06-15T12:26:00Z"
     )
     assert len(logs) == 0
 
     logs = acquirium_client_nodata.client.query_logs(
-        point_uri="urn:ex/Pump1-in",
+        property_uri="urn:ex/Pump1-in",
         observation_end="2024-06-14T12:26:00Z"
     )
     assert len(logs) == 2
@@ -167,7 +167,7 @@ def test_log_2(acquirium_client_nodata):
     assert result['rows'][0][0] == "urn:ex/Pump1-in"
     assert result['rows'][0][1] == "urn:ex/Pump1-in_log"
 
-    result = acquirium_client_nodata.client.delete_logs(point_uri="urn:ex/Pump1-in")
+    result = acquirium_client_nodata.client.delete_logs(property_uri="urn:ex/Pump1-in")
     assert result["ok"] is True
 
 ##### Log tests api #####
@@ -175,11 +175,11 @@ def test_log_3(acquirium_client_nodata):
     '''
     No period specified
     '''
-    result = acquirium_client_nodata.client.delete_logs(point_uri="urn:ex/Pump1-out")
+    result = acquirium_client_nodata.client.delete_logs(property_uri="urn:ex/Pump1-out")
     assert result["ok"] is True
-    result = acquirium_client_nodata.client.delete_logs(point_uri="urn:ex/Pump1")
+    result = acquirium_client_nodata.client.delete_logs(property_uri="urn:ex/Pump1")
     assert result["ok"] is True
-    result = acquirium_client_nodata.client.delete_logs(point_uri="urn:ex/Pump1-in")
+    result = acquirium_client_nodata.client.delete_logs(property_uri="urn:ex/Pump1-in")
     assert result["ok"] is True
     q = acquirium_client_nodata.query().entity(WATR.Pump, alias="pumps")
 
@@ -211,9 +211,9 @@ def test_log_3(acquirium_client_nodata):
     assert len(logs) == 1
     assert logs.shape == (1, 5)
 
-    result = acquirium_client_nodata.client.delete_logs(point_uri="urn:ex/Pump1")
+    result = acquirium_client_nodata.client.delete_logs(property_uri="urn:ex/Pump1")
     assert result["ok"] is True
-    result = acquirium_client_nodata.client.delete_logs(point_uri="urn:ex/Pump1-out")
+    result = acquirium_client_nodata.client.delete_logs(property_uri="urn:ex/Pump1-out")
     assert result["ok"] is True
 
 
@@ -289,7 +289,7 @@ def test_log_4(acquirium_client_nodata):
 
 
 
-    result = acquirium_client_nodata.client.delete_logs(point_uri="urn:ex/Pump1-out")
+    result = acquirium_client_nodata.client.delete_logs(property_uri="urn:ex/Pump1-out")
     assert result["ok"] is True
-    result = acquirium_client_nodata.client.delete_logs(point_uri="urn:ex/Pump1")
+    result = acquirium_client_nodata.client.delete_logs(property_uri="urn:ex/Pump1")
     assert result["ok"] is True

@@ -2,18 +2,46 @@
 title: Acquirium documentation
 ---
 
-Acquirium is a data management platform for water treatment plants. It
+:::{div} version-warning
+Acquirium is under rapid development. This documentation only explains version **{{ acquirium_version }}**.
+:::
+
+Acquirium is a data-metadata management platform for water treatment plants. It
 pairs with [WaTr](https://github.com/DataDrivenCPS/water-ontology), an
 ontology for water treatment operations that extends ASHRAE 223P with
 treatment processes, substance flows, chemical media and references to
-external data sources. 
+external data sources.
 
-The server stores two things: the semantic model of the plant (equipment,
-piping, sensors and what they measure, described with WaTr and 223P) and
-the timeseries of every measured point, whatever its source. Queries
-describe what you are looking for in domain terms and are refined step by
-step; the server finds the matching points and returns their data, without
-SPARQL or knowledge of the graph's structure.
+:::{div} sd-text-center sd-fs-2 sd-font-weight-bold sd-mt-5 sd-mb-3
+New to Acquirium?
+:::
+
+```{button-ref} getting-started
+:ref-type: doc
+:color: primary
+:shadow:
+:align: center
+:class: sd-fs-4 sd-px-5 sd-py-3 sd-mb-5
+
+Get started
+```
+
+## Get help and contribute
+
+1. Found a bug or a performance issue? Open a [GitHub issue](https://github.com/DataDrivenCPS/acquirium/issues).
+2. Feel free to fork the repo and open a [pull request](https://github.com/DataDrivenCPS/acquirium/pulls).
+3. Join our community on [Slack](https://join.slack.com/t/acquirium/shared_invite/zt-4ek0gz21f-M~3mwGxSC1VgyPrzjyq9wQ)
+
+## About this documentation
+
+This documentation follows [Diátaxis](https://diataxis.fr):
+
+- [Tutorials](tutorials/_index.md) are lessons. Start here if you are learning Acquirium.
+- [How-to guides](how-to/_index.md) are steps for a specific task.
+- [Reference](reference/_index.md) describes every method, config key and endpoint.
+- [Explanation](explanation/_index.md) covers how Acquirium works and why.
+
+## Citation
 
 The design is described in [Acquirium: Toward Interoperable Data Driven
 Applications in Water Treatment Systems](https://dl.acm.org/doi/abs/10.1145/3744256.3812557)
@@ -30,92 +58,3 @@ Applications in Water Treatment Systems](https://dl.acm.org/doi/abs/10.1145/3744
   doi       = {10.1145/3744256.3812557}
 }
 ```
-
-## Architecture
-
-```text
-                                  ┌──────────────────────────────────────────────┐
-                                  │               acquirium server               │
- ┌───────────┐   ┌────────────┐   │                                              │
- │ your code │──▶│  Acquirium │   │   graph store        semantic model + WaTr   │
- │ notebooks │◀──│   client   │◀─▶│   timeseries store   duckdb or timescale     │
- └───────────┘   └────────────┘   │   text resolution    embedding indexes       │
-                       HTTP       │                    ▲                         │
-                                  │                    │ write                   │
-                                  │             ┌──────┴──────┐                  │
-                                  │             │   drivers   │                  │
-                                  │             │ (Ray actor) │                  │
-                                  │             └──────▲──────┘                  │
-                                  └────────────────────┼─────────────────────────┘
-                                                       │ poll on a schedule
-                                     SCADA · historians · CSV · MQTT · lab sheets
-```
-
-## Tutorials
-
-Tutorials walk through the capabilities of Acquirium. We recommend starting here.
-
-- [Getting started](tutorials/getting-started.md) — install, start a server, run a first query
-- [Querying](tutorials/querying.md) — accessing plant metadata and timeseries data with the incremental query interface
-- [Query cookbook](tutorials/query-cookbook.md) — example queries for common domain questions
-- [Working with data](tutorials/data.md) — accessing and preprocessing timeseries data
-- [Your first driver](tutorials/first-driver.md) — authoring a CSV driver step by step without a plant model
-- [A driver against an existing plant model](tutorials/driver-with-a-plant-model.md) — the same driver with a plant model, binding its streams to the model's points
-- [Your first app](tutorials/first-app.md) — derive a new stream from stored data and watch it stay current
-- [Your first experiment](tutorials/first-experiment.py) — optimize a pump schedule with SciPy, record each scenario, and compare runs
-
-The notebooks under [`notebooks/watertap/`](https://github.com/DataDrivenCPS/acquirium/tree/main/notebooks/watertap) are runnable tutorials too: a quick start, the query interface feature by feature, a regulatory-compliance check and a soft sensor.
-
-<!-- TODO: that sentence covers four of the five notebooks in the folder;
-     `watertap-1.ipynb` is unlisted. Name it here or drop it from the repo. -->
-
-## How-to guides
-
-- [Calculate derived streams](how-to/calculate-derived-streams.md) — water-temperature conversion, averages, and alarms
-- [Check, deploy, and repair an app](how-to/check-deploy-apps.md) — dry runs, deployment, reprocessing, and execution controls
-- [Compare runs with formulas](how-to/compare-experiment-runs.md) — one row per run, formulas in Polars or plain Python
-- [Record experiments](how-to/record-experiments.md) — record inputs and results, find runs by metadata, and annotate stream intervals
-- [Record a whole model](how-to/record-a-whole-model.md) — explicit general and Pyomo adapters, JSON metadata, and sampling
-- [Run the server](how-to/run-the-server.md) — the server command, startup, Docker
-- [Start from a script](how-to/local-runtime.md) — `aq.init()`, config discovery, and local server ownership
-- [Debugging queries for an unexpected result](how-to/debug-an-empty-query.md) — the five usual causes
-- [Explore a model](how-to/explore-a-model.md) — build a query step by step; `options()` and `facets()`
-- [Load a plant model](how-to/load-a-plant-model.md) — insert the model, check it landed, validate it against the shapes
-- [Inserting data](how-to/write-data.md) — register streams and write rows without a driver; the logbook
-- [Attach metadata to a node](how-to/attach-metadata.md) — your own values on equipment and points, queryable like built-in attributes
-- [Resolve text to URIs](how-to/resolve-text.md) — `resolve()`, units and conversion, tuning
-
-## Reference
-
-The reference guides contain complete interface of each module:
-
-- [Acquirium Client API](reference/client-api.md) — every method of `Acquirium`, `Query`, `DataObject`, `AcquiriumClient`
-- [Driver reference](reference/drivers.md) — class hierarchy, hooks, state, config keys, built-in drivers, CLI
-- [App reference](reference/apps.md) — the app API, output requirements, and processing rules
-- [Experiment reference](reference/experiments.md) — Studies, variables, runs, stream annotations, and endpoints
-- [Server configuration](reference/server-config.md) — `[server]`, environment variables, `[ontologies]`, the endpoint table
-- [Storage migrations](reference/storage-migrations.md) — versioned schema upgrades and adding future migrations
-- [HTTP API](reference/http-api.md) — the raw endpoints
-- [Glossary](reference/glossary.md) — URIs, CURIEs, free text, the plant model, querying and data terms
-
-## Explanation
-
-These contain explanation behind the motivation of key design choices we made while building acquirium:
-
-- [The query model](explanation/query-model.md) — what a query is, why we built it, free text, how it executes
-- [Values](explanation/values.md) — numeric and text storage, `value_mode`, `cast_value`
-- [Units](explanation/units.md) — point units, storage units, compatibility, automatic and requested conversion
-- [Drivers](explanation/drivers.md) — why drivers, and the sMAP inspiration
-- [Apps](explanation/apps.md) — how apps keep derived streams current as readings arrive and are corrected
-- [Experiments](explanation/experiments.md) — how Studies, runs, stream intervals, and artifacts preserve analysis context
-- [The data stream lifecycle](explanation/stream-lifecycle.md) — how streams are identified, stored and found again
-- [Text resolution](explanation/text-resolution.md) — how matching works
-- [Materialization internals](explanation/materialization-internals.md) — app scheduling, recovery, storage backends, and tests
-- [Server internals](explanation/server-internals.md) — storage backends, the graph store, the embedding indexes
-- [Graph backend architecture](explanation/graph-backend.md) — graph ownership, inference, query views
-
-<!-- TODO: this page used to end by pointing at `docs/agents/`, the compact
-     per-topic references written for coding agents. That directory lives on
-     the `ums-agents` branch and does not exist here, so the paragraph was
-     removed. Restore it when the agent references land, and update the
-     "Working with a coding agent?" line in the top-level README with it. -->

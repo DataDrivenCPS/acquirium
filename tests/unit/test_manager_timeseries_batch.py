@@ -7,7 +7,7 @@ import pytest
 
 from acquirium.Server.manager import Manager
 from acquirium.Storage.values import prepare_value_columns
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import compute_stream_uri
 
 
 class _BulkStore:
@@ -15,29 +15,29 @@ class _BulkStore:
         self.frames = []
         self.refs = []
 
-    def ensure_stream_ref(self, point_uri, source_id, ref_name, ref_uri=None, value_kind="text"):
+    def ensure_stream_ref(self, property_uri, source_id, stream_name, stream_uri=None, value_kind="text"):
         self.refs.append(
             {
-                "point_uri": point_uri,
+                "property_uri": property_uri,
                 "source_id": source_id,
-                "ref_name": ref_name,
-                "ref_uri": str(ref_uri),
+                "stream_name": stream_name,
+                "stream_uri": str(stream_uri),
                 "value_kind": value_kind,
             }
         )
-        return str(ref_uri)
+        return str(stream_uri)
 
     def bulk_insert_polars(self, df):
         self.frames.append(df)
         return len(df)
 
-    def stream_value_kind(self, ref_uri):
-        if ref_uri == str(compute_ref_uri("source/file.csv", "state/value")):
+    def stream_value_kind(self, stream_uri):
+        if stream_uri == str(compute_stream_uri("source/file.csv", "state/value")):
             return "text"
         return "numeric"
 
-    def stream_value_kinds(self, ref_uris):
-        return {uri: self.stream_value_kind(uri) for uri in ref_uris}
+    def stream_value_kinds(self, stream_uris):
+        return {uri: self.stream_value_kind(uri) for uri in stream_uris}
 
 
 class _FailingBulkStore(_BulkStore):
@@ -46,7 +46,7 @@ class _FailingBulkStore(_BulkStore):
         raise RuntimeError("bulk insert failed")
 
 
-def test_insert_timeseries_batch_uses_computed_ref_uris_in_one_bulk_insert():
+def test_insert_timeseries_batch_uses_computed_stream_uris_in_one_bulk_insert():
     mgr = Manager.__new__(Manager)
     store = _BulkStore()
     mgr.timeseries_store = store
@@ -62,11 +62,11 @@ def test_insert_timeseries_batch_uses_computed_ref_uris_in_one_bulk_insert():
 
     assert count == 3
     assert len(store.frames) == 1
-    rows = store.frames[0].sort(["ref_uri", "ts"]).to_dicts()
-    assert store.frames[0].columns == ["ref_uri", "ts", "value", "value_kind"]
-    assert {row["ref_uri"] for row in rows} == {
-        str(compute_ref_uri("source/file.csv", "temp")),
-        str(compute_ref_uri("source/file.csv", "state/value")),
+    rows = store.frames[0].sort(["stream_uri", "ts"]).to_dicts()
+    assert store.frames[0].columns == ["stream_uri", "ts", "value", "value_kind"]
+    assert {row["stream_uri"] for row in rows} == {
+        str(compute_stream_uri("source/file.csv", "temp")),
+        str(compute_stream_uri("source/file.csv", "state/value")),
     }
     # A batch mixing scalar types is stringified so the split can vectorize;
     # the values still survive intact through prepare_value_columns.
@@ -78,7 +78,7 @@ def test_insert_timeseries_batch_uses_computed_ref_uris_in_one_bulk_insert():
     assert store.refs == []
 
 
-def test_insert_timeseries_uses_computed_ref_uris_in_one_bulk_insert():
+def test_insert_timeseries_uses_computed_stream_uris_in_one_bulk_insert():
     mgr = Manager.__new__(Manager)
     store = _BulkStore()
     mgr.timeseries_store = store
@@ -87,13 +87,13 @@ def test_insert_timeseries_uses_computed_ref_uris_in_one_bulk_insert():
     df = pl.DataFrame(
         {
             "ts": [ts, ts.replace(hour=1), ts],
-            "ref_name": ["temp", "state/value", "temp"],
+            "stream_name": ["temp", "state/value", "temp"],
             "value": ["72.4", "OK", "73.1"],
             "value_kind": ["numeric", "text", "numeric"],
         },
         schema={
             "ts": pl.Datetime("us", "UTC"),
-            "ref_name": pl.Utf8,
+            "stream_name": pl.Utf8,
             "value": pl.Utf8,
             "value_kind": pl.Utf8,
         },
@@ -103,14 +103,14 @@ def test_insert_timeseries_uses_computed_ref_uris_in_one_bulk_insert():
 
     assert count == 3
     assert len(store.frames) == 1
-    rows = store.frames[0].sort(["ref_uri", "ts"]).to_dicts()
-    assert store.frames[0].columns == ["ref_uri", "ts", "value", "value_kind"]
-    assert {row["ref_uri"] for row in rows} == {
-        str(compute_ref_uri("source/file.csv", "temp")),
-        str(compute_ref_uri("source/file.csv", "state/value")),
+    rows = store.frames[0].sort(["stream_uri", "ts"]).to_dicts()
+    assert store.frames[0].columns == ["stream_uri", "ts", "value", "value_kind"]
+    assert {row["stream_uri"] for row in rows} == {
+        str(compute_stream_uri("source/file.csv", "temp")),
+        str(compute_stream_uri("source/file.csv", "state/value")),
     }
     assert {row["value"] for row in rows} == {"72.4", "73.1", "OK"}
-    assert store.frames[0].sort(["ref_uri", "ts"]).get_column("value_kind").to_list() == ["text", "numeric", "numeric"]
+    assert store.frames[0].sort(["stream_uri", "ts"]).get_column("value_kind").to_list() == ["text", "numeric", "numeric"]
     assert store.refs == []
 
 
@@ -123,13 +123,13 @@ def test_insert_timeseries_ignores_input_value_kind_column():
     df = pl.DataFrame(
         {
             "ts": [ts, ts.replace(hour=1)],
-            "ref_name": ["state", "state"],
+            "stream_name": ["state", "state"],
             "value": ["1", "ON"],
             "value_kind": ["numeric", "text"],
         },
         schema={
             "ts": pl.Datetime("us", "UTC"),
-            "ref_name": pl.Utf8,
+            "stream_name": pl.Utf8,
             "value": pl.Utf8,
             "value_kind": pl.Utf8,
         },

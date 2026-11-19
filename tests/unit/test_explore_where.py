@@ -216,3 +216,34 @@ class TestAttributeDocs:
             assert "Attributes (usable on):" in doc, method.__name__
             for name in REGISTRY:
                 assert name in doc, (method.__name__, name)
+
+
+def _rows(query: Query, turtle: str) -> set[str]:
+    """Run the compiled SPARQL of ``query`` on a small rdflib graph."""
+    from rdflib import Graph
+
+    graph = Graph().parse(data=turtle, format="turtle")
+    return {str(row[0]) for row in graph.query(query.to_sparql())}
+
+
+_TWO_TYPES = """
+@prefix t: <urn:test#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+t:TypeA2 rdfs:subClassOf t:TypeA .
+t:a1 a t:TypeA .
+t:a2 a t:TypeA2 .
+t:b1 a t:TypeB .
+"""
+
+
+class TestNegatedTypeAndUri:
+    def test_a_negated_type_alone_matches_the_other_nodes(self):
+        # NOT EXISTS binds nothing: without a pattern for the node the filter
+        # was evaluated with the node free, and rejected every row.
+        rows = _rows(q().entity(type=Not(CLS_A)), _TWO_TYPES)
+        assert "urn:test#b1" in rows
+        assert not rows & {"urn:test#a1", "urn:test#a2"}
+
+    def test_a_uri_that_is_not_in_the_graph_matches_nothing(self):
+        assert _rows(q().entity(uri="urn:test#a1"), _TWO_TYPES) == {"urn:test#a1"}
+        assert _rows(q().entity(uri="urn:test#missing"), _TWO_TYPES) == set()

@@ -19,10 +19,11 @@ OF_MEDIUM = "http://data.ashrae.org/standard223#ofMedium"
 HAS_QUANTITY_KIND = "http://qudt.org/schema/qudt/hasQuantityKind"
 
 DATA_ATTRS = ["type", "medium", "substance", "quantity_kind", "unit",
-              "enumeration_kind", "data_source", "app", "label"]
+              "enumeration_kind", "data_source", "app", "is_disconnected", "label"]
 # an entity node covers every attribute: its own, then the measurement-only ones
 ENTITY_ATTRS = ["type", "process", "cp_type", "medium", "label",
-                "substance", "quantity_kind", "unit", "enumeration_kind", "data_source", "app"]
+                "substance", "quantity_kind", "unit", "enumeration_kind", "data_source", "app",
+                "is_disconnected"]
 
 
 @pytest.fixture(autouse=True)

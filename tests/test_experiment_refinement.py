@@ -26,7 +26,7 @@ def ledger_for(store, tmp_path):
 def counts(store):
     with store._own_conn() as conn:
         return {table: execute(conn, f"SELECT count(*) FROM {table}").fetchone()[0]
-                for table in ("streams", "ref_ids", "timeseries", "experiment_observations",
+                for table in ("streams", "stream_ids", "timeseries", "experiment_observations",
                               "experiment_artifacts", "experiment_artifact_chunks", "experiment_metadata_outbox")}
 
 
@@ -219,7 +219,7 @@ def test_stream_delivery_preserves_each_triples_subject(materialization_store, t
     ledger, graph, study = ledger_for(materialization_store, tmp_path)
     variable = ledger.declare(study, "flow", "output", "timeseries", {})
     run = ledger.start(study, {})["run_id"]
-    ref = ledger.record_batch(run, [{"form": "samples", "variable_id": variable["variable_id"], "samples": [(T0, 1)]}])[0]["ref_uri"]
+    ref = ledger.record_batch(run, [{"form": "samples", "variable_id": variable["variable_id"], "samples": [(T0, 1)]}])[0]["stream_uri"]
     ledger.sync_metadata_graph()
     point = URIRef(ref + "__point")
     assert set(graph.dataset.objects(point, RDFS.label)) == {Literal("flow")}
@@ -275,5 +275,5 @@ def test_committed_sample_intent_replays_after_graph_flush_failure(materializati
     assert counts(materialization_store)["experiment_observations"] == 1
     assert counts(materialization_store)["experiment_metadata_outbox"] > 0
     reopened = ExperimentStore(materialization_store, graph_store=graph)
-    assert reopened.observations(study)[0]["ref_uri"] == receipt["ref_uri"]
+    assert reopened.observations(study)[0]["stream_uri"] == receipt["stream_uri"]
     assert counts(materialization_store)["experiment_metadata_outbox"] == 0

@@ -22,7 +22,7 @@ from acquirium.Materialization.models import (
 )
 from acquirium.Materialization.worker import load_entrypoint
 from acquirium.Materialization.definitions import source_digest
-from acquirium.internals.models import compute_ref_uri, looks_like_uri
+from acquirium.internals.models import compute_stream_uri, looks_like_uri
 
 
 def _json(value: object) -> str:
@@ -79,13 +79,13 @@ def output_port(application_name: str, port: str,
     to anything that is not the stream's identity.
     """
     if spec.stream_name is not None:
-        ref_name = spec.stream_name
+        stream_name = spec.stream_name
     else:
-        pairs = sorted((alias, item.ref_uri) for alias, values in inputs.items() for item in values)
-        ref_name = f"{application_name}:{port}:{sha256(_json([port, pairs]).encode()).hexdigest()}"
-    ref_uri = str(compute_ref_uri(f"derived:{application_name}", ref_name))
-    point_uri = spec.point_uri or f"urn:acquirium:derived-point:{ref_uri.rsplit('#', 1)[-1]}"
-    return OutputPort(ref_uri, ref_name, point_uri, spec)
+        pairs = sorted((alias, item.stream_uri) for alias, values in inputs.items() for item in values)
+        stream_name = f"{application_name}:{port}:{sha256(_json([port, pairs]).encode()).hexdigest()}"
+    stream_uri = str(compute_stream_uri(f"derived:{application_name}", stream_name))
+    property_uri = spec.property_uri or f"urn:acquirium:derived-point:{stream_uri.rsplit('#', 1)[-1]}"
+    return OutputPort(stream_uri, stream_name, property_uri, spec)
 
 
 @dataclass(frozen=True)
@@ -117,8 +117,8 @@ def _query_rows(query: Query) -> tuple[_MatchRow, ...]:
             unit = cell(f"unit{node}") or cell(f"extunit{node}")
             label = cell(f"lbl{node}")
             streams.setdefault(graph.aliases_reverse.get(node, f"data_{node}"), []).append({
-                "ref_uri": str(ref),
-                "point_uri": str(cell(f"v{node}")) if cell(f"v{node}") is not None else None,
+                "stream_uri": str(ref),
+                "property_uri": str(cell(f"v{node}")) if cell(f"v{node}") is not None else None,
                 "unit": str(unit) if unit is not None else None,
                 "label": str(label) if label is not None else None,
             })
@@ -132,13 +132,13 @@ def _query_rows(query: Query) -> tuple[_MatchRow, ...]:
         }
         for alias, values in sorted(streams.items()):
             item = values[0]
-            columns[alias] = item["point_uri"]
-            columns[f"{alias}_ref"] = item["ref_uri"]
+            columns[alias] = item["property_uri"]
+            columns[f"{alias}_ref"] = item["stream_uri"]
             columns[f"{alias}.label"] = item["label"]
             columns[f"{alias}.unit"] = item["unit"]
         # SPARQL joins can repeat a stream through unrelated graph triples.
         # Bind each distinct alias-to-stream set once, deterministically.
-        key = _json({alias: sorted(item["ref_uri"] for item in values) for alias,values in streams.items()})
+        key = _json({alias: sorted(item["stream_uri"] for item in values) for alias,values in streams.items()})
         if key in seen and seen[key] != columns:
             raise ValueError("query matches the same streams with different entity bindings; disambiguate the query")
         if streams and key not in seen:
@@ -250,6 +250,7 @@ class Deployment:
         duration = lambda value: None if value is None else timedelta(microseconds=int(value))
         lookback = None if data["lookback"] == "all" else duration(data["lookback"])
         return cls(data["name"], data["entrypoint"], data["executable_digest"],
+            # a deployment stored before the ``property_uri`` name has ``point_uri``, which OutputSpec accepts
             {key: OutputSpec(**value) for key, value in data["outputs"].items()},
             lookback, duration(data.get("lookahead")) or timedelta(), bool(data.get("backfill")),
             duration(data.get("batch_delay", 0)) or timedelta(),
@@ -300,7 +301,7 @@ class BindingPlanner:
                 for row in rows:
                     for alias, matches in row.streams.items():
                         for item in matches:
-                            grouped.setdefault(alias, {})[str(item["ref_uri"])] = item
+                            grouped.setdefault(alias, {})[str(item["stream_uri"])] = item
                 # A named aggregate still owns its stream when its last input
                 # disappears. Keep empty aliases so retained outputs can retract.
                 if not grouped:
@@ -323,7 +324,7 @@ class BindingPlanner:
                     # The planner records the metadata the compiled query
                     # exposes: reference, point, unit, and label.
                     alias: tuple(StreamDescriptor(
-                        ref_uri=str(item["ref_uri"]), point_uri=item.get("point_uri"),
+                        stream_uri=str(item["stream_uri"]), property_uri=item.get("property_uri"),
                         unit=item.get("unit"), label=item.get("label"),
                     ) for item in items)
                     for alias, items in sorted(row_streams.items())

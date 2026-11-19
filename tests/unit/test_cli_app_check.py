@@ -65,11 +65,11 @@ def _run(monkeypatch, app_file: Path, bindings, capture=None, extra=("--limit", 
 def test_check_prints_matched_inputs_and_computed_rows(monkeypatch, app_file: Path):
     capture: dict = {}
     result = _run(monkeypatch, app_file, [{
-        "inputs": {"input": [{"ref_uri": "urn:input", "label": "Inlet temp", "unit": None}]},
+        "inputs": {"input": [{"stream_uri": "urn:input", "label": "Inlet temp", "unit": None}]},
         "row": {"hx": "urn:hx-1", "input": "urn:point",
                 "input_ref": "urn:input", "input.label": "Inlet temp"},
         "input_rows": {"input": 2},
-        "outputs": {"doubled": {"stream": "urn:derived", "ref_name": "doubled:abc",
+        "outputs": {"doubled": {"stream": "urn:derived", "stream_name": "doubled:abc",
                                 "value_kind": "numeric", "rows": 2, "truncated": True,
                                 "values": [{"time": "2026-01-01T00:00:00+00:00", "value": 4.0}]}},
         "error": None,
@@ -120,7 +120,7 @@ def test_a_module_spec_sends_no_search_path(monkeypatch, app_file: Path):
 
 def test_check_exits_nonzero_when_a_binding_failed(monkeypatch, app_file: Path):
     result = _run(monkeypatch, app_file, [{
-        "inputs": {"input": [{"ref_uri": "urn:input", "label": None, "unit": None}]},
+        "inputs": {"input": [{"stream_uri": "urn:input", "label": None, "unit": None}]},
         "row": None, "outputs": {}, "error": "ValueError: calibration missing",
     }])
 

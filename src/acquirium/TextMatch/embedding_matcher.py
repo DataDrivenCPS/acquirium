@@ -11,6 +11,8 @@ from typing import Any, Literal
 
 import numpy as np
 
+from acquirium.internals.internals_namespaces import WATR
+
 logger = logging.getLogger("acquirium.embedding_matcher")
 
 MatchStage = Literal["exact", "semantic"]
@@ -20,6 +22,21 @@ MatchStage = Literal["exact", "semantic"]
 # This name is registered with fastembed as the FP32 export of the same
 # model, from the original BAAI repository.
 DEFAULT_MODEL = "BAAI/bge-small-en-v1.5-fp32"
+
+# The water ontology refines classes of the ontologies it builds on, often
+# under the same name (watr:Pump, s223:Pump). When two candidates tie, the
+# watr one leads. Semantic scores count as tied within this margin.
+WATR_TIE_MARGIN = 0.01
+
+
+def is_watr(uri: str) -> bool:
+    """Whether *uri* is a term of the water ontology."""
+    return uri.startswith(str(WATR))
+
+
+def ranking_score(uri: str, score: float) -> float:
+    """The score used to order semantic candidates: watr terms win near-ties."""
+    return score + WATR_TIE_MARGIN if is_watr(uri) else score
 
 # Texts per inference batch. A batch is padded to its longest member, so a
 # smaller batch limits how many rows one long text can inflate.
@@ -408,13 +425,14 @@ class EmbeddingMatcher:
         Several concepts can share a surface: "volume" is the name of
         qk:Volume and an alternative label of qk:CartesianVolume. Within one
         case reading, the concept the text names comes first, then one whose
-        primary label it is, then the rest; index order breaks what is left.
+        primary label it is, then the rest. Among those still tied a watr
+        concept comes first, and index order breaks what is left.
         """
         cs_rows = set(surface_index_cs.get(_collapse_ws(text), ()))
         rows = [*cs_rows, *surface_index.get(_normalize_surface(text), ())]
         wanted = _normalize_surface(text)
 
-        def _rank(idx: int) -> tuple[int, int, int]:
+        def _rank(idx: int) -> tuple[int, int, int, int]:
             m = meta[idx]
             if " ".join(_split_local_name(m["uri"])) == wanted:
                 naming = 0
@@ -422,7 +440,7 @@ class EmbeddingMatcher:
                 naming = 1
             else:
                 naming = 2
-            return (0 if idx in cs_rows else 1, naming, idx)
+            return (0 if idx in cs_rows else 1, naming, 0 if is_watr(m["uri"]) else 1, idx)
 
         hits: list[ResolveResult] = []
         seen: set[str] = set()
@@ -465,12 +483,18 @@ class EmbeddingMatcher:
             top_indices = np.argpartition(-scores, n_candidates)[:n_candidates]
             top_indices = top_indices[np.argsort(-scores[top_indices])]
 
+        # Stable, so candidates outside a near-tie keep their score order.
+        top_indices = sorted(
+            (int(i) for i in top_indices),
+            key=lambda i: -ranking_score(meta[i]["uri"], float(scores[i])),
+        )
+
         seen_uris = set(exclude_uris)
         results: list[ResolveResult] = []
         for idx in top_indices:
             s = float(scores[idx])
             if s < min_score:
-                break
+                continue
             m = meta[idx]
             if m["uri"] in seen_uris:
                 continue

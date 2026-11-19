@@ -83,8 +83,8 @@ def _poll(check, *, timeout: float, interval: float = 1.0, message: str = ""):
     raise AssertionError(f"timed out after {timeout}s: {message} (last error: {last_exc})")
 
 
-def _timeseries_rows(point_uri: str) -> int:
-    resp = requests.get(f"{BASE_URL}/timeseries", params={"uri": point_uri}, timeout=30)
+def _timeseries_rows(property_uri: str) -> int:
+    resp = requests.get(f"{BASE_URL}/timeseries", params={"uri": property_uri}, timeout=30)
     resp.raise_for_status()
     return ipc.open_stream(resp.content).read_all().num_rows
 

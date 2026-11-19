@@ -2,6 +2,7 @@
 
 title: Acquirium Documentation
 author: NAWI Project Team
+logo: logo.png
 
 # design notes in plans/ are not published
 exclude_patterns:
@@ -16,6 +17,7 @@ repository:
   branch: main
 
 html:
+  favicon: logo-notext.png
   use_issues_button: true
   use_repository_button: true
   extra_navbar: '<a href="/">watermetadata.org</a> · <a href="/docs">Ontology docs</a>'
@@ -30,8 +32,13 @@ parse:
     - attrs_inline
 
 sphinx:
+  # reads the version from pyproject.toml for {{ acquirium_version }}
+  local_extensions:
+    pyproject_version: _ext
   config:
     # acquirium docs carry their title in frontmatter (`title:`) instead of an H1
     myst_title_to_header: true
     # auto-generate #slug anchors for headings so GitHub-style section links resolve
     myst_heading_anchors: 4
+    # links to other sites open in a new tab
+    myst_links_external_new_tab: true

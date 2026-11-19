@@ -42,7 +42,7 @@ def _post(ac, path, body):
 
 def test_backend_deletes_runs_studies_and_clears_experiments(ac):
     client = ac.client
-    ac.register_streams([{"source_id": "contract", "ref_name": "site level"}])
+    ac.register_streams([{"source_id": "contract", "stream_name": "site level"}])
     ac.insert_timeseries("contract", "site level", [(WHEN, 1000.0)])
     site = str(ac.reference_uri("contract", "site level"))
     study = client.define_experiment("experiment delete contract")
@@ -92,7 +92,7 @@ def test_batch_declarations_and_observations_are_ordered_and_atomic(ac):
     run = client.start_experiment(template_id, {})
     url = f"/experiments/runs/{run['run_id']}/observations/batch"
     observations = [dict(variable_id=variables[0]["variable_id"], value=4),
-                    dict(variable_id=variables[1]["variable_id"], ref_uri="urn:test:flow", key=["p1"]),
+                    dict(variable_id=variables[1]["variable_id"], stream_uri="urn:test:flow", key=["p1"]),
                     dict(variable_id=variables[2]["variable_id"], value={"case": 1})]
     # The last value is invalid: no prefix of the batch may be committed.
     assert _post(ac, url, [*observations, {**observations[0], "value": "bad"}]).status_code == 400

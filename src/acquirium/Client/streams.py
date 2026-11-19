@@ -7,6 +7,7 @@ from typing import Any
 
 from acquirium.ExperimentValues import timestamp as _utc
 import polars as pl
+from acquirium.internals._names import accepts_old_names
 
 
 def samples_frame(frame: pl.DataFrame) -> pl.DataFrame:
@@ -16,6 +17,7 @@ def samples_frame(frame: pl.DataFrame) -> pl.DataFrame:
     return frame.select(pl.col("ts").alias("time"), "value")
 
 
+@accepts_old_names
 @dataclass(frozen=True)
 class Stream:
     """One stored stream, identified by its reference URI.
@@ -24,7 +26,7 @@ class Stream:
     Handles compare equal when their reference URIs do, and ``str()`` returns
     the URI.
     """
-    ref_uri: str
+    stream_uri: str
     _client: Any = field(default=None, repr=False, compare=False)
 
     def between(self, start: datetime | str, end: datetime | str) -> "StreamInterval":
@@ -41,18 +43,30 @@ class Stream:
         if self._client is None:
             raise RuntimeError("this stream handle is not bound to a client")
         frame = self._client.timeseries_df(
-            self.ref_uri,
+            self.stream_uri,
             start=_utc(start).isoformat() if start is not None else None,
             end=_utc(end).isoformat() if end is not None else None,
             **options,
         )
         return samples_frame(frame)
 
+    def insert_metadata(self, values: Any) -> dict[str, Any]:
+        """Attach metadata to the stream: ``{key: value}``.
+
+        Written on the property the stream is linked to, with the rules of
+        ``Acquirium.insert_metadata``.
+        """
+        if self._client is None:
+            raise RuntimeError("this stream handle is not bound to a client")
+        return self._client.insert_metadata(
+            {self._client.stream_property(self.stream_uri): values}
+        )
+
     def __str__(self) -> str:
-        return self.ref_uri
+        return self.stream_uri
 
     def __repr__(self) -> str:
-        return f"<Stream {self.ref_uri}>"
+        return f"<Stream {self.stream_uri}>"
 
 
 @dataclass(frozen=True)
@@ -67,12 +81,12 @@ class StreamInterval:
             raise ValueError("a stream interval must end at or after its start")
 
     @property
-    def ref_uri(self) -> str:
-        return self.stream.ref_uri
+    def stream_uri(self) -> str:
+        return self.stream.stream_uri
 
     def dataframe(self, **options: Any) -> pl.DataFrame:
         """Read the samples in this interval as ``time`` and ``value`` columns."""
         return self.stream.dataframe(start=self.start, end=self.end, **options)
 
     def __repr__(self) -> str:
-        return f"<StreamInterval {self.ref_uri} [{self.start.isoformat()}, {self.end.isoformat()}]>"
+        return f"<StreamInterval {self.stream_uri} [{self.start.isoformat()}, {self.end.isoformat()}]>"

@@ -64,7 +64,7 @@ def test_split_value_numeric_nan_is_null():
 def test_prepare_value_columns_allows_text_rows_in_numeric_stream():
     df = pl.DataFrame(
         {
-            "ref_uri": ["urn:test:mixed", "urn:test:mixed"],
+            "stream_uri": ["urn:test:mixed", "urn:test:mixed"],
             "ts": [1, 2],
             "value": ["1.5", "Manual Control"],
             "value_kind": ["numeric", "numeric"],

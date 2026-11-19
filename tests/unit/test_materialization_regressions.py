@@ -71,7 +71,7 @@ def test_membership_removal_repairs_named_history_after_restart(tmp_path):
     runtime.deploy(Deployment.from_class(SumFleet))
     while runtime.run_once():
         pass
-    ref = runtime._dag.bindings[0].outputs['out'].ref_uri
+    ref = runtime._dag.bindings[0].outputs['out'].stream_uri
     assert len(stored(store, ref)) == 2
     runtime.close()
     store.close()

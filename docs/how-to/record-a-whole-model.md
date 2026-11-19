@@ -1,153 +1,243 @@
-# Record a whole model
+---
+title: Record a whole model
+---
 
-An adapter declares experiment variables and binds functions that read their
-values. Choose scalar, text, JSON, table, or time series explicitly. The Pyomo
-adapter evaluates selected components and extracts units and descriptions.
-Install the optional `acquirium[pyomo]` extra; no solver is needed here.
+In this article we'll describe model adapters.
+A model adapter lists the values of a model that a study should record, with a function that reads each value.
+The study then declares all the variables in one call, and records all the values in one call.
 
-This complete example inspects its adapter locally, starts a temporary server,
-and records three scenarios. It includes a scalar model state sampled through
-time and a component explicitly indexed by model time.
+This is useful for a model with many values, where declaring and recording them one by one takes a lot of code.
+Read the tutorial [Running experiments](../tutorials/advanced/experiments.md) first.
+
+## 1. Build an adapter
+
+The examples use a small model of a pump, written in plain Python.
+It stands for your own model:
 
 ```python
 from datetime import datetime, timedelta, timezone
-from tempfile import TemporaryDirectory
 
 import acquirium as aq
-import polars as pl
+
+acq = aq.init()
+
+
+class PumpModel:
+    def __init__(self):
+        self.speed = 50.0          # Hz
+        self.rated_power = 1100.0  # kW
+        self.power = 0.0           # kW
+        self.pressure = 0.0        # bar
+
+    def step(self, hour):
+        self.power = round(self.rated_power * (self.speed / 50) ** 3, 1)
+        self.pressure = round(60 * (self.speed / 50) ** 2 + 0.5 * hour, 2)
+
+
+model = PumpModel()
+```
+
+`aq.adapters.define()` creates an empty adapter.
+Each line below adds one value, with a `read` function that returns the current value from the model:
+
+```python
+adapter = aq.adapters.define()
+
+adapter.input.scalar("speed", read=lambda: model.speed, unit="Hz")
+adapter.input.scalar("rated power", read=lambda: model.rated_power, unit="kW")
+adapter.output.scalar("power", read=lambda: model.power, unit="kW")
+adapter.output.timeseries("pressure", read=lambda: model.pressure, unit="bar")
+```
+
+- `adapter.input` and `adapter.output` set the role of the variable.
+- The kinds are `scalar()`, `text()`, `json()`, `table()`, `object()` and `timeseries()`.
+- A `timeseries()` value is read once per time step. The other kinds are read once per run.
+
+`frame()` lists what the adapter declares, and `preview()` reads every value from the model.
+Both work without a study, so the adapter can be checked before anything is recorded:
+
+```python
+print(adapter.frame().select("label", "role", "kind", "unit"))
+print(adapter.preview())
+```
+```text
+shape: (4, 4)
+┌─────────────┬────────┬────────────┬──────┐
+│ label       ┆ role   ┆ kind       ┆ unit │
+│ ---         ┆ ---    ┆ ---        ┆ ---  │
+│ str         ┆ str    ┆ str        ┆ str  │
+╞═════════════╪════════╪════════════╪══════╡
+│ speed       ┆ input  ┆ scalar     ┆ Hz   │
+│ rated power ┆ input  ┆ scalar     ┆ kW   │
+│ power       ┆ output ┆ scalar     ┆ kW   │
+│ pressure    ┆ output ┆ timeseries ┆ bar  │
+└─────────────┴────────┴────────────┴──────┘
+{'speed': 50.0, 'rated power': 1100.0, 'power': 0.0, 'pressure': 0.0}
+```
+
+## 2. Declare the variables in a study
+
+`declare_from()` declares every variable of the adapter in the study:
+
+```python
+study = acq.study.define("pump-model")
+variables = study.declare_from(adapter)
+```
+
+`variables` holds the declared variables together with their `read` functions.
+One variable is available as `variables["power"]`.
+
+## 3. Record the runs
+
+- `record_values()` reads and records every value that is not a timeseries.
+- `sample(at=time)` reads and records one sample of every timeseries, with the given time.
+
+The loop below records three runs.
+The inputs are recorded before the model runs, one sample is recorded at each step, and the outputs are recorded at the end:
+
+```python
+start = datetime(2025, 7, 1, tzinfo=timezone.utc)
+
+for hz in [40.0, 45.0, 50.0]:
+    model.speed = hz
+    run = study.start({"operator": "ana"})
+
+    variables.input.record_values()
+    for hour in range(3):
+        model.step(hour)
+        variables.sample(at=start + timedelta(hours=hour))
+    variables.output.record_values()
+
+    run.finish()
+```
+
+`variables.input` and `variables.output` select the variables of one role.
+`variables.record_values()` records both roles at once.
+
+## 4. Read the results
+
+The variables are ordinary variables of the study, so the results are read in the same way as in the tutorial:
+
+```python
+print(study.experiments.scalars())
+```
+```text
+shape: (3, 4)
+┌─────────────────────────────────┬───────┬─────────────┬────────┐
+│ experiment_id                   ┆ speed ┆ rated power ┆ power  │
+│ ---                             ┆ ---   ┆ ---         ┆ ---    │
+│ str                             ┆ f64   ┆ f64         ┆ f64    │
+╞═════════════════════════════════╪═══════╪═════════════╪════════╡
+│ c155695b-1db3-4414-a3f1-b093fe… ┆ 40.0  ┆ 1100.0      ┆ 563.2  │
+│ 01c100fe-cbae-4cc4-948f-d9c6d6… ┆ 45.0  ┆ 1100.0      ┆ 801.9  │
+│ 387a589a-aa84-4a02-a457-91b973… ┆ 50.0  ┆ 1100.0      ┆ 1100.0 │
+└─────────────────────────────────┴───────┴─────────────┴────────┘
+```
+
+Each `sample()` call is one observation, so `latest()` gives only the last sample of a timeseries.
+A query on the `run_id` gives all the samples of the run:
+
+```python
+print(acq.query().measurement(run_id=run.run_id).dataframe())
+```
+```text
+shape: (3, 2)
+┌─────────────────────────┬────────────────┐
+│ time                    ┆ data__pressure │
+│ ---                     ┆ ---            │
+│ datetime[μs, UTC]       ┆ f64            │
+╞═════════════════════════╪════════════════╡
+│ 2025-07-01 00:00:00 UTC ┆ 60.0           │
+│ 2025-07-01 01:00:00 UTC ┆ 60.5           │
+│ 2025-07-01 02:00:00 UTC ┆ 61.0           │
+└─────────────────────────┴────────────────┘
+```
+
+## The Pyomo adapter
+
+`aq.adapters.pyomo(model)` is an adapter for [Pyomo](https://www.pyomo.org/) models, such as WaterTAP flowsheets.
+It needs Pyomo, which is installed with `pip install "acquirium[pyomo]"`.
+
+With this adapter a value is given as a Pyomo component instead of a `read` function.
+The unit and the description are taken from the component:
+
+```python
 import pyomo.environ as pyo
 
 model = pyo.ConcreteModel()
-model.time = pyo.Set(initialize=[0, 1, 2])
-model.pump = pyo.Set(initialize=["pump1", "pump2"])
-model.cost = pyo.Var(initialize=0)
-model.pressure = pyo.Var(initialize=0, units=pyo.units.Pa)
-model.flow = pyo.Var(model.pump, model.time, initialize=0, units=pyo.units.L / pyo.units.s)
-model.capacity = pyo.Param(model.pump, initialize={"pump1": 10, "pump2": 20})
-start = datetime(2026, 1, 1, tzinfo=timezone.utc)
-configuration = {"solver options": {"notes": [None, {}, []]}, "scenario.names": ["demo"]}
-annotations = {"experiment notes": {"a.b": [None, {}, [], {"": "arbitrary string keys"}]}}
+model.speed = pyo.Var(initialize=50, units=pyo.units.Hz, doc="Speed of the pumps")
+model.flow = pyo.Var(["P1", "P2"], initialize=100, units=pyo.units.kg / pyo.units.s, doc="Flow of each pump")
+model.power = pyo.Expression(
+    expr=1100 * pyo.units.kW * (model.speed / (50 * pyo.units.Hz)) ** 3,
+    doc="Power of the pumps",
+)
 
 adapter = aq.adapters.pyomo(model)
-adapter.input.json("configuration", read=lambda: configuration, metadata=annotations)
-adapter.scalar("cost", model.cost)  # Unqualified declarations are outputs.
-adapter.timeseries("pressure", model.pressure)
-adapter.table(
-    "capacity",
-    model.capacity,
-    read=lambda: pl.DataFrame({
-        "pump": list(model.pump),
-        "value": [pyo.value(model.capacity[pump]) for pump in model.pump],
-    }),
-)
-for pump in model.pump:
-    adapter.timeseries(
-        f"flow/{pump}",
-        model.flow,
-        read_at=lambda t, pump=pump: model.flow[pump, t],
-    )
+adapter.input.scalar("speed", model.speed)
+adapter.output.scalar("power", model.power)
+for var in model.flow.values():
+    adapter.output.scalar(var.name, var)
 
-print(adapter.frame())  # Declarations only; no readers or server requests.
-assert adapter.preview(model_time=0)["pressure"] == 0
-
-with TemporaryDirectory() as data_dir:
-    ac = aq.init(data_dir=data_dir)
-    try:
-        study = ac.study.define("pump scenarios")
-        variables = study.declare_from(adapter)
-        assert study.declare_from(adapter)["cost"] is variables["cost"]
-
-        for scenario in range(3):
-            run = study.start({"scenario": scenario})
-            variables.input.record_values()
-            for step in model.time:
-                model.pressure.set_value(10 + scenario + step)
-                for pump in model.pump:
-                    model.flow[pump, step].set_value(scenario + step + 1)
-                variables.sample(model_time=step, at=start + timedelta(hours=step))
-            model.cost.set_value(100 + scenario)
-            variables.output.record_values()
-            run.finish()
-
-        costs = study.experiments.scalars(variables["cost"])
-        assert sorted(costs["cost"]) == [100, 101, 102]
-        assert run.observations(variables["capacity"]).latest().dataframe().height == 2
-        assert run.observations(variables["configuration"]).latest().value == configuration
-        reopened = ac.study.get("pump scenarios")
-        assert reopened.variables["configuration"].metadata == annotations
-        pump1 = ac.query().measurement(
-            variable_id=variables["flow/pump1"].variable_id
-        ).dataframe(shape="narrow")
-        assert pump1.height == 9
-        print(costs)
-        print(pump1)
-    finally:
-        aq.shutdown()
+print(adapter.frame().select("label", "role", "unit", "description"))
+```
+```text
+shape: (4, 4)
+┌──────────┬────────┬──────┬────────────────────┐
+│ label    ┆ role   ┆ unit ┆ description        │
+│ ---      ┆ ---    ┆ ---  ┆ ---                │
+│ str      ┆ str    ┆ str  ┆ str                │
+╞══════════╪════════╪══════╪════════════════════╡
+│ speed    ┆ input  ┆ Hz   ┆ Speed of the pumps │
+│ power    ┆ output ┆ kW   ┆ Power of the pumps │
+│ flow[P1] ┆ output ┆ kg/s ┆ null               │
+│ flow[P2] ┆ output ┆ kg/s ┆ null               │
+└──────────┴────────┴──────┴────────────────────┘
 ```
 
-`adapter.input` and `adapter.output` expose the same declaration methods.
-`adapter.scalar(...)` is shorthand for `adapter.output.scalar(...)`, and the
-same default applies to text, JSON, table, and time-series declarations.
-Labels are unique across both namespaces. `variables.input` and
-`variables.output` select matching declarations for previewing and recording.
+Note that an indexed component such as `model.flow` cannot be given as a whole.
+The loop adds one variable for each element of it.
+For a large model, a loop over `model.component_data_objects(pyo.Var)` adds every variable of the model in the same way.
 
-`sample(at=when, model_time=index)` reads only time series. `model_time` is
-passed unchanged to `read_at(index)`; `at` is the timestamp stored with the
-sample. Acquirium does not convert between them. A current-state `read()` is
-called without arguments, so an adapter with only current-state readers needs
-just `sample(at=when)`.
+The rest is the same as with the generic adapter.
+In this example the values are set by hand.
+In your own script the solver sets them:
 
-`record_values()` reads scalar, text, JSON, and table declarations. It does not
-read time series or infer histories. Record inputs before running the model
-and outputs afterward using the namespace views. To record an already
-available history explicitly, use `variables[label].record(rows)`.
+```python
+study = acq.study.define("pump-pyomo")
+variables = study.declare_from(adapter)
 
-For unindexed Pyomo sources, the wrapper supplies a reader that evaluates the
-current value. Indexed sources require an explicit `read` or `read_at`
-function. The source supplies its model path, description, and known units.
-A `unit=` override asserts the same unit using another spelling or URI;
-changing scale or physical dimension is rejected before declaration. For
-converted or derived values, use the general builder with a reader performing
-that conversion and an explicit resulting unit.
+for hz in [40, 45, 50]:
+    model.speed.set_value(hz)
+    model.flow["P1"].set_value(2 * hz)
+    model.flow["P2"].set_value(hz)
 
-The JSON declaration records the reader's value. The separate optional
-`metadata=` argument attaches descriptive JSON to a declaration. Both support
-arbitrary string keys and nested objects, arrays, nulls, and empty containers.
-Metadata is available as `variable.metadata` after reopening. Semantic fields
-such as `variable.unit`, `quantity_kind`, and `source_path` are separate; a
-user metadata key named `unit` or `role` cannot override those fields.
+    run = study.start()
+    variables.record_values()
+    run.finish()
 
-Metadata is preserved exactly as JSON. Paths composed of valid attribute names
-also get a graph projection under `metadata`, on declarations and stream
-points, for queries such as `measurement(**{"metadata.location": "tank"})`
-when you deliberately supplied `metadata={"location": "tank"}`. Other keys
-remain available in the complete JSON object. Unit and quantity-kind fields
-are resolved at declaration, so sampling needs no semantic-resolution requests.
-Quantity kinds and optional `observed=property_uri` links are supplied explicitly.
+print(study.experiments.scalars())
+```
+```text
+shape: (3, 5)
+┌─────────────────────────────────┬───────┬────────┬──────────┬──────────┐
+│ experiment_id                   ┆ speed ┆ power  ┆ flow[P1] ┆ flow[P2] │
+│ ---                             ┆ ---   ┆ ---    ┆ ---      ┆ ---      │
+│ str                             ┆ i64   ┆ f64    ┆ i64      ┆ i64      │
+╞═════════════════════════════════╪═══════╪════════╪══════════╪══════════╡
+│ c7ec4b2d-db0b-4913-bc63-067596… ┆ 40    ┆ 563.2  ┆ 80       ┆ 40       │
+│ 40697563-f637-44c9-836b-f9ac22… ┆ 45    ┆ 801.9  ┆ 90       ┆ 45       │
+│ cd3cfe69-bb6b-4fcb-8d51-14701f… ┆ 50    ┆ 1100.0 ┆ 100      ┆ 50       │
+└─────────────────────────────────┴───────┴────────┴──────────┴──────────┘
+```
 
-For another library, use `aq.adapters.define()`. Its helpers take Python
-readers instead of Pyomo source arguments: `scalar("cost", read=lambda:
-model.cost)` or `timeseries("pressure", read=lambda: model.pressure)`. No
-arbitrary keyword arguments or inferred index mappings are needed.
+## Use a new model object
 
-Construction and `adapter.frame()` never read model values. `adapter.preview()`
-and `variables.preview()` read and validate locally without recording or an
-active run; indexed readers still need `model_time`. Reader failures identify
-the label, source path, and model-time argument. A missing/uninitialized value
-fails before any recording requests.
+The `read` functions of an adapter point to one model object.
+If your script builds a new model object, build a new adapter for it and call `declare_from()` again.
+The study keeps its variables, and the new `variables` object reads from the new model.
 
-`declare_from()` freezes the selected descriptors and reader bindings. Build
-an adapter for each new model instance and redeclare it on the study to reuse
-saved definitions with fresh readers. Declaring an empty adapter or selecting
-no components raises an explanatory error.
+## Next
 
-Each nonempty `sample()` and `record_values()` call sends one recording request.
-All readers and values are checked first; a reader failure sends no recording
-request. Stream registration, revisioned samples, artifact ownership, ordered
-observations, and durable graph intent share one SQL transaction. A rejected
-batch leaves no new samples or observations. Graph delivery retries from the
-outbox after commit; HTTP retries can still append another observation.
-
-Hand declarations use the same user metadata namespace and semantic properties.
-See the [declaration conversion table](../reference/experiments.md#declaring-variables)
-and [storage boundary and recovery](../reference/storage-migrations.md).
+- [Model adapters](../reference/experiments/model-adapters.md) lists every method of an adapter.
+- [Compare experiment runs](compare-experiment-runs.md) selects runs and calculates with their results.
+- [Record experiments](record-experiments.md) covers the kinds of variables.

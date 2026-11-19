@@ -1,0 +1,14 @@
+# The server of the "Writing a driver" page, with the built-in CSV driver.
+# Start it from this folder with: acquirium server
+
+[server]
+host       = "127.0.0.1"
+port       = 8000
+exact_only = true
+
+[[drivers]]
+spec      = "acquirium.Drivers.BuiltInDrivers.csv_ingest:CSVIngestDriver"
+source_id = "csv-data"
+watch_dir = "example"
+glob      = "*.csv"
+format    = "wide"

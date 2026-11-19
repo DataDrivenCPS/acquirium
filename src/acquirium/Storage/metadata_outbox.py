@@ -43,8 +43,12 @@ def migrate_documents(conn):
         records.append(variable_record(study, dict(variable_id=identifier, label=label, role=role, kind=kind, metadata=values, created_at=timestamp(created))))
     for identifier, study, status, metadata, started, finished in execute(conn, "SELECT run_id, template_id, status, metadata_json, started_at, finished_at FROM experiment_runs").fetchall():
         records.append(run_record(dict(run_id=identifier, template_id=study, status=status, metadata=json.loads(metadata), started_at=timestamp(started), finished_at=timestamp(finished) if finished else None)))
-    for run, sequence, study, ref, start, end, metadata, created in execute(conn, "SELECT o.run_id,o.sequence,r.template_id,o.ref_uri,o.range_start,o.range_end,o.value_json,o.recorded_at FROM experiment_observations o JOIN experiment_runs r ON r.run_id=o.run_id WHERE o.variable_id IS NULL").fetchall():
-        records.append(annotation_record(dict(annotation_id=f"{run}:{sequence}", run_id=run, template_id=study, ref_uri=ref, range_start=timestamp(start), range_end=timestamp(end) if end else None, metadata=json.loads(metadata), created_at=timestamp(created))))
+    # A database from before the ``stream_uri`` name still has ``ref_uri`` here;
+    # experiment migration 4 renames it afterwards.
+    observation_columns = {row[0] for row in execute(conn, "SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='experiment_observations'").fetchall()}
+    stream_column = "stream_uri" if "stream_uri" in observation_columns else "ref_uri"
+    for run, sequence, study, ref, start, end, metadata, created in execute(conn, f"SELECT o.run_id,o.sequence,r.template_id,o.{stream_column},o.range_start,o.range_end,o.value_json,o.recorded_at FROM experiment_observations o JOIN experiment_runs r ON r.run_id=o.run_id WHERE o.variable_id IS NULL").fetchall():
+        records.append(annotation_record(dict(annotation_id=f"{run}:{sequence}", run_id=run, template_id=study, stream_uri=ref, range_start=timestamp(start), range_end=timestamp(end) if end else None, metadata=json.loads(metadata), created_at=timestamp(created))))
     for record in records:
         enqueue(conn, graph.record_update(record))
     # Removing only the snapshots leaves lifecycle and observation data intact.

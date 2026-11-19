@@ -109,7 +109,7 @@ generator and one set of drivers work for all of them:
 |------|------|
 | `build-and-solve.py` | `build() -> m`, `change_inputs(m, d)`, `solve(m)` — the Pyomo model lifecycle |
 | `generate-values.py` | `generate_new_values(ts, rng) -> dict` — realistic, deterministic feed inputs for a timestamp |
-| `watertap-mapping.json` | maps each ontology point URI (`urn:.../...`) to a Pyomo variable path; the driver contract |
+| `watertap-mapping.json` | maps each ontology property URI (`urn:.../...`) to a Pyomo variable path; the driver contract |
 | `model.ttl` | the `s223`/`nawi` semantic model: equipment, connection points, and sensor properties |
 
 ### `seawater-ro` — full seawater RO desalination plant
@@ -144,7 +144,7 @@ mapped output of interest is the pump's mechanical work (`Pump1-Work`).
 ```
 deployments/WATERTAP/
 ├── models/
-│   ├── seawater-ro/          build-and-solve.py · generate-values.py · model.ttl · watertap-mapping.json
+│   ├── seawater-ro/          build-and-solve.py · generate-values.py · watertap-mapping.json  (model: src/acquirium/examples/seawater_ro/model.ttl)
 │   ├── seawater-ro-fouled/   build-and-solve.py · generate-values.py · model.ttl · watertap-mapping.json
 │   └── simple-pipe/          build-and-solve.py · generate-values.py · model.ttl · watertap-mapping.json
 └── scripts/

@@ -8,7 +8,7 @@ This is a reference for the vocabulary of the other guides.
 
 | term | meaning | example |
 |---|---|---|
-| URI | the full, globally unique name of a thing; every class, predicate, entity, point and unit has one | `urn:swro/RO`, `http://qudt.org/vocab/unit/PSI` |
+| URI | the full, globally unique name of a thing; every class, predicate, entity, property and unit has one | `urn:swro/RO`, `http://qudt.org/vocab/unit/PSI` |
 | CURIE | a compact URI, written `prefix:local` | `wbs:RO` is `urn:swro/` + `RO` |
 | free text | a plain phrase the server resolves to a URI, against one vocabulary (its *kind*: class, predicate, substance, process, role, unit or quantity kind) | `"ro membrane"` resolves to `watr:ReverseOsmosisMembrane` |
 | literal | a plain value in a triple rather than a name for something; matched verbatim, never resolved | `"SCADA"`, `42.0` |
@@ -19,7 +19,7 @@ This is a reference for the vocabulary of the other guides.
 | class | a category a node belongs to, via `rdf:type` | `watr:ReverseOsmosisMembrane` |
 | instance | one actual thing of a class | `wbs:RO` |
 | ontology | the shared vocabulary the model is written in | s223, NAWI water, QUDT |
-| model | the RDF description of one plant | `deployments/WATERTAP/models/seawater-ro/model.ttl` |
+| model | the RDF description of one plant | `src/acquirium/examples/seawater_ro/model.ttl` |
 | Turtle | the text format RDF is written in (`.ttl` files, graph inserts) | `model.ttl` |
 | SPARQL | the query language for RDF graphs; every `Query` compiles to it | `q.to_sparql()` |
 
@@ -29,14 +29,13 @@ This is a reference for the vocabulary of the other guides.
 | term | meaning | example |
 |---|---|---|
 | entity | a thing in the plant: equipment, a system, a connection point | `wbs:RO`, `wbs:RO-in` |
-| point | a node representing one measured or computed quantity | `wbs:P1-out-pressure` |
-| connection point | the inlet or outlet of a piece of equipment; most points hang off one | `wbs:RO-in` |
-| reference node | the RDF node linking a point to its stream, through `ref:hasExternalReference` | `urn:acquirium#399ce39c-...` |
-| label | a point's display name (`rdfs:label`), shown in place of its CURIE in results | `"P1 outlet pressure"` |
-| placeholder point | the point minted for a stream registered without a `point_uri`, labelled with its `ref_name` | `<ref_uri>__point` |
-| stream | the timeseries behind a point | the rows stored under that reference node |
+| property | a node representing one measured or computed quantity (`s223:Property`); older versions called it a point | `wbs:P1-out-pressure` |
+| connection point | the inlet or outlet of a piece of equipment; most properties hang off one | `wbs:RO-in` |
+| reference node | the RDF node linking a property to its stream, through `ref:hasExternalReference` | `urn:acquirium#399ce39c-...` |
+| label | a property's display name (`rdfs:label`), shown in place of its CURIE in results | `"P1 outlet pressure"` |
+| placeholder property | the property minted for a stream registered without a `property_uri`, labelled with its `stream_name` | `<stream_uri>__point` |
+| stream | the timeseries behind a property | the rows stored under that reference node |
 | source | the owner of a set of streams and of its own graph | a driver, an app, `plant` |
-| datasource | who writes a set of streams; the graph-side record of a source | `watertap-seawater-ro` |
 | deployment graph | the inferred union of every source's data, which queries run against | — |
 | dependencies | the resolved ontology and shape triples queried alongside it | `include_dependencies=True` |
 | medium | what flows at a connection point, or what a property is measured in | `watr:Water-Brine` |
@@ -48,13 +47,15 @@ This is a reference for the vocabulary of the other guides.
 ### Stream identifiers
 
 A stream carries three identifiers, and the third is computed from the first
-two.
+two. Older versions called the last two `ref_name` and `ref_uri`; the client
+still accepts those names and warns that they are deprecated. `point_uri` is
+accepted as another name for `property_uri`.
 
 | identifier | meaning | example |
 |---|---|---|
 | `source_id` | who writes the stream | `watertap-seawater-ro` |
-| `ref_name` | which series, unique within that source | `P1-out-pressure` |
-| `ref_uri` | the canonical URI of the stream | `urn:acquirium#399ce39c-e18d-5ad5-bd5c-9c9d053fe04d` |
+| `stream_name` | which series, unique within that source | `P1-out-pressure` |
+| `stream_uri` | the canonical URI of the stream | `urn:acquirium#399ce39c-e18d-5ad5-bd5c-9c9d053fe04d` |
 
 ## Querying
 
@@ -82,11 +83,11 @@ two.
 | term | meaning | example |
 |---|---|---|
 | observation | one reading: a timestamp and a value on one stream | `(2026-08-08 05:51:47, 7e6)` |
-| `value_kind` | whether a stream was registered as numeric or text | `"numeric"` |
+| `value_kind` | whether a stream is numeric or text; declared at registration or inferred from its first numeric value | `"numeric"` |
 | `value_mode` | which of the two value columns a read returns | `"default"`, `"numeric"`, `"text"`, `"coalesce"` |
 | `cast_value` | a client-side cast applied after the values arrive | `"float"`, `"int"`, `"str"`, `None` |
-| wide | one column per point, aligned on the timestamp | `time, m__wbs:RO-in-pressure, ...` |
-| narrow | one row per reading, with its point in its own column | `data_alias, point_id, time, value_numeric, ...` |
+| wide | one column per property, aligned on the timestamp | `time, m__wbs:RO-in-pressure, ...` |
+| narrow | one row per reading, with its property in its own column | `data_alias, property_id, time, value_numeric, ...` |
 
 
 ## Experiments
@@ -97,10 +98,10 @@ two.
 | Experiment | one execution of a Study, with metadata and lifecycle state | `study.start(metadata={"scenario": "baseline"})` |
 | experiment variable | a named recording handle with a role, value type, and metadata | `study.output("cost").scalar(unit="USD")` |
 | experiment observation | one saved value, event, artifact, or stream reference, ordered within its run | `cost.record(12.5)` |
-| stream annotation | an association between a run and an existing stream's time interval | `experiment.annotate_stream(ref_uri, start=t0)` |
+| stream annotation | an association between a run and an existing stream's time interval | `experiment.annotate_stream(stream_uri, start=t0)` |
 
 Experiment metadata uses the shared attribute registry and `.where()` syntax.
-See the [experiment reference](experiments.md) for the interface and read formats.
+See the [experiment reference](experiments/_index.md) for the interface and read formats.
 
 ## The platform
 

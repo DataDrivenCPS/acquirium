@@ -45,7 +45,7 @@ _logger = logging.getLogger("acquirium.ontologies")
 # Canonical ontology IRIs. These are part of the package's public API:
 # the embedding-index pipeline in Manager and the QUDT converter look
 # up named graphs by these exact IRIs.
-WATER_IRI = "urn:nawi-water-ontology"
+WATER_IRI = "https://watermetadata.org/ontology/watr"
 S223_IRI = "http://data.ashrae.org/standard223/1.0/model/all"
 QUDT_UNIT_IRI = "https://qudt.org/vocab/unit"
 QUDT_QK_IRI = "https://qudt.org/vocab/quantitykind"

@@ -27,58 +27,58 @@ def contract_uri_prefix() -> str:
     return f"urn:test:contract:{uuid4()}"
 
 
-def _values(store: TimeseriesStore, ref_uri: str, **kwargs):
+def _values(store: TimeseriesStore, stream_uri: str, **kwargs):
     return [
         value
-        for batch in store.timeseries(ref_uri, **kwargs)
+        for batch in store.timeseries(stream_uri, **kwargs)
         for value in batch.column("value").to_pylist()
     ]
 
 
 def test_timeseries_mutation_and_query_contract(contract_store, contract_uri_prefix):
     store = contract_store
-    ref_uri = f"{contract_uri_prefix}:numeric"
+    stream_uri = f"{contract_uri_prefix}:numeric"
 
     assert isinstance(store.ensure_table(), str)
 
     assert store.upsert_rows(
-        ref_uri,
+        stream_uri,
         [(_utc(2026, 1, 1), 1.0), (_utc(2026, 1, 2), 2.0)],
         value_kind="numeric",
     ) == 2
-    assert store.upsert_rows(ref_uri, [(_utc(2026, 1, 2), 20.0)], value_kind="numeric") == 1
+    assert store.upsert_rows(stream_uri, [(_utc(2026, 1, 2), 20.0)], value_kind="numeric") == 1
 
-    batches = list(store.timeseries(ref_uri, batch_size=1))
+    batches = list(store.timeseries(stream_uri, batch_size=1))
     assert sum(batch.num_rows for batch in batches) == 2
     assert batches[0].schema.names == ["ts", "value", "uri"]
-    assert _values(store, ref_uri, order="asc") == [1.0, 20.0]
-    assert _values(store, ref_uri, order="desc", limit=1) == [20.0]
-    assert _values(store, ref_uri, start=_utc(2026, 1, 2), end=_utc(2026, 1, 2)) == [20.0]
+    assert _values(store, stream_uri, order="asc") == [1.0, 20.0]
+    assert _values(store, stream_uri, order="desc", limit=1) == [20.0]
+    assert _values(store, stream_uri, start=_utc(2026, 1, 2), end=_utc(2026, 1, 2)) == [20.0]
 
-    info = store.timeseries_info(ref_uri)
+    info = store.timeseries_info(stream_uri)
     assert info.row_count == 2
     assert info.earliest == _utc(2026, 1, 1)
     assert info.latest == _utc(2026, 1, 2)
 
     missing_ref = f"{contract_uri_prefix}:missing"
-    batch_info = store.timeseries_info_batch([ref_uri, missing_ref])
-    assert batch_info[ref_uri].row_count == 2
+    batch_info = store.timeseries_info_batch([stream_uri, missing_ref])
+    assert batch_info[stream_uri].row_count == 2
     assert batch_info[missing_ref].row_count == 0
     assert list(store.timeseries(missing_ref)) == []
-    assert store.timeseries_exists_batch([ref_uri, missing_ref]) == {ref_uri}
+    assert store.timeseries_exists_batch([stream_uri, missing_ref]) == {stream_uri}
     assert store.timeseries_exists_batch([]) == set()
 
-    assert store.replace_rows(ref_uri, [(_utc(2026, 1, 3), 3.0)], value_kind="numeric") == 1
-    assert _values(store, ref_uri) == [3.0]
+    assert store.replace_rows(stream_uri, [(_utc(2026, 1, 3), 3.0)], value_kind="numeric") == 1
+    assert _values(store, stream_uri) == [3.0]
 
 
 def test_numeric_stream_can_store_and_query_text_fallback_rows(contract_store, contract_uri_prefix):
     store = contract_store
-    ref_uri = f"{contract_uri_prefix}:mixed"
-    store.ensure_stream_ref(None, contract_uri_prefix, "mixed", ref_uri=ref_uri, value_kind="numeric")
+    stream_uri = f"{contract_uri_prefix}:mixed"
+    store.ensure_stream_ref(None, contract_uri_prefix, "mixed", stream_uri=stream_uri, value_kind="numeric")
 
     assert store.upsert_rows(
-        ref_uri,
+        stream_uri,
         [
             (_utc(2026, 2, 1), "1.0"),
             (_utc(2026, 2, 2), "Manual Control"),
@@ -87,10 +87,10 @@ def test_numeric_stream_can_store_and_query_text_fallback_rows(contract_store, c
         value_kind="numeric",
     ) == 3
 
-    assert _values(store, ref_uri, order="asc") == [1.0, None, 2.5]
-    assert _values(store, ref_uri, order="asc", value_mode="numeric") == [1.0, 2.5]
-    assert _values(store, ref_uri, order="asc", value_mode="text") == ["Manual Control"]
-    assert _values(store, ref_uri, order="asc", value_mode="coalesce") == [
+    assert _values(store, stream_uri, order="asc") == [1.0, None, 2.5]
+    assert _values(store, stream_uri, order="asc", value_mode="numeric") == [1.0, 2.5]
+    assert _values(store, stream_uri, order="asc", value_mode="text") == ["Manual Control"]
+    assert _values(store, stream_uri, order="asc", value_mode="coalesce") == [
         "1.0",
         "Manual Control",
         "2.5",
@@ -99,11 +99,11 @@ def test_numeric_stream_can_store_and_query_text_fallback_rows(contract_store, c
 
 def test_bulk_insert_polars_contract(contract_store, contract_uri_prefix):
     store = contract_store
-    ref_uri = f"{contract_uri_prefix}:bulk"
+    stream_uri = f"{contract_uri_prefix}:bulk"
     ts = _utc(2026, 2, 1)
     df = pl.DataFrame(
         {
-            "ref_uri": [ref_uri, ref_uri, ref_uri],
+            "stream_uri": [stream_uri, stream_uri, stream_uri],
             "ts": [ts, ts, ts + timedelta(hours=1)],
             "value": [1.0, 2.0, 3.0],
             "value_kind": ["numeric", "numeric", "numeric"],
@@ -111,12 +111,12 @@ def test_bulk_insert_polars_contract(contract_store, contract_uri_prefix):
     )
 
     assert store.bulk_insert_polars(df) == 2
-    assert _values(store, ref_uri) == [2.0, 3.0]
+    assert _values(store, stream_uri) == [2.0, 3.0]
 
     empty = pl.DataFrame(
-        {"ref_uri": [], "ts": [], "value": [], "value_kind": []},
+        {"stream_uri": [], "ts": [], "value": [], "value_kind": []},
         schema={
-            "ref_uri": pl.Utf8,
+            "stream_uri": pl.Utf8,
             "ts": pl.Datetime("us", "UTC"),
             "value": pl.Float64,
             "value_kind": pl.Utf8,
@@ -127,42 +127,42 @@ def test_bulk_insert_polars_contract(contract_store, contract_uri_prefix):
 
 def test_stream_registry_contract(contract_store, contract_uri_prefix):
     store = contract_store
-    point_uri = f"{contract_uri_prefix}:point"
+    property_uri = f"{contract_uri_prefix}:point"
 
-    ref_uri = str(store.ensure_stream_ref(point_uri, contract_uri_prefix, "temperature", value_kind="numeric"))
-    assert ref_uri
-    assert store.stream_value_kind(ref_uri) == "numeric"
+    stream_uri = str(store.ensure_stream_ref(property_uri, contract_uri_prefix, "temperature", value_kind="numeric"))
+    assert stream_uri
+    assert store.stream_value_kind(stream_uri) == "numeric"
     assert str(store.ensure_stream_ref(
-        point_uri,
+        property_uri,
         contract_uri_prefix,
         "temperature",
         value_kind="numeric",
-    )) == ref_uri
+    )) == stream_uri
     assert str(store.ensure_stream_ref(
         f"{contract_uri_prefix}:other-point",
         f"{contract_uri_prefix}:other",
         "temperature",
-    )) != ref_uri
-    assert store.resolve_storage_key(point_uri) == ref_uri
+    )) != stream_uri
+    assert store.resolve_storage_key(property_uri) == stream_uri
     assert store.resolve_storage_key(f"{contract_uri_prefix}:unregistered") == f"{contract_uri_prefix}:unregistered"
 
-    other_point_uri = f"{contract_uri_prefix}:point2"
-    other_ref_uri = str(store.ensure_stream_ref(other_point_uri, contract_uri_prefix, "humidity"))
-    assert store.stream_value_kind(other_ref_uri) == "text"
-    assert store.resolve_storage_keys([point_uri, other_point_uri, "urn:test:contract:unregistered"]) == {
-        point_uri: ref_uri,
-        other_point_uri: other_ref_uri,
+    other_property_uri = f"{contract_uri_prefix}:point2"
+    other_stream_uri = str(store.ensure_stream_ref(other_property_uri, contract_uri_prefix, "humidity"))
+    assert store.stream_value_kind(other_stream_uri) == "text"
+    assert store.resolve_storage_keys([property_uri, other_property_uri, "urn:test:contract:unregistered"]) == {
+        property_uri: stream_uri,
+        other_property_uri: other_stream_uri,
         "urn:test:contract:unregistered": "urn:test:contract:unregistered",
     }
 
 
 def test_logs_contract(contract_store, contract_uri_prefix):
     store = contract_store
-    point_uri = f"{contract_uri_prefix}:logged"
+    property_uri = f"{contract_uri_prefix}:logged"
 
     store.insert_log(
         LogEntry(
-            point_uri=point_uri,
+            property_uri=property_uri,
             timestamp=_utc(2026, 3, 1),
             period=TimeIntervalModel(),
             message="no observation period",
@@ -170,46 +170,46 @@ def test_logs_contract(contract_store, contract_uri_prefix):
     )
     store.insert_log(
         LogEntry(
-            point_uri=point_uri,
+            property_uri=property_uri,
             timestamp=_utc(2026, 3, 2),
             period=TimeIntervalModel(start=_utc(2026, 3, 1, 12), end=_utc(2026, 3, 3)),
             message="observed",
         )
     )
 
-    logs = store.query_logs(point_uri)
+    logs = store.query_logs(property_uri)
     assert [log.message for log in logs] == ["no observation period", "observed"]
     assert logs[0].period.start is None
 
     time_filtered = store.query_logs(
-        point_uri,
+        property_uri,
         log_time_interval=TimeIntervalModel(start=_utc(2026, 3, 2), end=_utc(2026, 3, 2)),
     )
     assert [log.message for log in time_filtered] == ["observed"]
 
     obs_filtered = store.query_logs(
-        point_uri,
+        property_uri,
         obs_time_interval=TimeIntervalModel(start=_utc(2026, 3, 2), end=_utc(2026, 3, 2, 1)),
     )
     assert [log.message for log in obs_filtered] == ["observed"]
 
-    assert store.delete_logs(point_uri) is True
-    assert store.query_logs(point_uri) == []
+    assert store.delete_logs(property_uri) is True
+    assert store.query_logs(property_uri) == []
 
 
 def test_transaction_and_sql_query_contract(contract_store, contract_uri_prefix):
     store = contract_store
-    ref_uri = f"{contract_uri_prefix}:tx"
+    stream_uri = f"{contract_uri_prefix}:tx"
 
     store.begin()
-    store.upsert_rows(ref_uri, [(_utc(2026, 4, 1), "rolled back")], value_kind="text")
+    store.upsert_rows(stream_uri, [(_utc(2026, 4, 1), "rolled back")], value_kind="text")
     store.rollback()
-    assert store.timeseries_info(ref_uri).row_count == 0
+    assert store.timeseries_info(stream_uri).row_count == 0
 
     store.begin()
-    store.upsert_rows(ref_uri, [(_utc(2026, 4, 1), "committed")], value_kind="text")
+    store.upsert_rows(stream_uri, [(_utc(2026, 4, 1), "committed")], value_kind="text")
     store.commit()
-    assert _values(store, ref_uri) == ["committed"]
+    assert _values(store, stream_uri) == ["committed"]
 
     result = store.sql_query("SELECT 1 AS contract_value")
     assert result["columns"] == ["contract_value"]
@@ -220,8 +220,8 @@ def _snapshot(store):
     with store._own_conn() as conn:
         return (
             conn.execute('SELECT current_revision FROM system_state').fetchone()[0],
-            conn.execute('SELECT ref_id, ts, numeric_value, text_value, deleted, last_revision FROM timeseries ORDER BY ref_id, ts').fetchall(),
-            conn.execute('SELECT ref_uri, last_revision FROM stream_resets ORDER BY ref_uri').fetchall(),
+            conn.execute('SELECT stream_id, ts, numeric_value, text_value, deleted, last_revision FROM timeseries ORDER BY stream_id, ts').fetchall(),
+            conn.execute('SELECT stream_uri, last_revision FROM stream_resets ORDER BY stream_uri').fetchall(),
         )
 
 

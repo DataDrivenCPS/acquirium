@@ -21,7 +21,7 @@ TEST_REF = "urn:test:integration_ref"
 
 
 class TestRefIdKeys:
-    def test_timeseries_table_keyed_by_integer_ref_id(self, ts_store, clean_point):
+    def test_timeseries_table_keyed_by_integer_stream_id(self, ts_store, clean_point):
         ts_store.upsert_rows(
             clean_point,
             [(datetime(2025, 1, 1, tzinfo=timezone.utc), 1.0)],
@@ -29,33 +29,33 @@ class TestRefIdKeys:
         )
 
         mapping = ts_store.sql_query(
-            f"SELECT ref_id FROM ref_ids WHERE ref_uri = '{clean_point}'"
+            f"SELECT stream_id FROM stream_ids WHERE stream_uri = '{clean_point}'"
         )["rows"]
         assert len(mapping) == 1
-        ref_id = mapping[0][0]
-        assert isinstance(ref_id, int)
+        stream_id = mapping[0][0]
+        assert isinstance(stream_id, int)
 
         stored = ts_store.sql_query(
-            f"SELECT ref_id FROM timeseries WHERE ref_id = {ref_id}"
+            f"SELECT stream_id FROM timeseries WHERE stream_id = {stream_id}"
         )["rows"]
-        assert [tuple(row) for row in stored] == [(ref_id,)]
+        assert [tuple(row) for row in stored] == [(stream_id,)]
 
-    def test_ref_id_is_stable_across_writes(self, ts_store, clean_point):
+    def test_stream_id_is_stable_across_writes(self, ts_store, clean_point):
         ts_store.upsert_rows(clean_point, [(datetime(2025, 1, 1, tzinfo=timezone.utc), 1.0)])
-        first = ts_store.sql_query(f"SELECT ref_id FROM ref_ids WHERE ref_uri = '{clean_point}'")["rows"]
+        first = ts_store.sql_query(f"SELECT stream_id FROM stream_ids WHERE stream_uri = '{clean_point}'")["rows"]
         ts_store.upsert_rows(clean_point, [(datetime(2025, 1, 2, tzinfo=timezone.utc), 2.0)])
         ts_store.bulk_insert_polars(pl.DataFrame({
-            "ref_uri": [clean_point],
+            "stream_uri": [clean_point],
             "ts": [datetime(2025, 1, 3, tzinfo=timezone.utc)],
             "value": [3.0],
             "value_kind": ["numeric"],
         }))
-        again = ts_store.sql_query(f"SELECT ref_id FROM ref_ids WHERE ref_uri = '{clean_point}'")["rows"]
+        again = ts_store.sql_query(f"SELECT stream_id FROM stream_ids WHERE stream_uri = '{clean_point}'")["rows"]
         assert again == first
         assert ts_store.timeseries_info(clean_point).row_count == 3
 
     def test_no_default_ts_index(self, ts_store):
-        # create_default_indexes => FALSE: only the unique (ref_id, ts) index exists.
+        # create_default_indexes => FALSE: only the unique (stream_id, ts) index exists.
         names = [
             row[0] for row in ts_store.sql_query(
                 "SELECT indexname FROM pg_indexes WHERE tablename = 'timeseries'"
@@ -137,7 +137,7 @@ class TestReplaceRows:
 class TestBulkInsertPolars:
     def test_basic(self, ts_store, clean_point):
         df = pl.DataFrame({
-            "ref_uri": [clean_point, clean_point],
+            "stream_uri": [clean_point, clean_point],
             "ts": [
                 datetime(2025, 1, 1, tzinfo=timezone.utc),
                 datetime(2025, 1, 2, tzinfo=timezone.utc),
@@ -152,17 +152,17 @@ class TestBulkInsertPolars:
 
     def test_empty_dataframe(self, ts_store, clean_point):
         df = pl.DataFrame({
-            "ref_uri": [],
+            "stream_uri": [],
             "ts": [],
             "value": [],
-        }).cast({"ref_uri": pl.Utf8, "ts": pl.Datetime("us", "UTC"), "value": pl.Utf8})
+        }).cast({"stream_uri": pl.Utf8, "ts": pl.Datetime("us", "UTC"), "value": pl.Utf8})
         result = ts_store.bulk_insert_polars(df)
         assert result >= 0 or result == -1  # empty df may return 0 or -1
 
     def test_duplicate_keys_keep_last_value(self, ts_store, clean_point):
         ts = datetime(2025, 1, 1, tzinfo=timezone.utc)
         df = pl.DataFrame({
-            "ref_uri": [clean_point, clean_point],
+            "stream_uri": [clean_point, clean_point],
             "ts": [ts, ts],
             "value": ["10.0", "20.0"],
             "value_kind": ["numeric", "numeric"],
@@ -183,21 +183,21 @@ class TestStreamHandles:
     TEST_SOURCE = "test_source"
     TEST_REF_NAME = "test_ref"
 
-    def test_ref_uri_is_uuid(self, ts_store, clean_point):
-        ref_uri = ts_store.ensure_stream_ref(clean_point, self.TEST_SOURCE, self.TEST_REF_NAME)
-        assert isinstance(ref_uri, URIRef)
-        assert len(ref_uri) == len("urn:acquirium#") + 36  # UUID5 string form
+    def test_stream_uri_is_uuid(self, ts_store, clean_point):
+        stream_uri = ts_store.ensure_stream_ref(clean_point, self.TEST_SOURCE, self.TEST_REF_NAME)
+        assert isinstance(stream_uri, URIRef)
+        assert len(stream_uri) == len("urn:acquirium#") + 36  # UUID5 string form
 
     def test_deterministic(self, ts_store, clean_point):
-        # Same source_id + ref_name always yields the same ref_uri.
-        ref_uri1 = ts_store.ensure_stream_ref(clean_point, self.TEST_SOURCE, self.TEST_REF_NAME)
-        ref_uri2 = ts_store.ensure_stream_ref(clean_point, self.TEST_SOURCE, self.TEST_REF_NAME)
-        assert ref_uri1 == ref_uri2
+        # Same source_id + stream_name always yields the same stream_uri.
+        stream_uri1 = ts_store.ensure_stream_ref(clean_point, self.TEST_SOURCE, self.TEST_REF_NAME)
+        stream_uri2 = ts_store.ensure_stream_ref(clean_point, self.TEST_SOURCE, self.TEST_REF_NAME)
+        assert stream_uri1 == stream_uri2
 
-    def test_different_sources_different_ref_uris(self, ts_store, clean_point):
-        ref_uri1 = ts_store.ensure_stream_ref(clean_point, "source_a", self.TEST_REF_NAME)
-        ref_uri2 = ts_store.ensure_stream_ref(clean_point, "source_b", self.TEST_REF_NAME)
-        assert ref_uri1 != ref_uri2
+    def test_different_sources_different_stream_uris(self, ts_store, clean_point):
+        stream_uri1 = ts_store.ensure_stream_ref(clean_point, "source_a", self.TEST_REF_NAME)
+        stream_uri2 = ts_store.ensure_stream_ref(clean_point, "source_b", self.TEST_REF_NAME)
+        assert stream_uri1 != stream_uri2
 
 
 # ── Query Tests ────────────────────────────────────────────
@@ -207,8 +207,8 @@ class TestTimeseries:
     @pytest.fixture(autouse=True)
     def _insert_data(self, ts_store, clean_point):
         rows = [
-            (datetime(2025, 1, 1, ref_uri, 0, tzinfo=timezone.utc), float(ref_uri))
-            for ref_uri in range(24)
+            (datetime(2025, 1, 1, stream_uri, 0, tzinfo=timezone.utc), float(stream_uri))
+            for stream_uri in range(24)
         ]
         ts_store.upsert_rows(clean_point, rows, value_kind="numeric")
 
@@ -282,7 +282,7 @@ class TestTimeseriesInfo:
 class TestLogs:
     def test_insert_and_query(self, ts_store, clean_point):
         log = LogEntry(
-            point_uri=clean_point,
+            property_uri=clean_point,
             timestamp=datetime(2025, 6, 15, 10, 0, tzinfo=timezone.utc),
             period=TimeIntervalModel(),
             message="test log message",
@@ -294,7 +294,7 @@ class TestLogs:
 
     def test_with_observation_period(self, ts_store, clean_point):
         log = LogEntry(
-            point_uri=clean_point,
+            property_uri=clean_point,
             timestamp=datetime(2025, 6, 15, 10, 0, tzinfo=timezone.utc),
             period=TimeIntervalModel(
                 start=datetime(2025, 6, 15, 9, 0, tzinfo=timezone.utc),
@@ -310,7 +310,7 @@ class TestLogs:
 
     def test_no_period(self, ts_store, clean_point):
         log = LogEntry(
-            point_uri=clean_point,
+            property_uri=clean_point,
             timestamp=datetime(2025, 6, 15, 10, 0, tzinfo=timezone.utc),
             period=TimeIntervalModel(),
             message="no period",
@@ -323,7 +323,7 @@ class TestLogs:
     def test_time_filter(self, ts_store, clean_point):
         for hour in range(5):
             log = LogEntry(
-                point_uri=clean_point,
+                property_uri=clean_point,
                 timestamp=datetime(2025, 6, 15, hour, 0, tzinfo=timezone.utc),
                 period=TimeIntervalModel(),
                 message=f"log {hour}",
@@ -339,7 +339,7 @@ class TestLogs:
 
     def test_observation_filter(self, ts_store, clean_point):
         log = LogEntry(
-            point_uri=clean_point,
+            property_uri=clean_point,
             timestamp=datetime(2025, 6, 15, 10, 0, tzinfo=timezone.utc),
             period=TimeIntervalModel(
                 start=datetime(2025, 6, 15, 8, 0, tzinfo=timezone.utc),
@@ -358,7 +358,7 @@ class TestLogs:
 
     def test_delete(self, ts_store, clean_point):
         log = LogEntry(
-            point_uri=clean_point,
+            property_uri=clean_point,
             timestamp=datetime(2025, 6, 15, 10, 0, tzinfo=timezone.utc),
             period=TimeIntervalModel(),
             message="to delete",
