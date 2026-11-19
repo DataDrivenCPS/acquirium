@@ -10,6 +10,8 @@ change in any release.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-18
+
 ### Added
 
 - Metadata can be written on a stream without looking up its property:
@@ -71,6 +73,35 @@ change in any release.
 - `Driver` no longer infers `value_kind` from the first observed values; the
   server does.
 
+- Acquirium requires DuckDB 2.0 (`duckdb>=2.0.0`). An existing database file
+  opens as is and keeps its storage format. A database created by DuckDB 2.0
+  uses the 2.0 storage format, which DuckDB 1.x cannot open.
+- The DuckDB `timeseries` table no longer has the `UNIQUE (ref_id, ts)`
+  constraint. Writes still keep one row per stream and timestamp by deleting
+  colliding rows before inserting. Opening an existing database rebuilds the
+  table once to drop the constraint; allow space for the replacement table
+  when upgrading a large database.
+- "Point" is now "property" and "ref" is now "stream", following the WaTr
+  ontology and the rest of the interface: `point_uri` → `property_uri`,
+  `point_id` → `property_id`, `ref_uri` → `stream_uri`, `ref_name` →
+  `stream_name`, `measurement(ref=)` → `measurement(stream=)`, `include_ref` →
+  `include_stream`, `include_ref_uris` → `include_stream_uris`,
+  `resolve_point_metadata` → `resolve_property_metadata`, `compute_ref_uri` →
+  `compute_stream_uri`.
+  - The client, driver and app interfaces still accept the old names as
+    arguments, as `register_streams` keys, as the `ref_name` column of a
+    driver's observations, and as attributes of stream handles. `point` names
+    are plain aliases. `ref` names emit a `FutureWarning` and will be removed.
+  - Returned dataframes use the new names only: `property_uri`, `property_id`,
+    `stream_uri`, `stream_name`, and `stream` in place of the `ref` column.
+  - The HTTP API uses the new names only.
+  - Opening an existing database renames the columns in place (timeseries
+    schema version 3 on DuckDB and 2 on Timescale, experiment schema version
+    4). No data is rewritten.
+  - Identifiers already stored in graphs keep their form: the placeholder
+    `<stream_uri>__point`, `urn:acquirium:derived-point:…` and the `ref_uri`
+    field of experiment stream annotations.
+
 ### Removed
 - **Breaking:** `register_datasource()` on `Acquirium` and `AcquiriumClient`,
   and the `POST /register_datasource` endpoint. The node it wrote was never
@@ -118,36 +149,6 @@ change in any release.
   new label was added next to the old one, and `metadata()` listed the stream
   once per label. Registering again without a `label` keeps the label the
   stream has.
-
-### Changed
-- Acquirium requires DuckDB 2.0 (`duckdb>=2.0.0`). An existing database file
-  opens as is and keeps its storage format. A database created by DuckDB 2.0
-  uses the 2.0 storage format, which DuckDB 1.x cannot open.
-- The DuckDB `timeseries` table no longer has the `UNIQUE (ref_id, ts)`
-  constraint. Writes still keep one row per stream and timestamp by deleting
-  colliding rows before inserting. Opening an existing database rebuilds the
-  table once to drop the constraint; allow space for the replacement table
-  when upgrading a large database.
-- "Point" is now "property" and "ref" is now "stream", following the WaTr
-  ontology and the rest of the interface: `point_uri` → `property_uri`,
-  `point_id` → `property_id`, `ref_uri` → `stream_uri`, `ref_name` →
-  `stream_name`, `measurement(ref=)` → `measurement(stream=)`, `include_ref` →
-  `include_stream`, `include_ref_uris` → `include_stream_uris`,
-  `resolve_point_metadata` → `resolve_property_metadata`, `compute_ref_uri` →
-  `compute_stream_uri`.
-  - The client, driver and app interfaces still accept the old names as
-    arguments, as `register_streams` keys, as the `ref_name` column of a
-    driver's observations, and as attributes of stream handles. `point` names
-    are plain aliases. `ref` names emit a `FutureWarning` and will be removed.
-  - Returned dataframes use the new names only: `property_uri`, `property_id`,
-    `stream_uri`, `stream_name`, and `stream` in place of the `ref` column.
-  - The HTTP API uses the new names only.
-  - Opening an existing database renames the columns in place (timeseries
-    schema version 3 on DuckDB and 2 on Timescale, experiment schema version
-    4). No data is rewritten.
-  - Identifiers already stored in graphs keep their form: the placeholder
-    `<stream_uri>__point`, `urn:acquirium:derived-point:…` and the `ref_uri`
-    field of experiment stream annotations.
 
 ## [0.4.0a9] - 2026-11-09
 
@@ -881,7 +882,8 @@ change in any release.
 - Text matcher backed by FastEmbed with QUDT and graph indexes.
 - Grafana dashboard helpers.
 
-[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a9...HEAD
+[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a9...v0.4.0
 [0.4.0a9]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a8...v0.4.0a9
 [0.4.0a8]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a7...v0.4.0a8
 [0.4.0a7]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a6...v0.4.0a7
