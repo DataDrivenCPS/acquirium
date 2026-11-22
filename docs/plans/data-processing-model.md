@@ -28,9 +28,9 @@ Four ideas carry it. Each replaces a family of special cases with one concept.
 | One window shape | A window is an anchor time, an interval it reads per input, and an interval it owns. |
 | One function contract | The engine hands a function a run of windows and replaces exactly what those windows own. |
 | One dirty rule | Changed intervals go in; the windows that read them come out. |
-| One maintenance record | Each instance records the epoch its output reflects, and why if it is behind. |
+| One maintenance record | Each instance records the epoch its output reflects, and its error if it failed. |
 
-The primary workload is a DAG of Python functions. The engine's job is to
+The workload is a DAG of Python functions. The engine's job is to
 decide what to recompute, hand Python its inputs as columns, and publish the
 results atomically into tables that the database stores and SQL can query.
 Reads go through one small [query interface](#queries).
@@ -58,8 +58,8 @@ Non-goals:
 
 - A storage engine. The database stores the readings and decides how to
   split, compress and index them.
-- SQL operators or a growing library of native functions. The existing native
-  functions stay as they are.
+- SQL operators or native functions. Every calculation is a Python function,
+  and the engine's built-in functions are removed.
 - Dropping late data behind a watermark.
 - Running on more than one node.
 - Units in the engine. Functions convert units, as they do today.
@@ -71,7 +71,7 @@ Non-goals:
 | Term | Meaning |
 | --- | --- |
 | Series (stream) | A named sequence of readings. Source series are written by requests; derived series by one instance. |
-| Reading | A number or text at a key: stream, event time, sample. |
+| Reading | A number or text at a key: stream and event time. |
 | Epoch | One batch of requests applied and published together. Epoch numbers order publications. |
 | Template | One calculation, declared once: function, window, roles, ports, freshness. |
 | Role | A named input of a template. A driving role's readings decide which windows exist. |
@@ -79,19 +79,60 @@ Non-goals:
 | Binding | One row saying a stream feeds an instance in a role over a span of event time. |
 | Window | One evaluation of an instance: an anchor, what it reads, what it owns. |
 | Run | A batch of windows of one template, handed to a function in one call. |
-| Maintenance record | The epoch an instance's output reflects, and the cause if it is behind. |
+| Maintenance record | The epoch an instance's output reflects, and its error if it failed. |
 
 An instance is what the current engine calls an operator. A window is what it
 calls a group.
+
+## One change, end to end
+
+Tank A has two probes, and the template `tank_mean` writes their mean for
+each minute ([Plans](#plans)). A second template, `high_alarm`, reads each
+mean and writes 1 when it is above 25 and 0 otherwise. The store is at
+epoch 40:
+
+```text
+time       09:00:10   09:00:40
+probe_1    20.0
+probe_2               22.0
+
+mean at 09:00 = 21.0        alarm at 09:00 = 0
+```
+
+A reading from probe 1 arrives late: 24.0 at 09:00:50.
+
+1. **Request.** The write is appended to the log, and the writer gets a
+   receipt.
+2. **Epoch 41.** The engine applies the request to a candidate: one new
+   reading on `probe_1`.
+3. **Changed intervals.** `probe_1` differs between epochs 40 and 41 at one
+   point, 09:00:50.
+4. **Dirty rule.** A binding says `probe_1` feeds tank A's instance. The
+   window that reads 09:00:50 is the 09:00 minute, so one window is dirty.
+5. **Run.** The function is called once, with that window and all three
+   readings in it. It returns 22.0.
+6. **Early cutoff.** 22.0 differs from the stored 21.0, so the mean at 09:00
+   has changed. `high_alarm` reads it, so its 09:00 window is dirty. It
+   returns 0, which equals the stored row. Nothing changes there, and
+   nothing further is evaluated.
+7. **Publication.** In one transaction the old mean moves to `history` with
+   `until = 41`, and the late reading and the new mean enter `readings` with
+   `since = 41`.
+8. **Readers.** A snapshot at epoch 41 sees the late reading and the mean
+   22.0 together. A snapshot at epoch 40 still reads 21.0.
+   `versions(after=40)` returns three rows: the late reading, the new mean,
+   and the old mean with its `until`.
+
+The sections below define each step.
 
 ## Series and time
 
 ### Readings
 
-A reading's key is its stream, its event time in UTC nanoseconds, and a sample
-key that distinguishes readings at the same time. Its value is a finite number
-or text, with a quality code. Writing an existing key replaces the reading.
-A request can also delete a key or a range of event time.
+A reading's key is its stream and its event time in UTC nanoseconds, so a
+stream holds at most one reading at an instant. Its value is a finite number
+or text. Writing an existing key replaces the reading. A request can also
+delete a key or a range of event time.
 
 ### Two clocks
 
@@ -112,7 +153,7 @@ A version is one value a key has held. It carries the epoch that wrote it
 and, once it has been replaced or deleted, the epoch that ended it:
 
 ```text
-(stream, time, sample, since, until) -> value or text, quality
+(stream, time, since, until) -> value or text
 ```
 
 A version's value never changes. A key's value as of epoch E is its version
@@ -125,6 +166,11 @@ The change feed lists each epoch's signed changes: a version adds `+1` at its
 and the versions are its integral [[Budiu et al. 2023]](#references).
 Integrating the feed through epoch E must give exactly the snapshot at E,
 which is a property the tests check.
+
+Read as rows, the feed after epoch E is every version that began or ended
+after E. A copy of the store that applies those rows holds the same versions
+as the store, which is how a backup follows it
+([Following the store](#following-the-store)).
 
 ## The log and epochs
 
@@ -218,7 +264,9 @@ Rules:
 
 - Each derived series has exactly one owning instance.
 - The instances form a DAG: an instance may read series owned by others, and
-  there are no cycles.
+  there are no cycles. An instance may also read its own output from before
+  each window ([Reading its own output](#reading-its-own-output)). Time order
+  keeps that from being a cycle.
 - An instance's *definition* is its template's function, window, roles and
   ports, plus its own parameters and outputs. The engine computes a digest of
   it. Bindings are not part of the definition.
@@ -247,13 +295,15 @@ makes a change in group membership a change to a few binding rows.
 ### The shape
 
 A window has an anchor time `t`, an interval it reads for each role, and an
-interval it owns. All intervals are half-open and in nanoseconds.
+interval it owns. Times are whole nanoseconds. An interval includes its start
+and excludes its end, so the instant `t` is the interval `[t, t + 1)`.
 
 ```text
-Window { anchors: Instant | Grid { origin, step }, own }
+Window { anchors: Instant | Grid { origin, step }, body: Point | Bucket }
 Role   { name, reach, driving }
 
-Reach  = Span   { before, after }   reads [t - before, t + after)
+Reach  = Span   { before, after }   reads the body, and this far before and
+                                    after it
        | Latest { max_age }         reads the role's latest reading at or
                                     before t, no older than max_age
 ```
@@ -265,10 +315,12 @@ Reach  = Span   { before, after }   reads [t - before, t + after)
 - **Driving.** Each role is driving or not. A *driving* role's readings
   decide which windows exist. By default a `Span` role drives and a `Latest`
   role does not. [Driving roles](#driving-roles) explains the choice.
-- **Ownership.** The window owns the output interval `[t, t + own)`, with
-  `own` at most `step`. By default it owns only `t`, and a window at an
-  `Instant` anchor always owns only `t`. Owned intervals of one instance
-  never overlap.
+- **Body.** A `Point` window is the instant `t`. A `Bucket` window is
+  `[t, t + step)`, and needs a grid. A window owns its body: its output rows
+  lie there. Bodies of one instance never overlap.
+- **Reads.** A `Span` role reads the body with `before` added in front and
+  `after` behind. At a point that is `t - before` through `t + after`,
+  both included. At a bucket it is `[t - before, t + step + after)`.
 - **Existence.** A window at an `Instant` anchor exists because a driving
   reading has that timestamp. A window at a `Grid` anchor exists when a
   driving reading lies in its read interval. A window that does not exist
@@ -276,23 +328,25 @@ Reach  = Span   { before, after }   reads [t - before, t + after)
   never depends on whether a window once held readings.
 
 Anchors, reach and driving are independent choices. Any role may have any
-reach at either kind of anchor.
+reach at either kind of anchor. A window at an `Instant` anchor is always a
+point.
 
 The familiar windows are instances of this shape:
 
-| Window | Anchors | Reads | Owns |
-| --- | --- | --- | --- |
-| Pointwise | each driving timestamp | readings at `t` | `t` |
-| At each reading, lookback `L` | each driving timestamp | `[t - L, t]` | `t` |
-| Fixed bucket of width `w` | grid of `w` | `[t, t + w)` | `t` |
-| Rolling, lookback `L`, lookahead `A` | grid of `step` | `[t - L, t + A]` | `t` |
-| Range of width `w`, margins `L` and `A` | grid of `w` | `[t - L, t + w + A)` | `[t, t + w)` |
-| As-of role, in any of the above | (not driving by default) | latest in `[t - max_age, t]` | (nothing) |
+| Window | Anchors | Body | Reads | Owns |
+| --- | --- | --- | --- | --- |
+| Pointwise | each driving timestamp | point | `t` | `t` |
+| At each reading, lookback `L` | each driving timestamp | point | `[t - L, t]` | `t` |
+| Rolling, lookback `L`, lookahead `A` | grid of `step` | point | `[t - L, t + A]` | `t` |
+| Bucket of width `w` | grid of `w` | bucket | `[t, t + w)` | `[t, t + w)` |
+| Bucket with margins `L` and `A` | grid of `w` | bucket | `[t - L, t + w + A)` | `[t, t + w)` |
+| `Latest` role, in any of the above | (not driving by default) | | latest in `[t - max_age, t]` | (nothing) |
 
-The range window is the one cleaning, filling and resampling need. Its
-function reads a bucket with some margin on each side and returns a series at
-any timestamps inside the bucket. A fixed bucket is a rolling window with no
-lookback.
+A bucket with no margins is the fixed bucket of today's engine. A function
+that writes one row at the start of the bucket, as a mean does, is
+unaffected. A bucket with margins is the window that cleaning, filling and
+resampling need: the function reads a bucket with some margin on each side
+and returns a series at any timestamps inside the bucket.
 
 A lookback at each reading serves a calculation that a sparse measurement
 triggers. At each laboratory sample, a function can read the hour of sensor
@@ -355,6 +409,54 @@ A driving `Latest` role on a grid needs a bounded `max_age`. Its windows
 exist while a reading is in effect, and would otherwise continue without
 end.
 
+### Reading its own output
+
+A calculation that carries state from one window to the next reads its own
+earlier output. A role can name the template's own ports in place of bound
+streams. Each instance then reads its own output on those ports, like any
+other input.
+
+For example, a third template keeps a running total of flow, hour by hour.
+
+```text
+Template
+  id       running_total
+  window   one-hour buckets
+  roles    flow       the hour's readings, driving
+           previous   its own port total, the latest row before the hour
+  ports    total
+
+hour           09:00    10:00   11:00
+flow in hour   5        7       4
+previous       (none)   5       12
+total          5        12      16
+```
+
+- The 09:00 window finds no earlier output, so its function starts from
+  zero.
+- If a reading at 10:30 is corrected, the 10:00 window is recomputed and its
+  total changes. That total is an input of the 11:00 window, which is
+  recomputed in turn. The ordinary [dirty rule](#the-dirty-rule) does this,
+  and it stops at the first window whose total comes out unchanged.
+- A total that restarts each day ignores `previous` in the first hour of the
+  day. Resetting is the function's choice.
+
+Three rules keep this well defined:
+
+- The role reads only output from before `t`. A `Span` here reads
+  `[t - before, t)`, and a `Latest` reads the latest row before `t`.
+- The role is never driving.
+- The instance's windows are evaluated in anchor order, each seeing the
+  output of those before it.
+
+A function that needs the readings an earlier window read declares a lookback
+on that role. Every reading a window uses is then one its roles declare.
+
+Such a template may use any window. Windows are ordered by anchor and what
+they own never overlaps, so read intervals that overlap do not disturb the
+order. A cleaning function can carry state from bucket to bucket while
+reading a margin on each side.
+
 ### Geometry
 
 The scheduler needs three functions and nothing else about a window:
@@ -362,13 +464,15 @@ The scheduler needs three functions and nothing else about a window:
 ```text
 reads(role, t)        the interval window t reads for the role
 readers(role, [a,b))  the anchors whose read interval meets [a,b)
-owner(s)              the anchor whose owned interval holds time s
+owner(s)              the anchor whose body holds time s
 ```
 
 For a `Span` role, `readers(role, [a,b))` is every anchor `t` with
-`a - after < t < b + before`. For a `Latest` role, a reading at `s` can be
-read by anchors in `[s, s + max_age]`. The engine may shorten that range to
-end at the stream's next reading, taking the later of the old and new states.
+`a - after - len < t < b + before`, where `len` is the length of the body:
+one nanosecond for a point and `step` for a bucket. For a `Latest` role, a
+reading at `s` can be read by anchors in `[s, s + max_age]`. The engine may
+shorten that range to end at the stream's next reading, taking the later of
+the old and new states.
 
 On a grid, the anchors in a range follow from arithmetic. `Instant` anchors
 are found by reading the driving roles' timestamps in the range.
@@ -396,7 +500,7 @@ decline to answer when too little of the window is covered.
 For every window `t` of every instance:
 
 ```text
-output in own(t) = f(readings in reads(t), bindings in effect, parameters)
+output in body(t) = f(readings in reads(t), bindings in effect, parameters)
 ```
 
 A function is pure and deterministic. It receives every reading its window
@@ -416,8 +520,9 @@ Three guarantees follow:
 ### What a function returns
 
 A function returns rows for each declared port. Each row's time must lie in
-the window's owned interval, numbers must be finite, and keys must be unique.
-Returning no rows for a port retracts what the window owned on that port.
+the window's body, numbers must be finite, and a port may have only one row
+at each time. Returning no rows for a port retracts what the window owned on
+that port.
 
 ### Runs: the one wire contract
 
@@ -427,13 +532,12 @@ many windows, across many instances of one template, in one call.
 | Sent | Contents |
 | --- | --- |
 | Static context | The template, and each instance's parameters and bindings. Sent once per plan and template; the worker caches it. |
-| Rows | Every reading the run's windows read, once each: instance, role, stream, time, sample, value or text, quality. |
+| Rows | Every reading the run's windows read, once each: instance, role, stream, time, value or text. |
 | Windows | Each window's instance and anchor, and the interval it reads per role. |
-| Carried state | For sequential templates: each instance's starting state and its stored outputs. |
 
 | Returned | Contents |
 | --- | --- |
-| Output rows | Instance, port, time, sample, value or text, quality. |
+| Output rows | Instance, port, time, value or text. |
 | Status | Success or an error message, per instance. |
 
 The engine checks every returned row against the windows it asked for, and
@@ -441,6 +545,11 @@ replaces exactly what those windows own. Both directions are Arrow record
 batches. Handing a long-lived Python process a columnar batch and calling the
 function once per group is the pattern of Spark's pandas function API
 [[Spark]](#references).
+
+For a role on the template's [own ports](#reading-its-own-output), the rows
+sent are the instance's stored output. As the worker evaluates the
+instance's windows in anchor order, each window's output takes the place of
+the stored rows that later windows in the run read.
 
 ### Calling modes are adapters
 
@@ -451,23 +560,16 @@ run. The engine sees one contract.
 | --- | --- | --- |
 | Per window (default) | One window's readings and its context | Most calculations |
 | Vectorized | The whole run, each row tagged with its window | Large recomputations in Polars or pandas |
-| Sequential | One window at a time in anchor order, with the previous result | Running totals, filters, recursive estimators |
 
-A sequential window receives `previous`: the latest earlier window of the
-same instance that wrote output, with what it read and what it wrote. The
-state is the output itself, so it is stored, versioned and recovered like any
-series. A reset period, such as a day, starts the state afresh at each
-boundary.
-
-A sequential template may use any window. Windows are ordered by anchor and
-what they own never overlaps, so read intervals that overlap do not disturb
-the order. A cleaning function can therefore carry state from bucket to
-bucket while reading a margin on each side.
+A template that [reads its own output](#reading-its-own-output) is called
+per window, in anchor order. It cannot be vectorized, because each window's
+input includes the output of the one before. Running totals, filters and
+recursive estimators are written this way.
 
 ### Run invariance
 
 Results must not depend on how the engine divides windows into runs. The
-per-window and sequential modes guarantee this by construction. A vectorized
+per-window mode guarantees this by construction. A vectorized
 function must compute each window from that window's rows alone. The engine
 can check it: a test mode evaluates the same windows under different
 divisions and compares the results.
@@ -502,13 +604,16 @@ dirty anchors =
   + readers(role, span)                               for each span over which a
                                                       binding was added, removed
                                                       or altered
-  + the next window after t                           for a sequential template,
-                                                      when the output at t changed
 
 evaluate = the dirty anchors whose windows exist at e1
 replace  = stored output owned by a dirty anchor is replaced by the results;
            whatever is not produced again is retracted
 ```
+
+A role on the instance's [own ports](#reading-its-own-output) falls under
+the second line. Its stream is the instance's own output, which changes as
+the windows are evaluated. When a window's output changes, the later windows
+that read it become dirty.
 
 The same rule serves every situation. Only the starting cut differs.
 
@@ -530,11 +635,9 @@ cutoff in a build system, with windows as the build keys and the maintenance
 record as the trace of what an output was built from
 [[Mokhov et al. 2018]](#references).
 
-A sequential instance uses the same mechanism along event time. Repair
-evaluates the dirty windows in anchor order, and continues past each one
-while its result differs from the stored one. Where a window hands on
-unchanged state, repair skips to the next dirty window. A change does not
-carry across a reset boundary.
+The same holds inside an instance that reads its own output. A window whose
+result equals the stored one dirties nothing after it, and evaluation moves
+on to the next dirty window.
 
 ### Order and parallelism within an epoch
 
@@ -548,6 +651,8 @@ carry across a reset boundary.
   any idle thread can take [[Leis et al. 2014]](#references).
 - Each task reads the published snapshot plus the candidate's changes from
   instances that have finished. No task reads another's unfinished work.
+- The windows of an instance that reads its own output run in anchor order.
+  Its runs execute one after another, never at the same time.
 - Results are merged in stream and key order, so the epoch record and the
   change feed are identical however the work was interleaved.
 
@@ -556,29 +661,46 @@ or writes. Single ownership of series and the readiness rule ensure that.
 
 ### Limits
 
-Each instance has budgets for windows, input rows and output rows per epoch.
-Exceeding one is a failure of that instance, handled like any other failure.
-Because synchronous work holds the epoch, a single very large change is
-published late, not partially.
+The engine has settings for the windows, input rows and output rows that one
+instance may use in one epoch. They apply to every instance alike and are
+not part of a plan, as in today's engine. Exceeding one is a failure of that
+instance, handled like any other failure.
+
+The settings guard against a runaway change. A deployment sets them above
+its largest expected recomputation, such as the first evaluation of a new
+template over the stored history. Work within them is published whole:
+because synchronous work holds the epoch, a very large change is published
+late, not partially.
 
 ## Freshness and failure
 
 ### The maintenance record
 
 ```text
-Maintenance { definition, reflects, cause }
+Maintenance { definition, reflects, error }
 
-cause = Error { message, windows }     the function failed on these windows
-      | Upstream { instances }         an instance it reads from is behind
-      | Refreshing { pinned }          an asynchronous refresh is in progress
-      | Rejected { reader, message }   a refresh was computed, and a reader
-                                       failed on it
+error = Failed   { message, windows }   the function failed on these windows
+      | Rejected { reader, message }    a refresh was computed, and a reader
+                                        failed on it
 ```
 
 The law: at every published epoch, an instance's stored output equals its
 function applied to its inputs as of `reflects`, under `definition`. An
 instance with no record is current: it reflects the published epoch under the
-active plan. In steady state there are no records.
+active plan. In steady state a synchronous instance has no record.
+
+A record exists while an instance is behind, and most records carry no
+error. Why the instance is behind then follows from the plan and the other
+records. The first row that applies gives the reason:
+
+| The instance | Why it is behind |
+| --- | --- |
+| Has an error | Its function failed, or a reader rejected its refresh |
+| Reads a synchronous instance that is behind | It is held ([Failure](#failure)) |
+| Is asynchronous | Its refresh has not finished |
+
+A record says nothing about any other instance, so it cannot disagree with
+the instance it would describe.
 
 Recording how far each part of a computation has progressed, and letting
 parts lag behind a shared clock, is the frontier of Naiad and the `since` and
@@ -597,13 +719,13 @@ Materialize]](#references).
 ### Failure
 
 A function error fails that instance for the epoch. Its attempt is discarded,
-its stored output is retained, and a record with `Error` is committed with
+its stored output is retained, and a record with the error is committed with
 the epoch. Source data and independent branches publish as usual.
 
 The hold rule: an instance is not evaluated while a synchronous instance
-upstream of it is behind. It retains its output and gets a record with
-`Upstream`. An instance never computes on a mixture of fresh inputs and a
-stale synchronous input.
+upstream of it is behind. It retains its output and gets a record with no
+error. An instance never computes on a mixture of fresh inputs and a stale
+synchronous input.
 
 A commit failure is different: no part of an epoch becomes visible without a
 successful transaction.
@@ -612,14 +734,14 @@ successful transaction.
 
 A failed instance is retried when a window it failed on is dirtied, which
 means an input that window reads has changed. It is also retried when an
-activation changes its definition, bindings or limits, and on explicit
-request. New data elsewhere does not retry it: functions are deterministic,
-so the same inputs would fail the same way.
+activation changes its definition or bindings, and on explicit request. New
+data elsewhere does not retry it: functions are deterministic, so the same
+inputs would fail the same way.
 
 - A failure that names no window, such as a failed vectorized call, records
   the range of windows in the failed run.
-- A sequential instance counts any change from its last reset up to the
-  failing window, because state flows forward into that window.
+- An instance that reads its own output is retried on any change before the
+  failing window, because the change may carry forward into it.
 - A timeout or a crash can be transient, so it is retried once automatically
   before the rule above applies.
 
@@ -635,7 +757,7 @@ says where to resume.
 1. A refresh pins an epoch `P` and applies the dirty rule from `reflects` to
    `P`.
 2. It evaluates on its own workers and stages its output privately, with a
-   checkpoint so that a restart resumes.
+   checkpoint that records `P`, so that a restart resumes.
 3. When complete, it submits a publication request to the log. One such
    request may be pending at a time.
 4. An epoch of its own applies the request. It installs the staged output,
@@ -658,9 +780,11 @@ discarded.
 
 A read returns data as of an epoch. For each derived series it can also
 report whether the series is current and, if not, the epoch it reflects and
-the cause, including causes upstream. A reader that needs a current answer
-can wait for one. The [query interface](#queries) reports this through
-`describe`.
+the reason. The reason is the instance's own error, or is worked out as in
+[The maintenance record](#the-maintenance-record): which instance upstream
+holds it, or that its refresh has not finished. A reader that needs a
+current answer can wait for one. The [query interface](#queries) reports
+this through `describe`.
 
 ## Python execution
 
@@ -687,8 +811,8 @@ functions in one file, because every stage started a new process.
 
 ### Isolating a failure within a run
 
-Failure is recorded per instance. The per-window and sequential adapters
-catch an exception, mark that instance failed, and continue with the others.
+Failure is recorded per instance. The per-window adapter catches an
+exception, marks that instance failed, and continues with the others.
 When a vectorized call, a crash or a timeout fails a whole run, the engine
 splits the run by instance and tries the halves until the failing instances
 are found.
@@ -701,7 +825,10 @@ are found.
 | Acquirium adapter | Datetimes in place of nanoseconds, pandas or Polars frames, `emit` and related helpers |
 | The user's function | `(frame, context)` returning a frame per port |
 
-The user's function signature does not change.
+The user's function signature does not change. Acquirium's sequential apps
+become templates with a role on their own ports. `previous_value`,
+`previous_outputs` and `same_period` read that role. `previous_rows` is
+removed: a function that needs earlier inputs declares a lookback.
 
 ## Storage
 
@@ -713,8 +840,8 @@ the database's job, not the engine's.
 ### Tables
 
 ```text
-readings (stream, event_time, sample, value, text, quality, since)
-history  (stream, event_time, sample, value, text, quality, since, until)
+readings (stream, event_time, value, text, since)
+history  (stream, event_time, value, text, since, until)
 streams  (id, name, kind)
 ```
 
@@ -773,32 +900,28 @@ A SQL reader therefore sees whole epochs. An asynchronous refresh or a bulk
 import stages its rows in a table of its own, and the epoch that applies it
 moves them with the same three steps.
 
-### The working set
-
-The engine keeps the recent readings of each stream in memory as columns,
-within a byte budget. Live windows read this working set and do not query the
-database. Serving recent data from memory follows Gorilla
-[[Pelkonen et al. 2015]](#references). The working set is a cache: it can be
-dropped at any time and refilled from the tables.
-
 ### What processing needs from storage
 
-Every read is as of an epoch. A read that the working set cannot answer is
-one SQL query that returns a record batch.
+Every read is as of an epoch, and is one SQL query that returns a record
+batch. The engine keeps no copy of published readings: the database caches
+them. The only readings held in memory are the changes of the epoch being
+built, and a read inside that epoch sees them laid over the published
+snapshot.
 
 | Operation | Used by |
 | --- | --- |
 | `range(streams, intervals, epoch)` as a record batch | Building runs, comparing results, queries |
-| `latest(streams, times, max_age, epoch)`: the last reading at or before each time | `Latest` roles, sequential state |
+| `latest(streams, times, max_age, epoch)`: the last reading at or before each time | `Latest` roles |
 | `changed(stream, after, through)` | The dirty rule, queries |
 | `stats(streams, interval, epoch)`: count, first and last time within an interval | Planning, previews, queries |
-| `versions(streams, interval)`: every version, with `since` and `until` | Queries |
+| `versions(streams, interval, after)`: every version, with `since` and `until`; with `after`, those that began or ended after that epoch | Queries, the change feed |
 | `publish(epoch, changes, records)` in one transaction | Every writer |
 
 - A run's input is one `range` query over all its streams and intervals, not
   one query per window.
-- `changed` is answered from memory for recent epochs, and from the `since`
-  and `until` columns for older ones.
+- `changed` between two published epochs is answered from the `since` and
+  `until` columns. For the epoch being built it is that epoch's own list of
+  changes.
 
 ### Backends
 
@@ -809,7 +932,8 @@ SQL. A single contract test suite runs against both.
 | --- | --- | --- |
 | Tables | Native tables | Tables, or TimescaleDB hypertables where the extension is installed |
 | Splitting and compression | DuckDB's columnar storage | TimescaleDB chunks and compression |
-| Finding a key | Row-group statistics; no index | A primary key on stream, time and sample |
+| Finding a key | Row-group statistics; no index | A primary key on stream and time |
+| Finding what changed after an epoch | Row-group statistics on `since` | A scan of `since`; a BRIN index on it is optional |
 | Direct SQL from outside | Not while the engine runs | Any client |
 
 The capabilities are the same on both. Size and speed differ; see
@@ -840,7 +964,7 @@ it [[TimescaleDB]](#references):
   writes the SQL, so epochs and history are handled the same way for every
   caller and on both backends.
 - `readings` and `history` stay ordinary, documented tables. `readings` has
-  one row per stream, time and sample.
+  one row per stream and time.
 - On PostgreSQL any client can also query them directly while the engine
   runs.
 - While the engine has a DuckDB file open, no other process can open it, even
@@ -864,7 +988,8 @@ arrangements [[McSherry et al. 2020]](#references). The consequences:
 
 - Current values are untouched.
 - A read as of an epoch before H is refused. It is never answered wrongly.
-- The change feed starts at H.
+- The change feed starts at H. A consumer whose cursor is before H copies
+  the store afresh.
 - An instance whose maintenance record reflects an epoch before H is rebuilt
   in full when it next runs, because `changed` can no longer be answered for
   it.
@@ -872,14 +997,15 @@ arrangements [[McSherry et al. 2020]](#references). The consequences:
 ### Recovery
 
 Opening a store reads the published epoch from the database. Nothing is
-replayed, and the working set fills as it is read. Requests still in the
-inbox are the next epoch's input.
+replayed. Requests still in the inbox are the next epoch's input.
 
 ### Measurements
 
 Measured on 2026-11-22 with synthetic data. Caches were warm. The scripts are
-not in the repository. The first set used 1,000 streams at 1 Hz, on DuckDB
-2.0.0 and a local PostgreSQL 14.22 without TimescaleDB.
+not in the repository. Except where a row says otherwise, the tables measured
+still had a sample key and a quality code, both always zero. The first set
+used 1,000 streams at 1 Hz, on DuckDB 2.0.0 and a local PostgreSQL 14.22
+without TimescaleDB.
 
 | Layout | Bytes per reading | One stream, one hour | One stream, one day |
 | --- | ---: | ---: | ---: |
@@ -896,8 +1022,8 @@ not in the repository. The first set used 1,000 streams at 1 Hz, on DuckDB
   days (2.6 billion readings).
 - **Expected size.** A deployment like Benicia, with 112 streams at one
   reading a minute, writes about 59 million readings a year: about 0.5 GB on
-  DuckDB, 7 to 9 GB on PostgreSQL without compression, and about 0.9 GB on
-  TimescaleDB with closed chunks compressed.
+  DuckDB, about 5.4 GB on PostgreSQL without compression, and about 0.8 GB
+  on TimescaleDB with closed chunks compressed.
 
 TimescaleDB 2.28.3 on PostgreSQL 18.4 was measured in a container, on data
 shaped like Benicia: 112 streams at one reading a minute for 90 days, which
@@ -906,7 +1032,8 @@ compressed.
 
 | | Uncompressed | Compressed |
 | --- | ---: | ---: |
-| Bytes per reading in `readings` | 149 | 15 |
+| Bytes per reading in `readings`, with the tables as designed | 93 | 14 |
+| Bytes per reading in `readings`, with a sample key and a quality code | 149 | 15 |
 | Bytes per version in `history`, with no index | 85 | 8.9 |
 | One stream, one day | 1.4 ms | 1.3 ms |
 | One stream, 90 days | 87 ms | 52 ms |
@@ -929,6 +1056,8 @@ compressed.
   Three such failures grew a 329 MiB table to 1.8 GiB.
 - **Recompression.** Recompressing twelve chunks after corrections took 11
   to 13 s.
+- **Without TimescaleDB.** The same readings in a plain PostgreSQL table, as
+  designed, took 92 bytes each: 60 in the table and 32 in the primary key.
 - **Not measured.** TimescaleDB's compression policy running beside
   publication, and real plant data. The read times were taken with
   TimescaleDB's default index on time also in place.
@@ -938,8 +1067,8 @@ compressed.
 Reading goes through one small interface that the engine provides. It serves
 Acquirium and any other application built on the engine, so it speaks only of
 streams, times and epochs. The engine turns each call into SQL over the
-[tables](#tables), or answers it from the working set. A caller never chooses
-between `readings` and `history`, and never handles epochs by hand.
+[tables](#tables). A caller never chooses between `readings` and `history`,
+and never handles epochs by hand.
 
 Today the engine reads one stream at a time and returns raw readings only.
 Acquirium's client makes one request per stream, pages through each, and
@@ -966,8 +1095,8 @@ One call returns readings:
 read(streams, start, end, limit, newest_first)
 ```
 
-It returns each reading of each stream in the range: stream, time, sample,
-number or text, and quality.
+It returns each reading of each stream in the range: stream, time, and number
+or text.
 
 - **Range.** Times are UTC nanoseconds. A range includes `start` and excludes
   `end`. Either bound may be left open.
@@ -1010,24 +1139,79 @@ engine are [deferred](#deferred).
 | Call | Returns |
 | --- | --- |
 | `extent(start, end, streams)` | The streams that have a reading in the range, each with its count and its first and last time within the range. Either bound may be left open. With no streams named, every stream is considered |
-| `describe(streams)` | For each stream: source or derived. For a derived series, whether it is current and, if not, the epoch it reflects and the cause ([What a reader sees](#what-a-reader-sees)). With no streams named, every stream |
+| `describe(streams)` | For each stream: source or derived. For a derived series, whether it is current and, if not, the epoch it reflects and the reason ([What a reader sees](#what-a-reader-sees)). With no streams named, every stream |
+| `plan()` | The plan as of the snapshot: its templates, instances and bindings |
 | `changed_since(epoch, streams)` | The intervals of event time whose readings differ between that epoch and the snapshot's |
-| `history(streams, start, end)` | Every version of the readings in the range, with `since` and `until` |
+| `versions(streams, start, end, after)` | Every version of the readings in the range, with `since` and `until`. With `after`, only the versions that began or ended after that epoch. With no streams named, every stream |
+| `plan_versions(after)` | Every row the plan has held, with `since` and `until`. With `after`, only the rows that began or ended after that epoch |
 
 `extent` answers which streams have data between two times, and how much. A
 stream with no reading in the range has no row. `describe` says what a stream
 is and whether it is up to date, whether or not it holds readings.
 
+`read` and `plan` answer as of the snapshot. `versions` and `plan_versions`
+return what the store has held over time. A version with no `until` is the
+one the snapshot sees.
+
 `changed_since` returns the same [changed intervals](#changed-intervals) that
-drive the dirty rule. A consumer that keeps its own copy re-reads only those
-intervals. The [change feed](#versions-snapshots-and-the-change-feed) is
-separate: it lists each epoch's changes row by row, for a consumer that
-follows the store.
+drive the dirty rule. A consumer that keeps only current values re-reads
+those intervals.
 
 Reading as of a version, and asking which ranges changed between two
 versions, follow BTrDB [[Andersen and Culler 2016]](#references). Here one
 epoch covers every stream, where BTrDB versions each stream on its own
 [[BTrDB API]](#references).
+
+### Following the store
+
+`versions` with `after` is the
+[change feed](#versions-snapshots-and-the-change-feed). A consumer that holds
+every version through epoch E asks for the versions after E:
+
+- a version that began after E is added;
+- a version that ended after E has its `until` filled in.
+
+The consumer then holds every version through the snapshot's epoch, and that
+epoch is its next cursor. It applies the rows and stores the cursor in one
+transaction, so a pull that is interrupted can be repeated. `plan_versions`
+brings the plan along in the same way.
+
+A backup is such a consumer. The engine provides the feed and nothing more.
+An outside job pulls it on its own schedule and writes the copy where it
+likes: another database, on either backend, or files. A running DuckDB store
+can only be copied this way, because no other process can open its file.
+
+The copy holds the same rows as `readings`, `history` and the plan tables. It
+holds no maintenance records. A store rebuilt from a copy therefore evaluates
+each instance once and compares the results with the stored rows
+([Early cutoff](#early-cutoff)). With deterministic functions nothing
+changes.
+
+The loop was run on DuckDB as SQL, on the tables as designed. The store held
+90 days shaped like Benicia, and then ran 3,000 more epochs with 67
+corrections of a day of one stream and 33 deletions. A second database
+pulled at intervals of 1 to 240 epochs.
+
+- Its `readings` and `history` ended identical to the store's, row for row.
+- Reads as of four epochs gave the same readings from both.
+- The first pull copied all 14.5 million readings in under a second.
+- Applying a pull to the copy took 9 to 34 ms, and 124 ms at worst.
+
+The pull itself, over the same 90 days on each backend:
+
+| Backend | Changes of the last 60 epochs | Of the last 240 epochs |
+| --- | ---: | ---: |
+| DuckDB | 2.2 ms | 3.2 ms |
+| PostgreSQL | 92 ms | 107 ms |
+| PostgreSQL with a BRIN index on `since` | 5.4 ms | 25 ms |
+| TimescaleDB, closed chunks compressed | 60 ms | 75 ms |
+
+Sixty epochs changed 11,000 to 14,000 versions, and 240 changed 42,000 to
+55,000. Without an index PostgreSQL scans `since` for the whole table, so the
+time grows with the store. The BRIN index took 40 KiB; it was measured on a
+table whose rows lay in the order epochs wrote them. On TimescaleDB a b-tree
+index on the epoch columns brought the pull to 34 and 49 ms, and the
+compressed chunks were still scanned.
 
 ### Cost
 
@@ -1069,8 +1253,8 @@ aggregates. A SQL endpoint for a running DuckDB store is
 
 Rules:
 
-- A published snapshot is immutable and is replaced by swapping a pointer.
-  Readers never wait for an epoch.
+- A published snapshot is an epoch number. A reader takes the number and
+  reads as of it, so readers never wait for an epoch.
 - Only the epoch driver changes published state. Tasks read snapshots and
   return results.
 - No lock is held across a parallel call or a call to Python.
@@ -1083,11 +1267,11 @@ Rules:
 | Crate | Contents | Depends on |
 | --- | --- | --- |
 | `geometry` | Intervals, interval sets, the window shape, `reads`, `readers`, `owner`. No I/O. | |
-| `series` | The working set, snapshots, and the storage interface: the reads, `changed` and publication | `geometry` |
+| `series` | Snapshots and the storage interface: the reads, `changed` and publication | `geometry` |
 | `log` | The inbox, retry identities, epoch records, and the DuckDB and PostgreSQL implementations of storage | `series` |
 | `plan` | Templates, instances, bindings, validation, the DAG, plan comparison | `geometry` |
 | `repair` | The dirty rule, runs, result comparison, maintenance records, refresh | `series`, `plan`, `exec` |
-| `exec` | The run protocol, the Python worker pool, the existing native functions | `plan` |
+| `exec` | The run protocol and the Python worker pool | `plan` |
 | `engine` | Stages, limits, status, the query interface and the rest of the public API | all of the above |
 | `python` | Bindings that pass record batches without copying | `engine` |
 
@@ -1141,7 +1325,7 @@ and computation.
 | The dirty rule is sound | Random changes; results outside the evaluated windows must already match the recomputation |
 | Order does not matter | Shuffle request order and batching; compare final snapshots |
 | Runs are invisible | Random run boundaries and task completion order; compare with serial evaluation |
-| The feed integrates to the snapshot | Integrate the feed through each epoch and compare |
+| The feed integrates to the snapshot | Apply `versions(after)` pull by pull to a second store, and compare its tables and its reads as of past epochs with the first |
 | Recovery is exact | Stop at random points around a commit; reopen and compare |
 | The tables are the snapshot | After each epoch, read `readings` and `history` with SQL and compare with the engine's snapshot and feed |
 | Queries answer from the snapshot | For random streams, ranges, limits and epochs, compare each query call with the same answer computed from the oracle's snapshot |
@@ -1153,20 +1337,26 @@ Full recomputation is the oracle throughout. It is slow and obviously right.
 ## Implementation order
 
 Each step leaves the system working and is checked against the oracle.
+Storage comes first because the dirty rule, the plan and the maintenance
+record each write to it. Built on the old store, they would be built twice.
 
-1. **Generic Python workers.** A worker loads any function module.
-2. **Runs.** One call per template across instances, columnar in both
+1. **Storage.** `readings` and `history` on both backends, written at
+   publication; `changed` answered from them; the query interface;
+   PostgreSQL at parity.
+2. **Generic Python workers.** A worker loads any function module. The
+   native functions are removed.
+3. **Runs.** One call per template across instances, columnar in both
    directions, with the static context cached. Until templates exist in the
    plan, instances are grouped by identical function and window.
-3. **The window shape.** The `geometry` crate, with the existing windows
-   expressed in it and the range window added.
-4. **The dirty rule.** `changed` in storage; one discovery path.
-5. **Plans as templates, instances and bindings.** Acquirium's compiler emits
-   them; declarations move into annotations.
-6. **The maintenance record.** Failure and refresh state become one record;
+4. **The window shape.** The `geometry` crate, with the existing windows
+   expressed in it and buckets with margins added.
+5. **The dirty rule.** One discovery path, on `changed`. A role on a
+   template's own ports replaces the sequential mode.
+6. **Plans as templates, instances and bindings.** Acquirium's compiler emits
+   them; they are stored in the plan tables; declarations move into
+   annotations.
+7. **The maintenance record.** Failure and refresh state become one record;
    recovery resumes from it.
-7. **Storage.** `readings` and `history` on both backends, written at
-   publication; the working set; the query interface; PostgreSQL at parity.
 
 ## Decisions
 
@@ -1187,16 +1377,35 @@ Made on 2026-11-22.
   large change. Consistency comes first; moving such work to the background
   can be considered later. This document assumes the same for the first
   evaluation of a new or redefined instance.
-- **DAGs of Python functions are the priority.** Native functions are kept as
-  they are and are not extended.
+- **Every function is a Python function.** DAGs of Python functions are the
+  priority, and the engine's native functions are removed.
+- **The engine keeps no cache of published readings.** Reads go to the
+  database, which caches them.
+- **A reading has no quality code.** Its value is a number or text. A source
+  that reports quality can write it as a second series.
+- **A stream holds one reading at an instant.** There is no sample key.
+  Several values at one instant are several streams.
+- **The engine provides the change feed, and a backup is an outside job that
+  pulls it.** The engine does not schedule backups or write them.
+- **Asynchronous templates stay.** Refreshing a result in the background is
+  a feature the design keeps.
 - **Unit conversion stays in Python functions.** This follows from the
   priority above and was not decided separately. The engine does not
   transform values.
 - **A refresh publishes with its synchronous readers or not at all.**
 - **A failed instance is retried when its failing window's inputs change**,
   not on every new input.
-- **Sequential templates may use any window**, including windows whose read
-  intervals overlap.
+- **A window is a point or a bucket.** It owns that, and reads it plus the
+  reach its roles declare. There is no separate owned width.
+- **The maintenance record stores only errors.** That an instance is held by
+  one upstream, or awaiting a refresh, is worked out from the plan.
+- **Limits are engine settings**, the same for every instance, and not part
+  of a plan.
+- **Storage is built first.**
+- **State is an ordinary input.** A calculation that carries state reads its
+  own earlier output through a role. There is no sequential mode and no
+  carried state. Such a template may use any window, including windows whose
+  read intervals overlap.
 
 ## Open questions
 
@@ -1215,8 +1424,12 @@ None at present. [Measurements](#measurements) lists what was not measured.
     for a coarse view of many streams over a long span. Daily statistics of
     every stream over 90 days took 60 ms in DuckDB, against 670 ms and
     509 MiB when the caller reads everything. It would also put a choice of
-    statistics in the engine, with questions of time weighting and quality
-    codes that the engine otherwise leaves to functions.
+    statistics in the engine, with questions such as time weighting that the
+    engine otherwise leaves to functions.
+- **A cache of recent readings in the engine**, as Gorilla serves recent
+  data from memory [[Pelkonen et al. 2015]](#references). The database
+  caches already, and reads took 1 to 3 ms. A cache would be a second read
+  path that has to agree with the first.
 - **Direct SQL to a running DuckDB store.** Reads go through the
   [query interface](#queries), so this is not needed first. Two ways were
   examined.
@@ -1336,7 +1549,7 @@ definition, not against the paper.
   tolerance.
 - **Pelkonen et al. 2015.** T. Pelkonen and others. "Gorilla: A Fast,
   Scalable, In-Memory Time Series Database." PVLDB 8(12). Recent readings
-  served from memory.
+  served from memory, deferred.
 - **Spark.** Apache Spark's pandas function API, `applyInPandas`.
   <https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.GroupedData.applyInPandas.html>
   Arrow batches between the engine and Python processes, with the function
