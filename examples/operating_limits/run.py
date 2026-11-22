@@ -11,6 +11,7 @@ import json
 import os
 import platform
 import random
+import shutil
 import resource
 import subprocess
 import sys
@@ -255,8 +256,10 @@ def main():
             raise SystemExit(f"{size:,} readings: the correction was not applied after reopening")
         results.append(item)
         print(json.dumps(item), flush=True)
+        # The store's files, and the Parquet directory beside it that seals
+        # and staged rebuilds write.
         for path in database.parent.glob(database.name + "*"):
-            path.unlink()
+            shutil.rmtree(path) if path.is_dir() else path.unlink()
     environment = {
         "python": platform.python_version(),
         "platform": platform.platform(),

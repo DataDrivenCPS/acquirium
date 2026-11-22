@@ -14,6 +14,7 @@ import json
 import os
 import platform
 import random
+import shutil
 import threading
 import time
 from collections import deque
@@ -449,8 +450,10 @@ def main():
         if processor.status()["stats"]["reports_dropped"]:
             raise SystemExit("epoch reports were dropped; latencies are incomplete")
         verified = verify(target, senders, args)
+    # The store's files, and the Parquet directory beside it that seals
+    # and staged rebuilds write.
     for path in database.parent.glob(database.name + "*"):
-        path.unlink()
+        shutil.rmtree(path) if path.is_dir() else path.unlink()
     if not verified:
         raise SystemExit("the stored readings do not match those sent")
 
