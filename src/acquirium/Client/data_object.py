@@ -724,7 +724,9 @@ class DataObject:
                 _factors_cache[key] = self._client.get_conversion_factors(from_u, to_u)
             return _factors_cache[key]
 
-        # Every stream is read at one epoch, so the frame is one consistent view.
+        # Every stream is read at one epoch, so the frame is one consistent
+        # view. The server returns it once that epoch's plan has caught up
+        # with the metadata graph, so app outputs the graph names are there.
         epoch = self._client.engine_snapshot()["epoch"]
         bounds = inclusive_bounds(start, end)
         # One request per stream. A stream matched by several data nodes

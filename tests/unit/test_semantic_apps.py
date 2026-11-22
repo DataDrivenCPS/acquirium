@@ -1237,6 +1237,40 @@ def test_text_streams_store_and_read_text(system):
     assert read(numeric, "coalesce") == ["70.5", "Bad"]
 
 
+def test_engine_snapshot_waits_for_the_plan_to_catch_up_with_the_graph(system):
+    manager, http, _ = system
+    ref = register(system, "catch-up")
+    query = f"SELECT ?stream ?group WHERE {{ VALUES ?stream {{ <{ref}> }} ?stream <urn:catch-up> ?group }}"
+    declaration = App(
+        "catch-up-mean", {"input": Selection(query)}, {"mean": Output()},
+        {"kind": "mean", "port": "mean", "per_stream": False},
+    )
+    manager.insert_graph(f"<{ref}> <urn:catch-up> <urn:room:A> .", source_id="catch-up-groups")
+    manager.deploy_app(declaration)
+    manager.core.wait(manager.insert_timeseries(
+        source_id="catch-up", ref_name="temperature", rows=[(4242, 7)], request_id="one",
+    ))
+    moved = output_reference(declaration.name, "urn:room:B", "mean")
+    # The graph moves the stream, as any graph write does before the apps
+    # that read it install a plan; nothing has refreshed them yet.
+    manager.graph_store.insert_graph(
+        f"<{ref}> <urn:catch-up> <urn:room:B> .", replace=True,
+        graph_uri=manager.graph_store.source_graph_uri("catch-up-groups"),
+    )
+    assert manager.core.engine.snapshot().value(moved, 4242) is None
+    response = http.get("/engine/snapshot")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["plan_current"] is True
+    outputs = {
+        stream for op in body["plan"]["operators"] if op["id"].startswith("catch-up-mean:")
+        for stream in op["outputs"].values()
+    }
+    assert outputs == {moved}
+    assert manager.core.engine.snapshot().value(moved, 4242) == 7
+    manager.remove_app(declaration.name)
+
+
 def test_startup_refuses_an_engine_plan_that_apps_json_does_not_record(tmp_path):
     from escapement import Input, Native, Operator, Plan, Pointwise
     from acquirium.apps import Apps

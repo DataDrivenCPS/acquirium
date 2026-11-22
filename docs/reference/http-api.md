@@ -26,7 +26,7 @@ The server exposes semantic graph operations and one Escapement timeseries engin
 | `POST /timeseries_info` | `{uris: [...], view: "current"}` to current counts and UTC bounds |
 | `POST /timeseries_exists` | Same read selectors; returns `{uris: [...]}` with rows present |
 | `GET /engine/status` | Accepted/applied frontiers, backlog, per-operator failures, processor error, timings, worker queue/RSS, server PID and peak RSS |
-| `GET /engine/snapshot` | Published epoch, applied sequence, complete active plan, per-operator failures |
+| `GET /engine/snapshot` | Published epoch, applied sequence, complete active plan, per-operator failures. Returns once the plan reflects the metadata graph as of the request; while an app install is under way it waits up to 30 s, and `plan_current` is `false` if the plan is still behind |
 | `GET /engine/changes` | Bounded signed change-feed pages with exclusive epoch/ordinal cursor and complete-epoch frontier |
 | `POST /engine/retry` | Request another attempt for failed operators |
 | `GET /apps` | Desired declarations and active operators |

@@ -638,6 +638,21 @@ class Manager:
         return {uri: {"current": heads[uri], "raw": bases[uri], "unit": stage_units.get(heads[uri])}
                 for uri in uris}
 
+    def engine_snapshot(self, *, timeout: float = 30.0):
+        """The latest snapshot, once its plan reflects the metadata graph as
+        of this call, and whether it does.
+
+        Readers that resolve streams in the graph and then pin an epoch take
+        it here. They wait only while a graph write is ahead of the published
+        plan, and at most ``timeout`` seconds for an install under way."""
+        current = self.apps.catch_up(timeout)
+        if not current:
+            logger.warning(
+                "engine snapshot: the published plan does not reflect the latest "
+                "metadata yet; reads at it may miss or include app outputs"
+            )
+        return self.core.engine.snapshot(), current
+
     def timeseries_info_batch(self, uris, *, view="current"):
         """Current statistics, resolved and counted against one snapshot."""
         snapshot = self.core.engine.snapshot()

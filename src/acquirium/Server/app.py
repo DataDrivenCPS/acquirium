@@ -860,9 +860,10 @@ def engine_status():
 
 @app.get("/engine/snapshot")
 def engine_snapshot():
-    snapshot = app.state.manager.core.engine.snapshot()
+    # plan_current: the plan reflects the metadata graph as of this request.
+    snapshot, current = app.state.manager.engine_snapshot()
     return {"epoch": snapshot.epoch, "applied": snapshot.applied, "plan": snapshot.plan,
-            "failures": snapshot.failures}
+            "failures": snapshot.failures, "plan_current": current}
 
 
 @app.post("/engine/retry")

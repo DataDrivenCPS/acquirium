@@ -907,6 +907,31 @@ class Apps:
                 self.error = f"{type(error).__name__}: {error}"
                 raise
 
+    def catch_up(self, timeout: float = 30.0) -> bool:
+        """Wait until the published plan reflects the graph as of this call,
+        and return whether it does.
+
+        A graph write lands before the plan compiled from it publishes, so a
+        reader that resolves streams in the graph and then reads the latest
+        epoch can find outputs the plan does not hold yet. An install under
+        way finishes first; a write that nothing has installed yet is
+        installed here. Gives up after waiting ``timeout`` seconds for an
+        install, or when installing fails, whose error ``inspect`` reports.
+        """
+        revision = self.graph.graph_status()["source_version"]
+        if self._revision >= revision or not self.state["apps"]:
+            return True
+        if not self.lock.acquire(timeout=timeout):
+            return False
+        try:
+            if self._revision < revision:
+                self.refresh()
+        except Exception:
+            return False
+        finally:
+            self.lock.release()
+        return self._revision >= revision
+
     def deploy(self, app):
         with self.lock:
             definition = _definition(app)
