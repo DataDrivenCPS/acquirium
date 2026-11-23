@@ -131,8 +131,9 @@ The sections below define each step.
 
 A reading's key is its stream and its event time in UTC nanoseconds, so a
 stream holds at most one reading at an instant. Its value is a finite number
-or text. Writing an existing key replaces the reading. A request can also
-delete a key or a range of event time.
+or text. Writing an existing key replaces the reading. Writing the value a
+key already holds changes nothing and makes no new version. A request can
+also delete a key or a range of event time.
 
 ### Two clocks
 
@@ -738,8 +739,10 @@ activation changes its definition or bindings, and on explicit request. New
 data elsewhere does not retry it: functions are deterministic, so the same
 inputs would fail the same way.
 
-- A failure that names no window, such as a failed vectorized call, records
-  the range of windows in the failed run.
+- A failure that names no window, such as a failed vectorized call or a
+  crash, records the range of the windows the instance had to evaluate in
+  the epoch, so that the record does not depend on how the windows were
+  divided into runs.
 - An instance that reads its own output is retried on any change before the
   failing window, because the change may carry forward into it.
 - A timeout or a crash can be transient, so it is retried once automatically
@@ -765,12 +768,16 @@ says where to resume.
    it.
 
 A refresh publishes together with its synchronous readers or not at all. If
-a healthy reader fails on the new output, the epoch publishes none of it. The
-old output keeps serving, the readers keep their results, and the refreshing
-instance records `Rejected` with the reader's error. A source write cannot be
-refused, because it is a fact about the plant. A refresh is the engine's own
-result, so it can be. A rejected refresh is attempted again when its inputs
-change, when the reader is changed, or on request.
+a healthy reader fails on the new output, or a healthy instance downstream of
+one, the epoch publishes none of it. The old output keeps serving, the
+readers keep their results, and the refreshing instance records `Rejected`
+with the reader's error. A source write cannot be refused, because it is a
+fact about the plant. A refresh is the engine's own result, so it can be. A
+rejected refresh is attempted again when its inputs change, when the reader
+is changed, or on request. A failed refresh is attempted again by the rule
+for a failed synchronous instance. An epoch decides both: when one is due, it
+replaces the record's error with a record at the same cut and no error, and
+the instance is refreshed again. A refresh is not subject to the limits.
 
 While a refresh runs, readers and consumers see the last published output.
 If the plan redefined the instance in the meantime, the staged output is
@@ -913,7 +920,7 @@ snapshot.
 | `range(streams, intervals, epoch)` as a record batch | Building runs, comparing results, queries |
 | `latest(streams, times, max_age, epoch)`: the last reading at or before each time | `Latest` roles |
 | `changed(stream, after, through)` | The dirty rule, queries |
-| `stats(streams, interval, epoch)`: count, first and last time within an interval | Planning, previews, queries |
+| `extent(streams, interval, epoch)`: count, first and last time within an interval | Planning, previews, queries |
 | `versions(streams, interval, after)`: every version, with `since` and `until`; with `after`, those that began or ended after that epoch | Queries, the change feed |
 | `publish(epoch, changes, records)` in one transaction | Every writer |
 
@@ -1267,16 +1274,18 @@ Rules:
 | Crate | Contents | Depends on |
 | --- | --- | --- |
 | `geometry` | Intervals, interval sets, the window shape, `reads`, `readers`, `owner`. No I/O. | |
-| `series` | Snapshots and the storage interface: the reads, `changed` and publication | `geometry` |
-| `log` | The inbox, retry identities, epoch records, and the DuckDB and PostgreSQL implementations of storage | `series` |
+| `series` | The storage interface: snapshots, the reads, `changed` and publication. An in-memory reference implementation, and the contract tests every implementation must pass. No I/O. | `geometry` |
+| `store` | The DuckDB and PostgreSQL implementations of storage. All SQL is here: the readings, the plan tables, the inbox, retry identities, and the epoch and maintenance records | `series` |
 | `plan` | Templates, instances, bindings, validation, the DAG, plan comparison | `geometry` |
-| `repair` | The dirty rule, runs, result comparison, maintenance records, refresh | `series`, `plan`, `exec` |
 | `exec` | The run protocol and the Python worker pool | `plan` |
+| `repair` | The dirty rule, runs, result comparison, maintenance records, refresh | `series`, `plan`, `exec` |
 | `engine` | Stages, limits, status, the query interface and the rest of the public API | all of the above |
 | `python` | Bindings that pass record batches without copying | `engine` |
 
 `geometry` is pure and small. Its laws are property-tested on their own, and
-every other crate relies on them.
+every other crate relies on them. `repair` depends on the storage interface,
+not on a database, so the dirty rule is tested against the in-memory
+reference before it meets DuckDB or PostgreSQL.
 
 ## The Acquirium boundary
 
@@ -1336,27 +1345,50 @@ Full recomputation is the oracle throughout. It is slow and obviously right.
 
 ## Implementation order
 
-Each step leaves the system working and is checked against the oracle.
-Storage comes first because the dirty rule, the plan and the maintenance
-record each write to it. Built on the old store, they would be built twice.
+The engine is built new, as crates beside the current one. The current
+engine is left as it is and keeps serving Acquirium, which pins it by commit,
+until the new one passes.
 
-1. **Storage.** `readings` and `history` on both backends, written at
-   publication; `changed` answered from them; the query interface;
-   PostgreSQL at parity.
-2. **Generic Python workers.** A worker loads any function module. The
-   native functions are removed.
-3. **Runs.** One call per template across instances, columnar in both
-   directions, with the static context cached. Until templates exist in the
-   plan, instances are grouped by identical function and window.
-4. **The window shape.** The `geometry` crate, with the existing windows
-   expressed in it and buckets with margins added.
-5. **The dirty rule.** One discovery path, on `changed`. A role on a
-   template's own ports replaces the sequential mode.
-6. **Plans as templates, instances and bindings.** Acquirium's compiler emits
-   them; they are stored in the plan tables; declarations move into
-   annotations.
-7. **The maintenance record.** Failure and refresh state become one record;
-   recovery resumes from it.
+Nearly every module of the current engine rests on an idea this design
+replaces: block storage, snapshots held in memory, the operator plan, native
+functions. By file size that is about 12,500 of its 14,200 lines of Rust.
+Changing it in place would need glue at each step that the next step throws
+away.
+
+What carries over:
+
+- **The tests, as the specification.** The current engine's 125 Rust test
+  cases are translated to the new plan and windows, and become the
+  acceptance suite.
+- **The oracle.** Full recomputation, as today.
+- **The background processor loop and the handling of Python worker
+  processes**, where they still fit.
+- **Packaging and CI.**
+
+The crates are built in dependency order. Each is finished, with its tests,
+before the next begins.
+
+1. **`geometry`.** Intervals, the window shape and its three functions, with
+   their laws property-tested.
+2. **Storage: `series` and `store`.** The storage interface with its
+   in-memory reference; then the tables, publication, reads as of an epoch,
+   `changed` and `versions` on DuckDB and PostgreSQL, with TimescaleDB set up
+   where it is installed. One contract suite runs against the reference and
+   both backends.
+3. **`plan`.** Templates, instances, bindings, validation, the DAG, plan
+   comparison, and the plan tables.
+4. **`exec`.** The run protocol and generic Python workers.
+5. **`repair`.** The dirty rule, runs, result comparison, maintenance
+   records and asynchronous refresh, checked against the oracle on the
+   reference store and then on both backends.
+6. **`engine` and `python`.** The log and admission, the epoch driver, the
+   query interface and the bindings.
+7. **Acquirium.** The compiler emits the new plan, reads go through the
+   query interface, and Acquirium moves to the new engine.
+
+Acquirium cannot use the new engine until step 6 is done. That is the cost of
+building new. [The build plan](escapement-build-plan.md) details steps 1
+and 2.
 
 ## Decisions
 
@@ -1401,7 +1433,9 @@ Made on 2026-11-22.
   one upstream, or awaiting a refresh, is worked out from the plan.
 - **Limits are engine settings**, the same for every instance, and not part
   of a plan.
-- **Storage is built first.**
+- **The engine is built new**, as crates beside the current one, which stays
+  in service until the new one passes. Its tests carry over as the
+  specification.
 - **State is an ordinary input.** A calculation that carries state reads its
   own earlier output through a role. There is no sequential mode and no
   carried state. Such a template may use any window, including windows whose
@@ -1409,7 +1443,12 @@ Made on 2026-11-22.
 
 ## Open questions
 
-None at present. [Measurements](#measurements) lists what was not measured.
+- **Existing stores.** Whether any store written by the current engine has
+  to be carried over. If one does, the proposal is to export its source
+  readings and its plan through the current engine, ingest them into the
+  new one, and let the derived series be recomputed.
+
+[Measurements](#measurements) lists what was not measured.
 
 ## Deferred
 
