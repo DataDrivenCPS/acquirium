@@ -437,6 +437,20 @@ with the changes of finished instances laid over it (`View::building`),
 never another task's unfinished work. Instances of one template that are
 ready together share runs.
 
+As built, instances are visited in groups: the instances of one template
+at one depth of the DAG (its longest path from an instance that reads no
+other), so that no instance of a group reads another. A group is ready
+when every group it reads from has finished. The instances of a group
+whose dirty windows fit in one run stop at that run, and their runs are
+packed, in order, into runs of up to the row budget. `exec::run` pins a
+failed run on the instances that caused it, a crash or a timeout is tried
+again in a run alone, and an instance that reads its own output and
+carries a change past the run's windows goes on alone. Each instance
+comes to exactly what it would alone, its work counts included: an
+instance counts each run it was in, and its own input rows.
+`Settings::share_runs` turns sharing off, which makes every instance a
+group of its own, as before.
+
 ### The dirty rule
 
 For an instance with cut `(R, d)`, bound by the candidate plan:
@@ -652,7 +666,13 @@ Decide these by measurement or reading, and say what you found:
   check that DuckDB and PostgreSQL plan it well at Benicia scale, against
   one query per stream.
 - **Instances of one template sharing runs.** Measure the live epoch with
-  and without it.
+  and without it. Built (see the schedule above). At Benicia scale on
+  DuckDB, the live epoch's 270 windows go in 9 runs, not 270. Through the
+  Python pool, the epoch takes 210 ms shared and 246 ms not, and the
+  executor's time, summed over threads, falls from 1.02 s to 84 ms. On the
+  reference executor it makes no difference (204 ms and 193 ms, within
+  noise). What is left of a live epoch is reading each instance's rows,
+  one `range` call each, and comparing.
 
 Stop and ask the user about anything else that changes what the system
 means, including:
