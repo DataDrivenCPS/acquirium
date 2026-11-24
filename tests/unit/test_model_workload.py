@@ -7,7 +7,7 @@ import pytest
 
 from acquirium.functions import SCHEMA
 from examples.model_workload.model import ROLES, predict
-from examples.model_workload.run import scalar_prediction
+from examples.model_workload.oracle import scalar_prediction
 
 
 @pytest.mark.parametrize("missing_input", [False, True])

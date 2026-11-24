@@ -36,29 +36,6 @@ from .producer import WorkloadDriver
 from .state import save
 
 
-def pool_summary(stats):
-    """Keep live logs compact; complete histograms remain in saved metrics."""
-    result = {
-        name: stats[name]
-        for name in (
-            "spawned",
-            "reused",
-            "resident",
-            "active",
-            "queued",
-            "oldest_queue_age_ms",
-        )
-    }
-    telemetry = stats["telemetry"]
-    result.update(
-        warm_service_mean_ms=round(telemetry["warm_service"]["mean_ms"], 2),
-        cold_start_mean_ms=round(telemetry["cold_start"]["mean_ms"], 2),
-        rss_sampled_mib=round(telemetry["rss_sampled_bytes"] / 2**20, 2),
-        rss_complete=telemetry["rss_complete"],
-    )
-    return result
-
-
 def connect(address):
     url = urlsplit(address)
     return aq.Acquirium(
@@ -222,11 +199,12 @@ def run(
                 if loop.error:
                     raise loop.error
                 status = client.engine_status()
-                if status["error"]:
-                    raise RuntimeError(f"native processor paused: {status['error']}")
-                if status["engine"]["failures"]:
-                    raise RuntimeError(f"soft sensor failures: {status['engine']['failures']}")
-                peak_backlog = max(peak_backlog, status["engine"]["pending_requests"])
+                if status["fault"]:
+                    raise RuntimeError(f"epoch engine fault: {status['fault']}")
+                failures = client.engine_snapshot()["failures"]
+                if failures:
+                    raise RuntimeError(f"soft sensor failures: {failures}")
+                peak_backlog = max(peak_backlog, status["pending"])
                 peak_rss = max(peak_rss, status["process"]["peak_rss_bytes"] or 0)
                 driver.observe(status, loop.consumer.state["complete_through"])
                 return status
@@ -253,32 +231,15 @@ def run(
                         last_progress = time.monotonic()
                     status = observe()
                     if time.monotonic() >= next_report:
-                        report = status["last_report"]
-                        last_epoch = None
-                        if report is not None:
-                            last_epoch = {
-                                field: report[field]
-                                for field in ("epoch", "requests", "peak_workers")
-                            }
-                            last_epoch.update(
-                                {
-                                    field: round(value, 2)
-                                    for field, value in report["timings"].items()
-                                }
-                            )
                         print(
                             json.dumps(
                                 {
                                     "admitted": admitted,
-                                    "pending": status["engine"]["pending_requests"],
-                                    "published_epoch": status["engine"]["epoch"],
+                                    "pending": status["pending"],
+                                    "published_epoch": status["published"],
                                     "consumed_through": loop.consumer.state[
                                         "complete_through"
                                     ],
-                                    "last_epoch": last_epoch,
-                                    "python_workers": pool_summary(
-                                        status["python_workers"]
-                                    ),
                                 }
                             ),
                             flush=True,
@@ -314,9 +275,9 @@ def run(
                     driver.deliver(record)
                 status = observe()
                 if (
-                    not status["engine"]["pending_requests"]
+                    not status["pending"]
                     and loop.consumer.state["complete_through"]
-                    >= status["engine"]["epoch"]
+                    >= status["published"]
                 ):
                     break
                 if time.monotonic() > deadline:
@@ -336,10 +297,9 @@ def run(
                 "server_restarts": restarts,
                 "peak_pending_requests": peak_backlog,
                 "server_peak_rss_bytes": peak_rss,
-                "python_workers": status["python_workers"],
                 "publication_latency_upper_bound": latency(records, "published_ns"),
                 "consumption_latency_upper_bound": latency(records, "consumed_ns"),
-                "snapshot_epoch": status["engine"]["epoch"],
+                "snapshot_epoch": status["published"],
                 "consumer_complete_through": loop.consumer.state["complete_through"],
             }
             save(directory / "metrics.json", report)

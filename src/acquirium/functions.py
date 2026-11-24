@@ -18,16 +18,12 @@ also carry ``output_time`` to identify each row's result window.
 
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
-from functools import cache, wraps
+from functools import cache
 import inspect
-from pathlib import Path
-from types import ModuleType
+import json
 from typing import get_type_hints
 
-from escapement import artifact_digest
 import polars as pl
-
-from acquirium.replacements import annotation
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _TIME = pl.Datetime("us", "UTC")
@@ -162,6 +158,8 @@ def previous_rows(context):
     """The previous window's input readings, with a UTC datetime ``time`` column."""
     previous = context.get("previous")
     rows = previous["rows"] if previous else []
+    if rows is None:
+        raise ValueError("sequential calculations read previous outputs; store any needed input state on a port")
     schema = {"input": pl.String, "stream": pl.String, **SCHEMA}
     return _as_library(pl.DataFrame(rows, schema=schema))
 
@@ -205,32 +203,6 @@ def _datetime(ns, *, boundary=False):
     return _EPOCH + timedelta(microseconds=us)
 
 
-def _public_frame(frame):
-    if "sample_key" in frame.columns and (frame["sample_key"] != 0).any():
-        raise ValueError("Acquirium supports one reading per stream and timestamp")
-    names = {"event_time_ns": "time", "window_ns": "output_time"}
-    expressions = []
-    for name, target in names.items():
-        if name in frame.columns:
-            if (frame[name] % 1000 != 0).any():
-                raise ValueError("soft sensor timestamps must have microsecond precision")
-            expressions.append((pl.col(name) // 1000).cast(_TIME).alias(name))
-    # The engine calls each input's name its role.
-    names["role"] = "input"
-    return frame.with_columns(expressions).drop("sample_key", "quality", strict=False).rename({
-        name: target for name, target in names.items() if name in frame.columns
-    })
-
-
-def _public_record(row):
-    result = dict(row)
-    if result.pop("sample_key", 0) != 0:
-        raise ValueError("Acquirium supports one reading per stream and timestamp")
-    result.pop("quality", None)
-    result["time"] = _datetime(result.pop("event_time_ns"))
-    return _input_name(result)
-
-
 def _input_name(record):
     # The engine calls each input's name its role.
     if "role" in record:
@@ -256,15 +228,6 @@ def _public_context(context):
         result["inputs"] = [_public_input(item) for item in result["inputs"]]
     if "windows" in result:
         result["windows"] = [_public_context(window) for window in result["windows"]]
-    if "previous" in result:
-        previous = dict(result["previous"])
-        previous["output_time"] = _datetime(previous.pop("window_ns"))
-        previous["rows"] = [_public_record(row) for row in previous["rows"]]
-        previous["outputs"] = {
-            port: [_public_record(row) for row in rows]
-            for port, rows in previous["outputs"].items()
-        }
-        result["previous"] = previous
     if "parameters" in result:
         result["parameters"] = _public_parameters(result["parameters"])
     if "operator" in result:
@@ -304,81 +267,223 @@ def _public_input(item):
     return result
 
 
-def _engine_frame(frame):
-    frame = _as_polars(frame)
-    if "time" not in frame.columns:
-        raise ValueError("return a 'time' column; use reset_index() on a pandas time index")
-    unexpected = set(frame.columns) - SCHEMA.keys()
-    if unexpected:
-        raise ValueError(f"unexpected soft sensor output columns: {sorted(unexpected)}")
+def _epoch_input(frame, context, window, ports):
+    from acquirium.apps import _operator_id, output_reference
+
+    own_ports = {bound["stream"]: bound["port"] for bound in context["inputs"] if "port" in bound}
+    earlier = []
+    if own_ports:
+        state = frame.filter(pl.col("stream").is_in(list(own_ports)))
+        earlier = state.select("stream", "time", "value", "text").iter_rows(named=True)
+        frame = frame.filter(~pl.col("stream").is_in(list(own_ports)))
     _check_time_column(frame["time"])
-    us = frame["time"].dt.epoch("us")
-    if ((us < -(2**63 // 1000)) | (us > (2**63 - 1) // 1000)).any():
-        raise ValueError("output timestamp is outside the engine's supported range")
-    return frame.with_columns(
-        (pl.col("time").dt.epoch("us") * 1000).alias("event_time_ns"),
-        # Required by the engine wire schema; never exposed to calculations.
-        pl.lit(0, pl.Int64).alias("sample_key"),
-        pl.lit(0, pl.UInt32).alias("quality"),
-    ).drop("time")
+    inputs, source_contexts = [], {}
+    for bound in context["inputs"]:
+        if "port" in bound:
+            continue
+        source_contexts[(bound["role"], bound["stream"])] = bound["context"]
+        reading = {
+            "role": bound["role"], "stream": bound["stream"],
+            "context": json.loads(bound["context"]),
+        }
+        for name, limit in zip(("span_start_ns", "span_end_ns"), bound["reads_ns"]):
+            if limit is not None:
+                reading[name] = limit
+        inputs.append(reading)
+    row_contexts = [
+        source_contexts[(role, stream)] for role, stream in frame.select("role", "stream").iter_rows()
+    ]
+    public = frame.with_columns(
+        pl.col("time").cast(_TIME), pl.Series("context", row_contexts, dtype=pl.String)
+    ).rename({"role": "input"})
+    name, group = context["template"], context["instance"]
+    start, end = context["body_ns"]
+    if window["kind"] == "rolling":
+        start = max(-(2**63), start - window["lookback_ns"])
+        end = min(2**63 - 1, end + window.get("lookahead_ns", 0))
+    public_context = _public_context({
+        "window_ns": context["anchor_ns"],
+        "window_start_ns": start,
+        "window_end_ns": end,
+        "inputs": inputs,
+        "parameters": context["parameters"],
+        "operator": {
+            "id": _operator_id(name, group),
+            "window": window,
+            "inputs": inputs,
+            "outputs": {port: output_reference(name, group, port) for port in ports},
+            "parameters": context["parameters"],
+        },
+    })
+    by_time = {}
+    for row in earlier:
+        port = own_ports[row.pop("stream")]
+        time = row["time"]
+        if window["kind"] == "fixed":
+            width = timedelta(microseconds=window["width_ns"] // 1000)
+            origin = _datetime(window["origin_ns"])
+            time -= (time - origin) % width
+        by_time.setdefault(time, {})[port] = [row]
+    if by_time:
+        latest = max(by_time)
+        public_context["previous"] = {"output_time": latest, "outputs": by_time[latest], "rows": None}
+    return public, public_context
 
 
-def _datetime_function(function):
-    """Adapt an Acquirium calculation to the engine's private wire schema."""
+def _epoch_outputs(outputs, ports, replaced, anchors):
+    results = {}
+    for port, output in outputs.items():
+        out = _as_polars(output)
+        if "time" not in out:
+            raise ValueError("return a 'time' column; use reset_index() on a pandas time index")
+        unexpected = set(out.columns) - SCHEMA.keys()
+        if unexpected:
+            raise ValueError(f"unexpected soft sensor output columns: {sorted(unexpected)}")
+        _check_time_column(out["time"])
+        us = out["time"].dt.epoch("us")
+        if ((us < -((2**63) // 1000)) | (us > (2**63 - 1) // 1000)).any():
+            raise ValueError("output timestamp is outside the engine's supported range")
+        out = out.with_columns(pl.col("time").cast(_TIME))
+        if port in replaced:
+            out = out.filter(pl.col("time").is_in(pl.Series(anchors, dtype=_TIME).implode()))
+        if "value" not in out:
+            out = out.with_columns(pl.lit(None, pl.Float64).alias("value"))
+        results[port] = out.with_columns(pl.col("value").cast(pl.Float64))
+    for port in ports:
+        results.setdefault(port, pl.DataFrame(schema=SCHEMA))
+    return results
+
+
+def _epoch_function(function, window, ports, replaced):
+    """Present the Acquirium per-window interface to the epoch worker."""
     library = _frame_library(function)
 
-    @wraps(function)
     def call(frame, context):
+        public, public_context = _epoch_input(frame, context, window, ports)
         token = _FRAME_LIBRARY.set(library)
         try:
-            outputs = function(_as_library(_public_frame(frame), library), _public_context(context))
-            replacements = annotation(context.get("operator", {}), "replaces")
-            result = {}
-            for port, output in outputs.items():
-                wire = _engine_frame(output)
-                if port in replacements:
-                    # The callback returns its calculated series. Each invocation
-                    # owns only the timestamps scheduled by its declared window.
-                    times = [window["window_ns"] for window in context.get("windows", [context])]
-                    wire = wire.filter(pl.col("event_time_ns").is_in(times))
-                result[port] = wire
-            return result
+            outputs = function(_as_library(public, library), public_context)
+            return _epoch_outputs(outputs, ports, replaced, [public_context["output_time"]])
         finally:
             _FRAME_LIBRARY.reset(token)
 
     return call
 
 
-def _function_module(path, digest):
-    """Load one immutable module, shared by every entrypoint in a warm worker."""
-    def source():
-        code = Path(path).read_bytes()
-        if artifact_digest(code) != digest:
-            raise ValueError("Python artifact digest mismatch")
-        return code
+def _epoch_batch_function(function, window, ports, replaced):
+    """Adapt the worker's vectorized run to one batch per Acquirium group."""
+    library = _frame_library(function)
 
-    module = ModuleType("escapement_function")
-    module.__file__ = path
-    exec(compile(source(), path, "exec"), module.__dict__)
-    @cache
-    def entrypoint(name):
-        function = getattr(module, name)
-        calculate = _datetime_function(function)
+    def call(frame, context):
+        windows = context["windows"].cast({key: pl.Int64 for key in ("anchor", "body_start", "body_end")})
+        inputs = context["inputs"].cast({
+            key: pl.Int64 for key in ("anchor", "reads_start", "reads_end")
+        })
+        frame = frame.with_columns(pl.col("anchor").cast(pl.Int64))
+        result = {port: [] for port in ports}
+        token = _FRAME_LIBRARY.set(library)
+        try:
+            for (instance,), group in windows.group_by("instance", maintain_order=True):
+                rows = frame.filter(pl.col("instance") == instance).drop("instance")
+                bindings = inputs.filter(pl.col("instance") == instance)
+                chunks, public_windows = [], []
+                for spec in group.iter_rows(named=True):
+                    anchor = spec["anchor"]
+                    bound = bindings.filter(pl.col("anchor") == anchor)
+                    view, window_context = _epoch_input(
+                        rows.filter(pl.col("anchor") == anchor).drop("anchor"),
+                        {
+                            "template": context["template"], "instance": instance,
+                            "anchor_ns": anchor, "body_ns": (spec["body_start"], spec["body_end"]),
+                            "parameters": context["instances"][instance]["parameters"],
+                            "inputs": [
+                                {**item, "reads_ns": (item["reads_start"], item["reads_end"])}
+                                for item in bound.iter_rows(named=True)
+                            ],
+                        },
+                        window, ports,
+                    )
+                    chunks.append(view.with_columns(
+                        pl.lit(window_context["output_time"], dtype=_TIME).alias("output_time")
+                    ))
+                    public_windows.append(window_context)
+                shared = {**public_windows[0], "windows": public_windows}
+                outputs = function(_as_library(pl.concat(chunks), library), shared)
+                anchors = [item["output_time"] for item in public_windows]
+                for port, out in _epoch_outputs(outputs, ports, replaced, anchors).items():
+                    result.setdefault(port, []).append(out.select(
+                        "time", "value",
+                        pl.col("text") if "text" in out else pl.lit(None, pl.String).alias("text"),
+                        pl.lit(instance).alias("instance"),
+                    ))
+        finally:
+            _FRAME_LIBRARY.reset(token)
+        return {port: pl.concat(frames) for port, frames in result.items()}
 
-        @wraps(function)
-        def call(frame, context):
-            # Check the original artifact even when a worker reuses the module.
-            source()
-            return calculate(frame, context)
-
-        return call
-
-    return entrypoint
+    return call
 
 
-def _group_function(path, digest, entrypoint):
-    # Existing manifests may refer to this private loader from earlier builds.
-    return _function_module(path, digest)(entrypoint)
+def _builtin_function(spec, ports):
+    from acquirium.apps import _RATE_PORT, _bind_parameters
+
+    def calculate(frame, context):
+        options = _bind_parameters(spec, context["parameters"], context["template"], context["instance"])
+        kind, port, anchor = options["kind"], options["port"], context["anchor_ns"]
+        own = {item["stream"]: item["port"] for item in context["inputs"] if "port" in item}
+        saved = {own[row["stream"]]: row for row in
+                 frame.filter(pl.col("stream").is_in(list(own))).with_columns(
+                     pl.col("time").cast(pl.Int64)
+                 ).iter_rows(named=True)}
+        rows = frame.filter(~pl.col("stream").is_in(list(own))).drop_nulls("value")
+        values = rows["value"]
+        reading = {}
+        reset = options.get("reset")
+
+        def carry(previous_time):
+            total = saved.get(port)
+            if total is None:
+                return 0.0
+            if reset is not None:
+                width, origin = reset["width_ns"], reset.get("origin_ns", 0)
+                if (previous_time - origin) // width != (anchor - origin) // width:
+                    return 0.0
+            return total["value"]
+
+        if len(values):
+            if kind == "mean":
+                if options.get("per_stream"):
+                    values = rows.group_by("stream").agg(pl.col("value").mean())["value"]
+                reading[port] = values.mean()
+            elif kind == "threshold":
+                if len(values) != 1:
+                    raise ValueError("threshold expects at most one number per group")
+                if values[0] > options["above"]:
+                    reading[port] = values[0]
+            elif kind == "cumulative_sum":
+                reading[port] = carry(saved.get(port, {"time": anchor})["time"]) + values.sum()
+            elif kind == "integral":
+                if len(values) != 1:
+                    raise ValueError("integral expects at most one number per window")
+                previous = saved.get(_RATE_PORT)
+                reading[_RATE_PORT] = values[0]
+                reading[port] = 0.0
+                if previous is not None:
+                    elapsed = anchor - previous["time"]
+                    amount = carry(previous["time"])
+                    if options.get("max_gap_ns") is None or elapsed <= options["max_gap_ns"]:
+                        amount += (previous["value"] + values[0]) / 2 * elapsed / options["per_ns"]
+                    reading[port] = amount
+            else:
+                reading[port] = len(values) if kind == "count" else getattr(values, kind)()
+        return {
+            output: pl.DataFrame({
+                "time": pl.Series([anchor] if output in reading else [], dtype=pl.Int64).cast(pl.Datetime("ns", "UTC")),
+                "value": pl.Series([reading[output]] if output in reading else [], dtype=pl.Float64),
+            })
+            for output in ports
+        }
+
+    return calculate
 
 
 __all__ = [

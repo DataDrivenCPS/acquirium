@@ -136,11 +136,11 @@ class WorkloadDriver(Driver):
                 changed = False
                 if (
                     "published_ns" not in record
-                    and status["engine"]["applied"] >= receipt["sequence"]
+                    and status["applied"] >= receipt["sequence"]
                 ):
                     record.update(
                         published_ns=time_ns(),
-                        published_epoch=status["engine"]["epoch"],
+                        published_epoch=status["published"],
                     )
                     changed = True
                 if (

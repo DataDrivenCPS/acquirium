@@ -856,6 +856,12 @@ class ExperimentStore:
         rows = self._execute(conn, f"SELECT ref_uri FROM experiment_streams WHERE run_id IN ({self._marks(run_ids)})", run_ids).fetchall()
         return [row[0] for row in rows]
 
+    def _last_sample_request(self, conn, run_ids) -> int | None:
+        return self._execute(conn, f"""
+            SELECT max(accepted) FROM experiment_observation_accepted
+            WHERE run_id IN ({self._marks(run_ids)})
+            """, run_ids).fetchone()[0]
+
     def _delete_runs(self, conn, run_ids, *, sweep=False) -> dict[str, Any]:
         """Remove runs, their observations, and unshared files in `conn`.
 
@@ -880,7 +886,9 @@ class ExperimentStore:
                 if users:
                     raise ValueError("other experiments reference streams these runs recorded: "
                                      + ", ".join(row[0] for row in users))
-                removed["samples"] = self.store.samples.count(refs)
+                removed["samples"] = self.store.samples.count(
+                    refs, after=self._last_sample_request(conn, run_ids)
+                )
             for run_id, sequence, variable_id in self._execute(conn, f"""
                     SELECT run_id, sequence, variable_id FROM experiment_observations
                     WHERE run_id IN ({marks})""", run_ids).fetchall():
@@ -1053,7 +1061,9 @@ class ExperimentStore:
                 usage["files"], usage["file_bytes"] = int(files[0]), int(files[1])
                 refs = self._owned_refs(conn, selected)
                 if refs:
-                    usage["samples"], usage["sample_bytes"] = self.store.samples.usage(refs)
+                    usage["samples"], usage["sample_bytes"] = self.store.samples.usage(
+                        refs, after=self._last_sample_request(conn, selected)
+                    )
         usage["total_bytes"] = usage["sample_bytes"] + usage["file_bytes"] + usage["ledger_bytes"]
         return usage
 

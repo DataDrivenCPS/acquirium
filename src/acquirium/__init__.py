@@ -3,7 +3,7 @@
 from acquirium.Client.acquirium import Acquirium
 from acquirium.runtime import init, shutdown
 from acquirium.apps import App, Selection, Output, ReplacementOutput, Parameter
-from escapement import FixedBucket, Native, Pointwise, PythonFunction, Rolling
+from acquirium.app_spec import FixedBucket, Native, Pointwise, PythonFunction, Rolling
 from acquirium.debug import console
 from acquirium.Client.streams import Stream, StreamInterval
 from acquirium.Experiments import timestamp

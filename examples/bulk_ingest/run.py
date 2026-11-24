@@ -23,6 +23,7 @@ from pathlib import Path
 
 import acquirium as aq
 from acquirium.apps import output_reference
+from acquirium.internals.models import compute_ref_uri
 
 from .chain import MAX_GAP, SOFT_SENSORS, SOURCE, SUSTAINED_MINUTES
 from .chain import MINUTE as MINUTE_NS
@@ -199,22 +200,28 @@ def run(args):
                 raise RuntimeError(f"{app.name}: {state}")
         deploy_s = time.monotonic() - started
 
-        before = client.engine_status()["stats"]
+        before = client.engine_status()
+        names = [f"turbidity-{i}" for i in range(len(LOCATIONS))]
+        names += [f"filler-{i}" for i in range(args.filler_columns)]
+        refs = [str(compute_ref_uri(SOURCE, name)) for name in names]
         started = time.monotonic()
         for path in sorted(staging.iterdir()):
             path.rename(incoming / path.name)
 
         def done():
             status = client.engine_status()
-            ingested = status["stats"]["source_mutations"] - before["source_mutations"]
-            return ingested >= readings and status["engine"]["pending_requests"] == 0
+            if status["fault"]:
+                raise RuntimeError(status["fault"])
+            if status["pending"]:
+                return False
+            stats = client.client.timeseries_info_batch(refs, view="stored")
+            return sum(info.row_count for info in stats.values()) >= readings
 
         wait_for(done, args.timeout, "bulk insert did not finish")
         insert_s = time.monotonic() - started
         status = client.engine_status()
-        after = status["stats"]
-        epochs = after["completed_epochs"] - before["completed_epochs"]
-        requests = after["requests"] - before["requests"]
+        epochs = status["published"] - before["published"]
+        requests = status["applied"] - before["applied"]
         mismatches = verify(client, expected_outputs(raw))
         summary = {
             "batch": args.batch,
@@ -228,9 +235,6 @@ def run(args):
             "epochs": epochs,
             "requests": requests,
             "requests_per_epoch": requests / epochs,
-            "compute_ms": after["compute_ms"] - before["compute_ms"],
-            "publish_ms": after["publish_ms"] - before["publish_ms"],
-            "apps": status["apps"],
             "mismatches": mismatches,
         }
     finally:
@@ -239,10 +243,6 @@ def run(args):
     print(f"insert: {insert_s:.1f} s, {summary['readings_per_s']:,.0f} readings/s, "
           f"{epochs} epochs, {summary['requests_per_epoch']:.2f} requests/epoch")
     print(f"deploy: {deploy_s:.1f} s")
-    print(f"{'app':32} {'groups':>9} {'input rows':>12} {'changed':>9} {'compute s':>10}")
-    for name, totals in sorted(status["apps"].items()):
-        print(f"{name:32} {totals['groups']:9} {totals['input_rows']:12} "
-              f"{totals['changed_rows']:9} {totals['compute_ms'] / 1000:10.2f}")
     print("outputs match recomputation" if not mismatches else f"MISMATCHES: {mismatches}")
     return 0 if not mismatches else 1
 

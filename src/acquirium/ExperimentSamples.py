@@ -8,8 +8,6 @@ from __future__ import annotations
 import uuid
 
 import polars as pl
-from escapement import Receipt
-
 from acquirium.core import Core
 from acquirium.internals.models import MAX_REQUEST_ROWS
 
@@ -42,7 +40,8 @@ class EscapementSamples:
 
     def wait(self, sequence: int) -> None:
         """Wait until the request at ``sequence`` is published."""
-        self.core.wait(Receipt(sequence), timeout=self.timeout)
+        if sequence:
+            self.core.wait_for(sequence, timeout=self.timeout)
 
     def epochs(self, sequences) -> dict[int, int]:
         """The epoch that published each sequence, waiting for any not yet."""
@@ -50,12 +49,17 @@ class EscapementSamples:
         if not sequences:
             return {}
         self.wait(sequences[-1])
-        return dict(zip(sequences, self.core.engine.epochs_of(sequences)))
+        requests = [sequence for sequence in sequences if sequence != 0]
+        result = dict(zip(requests, self.core.epochs_of(requests)))
+        if sequences[0] == 0:
+            result[0] = 0
+        return result
 
-    def count(self, refs) -> int:
-        """How many samples ``refs`` hold, without reading them."""
-        snapshot = self.core.engine.snapshot()
-        return sum((snapshot.stats(ref) or {"count": 0})["count"] for ref in refs)
+    def count(self, refs, *, after=None) -> int:
+        """Count samples once the named recording has published."""
+        if after is not None:
+            self.wait(after)
+        return sum(info["row_count"] for info in self.core.info(refs).values())
 
     def clear(self, refs) -> None:
         """Delete every sample of ``refs`` and wait until that is published."""
@@ -65,7 +69,7 @@ class EscapementSamples:
         if refs:
             self.wait(receipt.sequence)
 
-    def usage(self, refs) -> tuple[int, int]:
+    def usage(self, refs, *, after=None) -> tuple[int, int]:
         """Sample count and their bytes: 8 for each time and 8 for each number."""
-        count = self.count(refs)
+        count = self.count(refs, after=after)
         return count, 16 * count

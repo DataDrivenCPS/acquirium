@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 
+import pytest
+
 from acquirium.Server.config import (
     DEFAULT_LOCAL_CONFIG,
     load_active_config,
@@ -16,6 +18,17 @@ def test_repository_config_uses_the_supported_exact_only_key():
 
     assert loaded.data["server"]["exact_only"] is True
     assert "exact_match" not in loaded.data["server"]
+
+
+def test_default_server_requires_a_separate_directory_for_legacy_readings(tmp_path):
+    from acquirium.Server.manager import Manager
+
+    legacy = tmp_path / "escapement.duckdb"
+    legacy.write_bytes(b"legacy store")
+    with pytest.raises(ValueError, match="separate data directory"):
+        Manager(data_dir=tmp_path, exact_only=True)
+    assert legacy.read_bytes() == b"legacy store"
+    assert not (tmp_path / "escapement-epoch.duckdb").exists()
 
 
 def test_local_config_without_a_file_uses_a_copy_of_the_defaults(monkeypatch, tmp_path):

@@ -2,6 +2,11 @@
 
 import pytest
 
+try:
+    from escapement import Engine as LegacyEngine
+except ImportError:
+    pytest.skip("historical benchmark requires legacy worker telemetry", allow_module_level=True)
+
 from examples.profiling.run import STAGES, run_case, summarize
 
 

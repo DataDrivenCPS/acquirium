@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Condition, RLock, Thread
+from urllib.parse import unquote
 
 from ontoenv import OntoEnv
 import pyoxigraph as ox
@@ -145,6 +146,61 @@ def _replace_named_graph(dataset: Dataset, graph: Graph, graph_uri: URIRef) -> N
     dataset.store._inner.load(
         input=nt, format=RdfFormat.N_TRIPLES, to_graph=NamedNode(str(graph_uri)),
     )
+
+
+def _query_result(result):
+    if isinstance(result, ox.QueryBoolean):
+        return {"columns": [], "rows": [[bool(result)]]}
+    if isinstance(result, ox.QuerySolutions):
+        return {
+            "columns": [str(v.value) for v in result.variables],
+            "rows": [[from_ox(cell) for cell in row] for row in result],
+        }
+    if isinstance(result, ox.QueryTriples):
+        triples = Graph()
+        triples += (from_ox(t) for t in result)
+        return {"columns": ["triple"], "rows": [[triple] for triple in triples]}
+    raise ValueError(f"Unexpected query result: {result!r}")
+
+
+class _SelectionSnapshot:
+    """A private query view with replaceable app-owned source graphs."""
+
+    def __init__(self, revision, data, sources, metadata, shapes, infer):
+        self.revision = revision
+        self._data, self._sources, self._metadata = data, sources, metadata
+        self._shapes, self._infer = shapes, infer
+        self._dataset = Dataset(store="Oxigraph", default_union=False)
+        _replace_named_graph(self._dataset, shapes, _DEPENDENCY_QUERY_GRAPH)
+        self._inferred = False
+
+    def data_graph(self, source_id):
+        return self._sources.get(source_id, Graph())
+
+    def stage(self, changes):
+        changed = any(set(graph) != set(self.data_graph(source)) for source, graph in changes.items())
+        self._sources.update(changes)
+        if changed:
+            self._inferred = False
+        return changed
+
+    def sparql_query(self, query, *, wait_for_fresh=False):
+        from acquirium.Metadata import overlay_documents
+
+        if not self._inferred:
+            data = Graph() + self._data
+            for graph in self._sources.values():
+                data += graph
+            overlay_documents(data, self._metadata)
+            _replace_named_graph(
+                self._dataset, self._infer(data, self._shapes), _INFERRED_DATA_GRAPH
+            )
+            self._inferred = True
+        result = self._dataset.store._inner.query(
+            query,
+            default_graph=[NamedNode(str(_INFERRED_DATA_GRAPH)), NamedNode(str(_DEPENDENCY_QUERY_GRAPH))],
+        )
+        return _query_result(result)
 
 
 def select_values(
@@ -367,6 +423,50 @@ class OxigraphGraphStore:
         """Copy one source-owned deployment graph, including an empty graph."""
         with self._lock:
             return Graph() + self.source_dataset.graph(self.source_graph_uri(source_id))
+
+    def app_sources(self):
+        """Source IDs of the published app output graphs."""
+        prefix = str(self.source_graph_uri("derived:"))
+        with self._lock:
+            return {
+                unquote(str(graph.identifier).removeprefix(SOURCE_GRAPH_PREFIX))
+                for graph in self.source_dataset.graphs()
+                if str(graph.identifier).startswith(prefix) and len(graph)
+            }
+
+    def selection_snapshot(self, sources):
+        """Capture the source graphs, overrides and dependency closure together."""
+        with self._lock:
+            revision = self._source_version
+            staged = {source: self.data_graph(source) for source in sources}
+            excluded = {self.source_graph_uri(source) for source in staged}
+            data = self._merge_source_data(excluded)
+            metadata = self.data_graph(METADATA_SOURCE_ID)
+            shapes = Graph() + self._ensure_dependency_cache_current()
+        return _SelectionSnapshot(revision, data, staged, metadata, shapes, self._build_query_views)
+
+    def project_app_sources(self, sources):
+        """Install the active plan's output graphs and drop obsolete outputs."""
+        with self._lock:
+            revision = self._source_version
+            changed = False
+            for source in sorted(self.app_sources() | sources.keys()):
+                old = self.data_graph(source)
+                new = sources.get(source, Graph())
+                # Oxigraph normalizes simple literals to xsd:string.
+                def triples(graph):
+                    return {
+                        (s, p, Literal(str(o), datatype=XSD.string)
+                         if isinstance(o, Literal) and not (o.datatype or o.language) else o)
+                        for s, p, o in graph
+                    }
+                if triples(old) != triples(new):
+                    _replace_named_graph(self.source_dataset, new, self.source_graph_uri(source))
+                    changed = True
+            if changed:
+                self._prune_orphan_metadata()
+                self._finalize_source_write(affects_closure=False)
+            return revision, self._source_version
 
     def named_graph(self, iri: str) -> Graph:
         """One ontology's own graph, materialized in memory (owl:imports NOT
@@ -819,18 +919,7 @@ class OxigraphGraphStore:
                         default_graph=default_graphs,
                     )
             with timed_debug(_logger,"sparql_query--output processing:"):
-                if isinstance(result, ox.QueryBoolean):
-                    out = {"columns": [], "rows": [[bool(result)]]}
-                elif isinstance(result, ox.QuerySolutions):
-                    cols = [str(v.value) for v in result.variables]
-                    rows = [[from_ox(cell) for cell in row] for row in result]
-                    out = {"columns": cols, "rows": rows}
-                elif isinstance(result, ox.QueryTriples):
-                    triples = Graph()
-                    triples += (from_ox(t) for t in result)
-                    out = {"columns": ["triple"], "rows": [[triple] for triple in triples]}
-                else:
-                    raise ValueError(f"Unexpected query result: {result!r}")
+                out = _query_result(result)
         _logger.debug("sparql_query: %d rows", len(out["rows"]))
         return out
 
@@ -1067,11 +1156,15 @@ class OxigraphGraphStore:
         """Materialize deployment data with explicit user metadata overrides."""
         from acquirium.Metadata import overlay_documents
 
+        merged = self._merge_source_data()
+        overlay_documents(merged, self.source_dataset.graph(self.source_graph_uri(METADATA_SOURCE_ID)))
+        return merged
+
+    def _merge_source_data(self, exclude=()) -> Graph:
         merged = Graph()
         for context in self.source_dataset.graphs():
-            if self._is_registered_data_graph_uri(context.identifier):
+            if context.identifier not in exclude and self._is_registered_data_graph_uri(context.identifier):
                 merged += context
-        overlay_documents(merged, self.source_dataset.graph(self.source_graph_uri(METADATA_SOURCE_ID)))
         return merged
 
     @staticmethod

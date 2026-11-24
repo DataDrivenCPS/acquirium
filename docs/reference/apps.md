@@ -204,7 +204,7 @@ no row. The default mean weights observations equally.
 
 `aq.Native.threshold(port, above)` passes through a window's single input value
 when it is greater than `above`; otherwise it produces no row. It does not emit
-zeros and ones. These functions execute without a Python calculation file.
+zeros and ones. Acquirium supplies these calculations to the Python workers.
 
 Use `aq.Parameter("limit")` in place of a function argument to resolve it from
 each group's parameters, for example:
@@ -224,14 +224,12 @@ integrates one reading per pointwise timestamp. For a flow measured per hour,
 use an hour in nanoseconds as `per_ns` to obtain a volume.
 
 `reset=aq.FixedBucket(width_ns)` restarts a total at each bucket boundary.
-Corrections repair later totals until the results stop changing; a reset bounds
-the repair to the rest of its period. Every repaired window counts toward the
-engine's per-operator group limit, so use resets for long-running totals.
+Corrections repair later totals until the results stop changing. Every repaired
+window counts toward the engine's limits per instance.
 
 An integral assigns a step across a boundary to the period in which it ends.
 A step longer than `max_gap_ns` adds nothing. Integrals require the default
-`Pointwise()` window and one reading per timestamp. Rolling windows cannot carry
-a total because their windows overlap.
+`Pointwise()` window and one reading per timestamp.
 
 ## Python functions
 
@@ -262,7 +260,7 @@ timestamps remain Python datetimes. pandas operations may allocate new buffers
 or convert individual columns; Arrow-backed input does not guarantee that
 every pandas operation is zero-copy.
 
-During a calculation, `emit`, `empty`, `previous_rows`, and `previous_outputs`
+During a calculation, `emit`, `empty`, and `previous_outputs`
 use the selected library. pandas missing scalar values passed to `emit` produce
 an empty result. `emit_windows` accepts either library and returns that same
 kind of dataframe. Outside a calculation, helpers default to Polars.
@@ -341,7 +339,7 @@ not persistent calculation state.
 
 ### Batch functions
 
-With `batch=True`, one call receives every affected window. The frame gains a
+With `batch=True`, one call receives a batch of affected windows. The frame gains a
 `output_time` UTC datetime column, and `context["windows"]` lists their contexts,
 including empty windows. A reading shared by overlapping windows appears once
 per window.
@@ -363,9 +361,9 @@ fails the computation. Switching batch mode recalculates the app's history. The
 ### Sequential functions
 
 With `sequential=True`, the function runs in time order, once per window.
-`context["previous"]` holds the latest earlier window that wrote outputs: its
-`output_time`, input `rows`, and `outputs` by port. It is absent for the first
-window. Outputs carry the state, so return every value needed by the next window.
+`context["previous"]` holds the latest earlier output window's `output_time`
+and the latest reading on each port from that window. Store any input values
+needed by a later window on an output port.
 
 `acquirium.functions.previous_value(context, port, default)` reads an earlier output.
 `acquirium.functions.same_period(context, width)` takes a positive
@@ -384,7 +382,7 @@ that reading's own `time`. `outputs_of` accepts the same argument.
 An as-of input creates no windows; other inputs determine when to calculate.
 A correction repairs the windows that read the value, up to its next reading or
 maximum age. All selections of one input must use the same age. Changing it
-recalculates history. As-of inputs require a Python function.
+recalculates history.
 
 ## Deployment
 
@@ -397,12 +395,10 @@ Deployment and inspection report input `matches` and `warnings`. Zero matches
 are valid, for example before a driver registers its streams.
 
 `deploy_app(app, dry_run=True)` previews work without activating the change.
-Its `apps` entry lists operators as `new`, `redefined`, `rebound`, or `unchanged`,
-along with groups to re-evaluate, input rows read, and output rows replaced.
-`downstream` identifies dependent apps; `removed` lists retractions;
-`within_limits` checks the counted work against engine limits. Apps affected by
-`metadata_changes` use current outputs in the preview, so further membership
-changes can become apparent only after the real deployment.
+Its `instances` entry reports each group's change, estimated windows and input
+rows, and stored output rows that may be replaced or retracted. `may_change`
+flags a dependency that could change the group's inputs. `within_limits`
+checks the counted work against engine limits.
 
 `client.remove_app(name)` removes an app after its dependants are removed. Its
 current outputs are retracted; historical versions remain. Output ownership
@@ -440,12 +436,11 @@ updating. `inspect_app(name)["app"]` includes:
 - `status`: `active`, `failed` for an evaluation error, or `blocked` for a failed
   upstream operator. `pending` means the desired plan has not activated.
 - `stale`: whether any operator in the app is failed or blocked.
-- `failures`: a map keyed by operator ID. Each entry contains `error` (on the
-  failed calculation), `blocked_by` (failed operator IDs), and `since_epoch`
-  (the first epoch whose inputs were not successfully processed).
+- `failures` maps instance IDs to the epoch their output reflects and the
+  reason they are behind. The entry includes the evaluation message or the
+  upstream instances holding it.
 
-`engine_status()["engine"]["failures"]` and `engine_snapshot()["failures"]`
-expose the full operator failure map.
+`engine_snapshot()["failures"]` reports the same information by output stream.
 Publication of a receipt does not mean all derived streams are current.
 Failure status survives restart. A corrected deployment, changed input, or
 `retry_engine()` requests another attempt. Recovery recomputes the affected

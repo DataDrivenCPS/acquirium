@@ -1,4 +1,4 @@
-"""Live ingest through metadata-driven plan changes, seals, and a restart.
+"""Live ingest through metadata-driven plan changes and a restart.
 
 A writer keeps submitting readings, late corrections, and deletes while
 metadata edits move streams between groups, add groups, and remove them. Each
@@ -11,7 +11,6 @@ restart.
 
 from __future__ import annotations
 
-import functools
 import math
 import threading
 import time
@@ -20,13 +19,12 @@ import pyarrow as pa
 import pyarrow.ipc as ipc
 import pytest
 from fastapi.testclient import TestClient
+from escapement_next import NotFound
 
 from acquirium import App, Output, Selection
-from acquirium.apps import output_reference
-from acquirium.core import Core
+from acquirium.apps import _plan_id, output_reference
 from acquirium.internals.internals_namespaces import OUTPUT_GROUP, PRODUCED_BY
 from acquirium.internals.models import compute_ref_uri
-from acquirium.Server import manager as manager_module
 from acquirium.Server.app import app as api
 from acquirium.Server.manager import Manager
 
@@ -86,9 +84,13 @@ REDUCE = {"mean": lambda values: sum(values) / len(values), "max": max}
 
 
 def operators(plan):
+    declarations = {row["id"]: row["annotations"]["app"] for row in plan["templates"]}
     return [
-        op for op in (plan or {}).get("operators", [])
-        if op["id"].split(":", 1)[0] in (MEAN, TOTAL)
+        {**instance, "id": f"{instance['template']}/{instance['key']}",
+         "function": declarations[instance["template"]]["function"],
+         "inputs": [binding for binding in plan["bindings"]
+                    if (binding["template"], binding["instance"]) == (instance["template"], instance["key"])]}
+        for instance in plan["instances"] if instance["template"] in (MEAN, TOTAL)
     ]
 
 
@@ -133,8 +135,14 @@ def incoherence(plan, read):
     return None
 
 
-def rows(batch):
-    return dict(zip(batch["event_time_ns"].to_pylist(), batch["value"].to_pylist()))
+def read_rows(snapshot, stream):
+    try:
+        batch = snapshot.read([stream], limit=LIMIT)
+    except NotFound:
+        return {}
+    with pa.RecordBatchReader.from_stream(batch) as reader:
+        table = reader.read_all()
+    return dict(zip(table["time"].cast(pa.int64()).to_pylist(), table["number"].to_pylist()))
 
 
 def check_snapshot(snapshot):
@@ -142,21 +150,14 @@ def check_snapshot(snapshot):
 
     def read(stream):
         if stream not in cache:
-            cache[stream] = rows(snapshot.query_arrow(stream, limit=LIMIT))
+            cache[stream] = read_rows(snapshot, stream)
         return cache[stream]
 
-    return incoherence(snapshot.plan, read)
+    return incoherence(snapshot.plan(), read)
 
 
 def check_epoch(engine, epoch):
-    cache = {}
-
-    def read(stream):
-        if stream not in cache:
-            cache[stream] = rows(engine.query_arrow(stream, epoch=epoch, limit=LIMIT))
-        return cache[stream]
-
-    return incoherence(engine.plan_at(epoch), read)
+    return check_snapshot(engine.snapshot(epoch))
 
 
 def check_http(http, manager):
@@ -184,7 +185,7 @@ def check_http(http, manager):
             cache[stream] = dict(zip(times, table["value"].to_pylist()))
         return cache[stream]
 
-    return incoherence(plan, read), (plan and plan["id"], compared)
+    return incoherence(plan, read), (_plan_id(plan), compared)
 
 
 def metadata_groups(manager):
@@ -280,7 +281,7 @@ def membership(manager, groups):
 
     def step():
         manager.insert_graph(membership_turtle(groups), source_id="membership", replace=True)
-        plan = manager.core.engine.snapshot().plan
+        plan = manager.core.engine.snapshot().plan()
         assert metadata_groups(manager) == plan_groups(plan) == {
             f"urn:live:{group}" for group in groups
         }
@@ -288,24 +289,21 @@ def membership(manager, groups):
     return step
 
 
-def live_round(manager, http, steps, *, start, oracle, seal=True):
-    """Write continuously while each step changes the plan in turn, sealing
-    after every other step."""
+def live_round(manager, http, steps, *, start, oracle):
+    """Write continuously while each step changes the plan in turn."""
     writer = Writer(manager, start, oracle)
 
     def snapshot_check():
         snapshot = manager.core.engine.snapshot()
-        return check_snapshot(snapshot), (snapshot.plan or {}).get("id")
+        return check_snapshot(snapshot), _plan_id(snapshot.plan())
 
     readers = [Reader(snapshot_check), Reader(lambda: check_http(http, manager))]
     for thread in [writer, *readers]:
         thread.start()
     try:
-        for index, step in enumerate(steps):
+        for step in steps:
             time.sleep(0.15)
             step()
-            if seal and index % 2:
-                manager.core.engine.seal()
         time.sleep(0.15)
     finally:
         for thread in [writer, *readers]:
@@ -325,7 +323,7 @@ def assert_current(manager, oracle):
     assert check_snapshot(snapshot) is None
     for name in STREAMS:
         expected = {ts: value for (stream, ts), value in oracle.items() if stream == name}
-        assert rows(snapshot.query_arrow(REFS[name], limit=LIMIT)) == expected
+        assert read_rows(snapshot, REFS[name]) == expected
     return snapshot
 
 
@@ -334,18 +332,8 @@ def assert_history(manager, epochs):
     assert {epoch: problem for epoch, problem in problems.items() if problem} == {}
 
 
-def staged_activations(manager):
-    return manager.core.processor.status()["stats"]["staged_activations"]
-
-
 @pytest.mark.integration
-@pytest.mark.parametrize("staged", [False, True], ids=["regular", "staged-rebuilds"])
-def test_live_ingest_through_plan_changes_stays_coherent_across_restart(
-    tmp_path, monkeypatch, staged
-):
-    # File-backed DuckDB stages rebuilds by default; compare with it off.
-    if not staged:
-        monkeypatch.setattr(manager_module, "Core", functools.partial(Core, stage_rebuilds=False))
+def test_live_ingest_through_plan_changes_stays_coherent_across_restart(tmp_path):
     oracle = {}
     manager, http = open_manager(tmp_path)
     try:
@@ -371,9 +359,8 @@ def test_live_ingest_through_plan_changes_stays_coherent_across_restart(
         assert len(readers[0].seen) >= 3
         assert any(compared for _, compared in readers[1].seen)
 
-        # Redefining the group app replaces its outputs, staged when enabled,
+        # Redefining the group app replaces its outputs
         # while the app reading them stays deployed.
-        staged_before = staged_activations(manager)
         writer, _ = live_round(
             manager, http,
             [
@@ -382,10 +369,10 @@ def test_live_ingest_through_plan_changes_stays_coherent_across_restart(
             ],
             start=writer.tick, oracle=oracle,
         )
-        redefinitions = staged_activations(manager) - staged_before
-        assert redefinitions >= 2 if staged else redefinitions == 0
         before = assert_current(manager, oracle)
-        assert_history(manager, range(first, before.epoch + 1))
+        before_epoch, before_plan = before.epoch, before.plan()
+        del before
+        assert_history(manager, range(first, before_epoch + 1))
         tick = writer.tick
     finally:
         http.close()
@@ -395,8 +382,8 @@ def test_live_ingest_through_plan_changes_stays_coherent_across_restart(
     try:
         snapshot = manager.core.engine.snapshot()
         # Recovery republishes nothing and keeps the exact plan and rows.
-        assert snapshot.epoch == before.epoch
-        assert snapshot.plan == before.plan
+        assert snapshot.epoch == before_epoch
+        assert snapshot.plan() == before_plan
         assert_current(manager, oracle)
         assert_history(manager, range(first, snapshot.epoch + 1))
 

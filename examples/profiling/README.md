@@ -1,5 +1,7 @@
 # Soft sensor execution profiling
 
+> This historical benchmark uses the previous Escapement build and its worker instrumentation. Run it from a revision that pins that build. For the epoch engine, see the benchmarks under Escapement's `crates/python`.
+
 See the [fresh-process measurements](../../docs/profiling/2026-10-18/README.md)
 and [worker settings](../../docs/reference/server-config.md).
 The [pool comparison](../../docs/profiling/2026-10-18-pool/README.md)

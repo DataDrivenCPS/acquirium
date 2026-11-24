@@ -15,7 +15,7 @@ data_dir = ".acquirium"
 
 # Escapement's DuckDB file. Use a fresh data directory when switching from the
 # former storage schema.
-# engine_path = ".acquirium/escapement.duckdb"
+# engine_path = ".acquirium/escapement-epoch.duckdb"
 
 # RDF graph store path (Oxigraph).  Defaults to {data_dir}/.oxigraph.
 # graph_path = ".acquirium/.oxigraph"

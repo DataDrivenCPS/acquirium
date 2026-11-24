@@ -40,8 +40,7 @@ Startup runs in this order:
 2. Build or load the embedding indexes.
 3. Read the registered streams from the graph.
    A reference node failing the canonical-URI check aborts startup.
-4. Restore app deployments. If the engine runs a plan that `apps.json` does not
-   record, startup fails instead of retracting every derived output.
+4. Restore app declarations and their output metadata from the engine's active plan.
 5. Serve HTTP. `/health` answers from this point.
 6. In the background, start the `[[drivers]]` entries and then deploy the
    `[[apps]]` entries. Drivers start first because their setup may load the

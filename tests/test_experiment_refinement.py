@@ -10,6 +10,7 @@ from acquirium.ExperimentMetadata import variable_uri
 from acquirium.Experiments import ExperimentStore
 from acquirium.Storage.metadata_outbox import enqueue, execute
 from tests.unit.test_experiment_metadata import MemoryGraphStore
+from tests.epoch_helpers import all_readings
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
@@ -28,7 +29,7 @@ def counts(store):
         result = {table: execute(conn, f"SELECT count(*) FROM {table}").fetchone()[0]
                   for table in ("experiment_streams", "experiment_observations", "experiment_artifacts",
                                 "experiment_artifact_chunks", "experiment_metadata_outbox")}
-    result["samples"] = len(store.samples.core.engine.snapshot().readings())
+    result["samples"] = len(all_readings(store.samples.core))
     return result
 
 
@@ -163,8 +164,8 @@ def test_recording_non_utc_postgres_preserves_sample_and_ledger_times(experiment
     observation = ledger.observations(study)[0]
     assert observation["range_start"] == observation["range_end"] == T0
     assert observation["recorded_at"] == receipt["recorded_at"]
-    [sample] = store.samples.core.engine.snapshot().readings()
-    assert (sample.event_time_ns, sample.value) == (int(T0.timestamp()) * 1_000_000_000, 7.0)
+    [(_, time_ns, value)] = all_readings(store.samples.core)
+    assert (time_ns, value) == (int(T0.timestamp()) * 1_000_000_000, 7.0)
 
 
 def test_stream_delivery_preserves_each_triples_subject(experiment_ledger, tmp_path):

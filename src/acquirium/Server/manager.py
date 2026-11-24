@@ -14,7 +14,7 @@ from time import perf_counter
 from rdflib import Graph, URIRef, Literal, RDF, RDFS
 from rdflib.namespace import NamespaceManager
 from acquirium.Storage.graph_store import OxigraphGraphStore
-from escapement import Receipt
+import sys
 
 from acquirium.core import Core
 from acquirium.apps import Apps
@@ -30,6 +30,7 @@ from acquirium.internals.models import compute_ref_uri
 from acquirium.internals.internals_namespaces import *
 
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 import shutil
 from acquirium.TextMatch.embedding_matcher import DEFAULT_MODEL, EmbeddingMatcher
 from acquirium.TextMatch.graph_concepts import GraphConcepts
@@ -90,13 +91,13 @@ class Manager:
         data_dir: str | Path | None = None,
         *,
         engine_path: str | Path | None = None,
+        engine_schema: str | None = None,
         experiments_path: str | Path | None = None,
         engine_workers: int = 2,
         python_pool_size: int | None = None,
-        python_max_worker_jobs: int = 10_000,
-        python_max_worker_age: float = 1800,
         epoch_requests: int = 128,
         max_pending_requests: int = 100_000,
+        history_epochs: int | None = None,
         drain_timeout: float | None = 10,
         graph_path: str | Path | None = None,
         ontoenv_root: str | Path | None = None,
@@ -117,6 +118,10 @@ class Manager:
                 _wipe_dir_contents(base)
                 print(f"Deleted data directory contents: {base}")
         base.mkdir(parents=True, exist_ok=True)
+        if any(
+            (base / name).exists() for name in ("apps.json", "escapement.duckdb")
+        ):
+            raise ValueError("Escapement Next requires a separate data directory or a migrated legacy store")
         graph_path = Path(graph_path) if graph_path is not None else base / ".oxigraph"
         ontoenv_root = Path(ontoenv_root) if ontoenv_root is not None else base
 
@@ -141,14 +146,21 @@ class Manager:
         self._stream_refs = {}
         self._point_refs = {}
         try:
+            artifacts = base / "app-functions"
+            artifacts.mkdir(exist_ok=True)
+            target = engine_path or base / "escapement-epoch.duckdb"
+            if is_postgres(target) and engine_schema is None:
+                options = parse_qs(urlsplit(str(target)).query).get("options", ())
+                if not any("search_path" in option for option in options):
+                    engine_schema = "acquirium_epoch"
             self.core = Core(
-                engine_path or base / "escapement.duckdb",
-                workers=engine_workers,
+                target,
+                schema=engine_schema,
+                workers=engine_workers if python_pool_size is None else python_pool_size,
                 epoch_requests=epoch_requests,
-                max_pending_requests=max_pending_requests,
-                python_pool_size=python_pool_size,
-                python_max_worker_jobs=python_max_worker_jobs,
-                python_max_worker_age=python_max_worker_age,
+                max_pending=max_pending_requests,
+                history_epochs=history_epochs,
+                module_paths=[*sys.path, str(artifacts.resolve())],
             )
             # App deployment and experiment metadata delivery share one lock:
             # delivery may reconcile apps, while deployment may edit metadata.
@@ -249,20 +261,17 @@ class Manager:
         return cls(
             data_dir=_data_dir,
             engine_path=os.getenv("ACQUIRIUM_ENGINE_PATH"),
+            engine_schema=os.getenv("ACQUIRIUM_ENGINE_SCHEMA"),
             experiments_path=os.getenv("ACQUIRIUM_EXPERIMENTS_PATH"),
             engine_workers=int(os.getenv("ACQUIRIUM_ENGINE_WORKERS", "2")),
             python_pool_size=(
                 int(os.environ["ACQUIRIUM_PYTHON_POOL_SIZE"])
                 if "ACQUIRIUM_PYTHON_POOL_SIZE" in os.environ else None
             ),
-            python_max_worker_jobs=int(
-                os.getenv("ACQUIRIUM_PYTHON_MAX_WORKER_JOBS", "10000")
-            ),
-            python_max_worker_age=float(
-                os.getenv("ACQUIRIUM_PYTHON_MAX_WORKER_AGE", "1800")
-            ),
             epoch_requests=int(os.getenv("ACQUIRIUM_EPOCH_REQUESTS", "128")),
             max_pending_requests=int(os.getenv("ACQUIRIUM_MAX_PENDING_REQUESTS", "100000")),
+            history_epochs=(int(os.environ["ACQUIRIUM_HISTORY_EPOCHS"])
+                            if "ACQUIRIUM_HISTORY_EPOCHS" in os.environ else None),
             drain_timeout=float(os.getenv("ACQUIRIUM_DRAIN_TIMEOUT", "10")),
             graph_path=os.getenv("ACQUIRIUM_GRAPH_PATH"),
             ontoenv_root=os.getenv("ACQUIRIUM_ONTOENV_ROOT"),
@@ -600,8 +609,7 @@ class Manager:
             if len(refs) != 1:
                 raise ValueError(f"point {uri!r} has multiple references; select an explicit ref_uri")
             result[uri] = next(iter(refs))
-        plan = (self.core.engine.snapshot().plan if epoch is None
-                else self.core.engine.plan_at(epoch))
+        plan = self.core.plan_at(epoch)
         resolved = resolve(plan, result.values(), view=view)
         return {uri: resolved[ref] for uri, ref in result.items()}
 
@@ -610,8 +618,8 @@ class Manager:
                          view="current"):
         """Read one view at one epoch; ``after`` waits for a published request."""
         if after is not None:
-            self.core.wait(Receipt(after))
-            if epoch is not None and epoch < self.core.engine.epochs_of([after])[0]:
+            self.core.wait_for(after)
+            if epoch is not None and epoch < self.core.epochs_of([after])[0]:
                 raise ValueError("epoch precedes the after receipt")
         if epoch is None:
             epoch = self.core.engine.snapshot().epoch
@@ -631,7 +639,7 @@ class Manager:
         views resolve to, and the unit a replacement head reports, if any."""
         from acquirium.replacements import resolve, units
 
-        plan = self.core.engine.snapshot().plan
+        plan = self.core.plan_at()
         heads = resolve(plan, uris, view="current")
         bases = resolve(plan, uris, view="raw")
         stage_units = units(plan)
@@ -1001,5 +1009,5 @@ class Manager:
             logger.warning(
                 "Manager.close: Escapement did not drain within %ss; leaving %d "
                 "pending request(s) for the next start",
-                self.drain_timeout, self.core.engine.status()["pending_requests"],
+                self.drain_timeout, self.core.pending_at_close,
             )

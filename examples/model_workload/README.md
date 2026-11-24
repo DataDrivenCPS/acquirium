@@ -1,5 +1,7 @@
 # Sustained model workload
 
+> This historical benchmark uses the previous Escapement build and its worker instrumentation. Run it from a revision that pins that build. For the epoch engine, see the benchmarks under Escapement's `crates/python`.
+
 This benchmark isolates Escapement's native Python pool from HTTP and semantic
 graph startup. The [streaming workload](../streaming/README.md) exercises those
 application paths separately. Both use Escapement as the only numeric engine.

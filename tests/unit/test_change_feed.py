@@ -65,29 +65,26 @@ def test_signed_feed_pages_split_updates_and_keep_complete_epoch_frontiers(tmp_p
         core.close()
 
 
-def test_page_excludes_publications_after_its_captured_frontier(tmp_path):
+def test_page_excludes_publications_after_its_captured_frontier(tmp_path, monkeypatch):
     core = Core(tmp_path / "core.duckdb")
     try:
         core.wait(submit(core, "initial", [(1, 20.0)]))
         native = core.engine
         frontier = native.snapshot().epoch
 
-        def growing_feed(**kwargs):
-            core.wait(submit(core, "later", [(2, 30.0)]))
-            return native.changes(**kwargs)
+        snapshot = native.snapshot
 
-        core.engine = SimpleNamespace(
-            snapshot=native.snapshot,
-            changes=growing_feed,
-            ingest=native.ingest,
-            close=native.close,
-        )
+        def growing_feed(*args, **kwargs):
+            monkeypatch.setattr(native, "snapshot", snapshot)
+            core.wait(submit(core, "later", [(2, 30.0)]))
+            return snapshot(*args, **kwargs)
+
+        monkeypatch.setattr(native, "snapshot", growing_feed)
         page = core.changes(limit=1)
         assert page["published_epoch"] == frontier
         assert page["complete_through"] == frontier
         assert not page["has_more"]
         assert [change["row"]["key"]["time"] for change in page["changes"]] == [1]
-        core.engine = native
         assert core.changes(**page["cursor"])["changes"][0]["row"]["key"]["time"] == 2
     finally:
         core.close()
@@ -144,6 +141,7 @@ def test_http_capacity_is_retryable_and_unpublished_admission_is_not_in_feed(
     tmp_path, monkeypatch
 ):
     from acquirium.internals.models import compute_ref_uri
+    from tests.epoch_helpers import pause_publication
     from acquirium.Server.manager import Manager
 
     manager = Manager(data_dir=tmp_path, exact_only=True, max_pending_requests=1)
@@ -154,45 +152,45 @@ def test_http_capacity_is_retryable_and_unpublished_admission_is_not_in_feed(
             '<urn:acquirium#refName> "probe" .',
             source_id="pressure",
         )
-        manager.core.processor.stop(drain=False)
-        monkeypatch.setattr(api.state, "manager", manager, raising=False)
-        http = TestClient(api)
-        try:
-            payload = [
-                {
-                    "source_id": "pressure",
-                    "ref_name": "probe",
-                    "values": [[1, 20]],
-                    "request_id": "first",
-                }
-            ]
-            response = http.post("/insert_timeseries", params={"wait": 0}, json=payload)
-            assert response.status_code == 200, response.text
-            receipt = response.json()["receipts"][0]
-            assert receipt["accepted"] and not receipt["published"]
-            response = http.get("/engine/changes")
-            assert response.json()["changes"] == []
-            payload[0]["request_id"] = "second"
-            response = http.post("/insert_timeseries", params={"wait": 0}, json=payload)
-            assert response.status_code == 503
-            assert response.headers["Retry-After"] == "1"
-            payload[0]["request_id"] = "first"
-            response = http.post("/insert_timeseries", params={"wait": 0}, json=payload)
-            assert response.status_code == 200
-            assert response.json()["receipts"][0]["sequence"] == receipt["sequence"]
-            assert (
-                http.get("/engine/changes", params={"limit": 10_001}).status_code == 422
-            )
-            assert http.get("/engine/changes", params={"epoch": 999}).status_code == 400
-        finally:
-            http.close()
-            manager.core.engine.step()  # The stopped processor no longer owns stepping.
+        with pause_publication(manager.core, tmp_path / "app-functions", ref):
+            monkeypatch.setattr(api.state, "manager", manager, raising=False)
+            http = TestClient(api)
+            try:
+                payload = [
+                    {
+                        "source_id": "pressure",
+                        "ref_name": "probe",
+                        "values": [[1, 20]],
+                        "request_id": "first",
+                    }
+                ]
+                response = http.post("/insert_timeseries", params={"wait": 0}, json=payload)
+                assert response.status_code == 200, response.text
+                receipt = response.json()["receipts"][0]
+                assert receipt["accepted"] and not receipt["published"]
+                response = http.get("/engine/changes")
+                assert response.json()["changes"] == []
+                payload[0]["request_id"] = "second"
+                response = http.post("/insert_timeseries", params={"wait": 0}, json=payload)
+                assert response.status_code == 503
+                assert response.headers["Retry-After"] == "1"
+                payload[0]["request_id"] = "first"
+                response = http.post("/insert_timeseries", params={"wait": 0}, json=payload)
+                assert response.status_code == 200
+                assert response.json()["receipts"][0]["sequence"] == receipt["sequence"]
+                assert (
+                    http.get("/engine/changes", params={"limit": 10_001}).status_code == 422
+                )
+                assert http.get("/engine/changes", params={"epoch": 999}).status_code == 400
+            finally:
+                http.close()
     finally:
         manager.close()
 
 
 def test_a_recording_refused_at_capacity_is_retryable_and_left_uncommitted(tmp_path, monkeypatch):
     from acquirium.Server.manager import Manager
+    from escapement_next import Capacity
 
     manager = Manager(data_dir=tmp_path, exact_only=True, max_pending_requests=1)
     try:
@@ -200,7 +198,6 @@ def test_a_recording_refused_at_capacity_is_retryable_and_left_uncommitted(tmp_p
         study = experiments.define("capacity")
         level = experiments.declare(study["template_id"], "level", "output", "timeseries", {})
         run = experiments.start(study["template_id"], {})["run_id"]
-        manager.core.processor.stop(drain=False)
         monkeypatch.setattr(api.state, "manager", manager, raising=False)
         http = TestClient(api)
         try:
@@ -208,14 +205,17 @@ def test_a_recording_refused_at_capacity_is_retryable_and_left_uncommitted(tmp_p
                         "samples": [["2026-01-01T00:00:00+00:00", 1.0]]}]
             # The first fills the inbox; it commits without waiting to publish.
             assert http.post(f"/experiments/runs/{run}/record", json=entries).status_code == 200
-            response = http.post(f"/experiments/runs/{run}/record", json=entries)
+            def over_capacity(*args, **kwargs):
+                raise Capacity("request capacity reached")
+
+            with monkeypatch.context() as patch:
+                patch.setattr(manager.core.engine, "write", over_capacity)
+                response = http.post(f"/experiments/runs/{run}/record", json=entries)
             assert response.status_code == 503 and response.headers["Retry-After"] == "1"
             # The route's own error statuses are not remapped as engine errors.
             assert http.post("/experiments/runs/missing/record", json=entries).status_code == 404
         finally:
             http.close()
-            manager.core.engine.step()
-        manager.core.processor = manager.core.engine.start()
         assert len(experiments.observations(study["template_id"])) == 1
     finally:
         manager.close()

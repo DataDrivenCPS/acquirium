@@ -18,21 +18,8 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, Mapping, Sequence
 
-from escapement import (
-    artifact_digest,
-    FixedBucket,
-    Input,
-    Native,
-    Operator,
-    Pointwise,
-    PythonFunction,
-    PendingError,
-    Rolling,
-    ExecutionError,
-    ValidationError,
-)
+from acquirium.app_spec import FixedBucket, Native, Pointwise, PythonFunction, Rolling
 from rdflib import Graph, Literal, RDF, RDFS, URIRef
-from rdflib.namespace import XSD
 
 from acquirium import replacements
 from acquirium.replacements import app_of
@@ -373,22 +360,6 @@ def _upgrade_input(item):
     return item
 
 
-def _upgrade_declaration(declaration):
-    return {**declaration, "inputs": [_upgrade_input(item) for item in declaration["inputs"]]}
-
-
-def _upgrade_state(state):
-    """Saved state with every declaration in the current form; the plan is unchanged."""
-    if not isinstance(state, dict):
-        return state
-    state = dict(state)
-    if "apps" in state:
-        state["apps"] = {name: _upgrade_declaration(item) for name, item in state["apps"].items()}
-    if state.get("previous") is not None:
-        state["previous"] = _upgrade_state(state["previous"])
-    return state
-
-
 def _output_from_dict(item):
     if "replaces" in item:
         # Earlier versions also stored the replacement's quantity and value
@@ -456,63 +427,74 @@ def _operator_id(app: str, group: str) -> str:
     return f"{app}:{_digest(group)}"
 
 
-def totals_per_app(operators, keys) -> dict[str, dict[str, Any]]:
-    """Per app, its operator count and the sum of each of ``keys`` over
-    ``(operator ID, counters)`` pairs."""
-    apps: dict[str, dict[str, Any]] = {}
-    for operator, counters in operators:
-        totals = apps.setdefault(app_of(operator), {"operators": 0, **dict.fromkeys(keys, 0)})
-        totals["operators"] += 1
-        for key in keys:
-            totals[key] += counters[key]
-    return apps
-
-
-def _plan(operators) -> dict[str, Any]:
-    # A complete-plan identity includes semantic context and all retained apps.
-    return {"id": f"acquirium:{_digest(operators)}", "operators": operators}
-
-
 def _definition(app) -> dict[str, Any]:
     """An app's validated declaration, from an ``App`` or its dict form."""
     return app.to_dict() if isinstance(app, App) else App.from_dict(app).to_dict()
+
+
+def _window_and_roles(declaration):
+    spec = declaration["window"]
+    if spec["kind"] == "pointwise":
+        window = {"anchors": {"instant": {}}, "body": "point"}
+    elif spec["kind"] == "fixed":
+        window = {
+            "anchors": {"grid": {"origin": spec.get("origin_ns", 0), "step": spec["width_ns"]}},
+            "body": "bucket",
+        }
+    else:
+        window = {
+            "anchors": {"grid": {"origin": spec.get("origin_ns", 0), "step": spec["step_ns"]}},
+            "body": "point",
+        }
+    roles = {}
+    for item in declaration["inputs"]:
+        age = item.get("as_of")
+        reach = {"latest": {"max_age": age}} if age is not None else {
+            "span": {"before": spec.get("lookback_ns", 0), "after": spec.get("lookahead_ns", 0)}
+        }
+        roles[item["input"]] = {"reach": reach, "driving": age is None, "reads": "bound"}
+    return window, roles
+
+
+_RATE_PORT = "__acquirium_rate"
+
+
+def _ports(declaration):
+    ports = sorted(declaration["outputs"])
+    if declaration["function"]["kind"] == "integral":
+        if _RATE_PORT in ports:
+            raise ValueError(f"output port {_RATE_PORT!r} is reserved for integration")
+        ports.append(_RATE_PORT)
+    return sorted(ports)
+
+
+def _plan_id(plan):
+    return f"acquirium:{_digest(plan)}"
+
+
+def _source_id(name):
+    return f"derived:{name}"
 
 
 class Apps:
     def __init__(self, core, graph, directory, *, converter=None, lock=None):
         self.core, self.graph, self.converter = core, graph, converter
         self.lock = lock if lock is not None else RLock()
-        self.path = Path(directory) / "apps.json"
+        self.directory = Path(directory)
         self._revision = -1
         self.error = None
         # Streams matched and groups skipped per app and input by the
         # installed compilation.
         self.report = {}
-        self.state = _upgrade_state(
-            json.loads(self.path.read_text())
-            if self.path.exists()
-            else {"apps": {}, "plan": None}
-        )
+        self.state = {"apps": {}, "plan": None}
+        self._pending = None
 
-    def _save(self, state):
-        temporary = self.path.with_suffix(".tmp")
-        with temporary.open("w") as handle:
-            handle.write(_json(state))
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, self.path)
-        descriptor = os.open(self.path.parent, os.O_RDONLY)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-
-    def _artifact(self, code):
+    def _artifact(self, code, *, prefix=""):
         """Durably retain immutable module bytes under their content hash."""
-        digest = artifact_digest(code)
-        directory = self.path.parent / "app-functions"
+        digest = sha256(code).hexdigest()
+        directory = self.directory / "app-functions"
         directory.mkdir(exist_ok=True)
-        path = directory / f"{digest}.py"
+        path = directory / f"{prefix}{digest}.py"
         if not path.exists() or path.read_bytes() != code:
             temporary = path.with_suffix(".tmp")
             with temporary.open("wb") as handle:
@@ -527,66 +509,30 @@ class Apps:
                 os.close(descriptor)
         return path.resolve(), digest
 
-    def _group_function(self, function):
-        """Snapshot the pinned source and adapt its public calculation interface."""
-        if function["kind"] != "python":
-            return function
+    def _source(self, function):
+        """Read the declared source at its content hash."""
         digest = function["sha256"]
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise ValueError("Python functions require a SHA-256 content hash")
-        source = self.path.parent / "app-functions" / f"{digest}.py"
+        source = self.directory / "app-functions" / f"{digest}.py"
         if source.exists():
-            if artifact_digest(source.read_bytes()) != digest:
+            code = source.read_bytes()
+            if sha256(code).hexdigest() != digest:
                 raise ValueError("cached Python calculation content hash mismatch")
         else:
             try:
                 code = Path(function["path"]).read_bytes()
             except OSError as error:
                 raise ValueError(f"cannot read Python calculation {function['path']!r}: {error}") from error
-            if artifact_digest(code) != digest:
+            if sha256(code).hexdigest() != digest:
                 raise ValueError(
                     "Python calculation changed since PythonFunction.from_file(); "
                     "rebuild its declaration before deploying"
                 )
-            source, _ = self._artifact(code)
-        code = (
-            "# Acquirium function interface v3: UTC datetimes, microsecond precision.\n"
-            "from acquirium.functions import _function_module\n"
-            f"__getattr__ = _function_module({str(source.resolve())!r}, {digest!r})\n"
-        ).encode()
-        path, wrapper_digest = self._artifact(code)
-        return {**function, "path": str(path), "sha256": wrapper_digest}
+        return code
 
-    def recover(self):
-        with self.lock:
-            plan = self.state.get("plan")
-            active = self.core.engine.snapshot().plan
-            if not plan and active and active["operators"]:
-                # Deploying nothing would retract every derived output.
-                raise RuntimeError(
-                    f"the engine store runs plan {active['id']} with "
-                    f"{len(active['operators'])} operators, but {self.path} records no "
-                    "apps. Restore apps.json, or start from an empty engine store."
-                )
-            if plan:
-                # Reusing the exact declaration also works after retry-ledger expiry.
-                if not active or active["id"] != plan["id"]:
-                    try:
-                        self.core.wait(
-                            self.core.activate(self.state["activation_id"], plan)
-                        )
-                    except ValidationError:
-                        previous = self.state.get("previous")
-                        if previous is None:
-                            raise
-                        self.state = previous
-                        self._save(previous)
-                    except (ExecutionError, PendingError):
-                        self.error = None
-                        return
-            self.refresh()
-
-    def _compile(self, declarations):
+    def _compile(self, declarations, *, graph=None):
+        graph = self.graph if graph is None else graph
         for name, declaration in declarations.items():
             for item in declaration["inputs"]:
                 upstream, port = item.get("upstream"), item.get("upstream_port")
@@ -610,7 +556,7 @@ class Apps:
                     self._conversions(selection.target_unit) if selection.target_unit else None
                 )
                 matches[name].setdefault(role, 0)
-                result = self.graph.sparql_query(selection.query, wait_for_fresh=True)
+                result = graph.sparql_query(selection.query, wait_for_fresh=True)
                 columns = result.get("columns", [])
                 if selection.stream not in columns or (
                     selection.group and selection.group not in columns
@@ -622,7 +568,7 @@ class Apps:
                 if selection.exclude_app:
                     excluded = {
                         str(subject)
-                        for subject in self.graph.data_graph(
+                        for subject in graph.data_graph(
                             f"derived:{selection.exclude_app}"
                         ).subjects(ACQUIRIUM_SOURCE_ID, None)
                     }
@@ -660,14 +606,12 @@ class Apps:
                             raise ValueError("input unit is required for conversion")
                         context.update(conversion(str(unit)))
                     groups.setdefault(str(group), []).append(
-                        Input(str(stream), role, context=context)
+                        {"stream": str(stream), "role": role, "context": context}
                     )
                     selected.setdefault((_operator_id(name, str(group)), role, str(stream)), (selection, conversion))
                     matches[name][role] += 1
-            function_template = self._group_function(declaration["function"])
             for group, inputs in sorted(groups.items()):
                 group_parameters = dict(parameters.get(group, {}))
-                # JSON stores the key as an array; Python calls receive a tuple.
                 group_key = [group]
                 if group_parameters.setdefault("group", group_key) != group_key:
                     raise ValueError(
@@ -677,24 +621,16 @@ class Apps:
                     port: output_reference(name, group, port)
                     for port in sorted(app.outputs)
                 }
-                function = _bind_parameters(
-                    function_template, group_parameters, name, group
-                )
-                operator = Operator(
-                    id=_operator_id(name, group),
-                    version="pending",
-                    inputs=sorted(inputs, key=lambda item: _json(item.to_dict())),
-                    outputs=outputs,
-                    window=app.window,
-                    function=function,
-                    parameters=group_parameters,
-                    as_of=as_of,
-                )
-                operators.append(operator.to_dict())
+                function = _bind_parameters(declaration["function"], group_parameters, name, group)
+                operators.append({
+                    "id": _operator_id(name, group),
+                    "inputs": inputs, "outputs": outputs, "as_of": as_of,
+                    "function": function, "parameters": group_parameters,
+                })
                 ports.extend((name, group, port, reference, app.outputs[port])
                              for port, reference in outputs.items())
         if any(map(replacements.claimed_inputs, declarations.values())):
-            streams = self._replacement_metadata(operators, declarations)
+            streams = self._replacement_metadata(operators, declarations, graph)
         else:
             streams = {}
         def rebind(operator, item, target, metadata):
@@ -716,7 +652,7 @@ class Apps:
         )
         bound = Counter()
         for operator in operators:
-            # Rebound inputs return to the canonical order Operator gave them.
+            # Bindings have a reproducible order after following replacement links.
             operator["inputs"].sort(key=_json)
             bound.update((app_of(operator["id"]), item["role"]) for item in operator["inputs"])
         # An input that follows replacements counts each identity once,
@@ -734,11 +670,6 @@ class Apps:
             }
             for name in matches
         }
-        for operator in operators:
-            definition = {key: operator[key] for key in ("function", "window", "outputs", "parameters")}
-            if operator.get("as_of"):
-                definition["as_of"] = {role: spec["max_age_ns"] for role, spec in operator["as_of"].items()}
-            operator["version"] = _digest(definition)
         return operators, metadata, report
 
     def _compatible_units(self, before, after):
@@ -748,7 +679,7 @@ class Apps:
         converter = self.converter()
         return converter.check_compatible(converter.resolve_unit(before), converter.resolve_unit(after))
 
-    def _replacement_metadata(self, operators, declarations):
+    def _replacement_metadata(self, operators, declarations, graph):
         # Candidate ordinary outputs need no graph lookup; replacement outputs
         # inherit theirs in replacements.compile. Read missing source metadata
         # in one batch, without inspecting unrelated registrations.
@@ -765,7 +696,7 @@ class Apps:
         if not missing:
             return streams
         refs = " ".join(URIRef(ref).n3() for ref in sorted(missing))
-        result = self.graph.sparql_query(f"""
+        result = graph.sparql_query(f"""
             SELECT ?stream ?value_kind ?unit ?quantity_kind WHERE {{
                 VALUES ?stream {{ {refs} }}
                 ?stream <{ACQUIRIUM_SOURCE_ID}> ?source .
@@ -812,93 +743,175 @@ class Apps:
 
         return context
 
-    def _metadata_changes(self, metadata):
-        """Apps whose output metadata differs from the published graph."""
+    def _function(self, declaration, previous):
+        function = declaration["function"]
+        kind = function["kind"]
+        ports = _ports(declaration)
+        batch = function.get("batch", False)
+        if batch and function.get("sequential"):
+            raise ValueError("a Python function can be batch or sequential")
+        replaced = sorted(replacements.claimed_inputs(declaration))
+        window = declaration["window"]
+        if previous is not None:
+            old = previous["annotations"]["app"]
+            identity = lambda spec: {key: value for key, value in spec.items() if key != "path"}
+            if (identity(old["function"]) == identity(function)
+                    and all(old[field] == declaration[field] for field in ("outputs", "window"))):
+                return previous["definition"]["function"], []
 
-        def terms(graph):
-            return {
-                (
-                    str(subject),
-                    str(predicate),
-                    (str(obj), str(obj.datatype or XSD.string), obj.language)
-                    if isinstance(obj, Literal)
-                    else str(obj),
-                )
-                for subject, predicate, obj in graph
-            }
+        artifacts = []
+        if kind == "python":
+            source = self._source(function)
+            artifacts.append(("", source))
+            adapter = "_epoch_batch_function" if batch else "_epoch_function"
+            code = (
+                f"from acquirium.functions import {adapter} as __acquirium_adapt\n"
+                f"__file__ = {function['path']!r}\n"
+                f"exec(compile({source!r}, __file__, 'exec'), globals())\n"
+                f"__acquirium_calculate = __acquirium_adapt(globals()[{function['entrypoint']!r}], "
+                f"{window!r}, {ports!r}, {replaced!r})\n"
+            )
+        else:
+            if kind not in {"mean", "sum", "min", "max", "count", "threshold", "integral", "cumulative_sum"}:
+                raise ValueError(f"unknown calculation {kind!r}")
+            if function.get("port") not in declaration["outputs"]:
+                raise ValueError("the built-in calculation must name a declared output port")
+            if kind == "integral" and (
+                window["kind"] != "pointwise" or type(function.get("per_ns")) is not int
+                or function["per_ns"] <= 0
+            ):
+                raise ValueError("integral requires a pointwise window and a positive per_ns")
+            code = (
+                "from acquirium.functions import _builtin_function\n"
+                f"__acquirium_calculate = _builtin_function({function!r}, {ports!r})\n"
+            )
+        code = code.encode()
+        digest = sha256(code).hexdigest()
+        artifacts.append(("aq_app_", code))
+        return {
+            "module": f"aq_app_{digest}", "name": "__acquirium_calculate",
+            "digest": digest, "mode": "vectorized" if batch else "per_window",
+        }, artifacts
 
-        return sorted(
-            name
-            for name in self.state["apps"].keys() | metadata.keys()
-            if terms(self.graph.data_graph(f"derived:{name}"))
-            != terms(metadata.get(name, Graph()))
+    def _candidate(self, declarations):
+        plan = {"templates": [], "instances": [], "bindings": []}
+        if not declarations:
+            return plan, [], self.graph.graph_status()["source_version"]
+        desired = {_source_id(name) for name in declarations}
+        sources = self.graph.app_sources() | desired
+        exclusions = {
+            _source_id(item["exclude_app"])
+            for declaration in declarations.values()
+            for item in declaration["inputs"]
+            if item.get("exclude_app")
+        }
+        view = self.graph.selection_snapshot(sources | exclusions)
+        view.stage({source: Graph() for source in sources - desired})
+        for _ in range(8):
+            operators, metadata, report = self._compile(declarations, graph=view)
+            if not view.stage({_source_id(name): graph for name, graph in metadata.items()}):
+                break
+        else:
+            raise ValueError("derived semantic selections did not stabilize")
+
+        old = {row["id"]: row for row in (self.state["plan"] or {}).get("templates", [])}
+        modules = []
+        for name, declaration in sorted(declarations.items()):
+            function, artifacts = self._function(declaration, old.get(name))
+            modules.extend(artifacts)
+            window, roles = _window_and_roles(declaration)
+            ports = _ports(declaration)
+            spec = declaration["function"]
+            if spec.get("sequential") or spec["kind"] in {"integral", "cumulative_sum"}:
+                previous_role = "__acquirium_previous"
+                while previous_role in roles:
+                    previous_role += "_"
+                roles[previous_role] = {
+                    "reach": {"latest": {"max_age": None}}, "driving": False,
+                    "reads": {"own_ports": ports},
+                }
+            plan["templates"].append({
+                "id": name,
+                "definition": {
+                    "function": function, "window": window, "roles": roles,
+                    "ports": ports, "freshness": "synchronous",
+                },
+                "annotations": {
+                    "app": declaration,
+                    "graph": sorted(metadata[name].serialize(format="nt").splitlines()),
+                    "report": report[name],
+                },
+            })
+        for operator in operators:
+            name = replacements.app_of(operator["id"])
+            parameters = dict(operator["parameters"])
+            key = parameters["group"][0]
+            annotations = parameters.pop("__acquirium", None)
+            outputs = operator["outputs"]
+            if operator["function"]["kind"] == "integral":
+                outputs = {**outputs, _RATE_PORT: output_reference(name, key, _RATE_PORT)}
+            plan["instances"].append({
+                "template": name, "key": key, "parameters": parameters,
+                "outputs": outputs, "annotations": annotations,
+            })
+            for item in operator["inputs"]:
+                plan["bindings"].append({
+                    "template": name, "instance": key, "role": item["role"], "stream": item["stream"],
+                    "valid_from": item.get("valid_from"), "valid_to": item.get("valid_to"),
+                    "context": _json(item["context"]),
+                })
+        plan["bindings"] = sorted(
+            plan["bindings"], key=lambda row: (
+                row["template"], row["instance"], row["role"], row["stream"],
+                row["valid_from"] is not None, row["valid_from"],
+                row["valid_to"] is not None, row["valid_to"], row["context"],
+            )
         )
+        return plan, modules, view.revision
 
-    def _publish_metadata(self, metadata):
-        changed = False
-        for name in self._metadata_changes(metadata):
-            graph_uri = self.graph.source_graph_uri(f"derived:{name}")
-            desired = metadata.get(name, Graph())
-            self.graph.insert_graph(desired, replace=True, graph_uri=graph_uri)
-            changed = True
-        return changed
+    def _adopt(self, plan, revision=None):
+        declarations, sources, report = {}, {}, {}
+        for template in plan["templates"]:
+            name, annotation = template["id"], template["annotations"]
+            if not annotation or "app" not in annotation:
+                raise ValueError(f"template {name!r} has no Acquirium declaration")
+            declarations[name] = annotation["app"]
+            sources[_source_id(name)] = Graph().parse(data="\n".join(annotation["graph"]), format="nt")
+            report[name] = annotation["report"]
+        before, after = self.graph.project_app_sources(sources)
+        self.state = {"apps": declarations, "plan": plan, "graph_revision": after}
+        self.report = report
+        self._revision = after if revision == before else -1
+        self.error = None
+
+    def _settle(self):
+        if self._pending is not None:
+            receipt, revision = self._pending
+            self.core.wait(receipt)
+            self._adopt(self.core.engine.snapshot().plan(), revision)
+            self._pending = None
+
+    def recover(self):
+        with self.lock:
+            status = self.core.engine.status()
+            if status["pending"]:
+                self.core.wait_for(status["accepted"])
+            self._adopt(self.core.engine.snapshot().plan())
+            self.refresh()
 
     def _install(self, declarations):
-        previous_metadata = {
-            name: self.graph.data_graph(f"derived:{name}")
-            for name in self.state["apps"].keys() | declarations.keys()
-        }
-        accepted = False
-        previous = self.state
-        try:
-            for _ in range(8):
-                operators, metadata, report = self._compile(declarations)
-                if not self._publish_metadata(metadata):
-                    break
-            else:
-                raise ValueError("derived semantic selections did not stabilize")
-            revision = self.graph.graph_status()["source_version"]
-            plan = _plan(operators)
-            active = self.core.engine.snapshot().plan
-            pending = self.state.get("plan")
-            activation_id = (
-                self.state.get("activation_id")
-                if pending
-                and pending["id"] == plan["id"]
-                and (not active or active["id"] != plan["id"])
-                else None
-            )
-            state = {
-                "apps": declarations,
-                "plan": plan,
-                "graph_revision": revision,
-                "activation_id": activation_id or uuid4().hex,
-            }
-            self._save(dict(state, previous=previous))
-            self.report = report
-            if not active or active["id"] != plan["id"]:
-                receipt = self.core.activate(state["activation_id"], plan)
-                accepted = True
-                self.state = state
-                self._save(state)
-                try:
-                    self.core.wait(receipt)
-                except (ExecutionError, PendingError):
-                    self.error = None
-                    return
-            else:
-                self.state = state
-                self._save(state)
-            self._revision = revision
-            self.error = None
-        except BaseException:
-            if not accepted:
-                self._save(previous)
-                self._publish_metadata(previous_metadata)
-            raise
+        plan, modules, revision = self._candidate(declarations)
+        if plan != self.state["plan"]:
+            for prefix, code in modules:
+                self._artifact(code, prefix=prefix)
+            self._pending = self.core.activate(uuid4().hex, plan), revision
+            self._settle()
+        else:
+            self._adopt(plan, revision)
 
     def refresh(self):
         with self.lock:
+            self._settle()
             if self._revision == self.graph.graph_status()["source_version"]:
                 return
             try:
@@ -934,111 +947,89 @@ class Apps:
 
     def deploy(self, app):
         with self.lock:
+            self._settle()
             definition = _definition(app)
             declarations = dict(self.state["apps"])
             declarations[definition["name"]] = definition
             self._install(declarations)
             return self.inspect(definition["name"])
 
-    def preview(self, app):
-        """What deploying ``app`` would do, without publishing or activating anything.
-
-        Compiles every app once against the current graph and asks Escapement
-        what the resulting plan would re-evaluate. Apps that select the outputs
-        of an app listed in ``metadata_changes`` are compiled against its
-        current outputs, so their own membership changes are not included.
-        """
-        with self.lock:
-            definition = _definition(app)
-            name = definition["name"]
-            declarations = dict(self.state["apps"])
-            declarations[name] = definition
-            operators, metadata, report = self._compile(declarations)
-            plan = _plan(operators)
-            preview = self.core.engine.preview(plan)
-            apps = totals_per_app(
-                ((item["id"], item) for item in preview["operators"]),
-                ("groups", "input_rows", "cleared_rows"),
-            )
-            for item in preview["operators"]:
-                totals = apps[app_of(item["id"])]
-                changes = totals.setdefault("changes", {})
-                changes[item["change"]] = changes.get(item["change"], 0) + 1
-                totals["downstream"] = totals.get("downstream", False) or item["downstream"]
-            removed = totals_per_app(
-                ((item["id"], item) for item in preview["removed"]), ("retracted_rows",)
-            )
-            return {
-                "name": name,
-                "dry_run": True,
-                "plan": plan["id"],
-                "active_plan": (self.core.engine.snapshot().plan or {}).get("id"),
-                "epoch": preview["epoch"],
-                "within_limits": preview["within_limits"],
-                "matches": report[name]["matches"],
-                "warnings": _warnings(report[name]),
-                "apps": apps,
-                "removed": [
-                    {"app": key, "retracted_rows": totals["retracted_rows"]}
-                    for key, totals in sorted(removed.items())
-                ],
-                "metadata_changes": self._metadata_changes(metadata),
-            }
-
     def remove(self, name):
         with self.lock:
-            if name not in self.state["apps"]:
-                raise KeyError(name)
+            self._settle()
             declarations = dict(self.state["apps"])
             del declarations[name]
             self._install(declarations)
-            return {
-                "name": name,
-                **self._deployment_status(self.core.engine.snapshot().plan, "removed"),
-            }
+            return {"name": name, "status": "removed", "active_plan": _plan_id(self.state["plan"])}
 
-    def _deployment_status(self, plan, current_status):
-        active = (plan or {}).get("id")
-        desired = (self.state.get("plan") or {}).get("id")
-        return {
-            "status": current_status if active and active == desired else "pending",
-            "active_plan": active,
-            "desired_plan": desired,
-            "error": self.error or self.core.processor.status()["error"],
-        }
+    def preview(self, app):
+        with self.lock:
+            definition = _definition(app)
+            name = definition["name"]
+            plan, _, _ = self._candidate({**self.state["apps"], name: definition})
+            preview = self.core.engine.preview(plan)
+            report = next(t["annotations"]["report"] for t in plan["templates"] if t["id"] == name)
+            return {
+                "name": name, "dry_run": True, "plan": _plan_id(plan),
+                "active_plan": _plan_id(self.state["plan"]), "epoch": preview["base"],
+                "matches": report["matches"], "warnings": _warnings(report),
+                "within_limits": all(item["within_limits"] for item in preview["instances"].values()),
+                "instances": [
+                    {"template": template, "key": key, **counts}
+                    for (template, key), counts in preview["instances"].items()
+                ],
+            }
 
     def inspect(self, name):
         with self.lock:
+            self._settle()
             definition = self.state["apps"][name]
             snapshot = self.core.engine.snapshot()
-            plan = snapshot.plan
-            operators = [
-                item
-                for item in (plan or {}).get("operators", [])
-                if app_of(item["id"]) == name
-            ]
-            report = self.report.get(name, {"matches": {}, "skipped": {}})
-            failures = {
-                operator: failure
-                for operator, failure in snapshot.failures.items()
-                if app_of(operator) == name
-            }
-            status = self._deployment_status(plan, "active")
-            if failures and status["status"] == "active":
-                errors = [failure["error"] for failure in failures.values() if failure["error"]]
-                status["status"] = "failed" if errors else "blocked"
-                status["error"] = "\n".join(dict.fromkeys(errors)) or None
+            plan = snapshot.plan()
+            instances = [row for row in plan["instances"] if row["template"] == name]
+            streams = [stream for row in instances for stream in row["outputs"].values()]
+            failures = {}
+            for stream in snapshot.describe(streams):
+                if stream["behind"] is not None:
+                    app, group = stream["instance"]
+                    failures[_operator_id(app, group)] = stream["behind"]
+            report = self.report[name]
+            template = next(row for row in plan["templates"] if row["id"] == name)
+            spec = template["definition"]
+            inputs = {}
+            for binding in plan["bindings"]:
+                if binding["template"] == name:
+                    key = binding["instance"]
+                    inputs.setdefault(key, []).append({
+                        "stream": binding["stream"], "role": binding["role"],
+                        "valid_from": binding["valid_from"], "valid_to": binding["valid_to"],
+                        "context": json.loads(binding["context"]),
+                    })
+            operators = []
+            for instance in instances:
+                group = instance["key"]
+                outputs = {key: value for key, value in instance["outputs"].items() if key in definition["outputs"]}
+                operator = {
+                    "id": _operator_id(name, group), "inputs": inputs.get(group, []),
+                    "outputs": outputs, "parameters": instance["parameters"],
+                    "function": _bind_parameters(definition["function"], instance["parameters"], name, group),
+                    "window": definition["window"],
+                }
+                as_of = {role: {"max_age_ns": row["reach"]["latest"]["max_age"]}
+                         for role, row in spec["roles"].items() if row["reads"] == "bound" and "latest" in row["reach"]}
+                if as_of:
+                    operator["as_of"] = as_of
+                operator["version"] = _digest([spec, instance["parameters"], outputs, instance["annotations"]])
+                operators.append(operator)
+            errors = [item["message"] for item in failures.values() if "message" in item]
+            status = "failed" if errors else "blocked" if failures else "active"
             return {
-                "name": name,
-                "definition": definition,
-                "operators": operators,
-                **status,
-                "stale": bool(failures),
-                "failures": failures,
-                "graph_revision": self.state.get("graph_revision"),
-                "matches": report["matches"],
-                "warnings": _warnings(report),
+                "name": name, "definition": definition, "instances": instances,
+                "operators": operators, "status": status,
+                "active_plan": _plan_id(plan), "desired_plan": _plan_id(self.state["plan"]),
+                "error": self.error or "\n".join(dict.fromkeys(errors)) or None,
+                "stale": bool(failures), "failures": failures, "graph_revision": self._revision,
+                "matches": report["matches"], "warnings": _warnings(report),
             }
-
     def list(self):
         return [self.inspect(name) for name in sorted(self.state["apps"])]

@@ -1,5 +1,7 @@
 # Memory and restart cost against history size
 
+> This historical benchmark uses the previous Escapement build and its worker instrumentation. Run it from a revision that pins that build. For the epoch engine, see the benchmarks under Escapement's `crates/python`.
+
 See the [results](../../docs/profiling/2026-11-02-history/README.md).
 
 Run from the repository root, using a **new** output directory:

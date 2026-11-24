@@ -5,9 +5,10 @@ import time
 import polars as pl
 import pyarrow as pa
 import pytest
-from escapement import ClosedError, Input, Operator, Plan, Pointwise, RetryConflictError
+from escapement_next import Closed, Refused
 
 from acquirium.core import Core, SCHEMA
+from tests.epoch_helpers import plan, readings, value
 
 
 def frame(times, values, stream="urn:sensor"):
@@ -29,32 +30,115 @@ def core(tmp_path):
         owner.close()
 
 
-def test_native_atomic_dag_correction_deletion_and_pinned_snapshot(core):
-    plan = Plan(
-        "one",
-        [
-            Operator(
-                "mean",
-                [Input("urn:sensor", "temperature")],
-                {"mean": "urn:mean"},
-                Pointwise(),
-                {"kind": "mean", "port": "mean", "per_stream": False},
-            )
-        ],
+@pytest.fixture
+def epoch_core(tmp_path):
+    owner = Core(tmp_path / "epoch.duckdb", module_paths=[str(tmp_path)], batch_rows=2)
+    try:
+        yield owner
+    finally:
+        owner.close()
+
+
+def test_epoch_arrow_transport_preserves_selected_limits_and_pinned_reads(epoch_core):
+    core = epoch_core
+    old = core.wait(core.ingest("gateway", "initial", frame([1001, 2002, 3003], [1, "Bad", 3])))
+    pages = core.batches("urn:sensor", order="desc", limit=2, batch_size=1)
+    latest = core.wait(core.ingest(
+        "gateway", "replace", frame([1001], [99]), replace=["urn:sensor"]
+    ))
+
+    batches = list(pages)
+    assert [batch.num_rows for batch in batches] == [1, 1]
+    table = pa.Table.from_batches(batches)
+    assert table.schema == SCHEMA
+    assert table["ts"].cast(pa.int64()).to_pylist() == [3003, 1001]
+    assert table["value"].to_pylist() == [3, 1]
+    assert next(core.batches("urn:sensor", mode="text", epoch=old.epoch))["value"].to_pylist() == ["Bad"]
+    assert next(core.batches("urn:sensor", epoch=latest.epoch))["value"].to_pylist() == [99]
+    assert core.info(["urn:none", "urn:sensor"], snapshot=old) == {
+        "urn:none": {"row_count": 0, "earliest": None, "latest": None},
+        "urn:sensor": {
+            "row_count": 3,
+            "earliest": "1970-01-01T00:00:00.000001001+00:00",
+            "latest": "1970-01-01T00:00:00.000003003+00:00",
+        },
+    }
+    assert next(core.batches("urn:none")).num_rows == 0
+    with pytest.raises(ValueError, match="not published"):
+        core.batches("urn:sensor", epoch=latest.epoch + 1)
+
+
+def test_epoch_arrow_transport_repairs_and_follows_versions(epoch_core, tmp_path):
+    core = epoch_core
+    module = tmp_path / "passthrough.py"
+    module.write_text(
+        'def calculate(frame, context):\n'
+        '    return {"out": frame.select("time", "value", "text")}\n',
+        encoding="utf-8",
     )
-    core.wait(core.activate("deploy", plan))
-    receipt = core.ingest("gateway", "initial", frame([1001, 2002], [20, 25]))
-    pinned = core.wait(receipt)
-    assert pinned.value("urn:mean", 1001) == 20
-    assert pinned.value("urn:sensor", 1001) == 20
-    core.wait(core.ingest("gateway", "correction", frame([1001], [30])))
-    assert core.engine.snapshot().value("urn:mean", 1001) == 30
-    assert pinned.value("urn:mean", 1001) == 20
-    deletion = frame([1001], [None]).with_columns(pl.lit("delete").alias("operation"))
-    core.wait(core.ingest("gateway", "delete", deletion))
-    assert core.engine.snapshot().value("urn:mean", 1001) is None
-    versions = core.engine.versions("urn:mean")
-    assert [item.value for item in versions if item.event_time_ns == 1001] == [20, 30]
+    core.wait(core.activate("application", plan(module)))
+    old = core.wait(core.ingest("gateway", "initial", frame([1001, 2002], [10, 20])))
+    assert next(core.batches("urn:derived"))["value"].to_pylist() == [10, 20]
+
+    correction = frame([2002, 1001, 1001], [None, 15, 30]).with_columns(
+        pl.Series("operation", ["delete", "upsert", "upsert"])
+    )
+    receipt = core.ingest("gateway", "correction", correction)
+    latest = core.wait(receipt)
+    assert core.ingest("gateway", "correction", correction[[2, 0]]) == receipt
+    assert next(core.batches("urn:derived"))["value"].to_pylist() == [30]
+    frontier, reader = core.versions(after=old.epoch, streams=["urn:derived"])
+    core.wait(core.clear("gateway", "clear", ["urn:sensor"]))
+    assert next(core.batches("urn:derived")).num_rows == 0
+    assert frontier == latest.epoch
+    with reader:
+        table = reader.read_all()
+    assert table["number"].to_pylist() == [10, 30, 20]
+    assert table["until"].to_pylist() == [latest.epoch, None, latest.epoch]
+
+
+def test_epoch_store_reopens_with_receipts_and_enforces_retention(tmp_path):
+    path = tmp_path / "epoch.duckdb"
+    core = Core(path)
+    try:
+        original = frame([1001], [1])
+        receipt = core.ingest("gateway", "one", original)
+        before = core.wait(receipt).epoch
+        latest = core.wait(core.ingest("gateway", "two", frame([1001], [2]))).epoch
+        assert core.engine.prune(latest) == latest
+        assert core.close()
+    finally:
+        core.close()
+
+    core = Core(path)
+    try:
+        assert next(core.batches("urn:sensor"))["value"].to_pylist() == [2]
+        assert core.engine.epochs_of([receipt]) == [before]
+        with pytest.raises(Refused, match="retention"):
+            core.batches("urn:sensor", epoch=before)
+        with pytest.raises(Refused, match="retention"):
+            core.versions(after=before)
+    finally:
+        core.close()
+
+
+def test_configured_retention_advances_and_drops_expired_history(tmp_path):
+    core = Core(tmp_path / "retention.duckdb", history_epochs=1)
+    try:
+        first = core.wait(core.ingest("gateway", "first", frame([1001], [1]))).epoch
+        latest = core.wait(core.ingest("gateway", "latest", frame([1001], [2]))).epoch
+        deadline = time.monotonic() + 5
+        while core.engine.status()["retention"] < latest:
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        assert value(core.engine.snapshot(), "urn:sensor", 1001) == 2
+        with pytest.raises(Refused, match="retention"):
+            core.batches("urn:sensor", epoch=first)
+        with pytest.raises(Refused, match="ordinals"):
+            core.changes(epoch=latest)
+        assert core.changes(epoch=latest, ordinal=2**64 - 1)["changes"] == []
+    finally:
+        core.close()
 
 
 def test_restart_restores_readings_and_native_retry_identity(tmp_path):
@@ -68,9 +152,9 @@ def test_restart_restores_readings_and_native_retry_identity(tmp_path):
     owner = Core(path)
     try:
         assert owner.ingest("gateway", "batch", payload).sequence == sequence
-        with pytest.raises(RetryConflictError):
+        with pytest.raises(Refused):
             owner.ingest("gateway", "batch", frame([1001], [21]))
-        assert owner.engine.snapshot().value("urn:sensor", 1001) == 20
+        assert value(owner.engine.snapshot(), "urn:sensor", 1001) == 20
     finally:
         owner.close()
 
@@ -84,8 +168,8 @@ def test_concurrent_ingests_share_admission_commits(core):
         receipts = [receipt for sent in pool.map(send, range(8)) for receipt in sent]
     assert sorted(receipt.sequence for receipt in receipts) == list(range(1, 161))
     status = core.engine.status()
-    assert status["admitted_requests"] == 160
-    assert status["admission_commits"] < 160
+    assert status["accepted"] == 160
+    assert status["admissions"] < 160
 
 
 def test_close_lets_running_submissions_finish_and_refuses_later_ones(tmp_path):
@@ -97,7 +181,7 @@ def test_close_lets_running_submissions_finish_and_refuses_later_ones(tmp_path):
         for i in range(10**6):
             try:
                 receipts.append(owner.ingest(f"gateway-{sender}", str(i), frame([i], [i])))
-            except ClosedError:
+            except Closed:
                 return
 
     with ThreadPoolExecutor(4) as pool:
@@ -106,7 +190,7 @@ def test_close_lets_running_submissions_finish_and_refuses_later_ones(tmp_path):
         assert owner.close()
         for sender in senders:
             sender.result(timeout=30)
-    with pytest.raises(ClosedError):
+    with pytest.raises(Closed):
         owner.ingest("gateway", "late", frame([1], [1]))
     # Every request accepted before close returned was drained by it.
     reopened = Core(path)
@@ -120,21 +204,17 @@ def test_close_lets_running_submissions_finish_and_refuses_later_ones(tmp_path):
 STUCK_CLOSE = """
 import sys, time
 import polars as pl
-from escapement import Input, Operator, Plan, Pointwise, PythonFunction
+from pathlib import Path
 from acquirium.core import Core
+from tests.epoch_helpers import plan
+from tests.unit.test_escapement_core import frame
 
-path, module, flag = sys.argv[1:]
-def frame(time, value):
-    return pl.DataFrame({"ref_uri": ["urn:sensor"],
-        "ts": pl.Series([time], dtype=pl.Int64).cast(pl.Datetime("ns", "UTC")),
-        "value": pl.Series([value], dtype=pl.Object)})
-core = Core(path)
-function = PythonFunction.from_file(module, "calculate")
-plan = Plan("p", [Operator("f", [Input("urn:sensor", "t")], {"out": "urn:out"}, Pointwise(), function)])
-core.wait(core.activate("deploy", plan))
+path, module, flag = map(Path, sys.argv[1:])
+core = Core(path, module_paths=[str(module.parent)])
+core.wait(core.activate("deploy", plan(module, output="urn:out")))
 open(flag, "w").close()
-core.ingest("gateway", "one", frame(1, 10))
-core.ingest("gateway", "two", frame(2, 20))
+core.ingest("gateway", "one", frame([1], [10]))
+core.ingest("gateway", "two", frame([2], [20]))
 started = time.monotonic()
 print(core.close(timeout=0.5), time.monotonic() - started)
 """
@@ -150,7 +230,7 @@ def test_close_gives_up_on_a_stuck_function_and_keeps_its_work(tmp_path):
         "def calculate(frame, context):\n"
         f"    while pathlib.Path({str(flag)!r}).exists():\n"
         "        time.sleep(0.05)\n"
-        '    return {"out": frame.select("event_time_ns", "sample_key", "value", "quality")}\n'
+        '    return {"out": frame.select("time", "value", "text")}\n'
     )
     # The abandoned engine keeps its lock until its process exits, so the
     # stuck close runs in a process of its own.
@@ -167,7 +247,7 @@ def test_close_gives_up_on_a_stuck_function_and_keeps_its_work(tmp_path):
     owner = Core(path)
     try:
         snapshot = owner.wait(owner.ingest("gateway", "three", frame([3], [30])))
-        assert [snapshot.value("urn:out", time) for time in (1, 2, 3)] == [10, 20, 30]
+        assert [value(snapshot, "urn:out", time) for time in (1, 2, 3)] == [10, 20, 30]
         assert owner.close(timeout=10)
     finally:
         owner.close()
@@ -204,8 +284,8 @@ def test_values_are_stored_as_their_stream_kind(core):
     snapshot = core.wait(core.ingest("gateway", "kinds", pl.concat([numeric, text])))
     # Numbers (and numeric strings) are numbers on a numeric stream, anything
     # else is kept as text, and rows with no reading are dropped on either kind.
-    assert [r.value for r in snapshot.readings("urn:sensor")] == [20, 21.5, "Bad", "True"]
-    assert [r.value for r in snapshot.readings("urn:status")] == ["20", "21.5"]
+    assert readings(snapshot, "urn:sensor") == [20, 21.5, "Bad", "True"]
+    assert readings(snapshot, "urn:status") == ["20", "21.5"]
     read = lambda mode: pa.Table.from_batches(list(core.batches("urn:sensor", mode=mode)))
     assert read("numeric")["value"].to_pylist() == [20, 21.5]
     assert read("text")["value"].to_pylist() == ["Bad", "True"]
@@ -218,7 +298,7 @@ def test_duplicate_key_last_wins_and_transport_order_does_not_change_retry(core)
     receipt = core.ingest("gateway", "batch", frame([1001, 2002, 1001], [10, 20, 30]))
     core.wait(receipt)
     assert core.ingest("gateway", "batch", frame([2002, 1001], [20, 30])) == receipt
-    assert core.engine.snapshot().value("urn:sensor", 1001) == 30
+    assert value(core.engine.snapshot(), "urn:sensor", 1001) == 30
 
 
 @pytest.mark.parametrize("operations, values, expected", [
@@ -234,7 +314,7 @@ def test_mixed_mutations_keep_the_last_surviving_operation(core, operations, val
     core.wait(core.ingest("gateway", "seed", frame([1001], [5])))
     mixed = frame([1001] * len(values), values).with_columns(pl.Series("operation", operations))
     receipt = core.ingest("gateway", "mixed", mixed)
-    assert core.wait(receipt).value("urn:sensor", 1001) == expected
+    assert value(core.wait(receipt), "urn:sensor", 1001) == expected
     canonical = frame([1001], [expected]).with_columns(
         pl.lit("delete" if expected is None else "upsert").alias("operation")
     )
@@ -258,29 +338,18 @@ def test_historical_epoch_read(core):
         core.batches("urn:sensor", epoch=old.epoch + 100)
 
 
-def test_fixed_buckets_repair_complete_groups_and_clear_downstream(core):
-    from escapement import FixedBucket
-
-    plan = Plan(
-        "buckets",
-        [
-            Operator(
-                "bucket",
-                [Input("urn:sensor", "temperature")],
-                {"mean": "urn:bucket"},
-                FixedBucket(1000),
-                {"kind": "mean", "port": "mean", "per_stream": False},
-            ),
-            Operator(
-                "child",
-                [Input("urn:bucket", "mean")],
-                {"mean": "urn:child"},
-                Pointwise(),
-                {"kind": "mean", "port": "mean", "per_stream": False},
-            ),
-        ],
+def test_fixed_buckets_repair_complete_groups_and_clear_downstream(epoch_core, tmp_path):
+    core = epoch_core
+    module = tmp_path / "mean.py"
+    module.write_text(
+        'import polars as pl\n'
+        'def calculate(frame, ctx):\n'
+        '    return {"out": frame.select(pl.lit(ctx["anchor_ns"]).cast(pl.Datetime("ns", "UTC")).alias("time"), pl.col("value").mean()).drop_nulls("value")}\n',
+        encoding="utf-8",
     )
-    core.wait(core.activate("deploy-buckets", plan))
+    first = plan(module, name="bucket", output="urn:bucket", width=1000)
+    second = plan(module, name="child", source="urn:bucket", output="urn:child")
+    core.wait(core.activate("deploy-buckets", {key: first[key] + second[key] for key in first}))
     snapshot = core.wait(
         core.ingest(
             "gateway",
@@ -288,16 +357,16 @@ def test_fixed_buckets_repair_complete_groups_and_clear_downstream(core):
             frame([-1500, -1, 0, 999, 1000], [10, 20, 30, 40, 50]),
         )
     )
-    assert snapshot.value("urn:bucket", -2000) == 10
-    assert snapshot.value("urn:bucket", -1000) == 20
-    assert snapshot.value("urn:child", 0) == 35
-    assert snapshot.value("urn:child", 1000) == 50
+    assert value(snapshot, "urn:bucket", -2000) == 10
+    assert value(snapshot, "urn:bucket", -1000) == 20
+    assert value(snapshot, "urn:child", 0) == 35
+    assert value(snapshot, "urn:child", 1000) == 50
     snapshot = core.wait(core.ingest("gateway", "late", frame([999], [70])))
-    assert snapshot.value("urn:child", 0) == 50
+    assert value(snapshot, "urn:child", 0) == 50
     deletion = frame([0, 999], [None, None]).with_columns(
         pl.lit("delete").alias("operation")
     )
     snapshot = core.wait(core.ingest("gateway", "clear-bucket", deletion))
-    assert snapshot.value("urn:bucket", 0) is None
-    assert snapshot.value("urn:child", 0) is None
-    assert snapshot.value("urn:child", 1000) == 50
+    assert value(snapshot, "urn:bucket", 0) is None
+    assert value(snapshot, "urn:child", 0) is None
+    assert value(snapshot, "urn:child", 1000) == 50

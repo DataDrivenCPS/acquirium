@@ -21,11 +21,12 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel, Field
 from datetime import datetime
+import uuid
 
 from acquirium.Server.config import load_active_config, load_app_target
 from acquirium.Server.manager import Manager
-from acquirium.apps import App, totals_per_app
-from escapement import CapacityError, EngineError, ExecutionError, PendingError
+from acquirium.apps import App
+from escapement_next import Capacity, Closed, Fault, NotFound, Refused, Timeout
 
 from acquirium.internals.models import (
     StreamInsert,
@@ -50,9 +51,9 @@ def _engine_http_error(error: Exception) -> HTTPException:
     """Bad input is the client's to fix (400). A full inbox, or an engine or
     database failure, may clear, so clients retry it (503). Anything else is a
     server bug (500)."""
-    if isinstance(error, (CapacityError, EngineError, OSError)):
+    if isinstance(error, (Capacity, Closed, Fault, Timeout, OSError)):
         return HTTPException(status_code=503, detail=str(error), headers={"Retry-After": "1"})
-    if isinstance(error, (ValueError, KeyError)):
+    if isinstance(error, (ValueError, KeyError, NotFound, Refused)):
         return HTTPException(status_code=400, detail=str(error))
     log.exception("engine request failed")
     return HTTPException(status_code=500, detail=str(error))
@@ -841,13 +842,7 @@ def remove_app(name: str):
 
 @app.get("/engine/status")
 def engine_status():
-    status = app.state.manager.core.processor.status()
-    status["python_workers"] = app.state.manager.core.engine.python_worker_stats()
-    # compute_ms sums operators that may have run in parallel.
-    status["apps"] = totals_per_app(
-        status["stats"]["operators"].items(),
-        ("groups", "input_rows", "changed_rows", "compute_ms"),
-    )
+    status = app.state.manager.core.engine.status()
     try:
         import resource
         peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
@@ -862,26 +857,31 @@ def engine_status():
 def engine_snapshot():
     # plan_current: the plan reflects the metadata graph as of this request.
     snapshot, current = app.state.manager.engine_snapshot()
-    return {"epoch": snapshot.epoch, "applied": snapshot.applied, "plan": snapshot.plan,
-            "failures": snapshot.failures, "plan_current": current}
+    core = app.state.manager.core
+    failures = {
+        item["stream"]: item["behind"] for item in snapshot.describe() if item["behind"] is not None
+    }
+    return {
+        "epoch": snapshot.epoch, "applied": core.applied_at(snapshot.epoch),
+        "plan": snapshot.plan(), "failures": failures, "plan_current": current,
+    }
 
 
 @app.post("/engine/retry")
+@_engine_errors
 def engine_retry():
-    app.state.manager.core.processor.retry()
+    app.state.manager.core.engine.retry(uuid.uuid4().hex)
     return engine_status()
 
 
 @app.get("/engine/changes")
+@_engine_errors
 def engine_changes(
     epoch: int = Query(0, ge=0, lt=2**64),
     ordinal: int = Query(0, ge=0, lt=2**64),
     limit: int = Query(1000, ge=1, le=10_000),
 ):
-    try:
-        return app.state.manager.core.changes(epoch=epoch, ordinal=ordinal, limit=limit)
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
+    return app.state.manager.core.changes(epoch=epoch, ordinal=ordinal, limit=limit)
 
 
 #### DRIVERS API ENDPOINTS ####
@@ -1003,12 +1003,12 @@ def _receipt(receipt, source_id, request_id, wait):
     try:
         if wait > 0:
             core.wait(receipt, timeout=wait)
-    except (PendingError, ExecutionError) as exception:
+    except (Fault, Timeout) as exception:
         error = str(exception)
-    status = core.processor.status()
+    status = core.engine.status()
+    applied, fault = status["applied"], status["fault"]
     return {"source_id": source_id, "request_id": request_id, "sequence": receipt.sequence,
-            "accepted": True, "published": status["engine"]["applied"] >= receipt.sequence,
-            "error": error or status["error"]}
+            "accepted": True, "published": applied >= receipt.sequence, "error": error or fault}
 
 
 @app.post("/insert_timeseries")

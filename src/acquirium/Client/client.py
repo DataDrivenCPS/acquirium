@@ -1063,10 +1063,10 @@ class AcquiriumClient:
         deadline = time.monotonic() + timeout
         while True:
             status = self.engine_status()
-            if status["engine"]["applied"] >= sequence:
+            if status["applied"] >= sequence:
                 return self.engine_snapshot()
-            if status["error"]:
-                raise RuntimeError(f"accepted request {sequence} is blocked: {status['error']}")
+            if status["fault"]:
+                raise RuntimeError(f"accepted request {sequence} is blocked: {status['fault']}")
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"accepted request {sequence} remains pending")
             time.sleep(min(0.05, max(0, deadline - time.monotonic())))

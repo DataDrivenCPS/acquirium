@@ -8,11 +8,12 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 import polars as pl
 import pytest
+from escapement_next import NotFound
 
 import acquirium as aq
 from acquirium import replacements
 from acquirium.apps import output_reference
-from acquirium.functions import _datetime_function
+from acquirium.functions import _epoch_outputs, _public_parameters
 from acquirium.internals.models import compute_ref_uri
 from acquirium.Server.app import app as api
 from acquirium.Server.manager import Manager
@@ -75,8 +76,6 @@ def test_several_selections_feed_one_input_and_roundtrip():
 
 
 def test_saved_declarations_with_roles_and_replaces_load():
-    from acquirium.apps import _upgrade_state
-
     app = declaration("clean", "urn:raw", aq.Native.mean("out"))
     data = app.to_dict()
     legacy = dict(data, inputs=[{("role" if key == "input" else key): value
@@ -86,11 +85,7 @@ def test_saved_declarations_with_roles_and_replaces_load():
     loaded = aq.App.from_dict(legacy)
     assert loaded.inputs["raw"] == app.inputs["raw"]
     assert loaded.outputs == {"out": aq.ReplacementOutput(of="raw", unit=NTU, label="Clean")}
-    state = _upgrade_state({"apps": {"clean": legacy}, "plan": None,
-                            "previous": {"apps": {"clean": deepcopy(legacy)}, "plan": None}})
-    for saved in (state["apps"]["clean"], state["previous"]["apps"]["clean"]):
-        assert [item["input"] for item in saved["inputs"]] == ["raw"]
-        assert "role" not in saved["inputs"][0]
+    assert [item["input"] for item in loaded.to_dict()["inputs"]] == ["raw"]
 
 
 def test_selection_views_roundtrip_and_default_by_selection_kind():
@@ -140,32 +135,19 @@ def test_adapter_selects_only_replacement_times_and_hides_private_parameters(lib
     import pandas as pd
 
     parameters = {"group": ["urn:tank"], "__acquirium": {"replaces": {"clean": "urn:raw"}}}
-    native = {"parameters": parameters, "operator": {
-        "parameters": parameters, "inputs": [], "window": {"kind": "pointwise"},
-    }}
+    assert _public_parameters(parameters) == {"group": ("urn:tank",)}
     times = [0, 1_000, 2_000]
-    if batch:
-        native["windows"] = [{"window_ns": 0}, {"window_ns": 2_000}]
-    else:
-        native["window_ns"] = 1_000
-    before = deepcopy(native)
-
-    def calculate(frame, context):
-        assert context["parameters"] == context["operator"]["parameters"] == {"group": ("urn:tank",)}
-        result = pl.DataFrame({
-            "time": pl.Series(times).cast(pl.Datetime("ns", "UTC")),
-            "value": [1., 2., 3.],
-        })
-        if library == "pandas":
-            result = result.to_pandas(use_pyarrow_extension_array=True)
-        return {"clean": result, "diagnostic": result}
-
-    calculate.__annotations__["frame"] = pd.DataFrame if library == "pandas" else pl.DataFrame
-    outputs = _datetime_function(calculate)(pl.DataFrame({"event_time_ns": times}), native)
-    assert outputs["clean"]["event_time_ns"].to_list() == ([0, 2_000] if batch else [1_000])
-    # Ordinary ports keep their data so the existing engine ownership check rejects it.
-    assert outputs["diagnostic"]["event_time_ns"].to_list() == times
-    assert native == before
+    values = pl.DataFrame({
+        "time": pl.Series(times).cast(pl.Datetime("ns", "UTC")),
+        "value": [1., 2., 3.],
+    })
+    selected = [0, 2_000] if batch else [1_000]
+    anchors = pl.Series(selected).cast(pl.Datetime("ns", "UTC")).to_list()
+    if library == "pandas":
+        values = values.to_pandas(use_pyarrow_extension_array=True)
+    outputs = _epoch_outputs({"clean": values, "diagnostic": values}, ["clean", "diagnostic"], ["clean"], anchors)
+    assert outputs["clean"]["time"].dt.epoch("ns").to_list() == selected
+    assert outputs["diagnostic"]["time"].dt.epoch("ns").to_list() == times
 
 
 @pytest.fixture(scope="module")
@@ -259,9 +241,9 @@ def test_chain_views_history_pagination_and_middle_removal(system):
     assert values(client, clean, view="stored") == [2., 4.]
     assert values(client, head, view="raw") == [1., 2.]
     assert values(client, ref, epoch=initial) == [1., 2.]
-    assert values(client, ref, epoch=initial, after=initial_snapshot.applied) == [1., 2.]
+    assert values(client, ref, epoch=initial, after=manager.core.applied_at(initial)) == [1., 2.]
     with pytest.raises(ValueError, match="precedes"):
-        manager.timeseries_batch(ref, epoch=initial - 1, after=initial_snapshot.applied)
+        manager.timeseries_batch(ref, epoch=initial - 1, after=manager.core.applied_at(initial))
     assert values(client, ref, epoch=first_epoch) == [2., 4.]
     assert client.client.resolve_storage_keys([point, ref]) == {point: head, ref: head}
     assert client.client.resolve_storage_keys([head], view="raw") == {head: ref}
@@ -287,8 +269,8 @@ def test_chain_views_history_pagination_and_middle_removal(system):
     manager.apps._install({"second": declaration("second", ref, function).to_dict()})
     assert manager.apps.inspect("second")["operators"][0]["version"] != old_version
     assert values(client, ref) == [2., 4.]
-    with pytest.raises(ValueError, match="not been published"):
-        manager.core.engine.plan_at(manager.core.engine.snapshot().epoch + 1)
+    with pytest.raises(NotFound, match="not published"):
+        manager.resolve_storage_keys([ref], epoch=manager.core.engine.snapshot().epoch + 1)
 
 
 def reader(*refs, view=None, group="urn:replacement:tank"):
@@ -358,7 +340,7 @@ def test_competing_claims_metadata_and_group_cardinality(system):
     manager, _, _, module, _, _, ref = system
     app = declaration("first", ref, aq.PythonFunction.from_file(module, "double"))
     manager.deploy_app(app)
-    before = manager.core.engine.snapshot().plan
+    before = manager.core.engine.snapshot().plan()
     with pytest.raises(ValueError, match="competing replacements"):
         manager.deploy_app(replace(app, name="sibling"))
     with pytest.raises(ValueError, match="not compatible with its input's unit"):
@@ -367,7 +349,7 @@ def test_competing_claims_metadata_and_group_cardinality(system):
         manager.deploy_app(replace(app, inputs={"raw": selection(ref, as_of=MINUTE)}))
     with pytest.raises(ValueError, match="exactly one"):
         manager.deploy_app(replace(app, inputs={"raw": [selection(ref), selection("urn:another")]}))
-    assert manager.core.engine.snapshot().plan == before
+    assert manager.core.engine.snapshot().plan() == before
     # Repeated identical query rows still identify one physical input.
     manager.deploy_app(replace(app, inputs={"raw": [selection(ref), selection(ref)]}))
     from rdflib import URIRef
@@ -420,7 +402,7 @@ def test_replacements_inherit_metadata_and_may_change_to_a_compatible_unit(syste
                     aq.PythonFunction.from_file(module.parent / "celsius.py", "celsius"))
     with pytest.raises(ValueError, match="not compatible"):
         manager.deploy_app(replace(second, outputs={"out": aq.ReplacementOutput(unit=NTU)}))
-    assert replacements.units(manager.core.engine.snapshot().plan) == {clean: DEG_C}
+    assert replacements.units(manager.core.engine.snapshot().plan()) == {clean: DEG_C}
 
 
 def test_failed_new_head_stale_values_and_successful_empty_result(system):

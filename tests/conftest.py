@@ -63,12 +63,12 @@ def acquirium_client_csv(own_acquirium):
 
 
 @pytest.fixture
-def samples():
+def samples(tmp_path):
     """Experiment samples sent to an in-memory Escapement."""
     from acquirium.core import Core
     from acquirium.ExperimentSamples import EscapementSamples
 
-    core = Core(":memory:")
+    core = Core(":memory:", module_paths=[str(tmp_path)])
     try:
         yield EscapementSamples(core)
     finally:

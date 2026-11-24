@@ -17,8 +17,15 @@ def claimed_inputs(declaration):
 
 
 def annotation(operator, key):
-    """One entry of the plan annotation that compile writes on an operator."""
+    """One entry of the replacement metadata on an operator or instance."""
+    if "annotations" in operator:
+        return (operator["annotations"] or {}).get(key, {})
     return operator.get("parameters", {}).get("__acquirium", {}).get(key, {})
+
+
+def _instances(plan):
+    plan = plan or {}
+    return plan.get("instances", plan.get("operators", ()))
 
 
 def input_views(declarations):
@@ -60,7 +67,7 @@ def compile(operators, declarations, *, streams, rebind, previous_plan=None, com
     """
     outputs = {ref for op in operators for ref in op["outputs"].values()}
     removed = {
-        op["outputs"][port] for op in (previous_plan or {}).get("operators", [])
+        op["outputs"][port] for op in _instances(previous_plan)
         for port in annotation(op, "replaces")
     } - outputs
     views = input_views(declarations)
@@ -127,7 +134,7 @@ def compile(operators, declarations, *, streams, rebind, previous_plan=None, com
 def units(plan):
     """The unit each replacement stage in ``plan`` reports, by stream."""
     result = {}
-    for operator in (plan or {}).get("operators", []):
+    for operator in _instances(plan):
         for port, unit in annotation(operator, "units").items():
             result[operator["outputs"][port]] = unit
     return result
@@ -179,7 +186,7 @@ def resolve(plan, refs, *, view="current"):
         raise ValueError("view must be 'current', 'raw', or 'stored'")
     links = {}
     if view != "stored":
-        for operator in (plan or {}).get("operators", []):
+        for operator in _instances(plan):
             for port, source in annotation(operator, "replaces").items():
                 target = operator["outputs"][port]
                 key, value = (source, target) if view == "current" else (target, source)

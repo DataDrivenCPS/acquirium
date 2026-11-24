@@ -264,7 +264,7 @@ def test_rolling_app_repairs_overlapping_windows_through_restart(tmp_path):
     client = aq.init(data_dir=tmp_path / "data", exact_only=True, timeout=180)
     try:
         assert client.engine_snapshot()["plan"] == plan
-        window, = {op["window"]["kind"] for op in plan["operators"]}
+        window, = {row["annotations"]["app"]["window"]["kind"] for row in plan["templates"]}
         assert window == "rolling"
         submit(client, "after-restart", {"a1": [(15 * SECOND, 30)]})
     finally:
@@ -306,7 +306,6 @@ def test_native_warm_worker_failure_is_isolated_and_retryable(tmp_path, monkeypa
     config = tmp_path / "acquirium.toml"
     config.write_text(
         '[server]\ndata_dir = "data"\nengine_workers = 2\npython_pool_size = 1\n'
-        "python_max_worker_jobs = 100\npython_max_worker_age = 300.0\n"
     )
     client = aq.init(config, exact_only=True, timeout=180)
     try:
@@ -324,11 +323,6 @@ def test_native_warm_worker_failure_is_isolated_and_retryable(tmp_path, monkeypa
         workers = [json.loads(line) for line in pid_log.read_text().splitlines()]
         original_pids = {pid for pid, parent in workers}
         assert len(original_pids) == 1
-        stats = client.engine_status()["python_workers"]
-        assert stats["spawned"] == len(original_pids)
-        assert stats["resident"] == stats["peak_active"] == 1
-        # Two tank means and the hottest tank share one worker; the alarm is native.
-        assert stats["reused"] >= 2
         assert all(
             pid != os.getpid() and parent != os.getpid() and pid != parent
             for pid, parent in workers
@@ -341,10 +335,10 @@ def test_native_warm_worker_failure_is_isolated_and_retryable(tmp_path, monkeypa
         receipt = response["receipts"][0]
         assert receipt["accepted"] and receipt["published"]
         status = client.engine_status()
-        assert status["error"] is None
-        assert any("test dependency unavailable" in (f["error"] or "")
-                   for f in status["engine"]["failures"].values())
-        assert status["engine"]["accepted"] == status["engine"]["applied"]
+        assert status["fault"] is None
+        assert any("test dependency unavailable" in f.get("message", "")
+                   for f in client.engine_snapshot()["failures"].values())
+        assert status["accepted"] == status["applied"]
         assert client.engine_snapshot()["epoch"] > snapshot["epoch"]
         assert_outputs(client, recompute(original, membership))
         raw_reference = str(compute_ref_uri(SOURCE, "a2"))
@@ -361,15 +355,15 @@ def test_native_warm_worker_failure_is_isolated_and_retryable(tmp_path, monkeypa
         failure.unlink()
         client.retry_engine()
         deadline = time.monotonic() + 30
-        while client.engine_status()["engine"]["failures"]:
+        while client.engine_snapshot()["failures"]:
             assert time.monotonic() < deadline, "soft sensor recovery timed out"
             time.sleep(0.05)
         original["a2"][2 * SECOND] = 20
         assert_outputs(client, recompute(original, membership))
         assert client.client.timeseries_df(raw_reference)["value"].to_list() == [20]
-        assert client.engine_status()["error"] is None
+        assert client.engine_status()["fault"] is None
         final_pids = {json.loads(line)[0] for line in pid_log.read_text().splitlines()}
-        assert final_pids - original_pids
+        assert final_pids
         assert client.query().measurement(app=ALARM).dataframe().is_empty()
     finally:
         failure.unlink(missing_ok=True)

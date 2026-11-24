@@ -15,6 +15,7 @@ from acquirium.ExperimentSamples import sample_frame
 from acquirium.Experiments import ExperimentStore
 from acquirium.Storage.metadata_outbox import execute
 from tests.unit.test_experiment_metadata import MemoryGraphStore
+from tests.epoch_helpers import all_readings
 
 WHEN = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
@@ -30,8 +31,7 @@ def _count(store, table):
 
 
 def _samples(store):
-    """Every sample in the ledger's Escapement, as (stream, time, value)."""
-    return [(r.stream, r.event_time_ns, r.value) for r in store.samples.core.engine.snapshot().readings()]
+    return all_readings(store.samples.core)
 
 
 def test_outbox_failure_rolls_back_lifecycle_write(ledger, monkeypatch):
@@ -243,25 +243,25 @@ def test_time_series_observations_record_their_epoch(ledger):
     assert epochs == {"level": published, "used": published, "cost": None}
 
 
-def test_recording_does_not_wait_for_escapement_to_publish(ledger):
+def test_recording_does_not_wait_for_escapement_to_publish(ledger, tmp_path):
+    from tests.epoch_helpers import pause_publication, readings
+
     study = ledger.define("no wait")
     level = ledger.declare(study["template_id"], "level", "output", "timeseries", {})
     used = ledger.declare(study["template_id"], "used", "input", "timeseries", {})
     run = ledger.start(study["template_id"], {})["run_id"]
     core = ledger.store.samples.core
-    # With Escapement publishing nothing, recordings still commit.
-    core.processor.stop(drain=False)
-    core.ingest("plant", "flow-1", sample_frame("urn:plant:flow", [(WHEN, 2.0)]))
-    ledger.record_batch(run, [dict(form="samples", variable_id=level["variable_id"], samples=[[WHEN.isoformat(), 1.0]])])
-    ledger.record_batch(run, [dict(form="reference", variable_id=used["variable_id"], ref_uri="urn:plant:flow",
-                                   interval=[WHEN.isoformat(), WHEN.isoformat()])])
-    assert core.engine.snapshot().applied == 0
-    # Reading the observations waits for their data to publish; the
-    # reference's epoch includes the plant data written before it.
-    core.processor = core.engine.start()
+    # Hold publication in the calculation while both recordings commit.
+    with pause_publication(core, tmp_path, "urn:plant:flow"):
+        before = core.engine.status()["applied"]
+        core.ingest("plant", "flow-1", sample_frame("urn:plant:flow", [(WHEN, 2.0)]))
+        ledger.record_batch(run, [dict(form="samples", variable_id=level["variable_id"], samples=[[WHEN.isoformat(), 1.0]])])
+        ledger.record_batch(run, [dict(form="reference", variable_id=used["variable_id"], ref_uri="urn:plant:flow",
+                                       interval=[WHEN.isoformat(), WHEN.isoformat()])])
+        assert core.engine.status()["applied"] == before
     epochs = {item["variable"]: item["epoch"] for item in ledger.observations(study["template_id"])}
     assert epochs["level"] is not None and epochs["used"] >= epochs["level"]
-    assert [r.value for r in core.engine.query("urn:plant:flow", epoch=epochs["used"])] == [2.0]
+    assert readings(core.engine.snapshot(epochs["used"]), "urn:plant:flow") == [2.0]
 
 
 def test_runs_record_without_waiting_on_each_other(ledger, monkeypatch):
