@@ -24,7 +24,6 @@ from escapement import Receipt
 from rdflib import Graph, Literal, RDF, RDFS, URIRef
 
 from acquirium import replacements
-from acquirium.replacements import app_of
 from acquirium.internals.models import compute_stream_uri, looks_like_uri
 from acquirium.Storage.graph_registry import DERIVED_SOURCE_PREFIX
 from acquirium.Storage.values import normalize_value_kind
@@ -528,8 +527,7 @@ class Apps:
                 )
         return code
 
-    def _compile(self, declarations, *, graph=None):
-        graph = self.graph if graph is None else graph
+    def _compile(self, declarations, apps, graph):
         for name, declaration in declarations.items():
             for item in declaration["inputs"]:
                 upstream, port = item.get("upstream"), item.get("upstream_port")
@@ -538,17 +536,16 @@ class Apps:
                         f"app {name!r} input {item['input']!r} needs output {port!r} "
                         f"of app {upstream!r}, which is not deployed"
                     )
-        operators, matches, skipped, ports = [], {}, {}, []
+        plan = {"templates": [], "instances": [], "bindings": []}
+        bindings, matches, skipped = {}, {}, {}
         # The selection behind each bound input, so a rebound input can
         # describe the stream it ends up reading.
         selected = {}
         for name, declaration in sorted(declarations.items()):
-            app = App.from_dict(declaration)
-            items = app.input_items()
-            as_of = {role: s.as_of for role, s in items if s.as_of is not None}
+            app = apps[name]
             groups, parameters = {}, {}
             matches[name], skipped[name] = {}, {}
-            for role, selection in items:
+            for role, selection in app.input_items():
                 conversion = (
                     self._conversions(selection.target_unit) if selection.target_unit else None
                 )
@@ -577,17 +574,18 @@ class Apps:
                     group = row.get(selection.group) if selection.group else name
                     if not stream or not group:
                         raise ValueError("selected stream/group must be bound")
+                    group, stream = str(group), str(stream)
                     context = {
                         str(key): str(value)
                         for key, value in row.items()
                         if value is not None
                     }
                     if selection.parameters is not None:
-                        values = selection.parameters.get(str(group))
+                        values = selection.parameters.get(group)
                         if values is None:
-                            skipped[name].setdefault(role, set()).add(str(group))
+                            skipped[name].setdefault(role, set()).add(group)
                             continue
-                        merged = parameters.setdefault(str(group), {})
+                        merged = parameters.setdefault(group, {})
                         for key, value in values.items():
                             if merged.setdefault(key, value) != value:
                                 raise ValueError(
@@ -602,65 +600,71 @@ class Apps:
                         if not unit or self.converter is None:
                             raise ValueError("input unit is required for conversion")
                         context.update(conversion(str(unit)))
-                    groups.setdefault(str(group), []).append(
-                        {"stream": str(stream), "role": role, "context": context}
-                    )
-                    selected.setdefault((_operator_id(name, str(group)), role, str(stream)), (selection, conversion))
+                    groups.setdefault(group, []).append({
+                        "template": name, "instance": group, "role": role, "stream": stream,
+                        "valid_from": None, "valid_to": None, "context": _json(context),
+                    })
+                    selected.setdefault((name, group, role, stream), (selection, conversion))
                     matches[name][role] += 1
-            for group, inputs in sorted(groups.items()):
+            for group, rows in sorted(groups.items()):
+                bindings[name, group] = rows
                 group_parameters = dict(parameters.get(group, {}))
                 group_key = [group]
                 if group_parameters.setdefault("group", group_key) != group_key:
                     raise ValueError(
                         f"app {name!r} parameter 'group' is reserved for the group key {group!r}"
                     )
-                outputs = {
-                    port: output_reference(name, group, port)
-                    for port in sorted(app.outputs)
-                }
                 # Refuse a group missing a parameter the function names.
                 _bind_parameters(declaration["function"], group_parameters, name, group)
-                operators.append({
-                    "id": _operator_id(name, group),
-                    "inputs": inputs, "outputs": outputs, "as_of": as_of,
+                plan["instances"].append({
+                    "template": name, "key": group,
+                    "outputs": {port: output_reference(name, group, port) for port in sorted(app.outputs)},
                     "parameters": group_parameters, "annotations": None,
                 })
-                ports.extend((name, group, port, reference, app.outputs[port])
-                             for port, reference in outputs.items())
+
+        streams = {}
         if any(map(replacements.claimed_inputs, declarations.values())):
-            streams = self._replacement_metadata(operators, declarations, graph)
-        else:
-            streams = {}
-        def rebind(operator, item, target, metadata):
+            streams = self._replacement_metadata(plan["instances"], bindings, declarations, graph)
+        views = replacements.input_views(declarations)
+
+        def rebind(binding, target, metadata):
             # Units and conversion factors describe the values the input reads.
-            selection, conversion = selected[(operator["id"], item["role"], item["stream"])]
             unit = metadata.get("unit")
-            context = dict(item["context"])
-            if unit:
-                for column in (selection.unit, selection.point_unit):
-                    if column and column in context:
-                        context[column] = unit
-                if conversion is not None:
-                    context.update(conversion(unit))
-            return dict(item, stream=target, context=context)
+            if not unit:
+                return dict(binding, stream=target)
+            identity = (binding["template"], binding["instance"], binding["role"], binding["stream"])
+            selection, conversion = selected[identity]
+            context = json.loads(binding["context"])
+            for column in (selection.unit, selection.point_unit):
+                if column and column in context:
+                    context[column] = unit
+            if conversion is not None:
+                context.update(conversion(unit))
+            return dict(binding, stream=target, context=_json(context))
 
         resolved = replacements.compile(
-            operators, declarations, streams=streams, previous_plan=self.state.get("plan"),
+            plan, bindings, declarations, views, streams=streams, previous_plan=self.state["plan"],
             compatible=self._compatible_units, rebind=rebind,
         )
-        bound = Counter()
-        for operator in operators:
-            # Bindings have a reproducible order after following replacement links.
-            operator["inputs"].sort(key=_json)
-            bound.update((app_of(operator["id"]), item["role"]) for item in operator["inputs"])
+        # Semantic selections are unbounded, so all bindings share the same span.
+        plan["bindings"] = sorted(
+            (row for rows in bindings.values() for row in rows),
+            key=lambda row: (row["template"], row["instance"], row["role"], row["stream"], row["context"]),
+        )
+        bound = Counter((row["template"], row["role"]) for row in plan["bindings"])
         # An input that follows replacements counts each identity once,
         # however many of its stages the query matched.
-        for (name, role), view in replacements.input_views(declarations).items():
+        for (name, role), view in views.items():
             if view != "stored":
                 matches[name][role] = bound[(name, role)]
         metadata = {name: Graph() for name in declarations}
-        for name, group, port, reference, spec in ports:
-            _output_metadata(metadata[name], name, group, port, reference, spec, resolved.get(reference))
+        for instance in plan["instances"]:
+            name, group = instance["template"], instance["key"]
+            for port, spec in apps[name].outputs.items():
+                ref = instance["outputs"][port]
+                _output_metadata(metadata[name], name, group, port, ref, spec, resolved.get(ref))
+            if declarations[name]["function"]["kind"] == "integral":
+                instance["outputs"][_RATE_PORT] = output_reference(name, group, _RATE_PORT)
         report = {
             name: {
                 "matches": matches[name],
@@ -668,7 +672,7 @@ class Apps:
             }
             for name in matches
         }
-        return operators, metadata, report
+        return plan, metadata, report
 
     def _compatible_units(self, before, after):
         """Whether a replacement may express its input's values in another unit."""
@@ -677,19 +681,20 @@ class Apps:
         converter = self.converter()
         return converter.check_compatible(converter.resolve_unit(before), converter.resolve_unit(after))
 
-    def _replacement_metadata(self, operators, declarations, graph):
+    def _replacement_metadata(self, instances, bindings, declarations, graph):
         # Candidate ordinary outputs need no graph lookup; replacement outputs
         # inherit theirs in replacements.compile. Read missing source metadata
         # in one batch, without inspecting unrelated registrations.
         streams, sources = {}, set()
-        for operator in operators:
-            declaration = declarations[app_of(operator["id"])]
+        for instance in instances:
+            name, group = instance["template"], instance["key"]
+            declaration = declarations[name]
             claimed = replacements.claimed_inputs(declaration)
-            for port, ref in operator["outputs"].items():
+            for port, spec in declaration["outputs"].items():
                 if port not in claimed:
-                    streams[ref] = declaration["outputs"][port]
+                    streams[instance["outputs"][port]] = spec
             roles = set(claimed.values())
-            sources.update(item["stream"] for item in operator["inputs"] if item["role"] in roles)
+            sources.update(row["stream"] for row in bindings[name, group] if row["role"] in roles)
         missing = sources - streams.keys()
         if not missing:
             return streams
@@ -796,9 +801,9 @@ class Apps:
         }, artifacts
 
     def _candidate(self, declarations):
-        plan = {"templates": [], "instances": [], "bindings": []}
         if not declarations:
-            return plan, [], self.graph.graph_status()["source_version"]
+            return {"templates": [], "instances": [], "bindings": []}, [], self.graph.graph_status()["source_version"]
+        apps = {name: App.from_dict(declaration) for name, declaration in declarations.items()}
         desired = {_source_id(name) for name in declarations}
         sources = self.graph.app_sources() | desired
         exclusions = {
@@ -810,7 +815,7 @@ class Apps:
         with self.graph.selection_snapshot(sources | exclusions) as view:
             view.stage({source: Graph() for source in sources - desired})
             for _ in range(8):
-                operators, metadata, report = self._compile(declarations, graph=view)
+                plan, metadata, report = self._compile(declarations, apps, view)
                 if not view.stage({_source_id(name): graph for name, graph in metadata.items()}):
                     break
             else:
@@ -844,29 +849,6 @@ class Apps:
                     "report": report[name],
                 },
             })
-        for operator in operators:
-            name = replacements.app_of(operator["id"])
-            key = operator["parameters"]["group"][0]
-            outputs = operator["outputs"]
-            if declarations[name]["function"]["kind"] == "integral":
-                outputs = {**outputs, _RATE_PORT: output_reference(name, key, _RATE_PORT)}
-            plan["instances"].append({
-                "template": name, "key": key, "parameters": operator["parameters"],
-                "outputs": outputs, "annotations": operator["annotations"],
-            })
-            for item in operator["inputs"]:
-                plan["bindings"].append({
-                    "template": name, "instance": key, "role": item["role"], "stream": item["stream"],
-                    "valid_from": item.get("valid_from"), "valid_to": item.get("valid_to"),
-                    "context": _json(item["context"]),
-                })
-        plan["bindings"] = sorted(
-            plan["bindings"], key=lambda row: (
-                row["template"], row["instance"], row["role"], row["stream"],
-                row["valid_from"] is not None, row["valid_from"],
-                row["valid_to"] is not None, row["valid_to"], row["context"],
-            )
-        )
         return plan, modules, view.revision
 
     def _adopt(self, plan, revision=None, *, epoch=None):
