@@ -40,7 +40,7 @@ version = "0.4.0a9"
 source = { editable = "." }
 dependencies = [
     { name = "duckdb" },
-    { name = "escapement-next" },
+    { name = "escapement-db" },
     { name = "fastapi" },
     { name = "fastembed" },
     { name = "fastexcel" },
@@ -97,7 +97,7 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "duckdb", specifier = ">=2.0.0" },
-    { name = "escapement-next", git = "ssh://git@github.com/gtfierro/escapement.git?subdirectory=crates%2Fpython&rev=c8fe56ebff83d9ffcbdee263434ab3b0b735a6b3" },
+    { name = "escapement-db", git = "ssh://git@github.com/gtfierro/escapement.git?subdirectory=crates%2Fpython&rev=25f80f12d5b2d21987e16183d2289789ac15f573" },
     { name = "fastapi", specifier = ">=0.125.0" },
     { name = "fastembed", specifier = ">=0.4.0" },
     { name = "fastexcel", specifier = ">=0.17.2" },
@@ -796,9 +796,9 @@ wheels = [
 ]
 
 [[package]]
-name = "escapement-next"
+name = "escapement-db"
 version = "0.1.0"
-source = { git = "ssh://git@github.com/gtfierro/escapement.git?subdirectory=crates%2Fpython&rev=c8fe56ebff83d9ffcbdee263434ab3b0b735a6b3#c8fe56ebff83d9ffcbdee263434ab3b0b735a6b3" }
+source = { git = "ssh://git@github.com/gtfierro/escapement.git?subdirectory=crates%2Fpython&rev=25f80f12d5b2d21987e16183d2289789ac15f573#25f80f12d5b2d21987e16183d2289789ac15f573" }
 dependencies = [
     { name = "polars" },
     { name = "pyarrow" },

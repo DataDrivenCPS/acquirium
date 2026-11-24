@@ -2,15 +2,10 @@
 title: Escapement core
 ---
 
-Escapement Next is Acquirium's time-series store and execution engine. The
+Escapement is Acquirium's time-series store and execution engine. The
 server owns one engine with background epoch and refresh workers. The default
 store is `escapement-epoch.duckdb` under the data directory. Set `engine_path`
 to use another file or a PostgreSQL URL.
-
-To move an existing deployment, start with a separate data directory and
-import the source readings and app declarations. Activating the apps
-recomputes their derived readings. Keep the legacy store for any experiments
-or consumers that still need its epoch history.
 
 The engine keeps a durable inbox of accepted writes and plan activations. Each
 epoch applies the next run of accepted requests, evaluates the affected app

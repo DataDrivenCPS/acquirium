@@ -20,8 +20,8 @@ max_pending_requests = 100000
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `data_dir` | `.acquirium` | Graph, indexes, cached calculation artifacts, and default engine database |
-| `engine_path` | `data_dir/escapement-epoch.duckdb` | Escapement Next store, either a DuckDB file or a PostgreSQL URL |
-| `engine_schema` | URL `search_path` when provided, otherwise `acquirium_epoch` | PostgreSQL schema for Escapement Next |
+| `engine_path` | `data_dir/escapement-epoch.duckdb` | Escapement store, either a DuckDB file or a PostgreSQL URL |
+| `engine_schema` | URL `search_path` when provided, otherwise `acquirium_epoch` | PostgreSQL schema for Escapement |
 | `experiments_path` | `engine_path` if it is a `postgres://` URL, else `data_dir/experiments.duckdb` | Experiment ledger: a DuckDB file or a `postgres://` URL. Holds Studies, runs, observations, and artifact bytes; their samples are Escapement streams |
 | `engine_workers` | 2 | Python workers available to synchronous app calculations |
 | `epoch_requests` | 128 | Maximum accepted requests processed per epoch |

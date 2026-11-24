@@ -19,7 +19,7 @@ import pyarrow as pa
 import pyarrow.ipc as ipc
 import pytest
 from fastapi.testclient import TestClient
-from escapement_next import NotFound
+from escapement import NotFound
 
 from acquirium import App, Output, Selection
 from acquirium.apps import _plan_id, output_reference

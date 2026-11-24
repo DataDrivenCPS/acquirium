@@ -5,7 +5,7 @@ import time
 import polars as pl
 import pyarrow as pa
 import pytest
-from escapement_next import Closed, Refused
+from escapement import Closed, Refused
 
 from acquirium.core import Core, SCHEMA
 from tests.epoch_helpers import plan, readings, value

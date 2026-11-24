@@ -78,20 +78,12 @@ def test_committed_deletion_is_retried_after_restart(experiment_ledger, tmp_path
     assert pending(store) == 0
 
 
-def seed_older_ledger(store, *, with_history):
+def test_ledger_with_another_migration_history_is_refused(experiment_ledger):
     from acquirium.Storage.ledger import DuckDBLedger
-    from acquirium.Storage.metadata_outbox import execute
     from acquirium.Storage.migrations import Migration, migrate
-    with store._lock, store._write_conn() as conn:
-        execute(conn, "CREATE TABLE experiment_templates (template_id VARCHAR PRIMARY KEY, name VARCHAR UNIQUE NOT NULL, created_at TIMESTAMP NOT NULL)")
-        if with_history:
-            migrate(conn, backend="duckdb" if isinstance(store, DuckDBLedger) else "postgres",
-                    component="experiments", migrations=(Migration(1, "observation_keys", ()),))
-
-
-@pytest.mark.parametrize("with_history", [False, True])
-def test_ledger_from_an_earlier_release_is_refused(experiment_ledger, with_history):
-    seed_older_ledger(experiment_ledger, with_history=with_history)
+    with experiment_ledger._lock, experiment_ledger._write_conn() as conn:
+        migrate(conn, backend="duckdb" if isinstance(experiment_ledger, DuckDBLedger) else "postgres",
+                component="experiments", migrations=(Migration(1, "observation_keys", ()),))
     with pytest.raises(RuntimeError, match="fresh data directory"):
         ExperimentStore(experiment_ledger, graph_store=MemoryGraphStore())
 

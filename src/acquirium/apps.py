@@ -20,7 +20,7 @@ from typing import Any, Mapping, Sequence
 
 from acquirium.app_spec import FixedBucket, Native, Pointwise, PythonFunction, Rolling
 from acquirium.functions import WINDOW_BUILTINS
-from escapement_next import Receipt
+from escapement import Receipt
 from rdflib import Graph, Literal, RDF, RDFS, URIRef
 
 from acquirium import replacements

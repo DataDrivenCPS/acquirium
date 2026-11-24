@@ -12,8 +12,8 @@ change in any release.
 
 ### Removed
 - Upgrades of experiment ledgers from earlier releases. The ledger schema is
-  now a single baseline migration, and an older ledger is refused at startup
-  with a message to use a fresh data directory.
+  now a single baseline migration. Stores and ledgers written by earlier
+  releases are not migrated or detected; start with a new data directory.
 - **Breaking:** `acquirium.functions.previous_rows` and
   `context["previous"]["rows"]`. Escapement does not keep a window's input
   rows; a sequential calculation reads its earlier results with
@@ -127,6 +127,8 @@ change in any release.
   read it. Requires the Escapement rolling-window release.
 
 ### Changed
+- Acquirium depends on `escapement-db`, imported as `escapement`, in place of
+  `escapement-next`.
 - The operating-limits harnesses (`examples/operating_limits`) run on
   Acquirium's engine core, with the 15-minute mean compiled as the `mean`
   built-in.

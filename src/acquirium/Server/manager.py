@@ -117,10 +117,6 @@ class Manager:
                 _wipe_dir_contents(base)
                 print(f"Deleted data directory contents: {base}")
         base.mkdir(parents=True, exist_ok=True)
-        if any(
-            (base / name).exists() for name in ("apps.json", "escapement.duckdb")
-        ):
-            raise ValueError("Escapement Next requires a separate data directory or a migrated legacy store")
         graph_path = Path(graph_path) if graph_path is not None else base / ".oxigraph"
         ontoenv_root = Path(ontoenv_root) if ontoenv_root is not None else base
 

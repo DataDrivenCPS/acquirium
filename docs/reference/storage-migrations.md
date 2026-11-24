@@ -14,9 +14,7 @@ opens. Applied versions are recorded in `schema_migrations`. Each upgrade runs
 in a transaction with its ledger entry; a failure rolls both back. Unknown
 versions or changed migration names raise an error.
 
-Version 1 creates the whole current schema. A ledger written by an earlier
-release, before that baseline, is not upgraded: the server refuses to open it,
-and its records need a fresh data directory.
+Version 1 creates the whole current schema.
 
 `recreate=True` erases the configured data directory and experiment ledger.
 Use it only when those records can be discarded.

@@ -14,7 +14,7 @@ from threading import Condition, Event, Thread
 import polars as pl
 import pyarrow as pa
 import pyarrow.compute as pc
-from escapement_next import Closed, Engine, EscapementError, NotFound, Receipt, Refused
+from escapement import Closed, Engine, EscapementError, NotFound, Receipt, Refused
 
 from acquirium.internals.models import MAX_REQUEST_ROWS
 from acquirium.Storage.values import split_values

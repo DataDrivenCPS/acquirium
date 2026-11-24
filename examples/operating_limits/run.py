@@ -21,7 +21,7 @@ from pathlib import Path
 
 import polars as pl
 import pyarrow as pa
-from escapement_next import Capacity
+from escapement import Capacity
 
 from acquirium.core import Core
 
@@ -164,8 +164,8 @@ def bucket_mean_matches(snapshot, bucket):
 
 
 def engine_version():
-    """The installed escapement-next, and the revision it was built from."""
-    distribution = importlib.metadata.distribution("escapement-next")
+    """The installed escapement-db, and the revision it was built from."""
+    distribution = importlib.metadata.distribution("escapement-db")
     origin = json.loads(distribution.read_text("direct_url.json") or "{}")
     return {"version": distribution.version, "url": origin.get("url"),
             "revision": origin.get("vcs_info", {}).get("commit_id")}

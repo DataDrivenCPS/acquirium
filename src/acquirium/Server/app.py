@@ -26,7 +26,7 @@ import uuid
 from acquirium.Server.config import load_active_config, load_app_target
 from acquirium.Server.manager import Manager
 from acquirium.apps import App
-from escapement_next import Capacity, Closed, Fault, NotFound, Refused, Timeout
+from escapement import Capacity, Closed, Fault, NotFound, Refused, Timeout
 
 from acquirium.internals.models import (
     StreamInsert,

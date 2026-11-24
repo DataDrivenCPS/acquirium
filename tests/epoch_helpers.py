@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from hashlib import sha256
 
 import pyarrow as pa
-from escapement_next import NotFound
+from escapement import NotFound
 
 
 def readings(snapshot, stream, *, start=None, end=None):

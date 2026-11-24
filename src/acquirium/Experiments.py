@@ -128,10 +128,6 @@ class ExperimentStore:
         # The ledger stores provenance records and artifact bytes; time-series
         # samples are Escapement streams (``store.samples``).
         with store._lock, store._write_conn() as conn:
-            tables = {row[0] for row in self._execute(conn, "SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema()").fetchall()}
-            if "experiment_templates" in tables and "schema_migrations" not in tables:
-                raise RuntimeError("this experiment ledger was written by an earlier version of Acquirium "
-                                   "and cannot be upgraded; use a fresh data directory")
             migrate(conn, backend="postgres" if conn.__class__.__module__.startswith("psycopg") else "duckdb", component="experiments",
                     migrations=EXPERIMENT_MIGRATIONS)
         self._resolutions = {}

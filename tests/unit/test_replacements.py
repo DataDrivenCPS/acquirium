@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 import polars as pl
 import pytest
-from escapement_next import NotFound
+from escapement import NotFound
 
 import acquirium as aq
 from acquirium import replacements

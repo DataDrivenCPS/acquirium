@@ -1386,7 +1386,7 @@ def test_startup_refuses_an_engine_plan_without_acquirium_annotations(tmp_path):
 
 
 def test_engine_failures_are_retryable_and_bad_input_is_not(system, monkeypatch):
-    from escapement_next import Fault
+    from escapement import Fault
 
     manager, http, client = system
     register(system, "errors")

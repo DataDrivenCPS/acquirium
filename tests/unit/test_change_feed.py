@@ -190,7 +190,7 @@ def test_http_capacity_is_retryable_and_unpublished_admission_is_not_in_feed(
 
 def test_a_recording_refused_at_capacity_is_retryable_and_left_uncommitted(tmp_path, monkeypatch):
     from acquirium.Server.manager import Manager
-    from escapement_next import Capacity
+    from escapement import Capacity
 
     manager = Manager(data_dir=tmp_path, exact_only=True, max_pending_requests=1)
     try:
