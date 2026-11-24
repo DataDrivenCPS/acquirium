@@ -46,8 +46,8 @@ def register(client):
             streams.append(
                 {
                     "source_id": SOURCE,
-                    "ref_name": f"{skid}-{measurement}",
-                    "point_uri": f"urn:membrane:{skid}-{measurement}",
+                    "stream_name": f"{skid}-{measurement}",
+                    "property_uri": f"urn:membrane:{skid}-{measurement}",
                     "unit": unit,
                     "value_kind": "numeric",
                 }

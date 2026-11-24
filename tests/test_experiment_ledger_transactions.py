@@ -233,7 +233,7 @@ def test_time_series_observations_record_their_epoch(ledger):
     run = ledger.start(study["template_id"], {})["run_id"]
     [recorded] = ledger.record_batch(run, [dict(form="samples", variable_id=level["variable_id"],
                                                 samples=[[WHEN.isoformat(), 1.0]])])
-    ledger.record_batch(run, [dict(form="reference", variable_id=used["variable_id"], ref_uri=recorded["ref_uri"],
+    ledger.record_batch(run, [dict(form="reference", variable_id=used["variable_id"], stream_uri=recorded["stream_uri"],
                                    interval=[WHEN.isoformat(), WHEN.isoformat()]),
                               dict(form="value", variable_id=cost["variable_id"], value=3)])
     epochs = {item["variable"]: item["epoch"] for item in ledger.observations(study["template_id"])}
@@ -256,7 +256,7 @@ def test_recording_does_not_wait_for_escapement_to_publish(ledger, tmp_path):
         before = core.engine.status()["applied"]
         core.ingest("plant", "flow-1", sample_frame("urn:plant:flow", [(WHEN, 2.0)]))
         ledger.record_batch(run, [dict(form="samples", variable_id=level["variable_id"], samples=[[WHEN.isoformat(), 1.0]])])
-        ledger.record_batch(run, [dict(form="reference", variable_id=used["variable_id"], ref_uri="urn:plant:flow",
+        ledger.record_batch(run, [dict(form="reference", variable_id=used["variable_id"], stream_uri="urn:plant:flow",
                                        interval=[WHEN.isoformat(), WHEN.isoformat()])])
         assert core.engine.status()["applied"] == before
     epochs = {item["variable"]: item["epoch"] for item in ledger.observations(study["template_id"])}

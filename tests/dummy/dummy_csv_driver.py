@@ -39,8 +39,8 @@ class DummyCSVDriver(FileIngestDriver):
 
     def _bind_points(self) -> None:
         mapping: dict[str, str] = json.loads(COLUMN_LOOKUP_PATH.read_text())
-        for point_uri, column in mapping.items():
-            self.declare(_dummy_ref_name(column), point_uri=point_uri)
+        for property_uri, column in mapping.items():
+            self.declare(_dummy_stream_name(column), property_uri=property_uri)
 
     def read(self, path: Path, cursor: Any) -> FileBatch:
         offset = cursor or 0
@@ -52,7 +52,7 @@ class DummyCSVDriver(FileIngestDriver):
         if df.is_empty():
             return FileBatch(None, cursor)
 
-        streams = {c: _dummy_ref_name(c) for c in df.columns if c not in ("Date", "Time")}
+        streams = {c: _dummy_stream_name(c) for c in df.columns if c not in ("Date", "Time")}
         for name in streams.values():
             if not self.is_declared(name):
                 self.declare(name)
@@ -65,13 +65,13 @@ class DummyCSVDriver(FileIngestDriver):
                 .dt.replace_time_zone("UTC").alias("ts")
             )
             .select("ts", pl.exclude("ts", "Date", "Time").cast(pl.Utf8, strict=False))
-            .unpivot(index="ts", variable_name="ref_name", value_name="value")
+            .unpivot(index="ts", variable_name="stream_name", value_name="value")
             .drop_nulls(["ts", "value"])
         )
         return FileBatch(observations, offset + len(df))
 
 
-def _dummy_ref_name(column: str) -> str:
+def _dummy_stream_name(column: str) -> str:
     """The dummy plant's deliberate legacy header-to-reference mapping."""
     unsafe = str.maketrans({" ": "_", "(": "", ")": ""})
     return " ".join(column.split()).translate(unsafe)

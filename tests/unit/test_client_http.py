@@ -16,7 +16,7 @@ from requests import HTTPError
 
 from acquirium import Acquirium
 from acquirium.Client.client import AcquiriumClient
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import compute_stream_uri
 
 
 @pytest.fixture
@@ -225,7 +225,7 @@ class TestSparql:
 
 class TestResolve:
     def test_single_text_returns_best_uri(self, client):
-        assert client.resolve("pump", "class") == "http://data.ashrae.org/standard223#Pump"
+        assert client.resolve("pump", "class") == "https://watermetadata.org/ontology/watr#Pump"
 
     def test_single_text_no_match_is_none(self, client):
         assert client.resolve("zzzznonexistent") is None
@@ -233,7 +233,7 @@ class TestResolve:
     def test_top_k_returns_candidates(self, client):
         matches = client.resolve("pump", "class", top_k=3)
         assert 1 < len(matches) <= 3
-        assert matches[0]["uri"] == "http://data.ashrae.org/standard223#Pump"
+        assert matches[0]["uri"] == "https://watermetadata.org/ontology/watr#Pump"
 
     def test_record_form_joint_resolution(self, client):
         assert client.resolve({"eu": ("gal/min", "unit"), "qty": ("zzzznonexistent", "quantity_kind"),
@@ -285,7 +285,7 @@ def test_recording_is_resent_while_the_server_is_at_capacity(offline):
 def test_arrow_insert_is_resent_whole_with_its_request_id(offline):
     import pyarrow as pa
     table = pa.table({"ts": pa.array([datetime(2026, 1, 1, tzinfo=timezone.utc)], pa.timestamp("us", tz="UTC")),
-                      "ref_name": ["temp"], "value": [1.0]})
+                      "stream_name": ["temp"], "value": [1.0]})
     with patch.object(offline._http, "post", side_effect=[_response(503, b'{"detail": "full"}'),
                                                           _response(200, b'{"rows_inserted": 1, "receipts": []}')]) as post:
         assert offline.insert_timeseries_arrow("src", table, request_id="r1")["rows_inserted"] == 1
@@ -298,7 +298,7 @@ def test_arrow_insert_is_resent_whole_with_its_request_id(offline):
 def test_writes_raise_other_errors_and_a_refusal_past_the_budget(offline):
     with patch.object(offline._http, "post", return_value=_response(400, b'{"detail": "bad"}')) as post:
         with pytest.raises(HTTPError, match="bad"):
-            offline.insert_timeseries(source_id="src", ref_name="temp", rows=[])
+            offline.insert_timeseries(source_id="src", stream_name="temp", rows=[])
     assert post.call_count == 1
     with patch.object(offline._http, "post", return_value=_response(503, b'{"detail": "full"}')) as post:
         with pytest.raises(HTTPError, match="full"):
@@ -317,7 +317,7 @@ def test_large_inserts_are_split_in_order_and_only_the_last_waits(offline):
     bodies = [call.kwargs["json"] for call in post.call_args_list]
     assert [sum(len(item["values"]) + item["replace"] for item in body) for body in bodies] == [MAX_REQUEST_ROWS, 9]
     # The clear travels with the stream's first rows, so it lands before them.
-    assert [(item["ref_name"], item["replace"]) for body in bodies for item in body] == [
+    assert [(item["stream_name"], item["replace"]) for body in bodies for item in body] == [
         ("a", True), ("a", False), ("b", False)]
     assert {item["request_id"] for item in bodies[0]} == {"r:0"} and {item["request_id"] for item in bodies[1]} == {"r:1"}
     assert [call.kwargs["params"]["wait"] for call in post.call_args_list] == [0, 30]
@@ -326,12 +326,11 @@ def test_large_inserts_are_split_in_order_and_only_the_last_waits(offline):
 
 def test_replace_keeps_exactly_the_supplied_rows(client):
     source, start = f"replace-{uuid4().hex[:8]}", datetime(2026, 1, 1, tzinfo=timezone.utc)
-    client.register_datasource(source)
-    client.register_streams([{"source_id": source, "ref_name": "s", "value_kind": "numeric"}])
+    client.register_streams([{"source_id": source, "stream_name": "s", "value_kind": "numeric"}])
     at = [start + timedelta(minutes=i) for i in range(3)]
-    client.insert_timeseries(source_id=source, ref_name="s", rows=list(zip(at, [1.0, 2.0, 3.0])))
-    client.insert_timeseries(source_id=source, ref_name="s", rows=[(at[1], 20.0)], replace=True)
-    ref = str(compute_ref_uri(source, "s"))
+    client.insert_timeseries(source_id=source, stream_name="s", rows=list(zip(at, [1.0, 2.0, 3.0])))
+    client.insert_timeseries(source_id=source, stream_name="s", rows=[(at[1], 20.0)], replace=True)
+    ref = str(compute_stream_uri(source, "s"))
     assert client.timeseries_df(ref)["value"].to_list() == [20.0]
-    client.insert_timeseries(source_id=source, ref_name="s", rows=[], replace=True)
+    client.insert_timeseries(source_id=source, stream_name="s", rows=[], replace=True)
     assert client.timeseries_df(ref).is_empty()

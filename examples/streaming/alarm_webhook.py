@@ -23,7 +23,7 @@ SAVED = Path("alarm-cursor.json")
 
 client = aq.Acquirium(server_url="127.0.0.1", server_port=8000)
 alarm = client.query().measurement(alias="alarm", app="high-mean")
-stream = alarm.data().stream_info()["ref_uri"][0]
+stream = alarm.data().stream_info()["stream_uri"][0]
 
 if SAVED.exists():
     cursor = json.loads(SAVED.read_text())

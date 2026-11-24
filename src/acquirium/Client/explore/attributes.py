@@ -32,6 +32,7 @@ from acquirium.internals.internals_namespaces import (
     HAS_MEDIUM,
     HAS_QUANTITY_KIND,
     HAS_UNIT,
+    IS_DISCONNECTED,
     OF_MEDIUM,
     OF_SUBSTANCE,
     PRODUCED_BY,
@@ -115,6 +116,10 @@ REGISTRY: dict[str, Attr] = {
         # app compiler. Absent on measurements that came from a driver.
         Attr("app", (str(PRODUCED_BY),), "any", DATA, literal=True,
              doc='app that derived the measurement ("normalize-temperatures")'),
+        # true on the property generated for a stream that was registered
+        # without a property_uri; gone once the stream is connected.
+        Attr("is_disconnected", (str(IS_DISCONNECTED),), "any", DATA, literal=True,
+             doc='true for a stream not connected to a plant property yet'),
         # rdfs:label literal on a data node (stream label / CSV column name).
         Attr("label", (str(RDFS.label),), "any", BOTH, literal=True,
              doc='stream or entity label, matched verbatim ("Influent flow")'),
@@ -131,8 +136,8 @@ REGISTRY: dict[str, Attr] = {
 # label is already a metadata() column; id repeats the node column unless
 # saved, and metadata_objects() carries it regardless.
 NOT_IN_ALL = {
-    "entity": frozenset({"type", "cp_type", "id"}),
-    "data": frozenset({"type", "app", "label", "id"}),
+    "entity": frozenset({"type", "cp_type", "id", "is_disconnected"}),
+    "data": frozenset({"type", "app", "label", "id", "is_disconnected"}),
 }
 
 

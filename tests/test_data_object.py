@@ -88,16 +88,16 @@ def test_dataframe_narrow(acquirium_client_csv):
 
     df = data.dataframe(shape="narrow", compact=False)
     assert "data_alias" in df.columns
-    assert "point_uri" in df.columns
-    assert "ref_uri" in df.columns
+    assert "property_uri" in df.columns
+    assert "stream_uri" in df.columns
     assert "time" in df.columns
     assert "value_numeric" in df.columns
     assert "value_text" in df.columns
 
     # the default narrow layout is compact, matching Query.dataframe()
     df_compact = data.dataframe(shape="narrow")
-    assert "point_id" in df_compact.columns
-    assert "point_uri" not in df_compact.columns
+    assert "property_id" in df_compact.columns
+    assert "property_uri" not in df_compact.columns
 
 
 # ---- metadata() ----
@@ -110,12 +110,12 @@ def test_metadata(acquirium_client_csv):
 
     meta = data.metadata()
     assert "data_alias" in meta.columns
-    assert "point_uri" in meta.columns
-    assert "ref_uri" not in meta.columns
+    assert "property_uri" in meta.columns
+    assert "stream_uri" not in meta.columns
     assert not meta.is_empty()
 
-    meta_full = data.metadata(include_ref_uris=True)
-    assert "ref_uri" in meta_full.columns
+    meta_full = data.metadata(include_stream_uris=True)
+    assert "stream_uri" in meta_full.columns
 
 
 # ---- stream_info ----
@@ -126,33 +126,33 @@ def test_stream_info(acquirium_client_csv):
     data = acq.find_all_data().data()
 
     info = data.stream_info()
-    assert info.columns == ["stream", "alias", "point_uri", "ref_uri", "source_id", "ref_name"]
+    assert info.columns == ["stream", "alias", "property_uri", "stream_uri", "source_id", "stream_name"]
     assert info.height == 10
     assert info["stream"].to_list() == list(range(10))
     assert set(info["source_id"].to_list()) == {_CSV_SOURCE_ID}
-    assert set(info["ref_name"].to_list()) == {f"point_{i}" for i in range(1, 11)}
+    assert set(info["stream_name"].to_list()) == {f"point_{i}" for i in range(1, 11)}
 
     only = data.stream_info(data.aliases[0])
     assert only.height == 10
     with pytest.raises(KeyError):
         data.stream_info("nope")
 
-    meta = data.metadata(include_ref_uris=True)
-    assert {"ref_uri", "source_id", "ref_name"} <= set(meta.columns)
+    meta = data.metadata(include_stream_uris=True)
+    assert {"stream_uri", "source_id", "stream_name"} <= set(meta.columns)
 
 
 def test_dataframe_streams(acquirium_client_csv):
-    """streams= narrows every shape to the chosen streams, by number or ref URI."""
+    """streams= narrows every shape to the chosen streams, by number or stream URI."""
     acq = acquirium_client_csv
     data = acq.find_all_data().data()
     info = data.stream_info()
 
     one = data.dataframe(shape="narrow", compact=False, streams=[0])
-    assert one["ref_uri"].unique().to_list() == [info["ref_uri"][0]]
-    assert data.dataframe(shape="narrow", compact=False, streams=info["ref_uri"][0]).equals(one)
+    assert one["stream_uri"].unique().to_list() == [info["stream_uri"][0]]
+    assert data.dataframe(shape="narrow", compact=False, streams=info["stream_uri"][0]).equals(one)
 
-    two = data.dataframe(shape="narrow", compact=False, streams=[0, info["ref_uri"][1]])
-    assert set(two["ref_uri"].to_list()) == set(info["ref_uri"][:2].to_list())
+    two = data.dataframe(shape="narrow", compact=False, streams=[0, info["stream_uri"][1]])
+    assert set(two["stream_uri"].to_list()) == set(info["stream_uri"][:2].to_list())
 
     wide = data.dataframe(streams=[0])
     assert len(wide.columns) == 2            # time + one stream
@@ -171,16 +171,16 @@ def test_latest(acquirium_client_csv):
     data = query.data()
 
     alias = data.aliases[0]
-    points = {b.point_uri for b in data.bindings if b.alias == alias}
+    points = {b.property_uri for b in data.bindings if b.alias == alias}
     latest = data.latest(alias)
     assert latest.shape[0] == len(points)
     assert "time" in latest.columns
     assert "value" in latest.columns
-    assert ("point_uri" in latest.columns) == (len(points) > 1)
+    assert ("property_uri" in latest.columns) == (len(points) > 1)
 
     everything = data.latest()
-    assert everything.columns == ["data_alias", "point_uri", "time", "value"]
-    assert everything.shape[0] == len({(b.alias, b.point_uri) for b in data.bindings})
+    assert everything.columns == ["data_alias", "property_uri", "time", "value"]
+    assert everything.shape[0] == len({(b.alias, b.property_uri) for b in data.bindings})
 
 
 # ---- Edge cases ----

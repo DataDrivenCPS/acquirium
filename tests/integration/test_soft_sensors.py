@@ -11,7 +11,7 @@ import pytest
 
 import acquirium as aq
 from acquirium.apps import output_reference
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import compute_stream_uri
 from examples.soft_sensors.declarations import (
     ALARM,
     BUCKET_NS,
@@ -118,8 +118,8 @@ def test_semantic_python_chain_matches_full_recomputation_and_restart(tmp_path):
             .entity(uri=TANK_A, alias="tank")
             .measurement(app=MEAN, alias="mean")
         )
-        discovered = query.data().metadata(include_ref_uris=True)
-        assert discovered["ref_uri"].unique().to_list() == [
+        discovered = query.data().metadata(include_stream_uris=True)
+        assert discovered["stream_uri"].unique().to_list() == [
             output_reference(MEAN, TANK_A, "mean")
         ]
         # The query DSL also compiles the group attachment for a downstream app.
@@ -341,7 +341,7 @@ def test_native_warm_worker_failure_is_isolated_and_retryable(tmp_path, monkeypa
         assert status["accepted"] == status["applied"]
         assert client.engine_snapshot()["epoch"] > snapshot["epoch"]
         assert_outputs(client, recompute(original, membership))
-        raw_reference = str(compute_ref_uri(SOURCE, "a2"))
+        raw_reference = str(compute_stream_uri(SOURCE, "a2"))
         assert client.client.timeseries_df(raw_reference)["value"].to_list() == [20]
         assert client.inspect_app(MEAN)["app"]["status"] == "failed"
         assert client.inspect_app(ALARM)["app"]["status"] == "blocked"

@@ -51,7 +51,7 @@ class CollectDriver(PollingIngestDriver):
     def collect(self) -> pl.DataFrame:
         return pl.DataFrame({
             "ts": [datetime(2024, 1, 1, tzinfo=timezone.utc)],
-            "ref_name": ["temp"],
+            "stream_name": ["temp"],
             "value": [21.5],
         })
 
@@ -83,7 +83,7 @@ def test_add_buffers_until_flush(tmp_path):
     driver.flush()
     (source_id, cols), = inserted(driver)
     assert source_id == "sensors"
-    assert cols["ref_name"] == ["temp"]
+    assert cols["stream_name"] == ["temp"]
     assert cols["value"] == [21.5]
 
 
@@ -97,7 +97,7 @@ def test_flush_sends_one_frame_for_all_buffered_rows(tmp_path):
 
     assert driver.aq.insert_timeseries_arrow.call_count == 1
     (_, cols), = inserted(driver)
-    assert cols["ref_name"] == ["temp", "rh", "temp"]
+    assert cols["stream_name"] == ["temp", "rh", "temp"]
     assert cols["value"] == [21.5, 55.0, 22.0]
 
 
@@ -158,7 +158,7 @@ def test_tick_reads_then_flushes(tmp_path):
 
     (source_id, cols), = inserted(driver)
     assert source_id == "sensors"
-    assert cols["ref_name"] == ["temp", "rh"]
+    assert cols["stream_name"] == ["temp", "rh"]
 
 
 def test_collect_style_driver_still_works(tmp_path):
@@ -167,7 +167,7 @@ def test_collect_style_driver_still_works(tmp_path):
 
     (source_id, cols), = inserted(driver)
     assert source_id == "sensors"
-    assert cols["ref_name"] == ["temp"]
+    assert cols["stream_name"] == ["temp"]
     assert cols["value"] == [21.5]
 
 
@@ -424,19 +424,11 @@ def test_undeclared_bulk_observation_is_rejected(tmp_path):
     driver = make_driver(AddDriver, tmp_path)
     frame = pl.DataFrame({
         "ts": [datetime.now(timezone.utc)],
-        "ref_name": ["missing"],
+        "stream_name": ["missing"],
         "value": [1.0],
     })
     with pytest.raises(UndeclaredStreamError, match="undeclared streams"):
         driver.insert_observations(frame)
-
-
-def test_platform_registers_declared_datasource(tmp_path):
-    driver = make_driver(AddDriver, tmp_path)
-    driver.aq.register_datasource.assert_called_once_with("sensors")
-
-
-
 
 
 def test_null_only_batch_does_not_freeze_inferred_value_kind(tmp_path):
@@ -451,17 +443,17 @@ def test_null_only_batch_does_not_freeze_inferred_value_kind(tmp_path):
         spec
         for call in driver.aq.register_streams.call_args_list
         for spec in call.args[0]
-        if spec["ref_name"] == "optional"
+        if spec["stream_name"] == "optional"
     ]
-    assert specs[-1]["value_kind"] == "numeric"
+    assert specs and all("value_kind" not in spec for spec in specs)
 
 
 def test_conflicting_redeclaration_after_registration_raises(tmp_path):
     driver = make_driver(AddDriver, tmp_path)
-    driver.declare("state", point_uri="urn:first")
+    driver.declare("state", property_uri="urn:first")
     driver.register_declared()
     with pytest.raises(ValueError, match="conflicting declaration"):
-        driver.declare("state", point_uri="urn:second")
+        driver.declare("state", property_uri="urn:second")
 
 
 def test_graceful_shutdown_flushes_after_stopping_producer(tmp_path):
@@ -484,7 +476,7 @@ def test_insert_resends_requests_refused_at_capacity_for_the_driver_budget(tmp_p
     driver = make_driver(CollectDriver, tmp_path)
     observations = pl.DataFrame({
         "ts": [datetime(2024, 1, 1, tzinfo=timezone.utc)],
-        "ref_name": ["temp"],
+        "stream_name": ["temp"],
         "value": [1.0],
     })
 
@@ -502,9 +494,32 @@ def test_insert_raises_other_http_errors(tmp_path):
     )
     observations = pl.DataFrame({
         "ts": [datetime(2024, 1, 1, tzinfo=timezone.utc)],
-        "ref_name": ["temp"],
+        "stream_name": ["temp"],
         "value": [1.0],
     })
     with pytest.raises(HTTPError):
         driver.insert_observations(observations)
     assert driver.aq.insert_timeseries_arrow.call_count == 1
+
+
+class BooleanDriver(PollingIngestDriver):
+    def setup(self) -> None:
+        self.source_id = "sensors"
+        self.declare("running")
+        self.declare("alarm", value_kind="text")
+
+    def read(self) -> None:
+        pass
+
+
+def test_a_boolean_is_sent_as_a_number_unless_the_stream_is_text(tmp_path) -> None:
+    driver = make_driver(BooleanDriver, tmp_path)
+    ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    driver.add("running", True, ts)
+    driver.add("running", 3.5, ts)
+    driver.add("alarm", False, ts)
+    frame = driver.normalize_observations(driver._pending_frame(driver._pending))
+    assert frame["value"].to_list() == ["1.0", "3.5", "False"]
+
+    typed = pl.DataFrame({"ts": [ts, ts], "stream_name": ["running", "alarm"], "value": [True, True]})
+    assert driver.normalize_observations(typed)["value"].to_list() == ["1.0", "True"]

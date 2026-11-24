@@ -25,13 +25,14 @@ from rdflib import Graph, Literal, RDF, RDFS, URIRef
 
 from acquirium import replacements
 from acquirium.replacements import app_of
-from acquirium.internals.models import compute_ref_uri, looks_like_uri
+from acquirium.internals.models import compute_stream_uri, looks_like_uri
 from acquirium.Storage.graph_registry import DERIVED_SOURCE_PREFIX
 from acquirium.Storage.values import normalize_value_kind
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_SOURCE_ID,
     ACQUIRIUM_REF_NAME,
     ACQUIRIUM_VALUE_KIND,
+    INFERRED_VALUE_KIND,
     HAS_EXTERNAL_REFERENCE,
     HAS_UNIT,
     HAS_QUANTITY_KIND,
@@ -408,7 +409,7 @@ def _warnings(report):
 
 
 def output_reference(app: str, group: str, port: str) -> str:
-    return str(compute_ref_uri(_source_id(app), _json([group, port])))
+    return str(compute_stream_uri(_source_id(app), _json([group, port])))
 
 
 # An app's operators are "<app>:<group digest>", one per selected group.
@@ -697,7 +698,9 @@ class Apps:
             SELECT ?stream ?value_kind ?unit ?quantity_kind WHERE {{
                 VALUES ?stream {{ {refs} }}
                 ?stream <{ACQUIRIUM_SOURCE_ID}> ?source .
-                OPTIONAL {{ ?stream <{ACQUIRIUM_VALUE_KIND}> ?value_kind . }}
+                OPTIONAL {{ ?stream <{ACQUIRIUM_VALUE_KIND}> ?declared_kind . }}
+                OPTIONAL {{ ?stream <{INFERRED_VALUE_KIND}> ?inferred_kind . }}
+                BIND(COALESCE(?declared_kind, ?inferred_kind) AS ?value_kind)
                 OPTIONAL {{ ?point <{HAS_EXTERNAL_REFERENCE}> ?stream .
                     OPTIONAL {{ ?point <{HAS_UNIT}> ?point_unit . }}
                     OPTIONAL {{ ?point <{HAS_QUANTITY_KIND}> ?quantity_kind . }}

@@ -34,6 +34,7 @@ from acquirium.TextMatch.embedding_matcher import (
     EmbeddingMatcher,
     ResolveResult,
     _split_local_name,
+    ranking_score,
 )
 from acquirium.internals.qudt_units import UnitNotFound
 
@@ -397,12 +398,17 @@ class ConceptResolver:
         """One total order: exact before semantic, then score.
 
         Stable sort, so candidates from earlier (higher-authority) sources
-        win ties against equal candidates from later ones. Dedupes by URI,
-        caps at ``limit``.
+        win ties against equal candidates from later ones. Exact hits keep
+        the order their source gave them. Among semantic hits a watr term
+        leads any other term within ``WATR_TIE_MARGIN`` of its score.
+        Dedupes by URI, caps at ``limit``.
         """
         ordered = sorted(
             candidates,
-            key=lambda r: (r.match_stage == "exact", r.score),
+            key=lambda r: (
+                r.match_stage == "exact",
+                r.score if r.match_stage == "exact" else ranking_score(r.uri, r.score),
+            ),
             reverse=True,
         )
         seen: set[str] = set()

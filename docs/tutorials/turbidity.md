@@ -9,7 +9,7 @@ at a stretch of time, cope with bad and missing data, and change its mind when
 better data arrives.
 
 This tutorial builds that alarm from two apps. It continues from
-[Soft sensor app](first-app.md).
+[Soft sensor app](advanced/first-app.md).
 
 ```text
 analyser readings ──replaced by──> turbidity-clean ──read by──> turbidity-alarm
@@ -237,7 +237,7 @@ arrives.
 ## Replacing the analyser readings
 
 Most derived streams sit beside their inputs. The high-wave stream in
-[Soft sensor app](first-app.md) is new information, and the sine wave is
+[Soft sensor app](advanced/first-app.md) is new information, and the sine wave is
 still the answer to "what did the driver produce?". Cleaning is different:
 nobody downstream should use Filter 3's raw readings when cleaned ones exist.
 The cleaner's output says so:
@@ -301,7 +301,7 @@ cleaner's query never matches it.
 
 A query that names the app, such as `measurement(app="turbidity-clean")`,
 reads that app's stored output exactly. The
-[replacement reference](../reference/apps.md#replacement-outputs) lists every
+[replacement reference](../reference/apps/outputs.md#replacement-outputs) lists every
 view.
 
 ## Sustained turbidity threshold

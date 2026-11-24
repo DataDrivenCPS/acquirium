@@ -2,7 +2,7 @@
 
 These are plain functions, not a base class: a driver reads its own file format
 however it likes, then calls :func:`to_observations` to get canonical
-``(ts, ref_name, value)`` rows. Nothing here knows about drivers, config, or
+``(ts, stream_name, value)`` rows. Nothing here knows about drivers, config, or
 the graph.
 """
 
@@ -171,7 +171,7 @@ def to_observations(
     timezone: str = "UTC",
     day_first: bool = False,
 ) -> pl.DataFrame:
-    """Reshape a wide or narrow tabular frame into ``(ts, ref_name, value)``.
+    """Reshape a wide or narrow tabular frame into ``(ts, stream_name, value)``.
 
     ``layout`` is ``"wide"`` (one column per stream) or ``"narrow"``
     (``time``/``id``/``value`` triples). Stream names are preserved exactly;
@@ -206,9 +206,9 @@ def to_observations(
                 raise ValueError(f"column '{col}' not found in {df.columns}")
         observations = df.select(
             pl.col("__ts").alias("ts"),
-            pl.col(id_col).cast(pl.Utf8).alias("ref_name"),
+            pl.col(id_col).cast(pl.Utf8).alias("stream_name"),
             *_values(df, [value_col], ["value"]),
-        ).drop_nulls("ref_name")
+        ).drop_nulls("stream_name")
     else:
         streams = [c for c in df.columns if c not in (*timestamp_columns, "__ts")]
         observations = (
@@ -216,7 +216,7 @@ def to_observations(
                 pl.col("__ts").alias("ts"),
                 *_values(df, streams, streams),
             )
-            .unpivot(index="ts", variable_name="ref_name", value_name="value")
+            .unpivot(index="ts", variable_name="stream_name", value_name="value")
         )
     return observations.drop_nulls("value")
 

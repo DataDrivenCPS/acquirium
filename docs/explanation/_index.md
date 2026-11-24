@@ -2,29 +2,25 @@
 title: Explanation
 ---
 
-These pages describe how Acquirium works and why it was designed that way.
-Read them when you want to understand a behaviour rather than look up a call.
+The pages in this section explain how Acquirium works and why.
+They are background reading. For step-by-step instructions, see the [tutorial](../tutorials/_index.md) and the [how-to guides](../how-to/_index.md).
 
-**Data queries**
+## Queries and data
 
-- [Query model](query-model.md): what a query is, how free text is resolved, and how a pattern becomes a graph query.
-- [Text resolution](text-resolution.md): how free text is matched to the vocabulary.
-- [Values](values.md): when a reading is a number and when it is text.
-- [Units](units.md): where units are recorded, and when values are converted.
+- [The query model](query-model.md): what a query is and how it is executed.
+- [Text matcher](text-resolution.md): how plain text is matched to the terms of the ontologies.
+- [Values](values.md): how numbers and text are stored and returned.
+- [Units](units.md): where a unit is recorded and how values are converted.
+- [The stream lifecycle](stream-lifecycle.md): what registration writes, how readings are stored and how a query finds them.
 
-**Data ingestion**
+## Drivers, apps and experiments
 
-- [Drivers](drivers.md): how a source hands readings to the server.
-- [Data stream lifecycle](stream-lifecycle.md): how a stream is identified, stored, and found again.
+- [How drivers work](drivers.md): what the server does when a driver runs.
+- [How apps work](apps.md): how the calculated streams are kept up to date.
+- [How experiments work](experiments.md): studies, runs and what is stored.
 
-**Derived data and analysis**
+## Inside the server
 
-- [Soft sensor inputs](soft-sensor-inputs.md): illustrated groups, time windows, function inputs, and one-to-many or many-to-one outputs.
-- [Derived stream updates](apps.md): what a correction changes, and why.
-- [Experiments](experiments.md): how Studies and runs keep the context of an analysis.
-
-**Server components**
-
-- [Server internals](server-internals.md): what one server process runs.
-- [Escapement core](escapement-core.md): writes, history, snapshots, and recovery.
-- [Graph updates and queries](graph-backend.md): ownership, inference, and fresh reads.
+- [Server internals](server-internals.md): the data folder, the stores and the startup order.
+- [The graph store](graph-backend.md): the graphs of each source, what a query reads and when it is rebuilt.
+- [Escapement core](escapement-core.md): how the progress of apps is stored and resumed.

@@ -6,7 +6,7 @@ no stream registry, SQL connections, revision ledger, or computation scheduler.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 from pathlib import Path
 from threading import Condition, Event, Thread
@@ -62,23 +62,22 @@ def _selected(times, values, texts, mode: str, stream: str) -> pa.RecordBatch:
 def time_ns(value: int | datetime | str | None) -> int | None:
     if value is None:
         return None
-    if isinstance(value, bool):
-        raise ValueError(
-            "timestamps must be UTC nanoseconds or timezone-aware datetimes"
-        )
+    if isinstance(value, bool) or not isinstance(value, (int, datetime, str)):
+        raise ValueError("timestamps must be UTC nanoseconds or ISO datetimes")
     if isinstance(value, int):
         if not -(2**63) <= value < 2**63:
             raise ValueError("timestamp exceeds signed UTC nanoseconds")
         return value
     if isinstance(value, str):
-        if datetime.fromisoformat(value.replace("Z", "+00:00")).tzinfo is None:
-            raise ValueError("timestamps must be timezone-aware")
-        series = pl.Series([value]).str.to_datetime(
-            time_unit="ns", time_zone="UTC", strict=True
-        )
+        try:
+            series = pl.Series([value]).str.to_datetime(
+                time_unit="ns", time_zone="UTC", strict=True
+            )
+        except pl.exceptions.PolarsError as error:
+            raise ValueError(f"invalid timestamp {value!r}") from error
         return series.cast(pl.Int64).item()
     if value.tzinfo is None:
-        raise ValueError("timestamps must be timezone-aware")
+        value = value.replace(tzinfo=timezone.utc)
     return (
         pc.cast(
             pa.array([value], type=pa.timestamp("us", tz="UTC")),
@@ -161,7 +160,7 @@ class Core:
                 logger.exception("could not advance Escapement retention")
 
     def ingest(self, source: str, request_id: str, frame: pl.DataFrame, *, replace=()):
-        """Submit ``ref_uri``, timezone-aware ``ts`` and ``value`` rows, or rows
+        """Submit ``stream_uri``, timezone-aware ``ts`` and ``value`` rows, or rows
         with ``operation`` ``"delete"``. Each value is stored as its row's
         ``value_kind`` (numeric when absent; see ``split_values``).
 
@@ -182,24 +181,24 @@ class Core:
         # Splitting deletes from values must not change which mutation wins
         # when the request addresses the same key more than once.
         frame = frame.select(
-            "ref_uri", "ts", "operation", "value", "value_kind"
+            "stream_uri", "ts", "operation", "value", "value_kind"
         ).with_row_index("_row")
         deleted = frame["operation"].eq("delete")
         rows = pl.concat([
             frame.filter(deleted).select(
-                "_row", "ref_uri", "ts", "operation",
+                "_row", "stream_uri", "ts", "operation",
                 pl.lit(None, pl.Float64).alias("number"), pl.lit(None, pl.String).alias("text"),
             ),
             split_values(frame.filter(~deleted).select(
-                "_row", "ref_uri", "ts", "operation", "value", "value_kind"
+                "_row", "stream_uri", "ts", "operation", "value", "value_kind"
             )),
         ]).sort("_row").drop("_row")
         # Keep the last surviving operation at each stream and time.
         # A row with neither a number nor text deletes the key.
         rows = (
-            rows.unique(subset=["ref_uri", "ts"], keep="last")
-            .sort(["ref_uri", "ts"])
-            .select(pl.col("ref_uri").alias("stream"), pl.col("ts").alias("time"), "number", "text")
+            rows.unique(subset=["stream_uri", "ts"], keep="last")
+            .sort(["stream_uri", "ts"])
+            .select(pl.col("stream_uri").alias("stream"), pl.col("ts").alias("time"), "number", "text")
             .to_arrow()
         )
         deletes = [(stream, None, None) for stream in replace]

@@ -200,6 +200,6 @@ finished program does this with a `catching_up` flag that turns off once a
 page reports `has_more=False`, meaning it has caught up with everything
 published.
 
-The fields of a page are listed in the [HTTP API reference](../reference/http-api.md).
+The fields of a page are listed in the [HTTP API reference](../reference/server/http-api.md).
 How writes are acknowledged and published is described in
 [Escapement core](../explanation/escapement-core.md#writes).

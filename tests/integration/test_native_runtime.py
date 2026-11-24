@@ -102,10 +102,10 @@ def test_local_runtime_native_function_corrections_deletion_and_restart(tmp_path
             [
                 dict(
                     source_id="gateway",
-                    ref_name="temperature",
+                    stream_name="temperature",
                     value_kind="numeric",
                     unit="http://qudt.org/vocab/unit/DEG_F",
-                    point_uri="urn:runtime:temperature",
+                    property_uri="urn:runtime:temperature",
                 )
             ]
         )

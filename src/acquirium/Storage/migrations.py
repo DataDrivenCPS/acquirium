@@ -72,7 +72,7 @@ _BASELINE = (
     "CREATE TABLE experiment_templates (template_id VARCHAR PRIMARY KEY, name VARCHAR UNIQUE NOT NULL, created_at TIMESTAMP NOT NULL)",
     "CREATE TABLE experiment_variables (variable_id VARCHAR PRIMARY KEY, template_id VARCHAR NOT NULL, label VARCHAR NOT NULL, role VARCHAR NOT NULL, kind VARCHAR NOT NULL, created_at TIMESTAMP NOT NULL, UNIQUE(template_id, label))",
     "CREATE TABLE experiment_runs (run_id VARCHAR PRIMARY KEY, template_id VARCHAR NOT NULL, status VARCHAR NOT NULL, started_at TIMESTAMP NOT NULL, finished_at TIMESTAMP, error_json VARCHAR)",
-    "CREATE TABLE experiment_observations (run_id VARCHAR NOT NULL, variable_id VARCHAR, sequence BIGINT NOT NULL, recorded_at TIMESTAMP NOT NULL, occurred_at TIMESTAMP, value_json VARCHAR, artifact_digest VARCHAR, ref_uri VARCHAR, range_start TIMESTAMP, range_end TIMESTAMP, key_json VARCHAR, PRIMARY KEY(run_id, sequence))",
+    "CREATE TABLE experiment_observations (run_id VARCHAR NOT NULL, variable_id VARCHAR, sequence BIGINT NOT NULL, recorded_at TIMESTAMP NOT NULL, occurred_at TIMESTAMP, value_json VARCHAR, artifact_digest VARCHAR, stream_uri VARCHAR, range_start TIMESTAMP, range_end TIMESTAMP, key_json VARCHAR, PRIMARY KEY(run_id, sequence))",
     # The Escapement request sequence each time-series observation's data was
     # accepted at; its epoch is looked up from it.
     "CREATE TABLE experiment_observation_accepted (run_id VARCHAR NOT NULL, sequence BIGINT NOT NULL, accepted BIGINT NOT NULL, PRIMARY KEY (run_id, sequence))",
@@ -81,14 +81,14 @@ _BASELINE = (
     "CREATE TABLE experiment_artifact_chunks (digest VARCHAR NOT NULL, seq INTEGER NOT NULL, data BYTEA NOT NULL, PRIMARY KEY(digest, seq))",
     # Every stream a run may have written: a row is added before the first
     # sample and removed only after the stream's samples are cleared.
-    "CREATE TABLE experiment_streams (ref_uri VARCHAR PRIMARY KEY, run_id VARCHAR NOT NULL, source_id VARCHAR NOT NULL, ref_name VARCHAR NOT NULL)",
+    "CREATE TABLE experiment_streams (stream_uri VARCHAR PRIMARY KEY, run_id VARCHAR NOT NULL, source_id VARCHAR NOT NULL, stream_name VARCHAR NOT NULL)",
     # Resolved graph writes, delivered in version order.
     "CREATE TABLE experiment_metadata_state (generation VARCHAR NOT NULL, version BIGINT NOT NULL, published_version BIGINT NOT NULL)",
     "CREATE TABLE experiment_metadata_outbox (version BIGINT PRIMARY KEY, update_text VARCHAR NOT NULL)",
     "CREATE INDEX experiment_variables_template_idx ON experiment_variables(template_id)",
     "CREATE INDEX experiment_runs_template_idx ON experiment_runs(template_id, status, started_at)",
     "CREATE INDEX experiment_observations_variable_idx ON experiment_observations(variable_id, run_id, sequence)",
-    "CREATE INDEX experiment_observations_ref_idx ON experiment_observations(ref_uri, range_start, range_end)",
+    "CREATE INDEX experiment_observations_ref_idx ON experiment_observations(stream_uri, range_start, range_end)",
 )
 
 # Version 1 creates the whole schema. Ledgers from releases before it are not

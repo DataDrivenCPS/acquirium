@@ -24,13 +24,13 @@ from escapement import NotFound
 from acquirium import App, Output, Selection
 from acquirium.apps import _plan_id, output_reference
 from acquirium.internals.internals_namespaces import OUTPUT_GROUP, PRODUCED_BY
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import compute_stream_uri
 from acquirium.Server.app import app as api
 from acquirium.Server.manager import Manager
 
 SOURCE = "live"
 STREAMS = "abc"
-REFS = {name: str(compute_ref_uri(SOURCE, name)) for name in STREAMS}
+REFS = {name: str(compute_stream_uri(SOURCE, name)) for name in STREAMS}
 FEEDS = "urn:live#feeds"
 GROUPS = ("urn:live:g1", "urn:live:g2")
 MEAN, TOTAL = "live-mean", "live-total"
@@ -238,7 +238,7 @@ def delete_frame(ref, ts):
 
     return pl.DataFrame(
         {
-            "ref_uri": [ref],
+            "stream_uri": [ref],
             "ts": pl.Series([ts], dtype=pl.Int64).cast(pl.Datetime("ns", "UTC")),
             "operation": ["delete"],
             "value": pl.Series([None], dtype=pl.Object),

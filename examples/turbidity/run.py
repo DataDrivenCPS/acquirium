@@ -39,11 +39,10 @@ def readings(location, normal):
 
 def run(client):
     client.insert_graph_file(Path(__file__).with_name("model.ttl"), source_id="turbidity-plant")
-    client.register_datasource(SOURCE)
     client.register_streams([{
         "source_id": SOURCE,
-        "ref_name": location,
-        "point_uri": f"urn:turbidity:{location}-turbidity",
+        "stream_name": location,
+        "property_uri": f"urn:turbidity:{location}-turbidity",
         "unit": NTU,
         "quantity_kind": TURBIDITY,
         "value_kind": "numeric",
@@ -88,7 +87,7 @@ def run(client):
     print(f"Sustained alarm, at most: {alarm.dataframe()['alarm'].max():.0f}")
 
     # The snapshot taken before the correction still holds the original alarm.
-    stream = alarm.data().stream_info()["ref_uri"][0]
+    stream = alarm.data().stream_info()["stream_uri"][0]
     earlier = client.stream(stream).dataframe(epoch=first)
     print(f"At the first snapshot, the alarm was on for {earlier['value'].sum():.0f} minutes")
 

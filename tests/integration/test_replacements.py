@@ -25,8 +25,8 @@ def calibrate(frame: pl.DataFrame, context):
     try:
         client.insert_graph_file(Path("examples/turbidity/model.ttl"), source_id="turbidity-plant")
         client.register_streams([dict(
-            source_id=SOURCE, ref_name=location, data_source=SOURCE,
-            point_uri=f"urn:turbidity:{location}-turbidity", unit=NTU, quantity_kind=TURBIDITY,
+            source_id=SOURCE, stream_name=location, data_source=SOURCE,
+            property_uri=f"urn:turbidity:{location}-turbidity", unit=NTU, quantity_kind=TURBIDITY,
         ) for location in LOCATIONS])
         clean, alarm = declarations(client)
         client.deploy_app(clean)

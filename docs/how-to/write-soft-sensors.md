@@ -8,7 +8,7 @@ Acquirium has built in, then moves to functions of your own, and covers the
 choices you make along the way: the window, state carried between results,
 speed, and settings that differ between groups.
 
-It uses the sine-wave server from [Soft sensor app](../tutorials/first-app.md).
+It uses the sine-wave server from [Soft sensor app](../tutorials/advanced/first-app.md).
 Start it if it is not running, and connect:
 
 ```python
@@ -96,7 +96,7 @@ changes, because a late reading arrived in its bucket, the threshold follows.
 
 `aq.Native.cumulative_sum` and `aq.Native.integral` keep running totals, such
 as the volume pumped from a flow rate. The
-[app reference](../reference/apps.md#built-in-functions) lists every built-in
+[app reference](../reference/apps/_index.md#built-in-functions) lists every built-in
 function.
 
 ## Python functions
@@ -120,7 +120,7 @@ def spread(frame, context):
     return {"spread": emit(context, value)}
 ```
 
-As in [your first app](../tutorials/first-app.md#function-inputs), the
+As in [your first app](../tutorials/advanced/first-app.md#function-inputs), the
 function receives readings in `frame` and returns one result for each output.
 `emit()` stamps the value at the timestamp in `context`. Given `None`, it writes
 nothing, and clears anything written at that timestamp before.
@@ -135,7 +135,7 @@ function only needs the values, so it leaves timestamp handling to `emit`.
 An unannotated function receives Polars. Annotate its first parameter with
 `pd.DataFrame` to receive Arrow-backed pandas 2.x, or `pl.DataFrame` to select
 Polars explicitly. The function still takes `(frame, context)` and returns a
-dataframe for each output. See the [dataframe type reference](../reference/apps.md#dataframe-type)
+dataframe for each output. See the [dataframe type reference](../reference/apps/_index.md#dataframe-type)
 and the [pandas cleaning example](../tutorials/turbidity.md#cleaning-steps).
 
 Because it is an ordinary function, you can try it before deploying anything:
@@ -348,5 +348,5 @@ For complete examples with small input and output tables, see
 To see what a change will recompute before you make it, to update a
 function's code, or to recover from a function that fails, see
 [App deployment and recovery](check-deploy-apps.md). The
-[app reference](../reference/apps.md#python-functions) describes every column
+[app reference](../reference/apps/_index.md#python-functions) describes every column
 of the frame and every field of the context.

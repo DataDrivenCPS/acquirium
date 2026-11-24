@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import polars as pl
+import pytest
 
 from acquirium.Client.data_object import BindingInfo, DataObject
 from acquirium.Client.query_graph import QueryGraph
@@ -15,25 +16,30 @@ class RecordingClient:
     def engine_snapshot(self):
         return {"epoch": 7}
 
-    def timeseries_df(self, ref_uri, **kwargs):
-        self.calls.append((ref_uri, kwargs))
+    def timeseries_df(self, stream_uri, **kwargs):
+        self.calls.append((stream_uri, kwargs))
+        value = 21.5 if kwargs["value_mode"] == "numeric" else "Manual Control"
         return pl.DataFrame(
             {
                 "ts": [datetime(2026, 1, 1, tzinfo=timezone.utc)],
-                "value": [21.5],
-                "uri": [ref_uri],
+                "value": [value],
+                "uri": [stream_uri],
             }
         )
 
 
-def test_data_object_passes_value_mode_to_timeseries_client():
+@pytest.mark.parametrize(("mode", "column", "value"), [
+    ("numeric", "value_numeric", 21.5),
+    ("coalesce", "value_text", "Manual Control"),
+])
+def test_data_object_passes_value_mode_to_timeseries_client(mode, column, value):
     client = RecordingClient()
     data = DataObject(
         _bindings=[
             BindingInfo(
                 nid=1,
-                point_uri="urn:point:1",
-                ref_uri="urn:ref:1",
+                property_uri="urn:point:1",
+                stream_uri="urn:ref:1",
                 alias="mode",
                 entity_contexts=[{}],
                 row_count=1,
@@ -48,11 +54,46 @@ def test_data_object_passes_value_mode_to_timeseries_client():
             "limit": None,
             "order": "asc",
             "cast_value": None,
-            "value_mode": "numeric",
+            "value_mode": mode,
         },
     )
 
     df = data.dataframe(shape="narrow")
 
-    assert df["value_numeric"].to_list() == [21.5]
-    assert client.calls[0][1]["value_mode"] == "numeric"
+    assert df[column].to_list() == [value]
+    assert client.calls[0][1]["value_mode"] == mode
+    assert client.calls[0][1]["epoch"] == 7
+
+
+def test_a_bad_value_mode_is_rejected_before_the_request():
+    from acquirium.Client.client import AcquiriumClient
+
+    client = AcquiriumClient.__new__(AcquiriumClient)  # no server: nothing may be sent
+    with pytest.raises(ValueError, match="value_mode must be"):
+        client.timeseries_df("urn:ref:1", value_mode="x")
+
+
+def test_the_server_answers_400_to_a_bad_value_mode(monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+
+    from acquirium.Server import app as module
+
+    class Manager:
+        def timeseries_batch(self, **kwargs):  # lazy, as the real one is
+            raise AssertionError("the store must not be reached")
+            yield
+
+    class State:
+        manager = Manager()
+        read_batch_size = 10
+
+    class Request:
+        headers: dict = {}
+        app = type("A", (), {"state": State})
+
+    monkeypatch.setattr(module.app, "state", State, raising=False)
+    with pytest.raises(HTTPException) as error:
+        module.get_timeseries(Request(), uri="urn:ref:1", value_mode="x")
+    assert error.value.status_code == 400
+    assert "value_mode must be" in error.value.detail

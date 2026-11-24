@@ -50,7 +50,6 @@ import acquirium as aq
 
 client = aq.init(data_dir="./parameterized-sensor-data")
 start = aq.to_timestamp("2026-01-01T00:00:00 UTC")
-client.register_datasource("parameter-demo")
 client.register_streams([
     {
         "source_id": "parameter-demo",

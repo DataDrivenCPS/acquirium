@@ -141,11 +141,28 @@ def _server_base_url(
     server_url: Optional[str] = None,
     server_port: Optional[int] = None,
 ) -> str:
-    """Build the server base URL from CLI options, falling back to [driver] config."""
-    host, port, use_ssl, _ = _driver_connect_cfg(cfg.get("driver", {}))
+    """Build the server base URL from CLI options, falling back to the config."""
+    host, port, use_ssl = _config_server_address(cfg)
     host = server_url or host
     port = server_port or port
     return f"{'https' if use_ssl else 'http'}://{host}:{port}"
+
+
+def _config_server_address(cfg: dict) -> tuple[str, int, bool]:
+    """Where the server of a config is reached: (host, port, use_ssl).
+
+    ``[driver] server_url`` / ``server_port`` win. Without them the address
+    the server listens on, ``[server] host`` / ``port``, is used, so a config
+    that only sets ``[server] port`` reaches its own server.
+    """
+    server_cfg = cfg.get("server", {})
+    host, port, use_ssl, _ = _driver_connect_cfg(
+        cfg.get("driver", {}),
+        fallback_host=server_cfg.get("host") or "127.0.0.1",
+        # port 0 asks for any free port, which cannot be known from the file
+        fallback_port=int(server_cfg.get("port") or 8000),
+    )
+    return host, port, use_ssl
 
 
 def _push_drivers_to_server(
@@ -211,8 +228,8 @@ def _push_drivers_to_server(
 driver_app = typer.Typer(help="Manage drivers running on an Acquirium server.", add_completion=False)
 app.add_typer(driver_app, name="driver")
 
-_ServerUrlOpt = Annotated[Optional[str], typer.Option("--server-url", help="Server host (default: driver.server_url or 127.0.0.1)")]
-_ServerPortOpt = Annotated[Optional[int], typer.Option("--server-port", help="Server port (default: driver.server_port or 8000)")]
+_ServerUrlOpt = Annotated[Optional[str], typer.Option("--server-url", help="Server host (default: driver.server_url, else server.host, else 127.0.0.1)")]
+_ServerPortOpt = Annotated[Optional[int], typer.Option("--server-port", help="Server port (default: driver.server_port, else server.port, else 8000)")]
 
 
 @driver_app.command("start")
@@ -352,7 +369,7 @@ def app_deploy(
     """Deploy an App declaration or a factory accepting (client, parameters)."""
     from acquirium import Acquirium, App
     cfg = load_config(config).data
-    host, port, ssl, _ = _driver_connect_cfg(cfg.get("driver", {}))
+    host, port, ssl = _config_server_address(cfg)
     client = Acquirium(server_url=host, server_port=port, use_ssl=ssl)
     target = load_app_target(spec)
     declaration = target(client, {}) if callable(target) else target
@@ -571,6 +588,155 @@ def config_init(
 
     typer.echo(f"Wrote {target}")
     typer.echo(f"Start the server with: acquirium server --config {target}")
+
+
+# ---------------------------------------------------------------------------
+# Clearing stored data
+# ---------------------------------------------------------------------------
+
+# What an Acquirium data folder holds. ``clear`` refuses a folder with none of
+# these, so a mistyped path cannot erase unrelated files.
+_DATA_DIR_MARKERS = (".oxigraph", "escapement-epoch.duckdb", "experiments.duckdb", ".runtime", ".ontoenv", "embedding_cache")
+_EMBEDDING_CACHE = "embedding_cache"
+
+
+def _server_uses(data_dir: Path) -> bool:
+    """True when a server has the stores of ``data_dir`` open."""
+    from acquirium.runtime import _running
+
+    runtime = data_dir / ".runtime"
+    if runtime.is_dir() and _running(runtime):
+        return True
+    graph = data_dir / ".oxigraph"
+    if graph.is_dir():
+        # A standalone server has no runtime lock, but the graph store can
+        # only be opened by one process.
+        import pyoxigraph
+
+        try:
+            store = pyoxigraph.Store(str(graph))
+        except OSError:
+            return True
+        del store
+    return False
+
+
+@app.command("clear")
+def clear_cmd(
+    path: Annotated[Optional[Path], typer.Argument(help="Data folder to clear. Default: data_dir of the config, else .acquirium")] = None,
+    everything: Annotated[bool, typer.Option("--all", help="Also erase the embeddings")] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Do not ask for confirmation")] = False,
+    config: Annotated[Optional[Path], typer.Option("--config", "-c", help="Path to acquirium.toml")] = None,
+) -> None:
+    """Erase the stored data of a data folder, keeping the embeddings.
+
+    Removes the graph, the readings and everything else in the folder except
+    the embeddings, which take long to build and do not depend on your data.
+    With --all the whole folder is removed. Does not start a server, and
+    refuses while one is using the folder.
+    """
+    import shutil
+
+    loaded = load_local_config(config, discover=True)
+    server = loaded.data["server"]
+    target = path if path is not None else loaded.directory / Path(server["data_dir"]).expanduser()
+    target = target.expanduser().resolve()
+
+    if not target.exists():
+        typer.echo(f"Nothing to clear: {target} does not exist.")
+        return
+    if not target.is_dir():
+        typer.echo(f"{target} is not a folder.", err=True)
+        raise typer.Exit(1)
+    entries = list(target.iterdir())
+    if entries and not any((target / name).exists() for name in _DATA_DIR_MARKERS):
+        typer.echo(f"{target} does not look like an Acquirium data folder; nothing was erased.", err=True)
+        raise typer.Exit(1)
+    if _server_uses(target):
+        typer.echo(f"A server is using {target}. Stop it first; nothing was erased.", err=True)
+        raise typer.Exit(1)
+
+    what = "everything" if everything else "the stored data"
+    if not yes and not typer.confirm(f"Erase {what} in {target}?"):
+        typer.echo("Nothing was erased.")
+        raise typer.Exit(1)
+
+    if everything:
+        shutil.rmtree(target)
+        typer.echo(f"Removed {target}")
+    else:
+        for entry in entries:
+            if entry.name == _EMBEDDING_CACHE:
+                continue
+            if entry.is_dir() and not entry.is_symlink():
+                shutil.rmtree(entry)
+            else:
+                entry.unlink()
+        kept = " (kept the embeddings)" if (target / _EMBEDDING_CACHE).exists() else ""
+        typer.echo(f"Cleared {target}{kept}")
+
+    from acquirium.Storage.ledger import is_postgres
+
+    for key in ("engine_path", "experiments_path", "graph_path"):
+        location = server.get(key)
+        if not location:
+            continue
+        if is_postgres(location):
+            typer.echo(f"Note: {key} uses PostgreSQL. Its data was kept.")
+            continue
+        outside = (loaded.directory / Path(location).expanduser()).resolve()
+        if not outside.is_relative_to(target) and outside.exists():
+            typer.echo(f"Note: {key} is outside the data folder and was kept: {outside}")
+
+
+# ---------------------------------------------------------------------------
+# Example data
+# ---------------------------------------------------------------------------
+
+example_app = typer.Typer(help="Create the files of the example plant.", add_completion=False)
+app.add_typer(example_app, name="example")
+
+
+@example_app.command("init")
+def example_init(
+    path: Annotated[Path, typer.Argument(help="Folder to create")] = Path("example"),
+    step: Annotated[int, typer.Option("--step", help="Minutes between two rows of data.csv")] = 60,
+    force: Annotated[bool, typer.Option("--force", "-f", help="Overwrite the files if they exist")] = False,
+) -> None:
+    """Create a folder with the example plant: its model and one year of data.
+
+    Writes ``model.ttl``, the plant model of a seawater reverse-osmosis
+    plant, and ``data.csv``, the year 2025 of that plant with a ``time``
+    column and one column per stream. Does not start a server.
+    """
+    import shutil
+    from datetime import timedelta
+
+    import polars as pl
+
+    from acquirium.examples import seawater_ro
+
+    if step < 1:
+        typer.echo("--step must be at least 1 minute.", err=True)
+        raise typer.Exit(1)
+    model, data = path / "model.ttl", path / "data.csv"
+    existing = [str(target) for target in (model, data) if target.exists()]
+    if existing and not force:
+        typer.echo(f"{', '.join(existing)} already exist. Pass --force to overwrite.", err=True)
+        raise typer.Exit(1)
+    path.mkdir(parents=True, exist_ok=True)
+
+    shutil.copyfile(seawater_ro.model_path, model)
+    streams = seawater_ro.generate(step=timedelta(minutes=step))
+    names = list(streams)
+    frame = pl.DataFrame({
+        "time": [timestamp for timestamp, _ in streams[names[0]]],
+        **{name: [value for _, value in streams[name]] for name in names},
+    })
+    frame.write_csv(data)
+
+    typer.echo(f"Wrote {model}")
+    typer.echo(f"Wrote {data} ({frame.height} rows, {len(names)} streams)")
 
 
 # ---------------------------------------------------------------------------

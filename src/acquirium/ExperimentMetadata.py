@@ -27,7 +27,7 @@ EXPERIMENT = Namespace("urn:acquirium:experiment:")
 RESERVED_METADATA_KEYS = frozenset({
     "study_id", "run_id", "variable_id", "annotation_id", "role", "kind",
     "status", "created_at", "started_at", "finished_at", "range_start", "range_end",
-    "ref_uri", "label",
+    "ref_uri", "stream_uri", "label",
 })
 
 
@@ -213,7 +213,10 @@ def run_record(item):
     return run_uri(item["run_id"]), EXPERIMENT.Run, fields, item["metadata"]
 
 def annotation_record(item):
-    fields = {key: item.get(key) for key in ("annotation_id", "run_id", "ref_uri", "range_start", "range_end", "created_at")}
+    fields = {key: item.get(key) for key in ("annotation_id", "run_id", "range_start", "range_end", "created_at")}
+    # The graph field keeps its original name, so annotations written before
+    # the ``stream_uri`` name stay queryable alongside new ones.
+    fields["ref_uri"] = item.get("stream_uri")
     fields["study_id"] = item["template_id"]
     return annotation_uri(item["annotation_id"]), EXPERIMENT.StreamAnnotation, fields, item["metadata"]
 
@@ -374,7 +377,7 @@ def stream_update(writer, source, name, study_id, run_id, variable_id, label, me
     # Unresolved spellings remain in declaration documents; no resolver
     # is called during recording or replay.
     semantics = {field: value for field, value in semantics.items() if resolved[field] is not None}
-    point = _build_stream_triples(graph, {"source_id": source, "ref_name": name, "label": label,
+    point = _build_stream_triples(graph, {"source_id": source, "stream_name": name, "label": label,
         "value_kind": "numeric", **semantics}, resolved, {}, lambda *_: False)
     observed = metadata.get("observed")
     from acquirium.Metadata import dumps

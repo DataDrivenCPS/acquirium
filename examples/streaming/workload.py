@@ -19,7 +19,7 @@ from filelock import FileLock
 
 import acquirium as aq
 from acquirium.apps import output_reference
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import compute_stream_uri
 from examples.soft_sensors.declarations import (
     ALARM,
     BUCKET_NS,
@@ -101,7 +101,7 @@ def expected_values(records):
             else:
                 raw[probe].update(values)
     result = {
-        (str(compute_ref_uri(SOURCE, probe)), timestamp): value
+        (str(compute_stream_uri(SOURCE, probe)), timestamp): value
         for probe, readings in raw.items()
         for timestamp, value in readings.items()
     }
@@ -134,7 +134,7 @@ def verify(client, driver, consumer):
         if not math.isclose(actual[slot], value, rel_tol=1e-10, abs_tol=1e-10):
             raise AssertionError((slot, actual[slot], value))
     epoch = client.engine_snapshot()["epoch"]
-    references = {str(compute_ref_uri(SOURCE, probe)) for probe in ("a1", "a2", "b1")}
+    references = {str(compute_stream_uri(SOURCE, probe)) for probe in ("a1", "a2", "b1")}
     for name in (MEAN, HOTTEST, ALARM):
         for operator in client.inspect_app(name)["app"]["operators"]:
             references.update(operator["outputs"].values())

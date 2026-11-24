@@ -32,11 +32,11 @@ from acquirium.internals.internals_namespaces import (
 logger = logging.getLogger("acquirium.mqtt")
 
 MQTT_SPARQL_QUERY = f"""
-SELECT ?data ?ref ?ref_name ?value_kind ?broker ?topic ?tkey ?vkey
+SELECT ?data ?ref ?stream_name ?value_kind ?broker ?topic ?tkey ?vkey
 WHERE {{
   ?data <{HAS_EXTERNAL_REFERENCE}> ?ref .
   ?ref a <{MQTT_REFERENCE}> .
-  ?ref <{ACQUIRIUM_REF_NAME}> ?ref_name .
+  ?ref <{ACQUIRIUM_REF_NAME}> ?stream_name .
   OPTIONAL {{ ?ref <{ACQUIRIUM_VALUE_KIND}> ?value_kind . }}
   OPTIONAL {{ ?ref <{MQTT_BROKER}> ?broker . }}
   OPTIONAL {{ ?ref <{MQTT_TOPIC}> ?topic . }}
@@ -48,9 +48,9 @@ WHERE {{
 
 @dataclass(frozen=True)
 class MQTTStreamSpec:
-    point_uri: str
-    ref_uri: str
-    ref_name: str
+    property_uri: str
+    stream_uri: str
+    stream_name: str
     broker: str
     port: int
     topic: str
@@ -270,30 +270,30 @@ class MQTTIngestDriver(EventIngestDriver):
         logger.debug("mqtt _sync_subscriptions: %d candidate rows from graph", len(rows))
         specs: list[MQTTStreamSpec] = []
         for row in rows:
-            data_uri, ref_uri, ref_name, value_kind, broker, topic, tkey, vkey = row
+            data_uri, stream_uri, stream_name, value_kind, broker, topic, tkey, vkey = row
             topic_s = (topic or "").strip('"')
             if not topic_s:
                 continue
-            ref_name_s = (ref_name or "").strip('"')
-            if not ref_name_s:
-                logger.warning("mqtt: skipping ref %s with no acq:refName", ref_uri)
+            stream_name_s = (stream_name or "").strip('"')
+            if not stream_name_s:
+                logger.warning("mqtt: skipping ref %s with no acq:refName", stream_uri)
                 continue
-            expected_ref_uri = str(self.reference_uri(ref_name_s))
-            actual_ref_uri = str(ref_uri)
-            if actual_ref_uri != expected_ref_uri:
+            expected_stream_uri = str(self.reference_uri(stream_name_s))
+            actual_stream_uri = str(stream_uri)
+            if actual_stream_uri != expected_stream_uri:
                 logger.warning(
-                    "mqtt: skipping point=%s ref=%s because canonical ref URI for %s is %s",
+                    "mqtt: skipping point=%s ref=%s because canonical stream URI for %s is %s",
                     data_uri,
-                    actual_ref_uri,
-                    ref_name_s,
-                    expected_ref_uri,
+                    actual_stream_uri,
+                    stream_name_s,
+                    expected_stream_uri,
                 )
                 continue
             host, port = parse_mqtt_broker((broker or "localhost").strip('"'))
             spec = MQTTStreamSpec(
-                point_uri=str(data_uri),
-                ref_uri=actual_ref_uri,
-                ref_name=ref_name_s,
+                property_uri=str(data_uri),
+                stream_uri=actual_stream_uri,
+                stream_name=stream_name_s,
                 broker=host,
                 port=port,
                 topic=topic_s,
@@ -306,10 +306,10 @@ class MQTTIngestDriver(EventIngestDriver):
             if self._spec_key(spec) in self._spec_keys:
                 continue
             try:
-                self.declare(ref_name_s, value_kind=spec.value_kind)
+                self.declare(stream_name_s, value_kind=spec.value_kind)
                 self.register_declared()
             except Exception:
-                logger.warning("mqtt: failed to register stream %s", ref_uri, exc_info=True)
+                logger.warning("mqtt: failed to register stream %s", stream_uri, exc_info=True)
                 continue
             specs.append(spec)
         self._subscribe(specs)
@@ -356,7 +356,7 @@ class MQTTIngestDriver(EventIngestDriver):
                 pass
             logger.info(
                 "mqtt subscribed point=%s broker=%s port=%d topic=%s",
-                spec.point_uri, spec.broker, spec.port, spec.topic,
+                spec.property_uri, spec.broker, spec.port, spec.topic,
             )
 
     # ---- internal ----
@@ -374,9 +374,9 @@ class MQTTIngestDriver(EventIngestDriver):
 
     def _spec_key(self, spec: MQTTStreamSpec) -> str:
         return "|".join((
-            spec.point_uri,
-            spec.ref_uri,
-            spec.ref_name,
+            spec.property_uri,
+            spec.stream_uri,
+            spec.stream_name,
             spec.broker,
             str(spec.port),
             spec.topic,
@@ -402,7 +402,7 @@ class MQTTIngestDriver(EventIngestDriver):
 
         Override in a subclass to support any wire format (MessagePack,
         Protobuf, binary frames, CSV lines, etc.).  The stream identity is
-        already known via ``spec.ref_uri`` — only the observation itself needs
+        already known via ``spec.stream_uri`` — only the observation itself needs
         to be returned.
 
         Args:
@@ -445,7 +445,7 @@ class MQTTIngestDriver(EventIngestDriver):
                     specs = list(self._topic_specs.get(client_key, {}).get(topic, []))
                 for spec in specs:
                     ts, value = self.decode_payload(msg.payload, spec)
-                    observations.append((spec.ref_name, ts, value))
+                    observations.append((spec.stream_name, ts, value))
             except Exception as exc:
                 logger.warning("mqtt decode failed client=%s topic=%s err=%s", client_key, topic, exc)
             with self._messages_lock:

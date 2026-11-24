@@ -2,58 +2,105 @@
 format: jb-book
 root: _index.md
 chapters:
+- file: getting-started.md
 - file: tutorials/_index.md
   sections:
-  - file: tutorials/getting-started.md
-  - file: tutorials/querying.md
-  - file: tutorials/query-cookbook.md
-  - file: tutorials/data.md
-  - file: tutorials/first-driver.md
-  - file: tutorials/driver-with-a-plant-model.md
-  - file: tutorials/first-app.md
+  - file: tutorials/fundamentals.md
+  - file: tutorials/inserting-data.md
+  - file: tutorials/querying-data.md
+  - file: tutorials/inserting-metadata.md
+  - file: tutorials/inserting-plant-model.md
+  - file: tutorials/a-full-example.md
+  - file: tutorials/acquirium-at-a-glance.md
   - file: tutorials/turbidity.md
+  - file: tutorials/advanced/_index.md
+    sections:
+    - file: tutorials/advanced/writing-a-driver.md
+    - file: tutorials/advanced/first-app.md
+    - file: tutorials/advanced/experiments.md
 - file: how-to/_index.md
   sections:
-  - file: how-to/local-runtime.md
-  - file: how-to/run-the-server.md
-  - file: how-to/load-a-plant-model.md
   - file: how-to/explore-a-model.md
   - file: how-to/debug-an-empty-query.md
-  - file: how-to/attach-metadata.md
-  - file: how-to/resolve-text.md
-  - file: how-to/write-data.md
-  - file: how-to/consume-streaming-changes.md
+  - file: how-to/query-cookbook.md
+  - file: how-to/write-soft-sensors.md
+  - file: how-to/chain-cleaning-apps.md
+  - file: how-to/clean-data-with-multiple-outputs.md
+  - file: how-to/parameterize-soft-sensors.md
   - file: how-to/soft-sensor-examples.md
-    sections:
-    - file: how-to/write-soft-sensors.md
-    - file: how-to/chain-cleaning-apps.md
-    - file: how-to/clean-data-with-multiple-outputs.md
-    - file: how-to/parameterize-soft-sensors.md
+  - file: how-to/consume-streaming-changes.md
   - file: how-to/check-deploy-apps.md
-  - file: how-to/record-experiments.md
   - file: how-to/record-a-whole-model.md
+  - file: how-to/record-experiments.md
   - file: how-to/compare-experiment-runs.md
 - file: reference/_index.md
   sections:
-  - file: reference/client-api.md
-  - file: reference/drivers.md
-  - file: reference/apps.md
-  - file: reference/experiments.md
-  - file: reference/server-config.md
-  - file: reference/storage-migrations.md
-  - file: reference/http-api.md
+  - file: reference/client/_index.md
+    sections:
+    - file: reference/client/starting.md
+    - file: reference/client/streams.md
+    - file: reference/client/timeseries.md
+    - file: reference/client/graph.md
+    - file: reference/client/metadata.md
+    - file: reference/client/querying.md
+    - file: reference/client/logs.md
+    - file: reference/client/apps.md
+  - file: reference/query/_index.md
+    sections:
+    - file: reference/query/building.md
+    - file: reference/query/filtering.md
+    - file: reference/query/columns.md
+    - file: reference/query/facets.md
+    - file: reference/query/reading.md
+    - file: reference/query/data-object.md
+    - file: reference/query/data-object-info.md
+    - file: reference/query/inspecting.md
+    - file: reference/query/writing.md
+    - file: reference/query/traversal.md
+  - file: reference/drivers/_index.md
+    sections:
+    - file: reference/drivers/base-classes.md
+    - file: reference/drivers/hooks.md
+    - file: reference/drivers/helpers.md
+    - file: reference/drivers/state.md
+    - file: reference/drivers/configuration.md
+    - file: reference/drivers/built-in-drivers.md
+    - file: reference/drivers/tabular-helpers.md
+  - file: reference/apps/_index.md
+    sections:
+    - file: reference/apps/app-class.md
+    - file: reference/apps/inputs.md
+    - file: reference/apps/outputs.md
+    - file: reference/apps/deploying.md
+    - file: reference/apps/cli.md
+  - file: reference/experiments/_index.md
+    sections:
+    - file: reference/experiments/studies-and-runs.md
+    - file: reference/experiments/declaring-variables.md
+    - file: reference/experiments/recording.md
+    - file: reference/experiments/annotations.md
+    - file: reference/experiments/selecting-runs.md
+    - file: reference/experiments/reading.md
+    - file: reference/experiments/model-adapters.md
+    - file: reference/experiments/codecs-and-values.md
+  - file: reference/server/_index.md
+    sections:
+    - file: reference/server/cli.md
+    - file: reference/server/configuration.md
+    - file: reference/server/http-api.md
+    - file: reference/server/storage-migrations.md
   - file: reference/glossary.md
 - file: explanation/_index.md
   sections:
   - file: explanation/query-model.md
-  - file: explanation/text-resolution.md
   - file: explanation/values.md
   - file: explanation/units.md
   - file: explanation/drivers.md
-  - file: explanation/stream-lifecycle.md
-  - file: explanation/soft-sensor-inputs.md
   - file: explanation/apps.md
+  - file: explanation/stream-lifecycle.md
   - file: explanation/experiments.md
-  - file: explanation/server-internals.md
+  - file: explanation/text-resolution.md
   - file: explanation/escapement-core.md
+  - file: explanation/soft-sensor-inputs.md
+  - file: explanation/server-internals.md
   - file: explanation/graph-backend.md

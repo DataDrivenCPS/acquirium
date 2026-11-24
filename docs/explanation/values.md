@@ -2,87 +2,177 @@
 title: Values
 ---
 
-This is an explanation of how Acquirium stores readings that can be numbers or text, and how `value_mode` and `cast_value` decide what a query returns.
+In this article we'll describe how Acquirium stores values that can be numbers or text, and how `value_mode` and `cast_value` decide what you get back.
 
 ## Numbers and text
 
-Each reading is a finite number or text. A stream can hold both: a flow meter
-that normally reports numbers can report `"Bad"` during a fault, and keeping
-that row as text means a bad reading is not lost and does not change the type
-of the others. Escapement stores the readings; Acquirium decides how each
-value is stored.
+The values of a stream are not always of one type.
+A flow meter that normally reports numbers can report "Bad" during a fault, and a status stream can carry "1" next to "ON".
 
-A stream is declared numeric or text when it is registered. That declaration
-is called `value_kind`, and it is set by whoever writes the data, not by the
-reader. When a driver does not declare it, it is inferred from the first
-observed values: a stream with any numeric value is `numeric`, otherwise
-`text`. A stream registered without one is numeric.
+To keep every value, each row of a stream has two value columns: one for a number and one for a text.
+A value is stored in one of them, and the other one is empty.
+This way a value that does not fit the stream is kept, and it does not change the type of the other values.
 
-On a numeric stream, a value is stored as a number when it parses as one
-(`"12.5"` counts), including numeric strings coming from a CSV. Anything else
-is stored as text, even on a numeric stream. Booleans are stored as text
-(`"True"`). On a text stream every value is stored as text, numbers included.
-Null, blank, `NaN` and infinite values are not readings: those rows are
-dropped. To remove a stored reading, delete it explicitly by stream and
-timestamp.
+Each stream has a **value kind**, which is `"numeric"` or `"text"`.
+It decides where a value goes:
 
-## Reading values
+- In a numeric stream, a value that can be read as a number is stored as a number. This includes text such as "13.0", for example from a CSV file. Any other text is stored as text.
+- In a text stream, every value is stored as text, numbers included.
+- A boolean is stored as the number `1.0` or `0.0` in a numeric stream, and as the text "True" or "False" in a text stream.
+- A missing value (`None`) is stored as a row with no value. In a numeric stream, an empty text and the texts "NaN" and "inf" are stored the same way.
 
-When reading, `value_mode` decides which readings you get.
+You do not have to give the value kind.
+A stream registered without `value_kind` holds text until it receives its first number.
+From then on it is a numeric stream.
 
-| value_mode | you get |
+Pass `"value_kind": "text"` or `"value_kind": "numeric"` to `register_streams()` to set the kind yourself.
+This is useful for a status stream that carries "1" next to "ON" and should stay text.
+
+**Note:** The value kind applies to the values inserted after it is set.
+Values that are already stored are not moved to the other column.
+
+## Choosing what is read
+
+The stream below is registered without a value kind.
+It becomes numeric with its first value, so "13.0" is stored as a number and "Bad" is stored as text.
+
+```python
+from datetime import datetime, timezone
+
+def at(minute):
+    return datetime(2026, 8, 8, 10, minute, tzinfo=timezone.utc)
+
+acq.register_streams([{"source_id": "scada", "stream_name": "feed-flow"}])
+acq.insert_timeseries("scada", "feed-flow", [
+    (at(0), 12.5),
+    (at(5), "13.0"),
+    (at(10), "Bad"),
+    (at(15), 14.0),
+])
+
+flow = acq.stream("scada", "feed-flow")
+flow.dataframe()
+```
+```text
+shape: (4, 2)
+┌─────────────────────────┬───────┐
+│ time                    ┆ value │
+│ ---                     ┆ ---   │
+│ datetime[μs, UTC]       ┆ f64   │
+╞═════════════════════════╪═══════╡
+│ 2026-08-08 10:00:00 UTC ┆ 12.5  │
+│ 2026-08-08 10:05:00 UTC ┆ 13.0  │
+│ 2026-08-08 10:10:00 UTC ┆ null  │
+│ 2026-08-08 10:15:00 UTC ┆ 14.0  │
+└─────────────────────────┴───────┘
+```
+
+By default a read follows the value kind of the stream.
+The stream is numeric, so the numbers are returned and the row that holds "Bad" has no value.
+
+`value_mode` changes which values are read:
+
+- `"default"` follows the value kind of the stream.
+- `"numeric"` returns only the rows that hold a number.
+- `"text"` returns only the rows that hold a text.
+- `"coalesce"` returns every value as text, so nothing is left out.
+
+For the stream above:
+
+| `value_mode` | values |
 |---|---|
-| `"default"` | the stream's declared kind: numbers on a numeric stream, text on a text stream |
-| `"numeric"` | numeric readings only, as `Float64` |
-| `"text"` | text readings only, as strings |
-| `"coalesce"` | every reading as a string, so no row is left out |
-
-`"default"` does not inspect the stored values; it follows the registered
-`value_kind`. A stream registered without a `value_kind` is numeric.
-
-On a numeric stream, a value that parses as a number is stored as one, and
-anything else is kept as text. `"default"` therefore leaves the text readings
-out of a numeric stream; `"text"` returns only them, and `"coalesce"` returns
-them next to the numbers as strings. For instance, a numeric stream that
-received `12.5`, `"13.0"`, `"Bad"` and `14.0` reads as follows:
-
-| value_mode | values |
-|---|---|
-| `"default"` | `12.5`, `13.0`, `14.0` |
+| `"default"` | `12.5`, `13.0`, null, `14.0` |
 | `"numeric"` | `12.5`, `13.0`, `14.0` |
 | `"text"` | `"Bad"` |
 | `"coalesce"` | `"12.5"`, `"13.0"`, `"Bad"`, `"14.0"` |
 
 ```python
-d = q.data(value_mode="numeric")
+flow.dataframe(value_mode="coalesce")
+```
+```text
+shape: (4, 2)
+┌─────────────────────────┬───────┐
+│ time                    ┆ value │
+│ ---                     ┆ ---   │
+│ datetime[μs, UTC]       ┆ str   │
+╞═════════════════════════╪═══════╡
+│ 2026-08-08 10:00:00 UTC ┆ 12.5  │
+│ 2026-08-08 10:05:00 UTC ┆ 13.0  │
+│ 2026-08-08 10:10:00 UTC ┆ Bad   │
+│ 2026-08-08 10:15:00 UTC ┆ 14.0  │
+└─────────────────────────┴───────┘
 ```
 
-## Values in apps
+`value_mode` is also a parameter of `dataframe()` and `data()` of a query.
+Note that the wide table of a query leaves out the rows that have no value in any column.
 
-Native functions (`mean`, `max`, `threshold`, and so on) read only the numbers
-in their input; text readings do not take part. A Python function's frame has
-a `value` column for numbers and a `text` column for text, exactly one set per
-row, so Polars aggregations such as `mean` skip text rows on their own. A
-function may emit text, for example `emit(context, "anoxic")`; declare that
-port with `Output(value_kind="text")` so default reads return it.
+## Changing the type after the read
 
-### cast_value
+`cast_value` is a parameter of `dataframe()` and `data()` of a query.
+It is applied by the client, after the values arrive from the server.
+The default is `None`, which leaves the values as they are.
 
-`cast_value` is the last step, applied client side after the values arrive.
-It takes `"float"`, `"int"`, `"str"` or `None`; anything else is a
-`ValueError`. The default is `None`, which leaves the columns exactly as the
-server sent them.
+The status stream below is a text stream, so the numbers in it are stored as text:
 
-`"float"` parses the values of a text column that read as numbers into
-`value_numeric` and leaves the rest in `value_text`, so a status stream
-carrying `"12.5"` next to `"ON"` keeps both.
-A numeric column is already `Float64` and is left alone.
+```python
+acq.register_streams([{"source_id": "scada", "stream_name": "pump-status", "value_kind": "text"}])
+acq.insert_timeseries("scada", "pump-status", [
+    (at(0), "ON"),
+    (at(5), 1),
+    (at(10), 0),
+    (at(15), "OFF"),
+])
 
-`"int"` does the same parsing and returns the value columns as `Int64`.
-The cast truncates toward zero, so a column that holds fractional values
-raises a `UserWarning` naming the column and one of the values it changed.
+status = acq.query().measurement(stream=acq.stream("scada", "pump-status"))
+status.dataframe()
+```
+```text
+shape: (4, 2)
+┌─────────────────────────┬───────────────────┐
+│ time                    ┆ data__pump-status │
+│ ---                     ┆ ---               │
+│ datetime[μs, UTC]       ┆ str               │
+╞═════════════════════════╪═══════════════════╡
+│ 2026-08-08 10:00:00 UTC ┆ ON                │
+│ 2026-08-08 10:05:00 UTC ┆ 1                 │
+│ 2026-08-08 10:10:00 UTC ┆ 0                 │
+│ 2026-08-08 10:15:00 UTC ┆ OFF               │
+└─────────────────────────┴───────────────────┘
+```
 
-`"str"` sends every value to `value_text` as a string, numbers included.
-Unit conversion needs numbers, so `convert_to()` refuses such an object.
+`cast_value="float"` turns the text that can be read as a number into a number.
+The rest stays text, in a second column:
 
-All of these are vectorized polars casts; none of them loops over rows.
+```python
+status.dataframe(cast_value="float")
+```
+```text
+shape: (4, 3)
+┌─────────────────────────┬───────────────────┬────────────────────────┐
+│ time                    ┆ data__pump-status ┆ data__pump-status_text │
+│ ---                     ┆ ---               ┆ ---                    │
+│ datetime[μs, UTC]       ┆ f64               ┆ str                    │
+╞═════════════════════════╪═══════════════════╪════════════════════════╡
+│ 2026-08-08 10:00:00 UTC ┆ null              ┆ ON                     │
+│ 2026-08-08 10:05:00 UTC ┆ 1.0               ┆ null                   │
+│ 2026-08-08 10:10:00 UTC ┆ 0.0               ┆ null                   │
+│ 2026-08-08 10:15:00 UTC ┆ null              ┆ OFF                    │
+└─────────────────────────┴───────────────────┴────────────────────────┘
+```
+
+The other options are:
+
+- `"int"` works like `"float"` and returns whole numbers. The fraction is cut off, and a `UserWarning` names a value that was changed.
+- `"str"` returns every value as text. Be aware that `convert_to()` needs numbers, so it raises a `ValueError` on such a result.
+
+For instance, `cast_value="int"` on the `feed-flow` stream gives this warning:
+
+```text
+UserWarning: cast_value='int' truncates 1 non-integer value(s) in column 'data__feed-flow', such as 12.5; use cast_value='float' to keep them
+```
+
+## Further reading
+
+- [`Query.data`](../reference/query/reading.md#querydata) and [`Query.dataframe`](../reference/query/reading.md#querydataframe): the parameters of a read.
+- [`register_streams`](../reference/client/streams.md#acquiriumregister_streams): the keys of a stream, including `value_kind`.
+- [Units](units.md): how numeric values are converted between units.

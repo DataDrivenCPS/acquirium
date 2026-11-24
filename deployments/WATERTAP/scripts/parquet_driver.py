@@ -58,14 +58,14 @@ class WaterTAPParquetDriver(FileIngestDriver):
                 replace=bool(cfg.get("watertap_insert_graph_replace", False)),
             )
 
-        # Ref names are the mapping's point URIs minus its namespace, which is
+        # Ref names are the mapping's property URIs minus its namespace, which is
         # exactly what the data generator writes as column headers.
         mapping_path = resolve_path(cfg.get("watertap_mapping_path"), "watertap_mapping_path")
         specs = _load_point_specs_from_mapping(mapping_path, self.source_id)
         for spec in specs:
             self.declare(
-                spec.ref_name,
-                point_uri=spec.point_uri,
+                spec.stream_name,
+                property_uri=spec.property_uri,
                 value_kind="numeric",
                 properties={HAS_PYOMO_VAR: spec.pyomo_var},
             )
@@ -89,7 +89,7 @@ class WaterTAPParquetDriver(FileIngestDriver):
             skip_cols=cfg.get("skip_cols", []),
         )
         if batch.observations is not None:
-            for name in batch.observations["ref_name"].unique():
+            for name in batch.observations["stream_name"].unique():
                 if not self.is_declared(name):
                     self.declare(name)
         return batch

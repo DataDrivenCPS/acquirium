@@ -98,7 +98,6 @@ import acquirium as aq
 MINUTE = 60 * 1_000_000_000
 start = aq.to_timestamp("2026-01-01T00:00:00 UTC")
 client = aq.init(data_dir="./multi-output-cleaning-data")
-client.register_datasource("multi-output-cleaning")
 client.register_streams([{
     "source_id": "multi-output-cleaning",
     "ref_name": "signal",

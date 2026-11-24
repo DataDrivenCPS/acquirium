@@ -38,12 +38,11 @@ def acquirium_client_csv(own_acquirium):
     """The module's own server with the CSV test model and its readings."""
     acq = own_acquirium
     acq.insert_graph_file("tests/test_model_csv.ttl", source_id="plant")
-    acq.register_datasource(_CSV_SOURCE_ID)
     acq.register_streams([
         {
             "source_id": _CSV_SOURCE_ID,
-            "ref_name": f"point_{i}",
-            "point_uri": f"urn:ex/point_{i}",
+            "stream_name": f"point_{i}",
+            "property_uri": f"urn:ex/point_{i}",
             "value_kind": "text" if i >= 9 else "numeric",
         }
         for i in range(1, 11)
@@ -55,7 +54,7 @@ def acquirium_client_csv(own_acquirium):
             pl.col("Timestamp").str.to_datetime(time_zone="UTC"),
             *[pl.col(c).cast(pl.String) for c in value_cols],
         ])
-        .unpivot(on=value_cols, index="Timestamp", variable_name="ref_name", value_name="value")
+        .unpivot(on=value_cols, index="Timestamp", variable_name="stream_name", value_name="value")
         .rename({"Timestamp": "ts"})
     )
     acq.insert_timeseries_arrow(_CSV_SOURCE_ID, long.to_arrow())

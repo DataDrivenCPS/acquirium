@@ -14,7 +14,7 @@ import acquirium as aq
 from acquirium import replacements
 from acquirium.apps import output_reference
 from acquirium.functions import _epoch_outputs, _public_parameters
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import compute_stream_uri
 from acquirium.Server.app import app as api
 from acquirium.Server.manager import Manager
 
@@ -185,9 +185,9 @@ def system(runtime, request):
     manager, http, client, module = runtime
     source = request.node.name.replace("[", "-").replace("]", "")
     point = f"urn:replacement:{source}"
-    client.register_streams([dict(source_id=source, ref_name="ntu", point_uri=point,
+    client.register_streams([dict(source_id=source, stream_name="ntu", property_uri=point,
                                   unit=NTU, quantity_kind=TURBIDITY)])
-    ref = str(compute_ref_uri(source, "ntu"))
+    ref = str(compute_stream_uri(source, "ntu"))
     try:
         yield manager, http, client, module, source, point, ref
     finally:
@@ -197,7 +197,7 @@ def system(runtime, request):
 def put(system, rows, request="data"):
     manager, _, _, _, source, _, _ = system
     return manager.core.wait(manager.insert_timeseries(
-        source_id=source, ref_name="ntu", rows=rows, request_id=request))
+        source_id=source, stream_name="ntu", rows=rows, request_id=request))
 
 
 def values(client, ref, **kwargs):
@@ -343,10 +343,10 @@ def test_replacements_inherit_metadata_and_may_change_to_a_compatible_unit(syste
 
     manager, _, client, _, source, _, _ = system
     point = f"urn:replacement:{source}:temperature"
-    client.register_streams([dict(source_id=source, ref_name="temperature", point_uri=point,
+    client.register_streams([dict(source_id=source, stream_name="temperature", property_uri=point,
                                   unit=DEG_F, quantity_kind="http://qudt.org/vocab/quantitykind/Temperature")])
-    ref = str(compute_ref_uri(source, "temperature"))
-    manager.core.wait(manager.insert_timeseries(source_id=source, ref_name="temperature",
+    ref = str(compute_stream_uri(source, "temperature"))
+    manager.core.wait(manager.insert_timeseries(source_id=source, stream_name="temperature",
                                                rows=[(0, 68.), (1_000, 212.)], request_id="temperature"))
     module = tmp_path / "celsius.py"
     module.write_text(
@@ -368,7 +368,7 @@ def test_replacements_inherit_metadata_and_may_change_to_a_compatible_unit(syste
     assert values(client, point) == pytest.approx([20., 100.])
     data = client.query().measurement(alias="t", uri=point).data()
     assert data.bindings[0].property_unit == DEG_C
-    assert data.bindings[0].ref_unit == DEG_C
+    assert data.bindings[0].stream_unit == DEG_C
     # A consumer that selected the Fahrenheit stream converts from the stage it binds.
     normalize = aq.PythonFunction.from_file(
         Path(__file__).resolve().parents[2] / "scripts/apps/temperature_normalization.py", "normalize")
@@ -425,10 +425,10 @@ def test_discovery_deduplicates_identity_and_explicit_app_query_is_stored(system
     ]})
     data = query.data()
     assert len(data.bindings) == 1
-    assert data.bindings[0].ref_uri == ref
-    assert data.dataframe()["turbidity"].to_list() == [4.]
+    assert data.bindings[0].stream_uri == ref
+    assert data.dataframe(shape="narrow")["value_numeric"].to_list() == [4.]
     assert data.total_rows == 1
-    assert query.data(view="raw").dataframe()["turbidity"].to_list() == [1.]
+    assert query.data(view="raw").dataframe(shape="narrow")["value_numeric"].to_list() == [1.]
     # A normal measurement and an explicit reference can read the same
     # identity in different views in one DataObject.
     from acquirium.Client.query_graph import DataNodeInfo
@@ -442,13 +442,12 @@ def test_discovery_deduplicates_identity_and_explicit_app_query_is_stored(system
     both = mixed.data()
     assert not both.is_empty()
     assert both.total_rows == 2
-    table = both.dataframe()
-    assert table["turbidity"].to_list() == [4.]
-    assert table["stored"].to_list() == [1.]
+    table = both.dataframe(shape="narrow", compact=False)
+    assert dict(table.select("data_alias", "value_numeric").iter_rows()) == {"turbidity": 4., "stored": 1.}
     monkeypatch.undo()
     stored = client.query().measurement(alias="first", app="first").data()
     assert stored.bindings[0].view == "stored"
-    assert stored.dataframe()["first"].to_list() == [2.]
+    assert stored.dataframe(shape="narrow")["value_numeric"].to_list() == [2.]
     assert stored.total_rows == 1
 
 
@@ -473,9 +472,9 @@ def test_whole_series_cleaner_corrections_and_deletions(system):
 
 def test_removed_text_replacement_keeps_its_historical_read_kind(system):
     manager, _, client, module, source, _, _ = system
-    client.register_streams([dict(source_id=source, ref_name="state", value_kind="text")])
-    ref = str(compute_ref_uri(source, "state"))
-    manager.core.wait(manager.insert_timeseries(source_id=source, ref_name="state",
+    client.register_streams([dict(source_id=source, stream_name="state", value_kind="text")])
+    ref = str(compute_stream_uri(source, "state"))
+    manager.core.wait(manager.insert_timeseries(source_id=source, stream_name="state",
                                                rows=[(0, "running")], request_id="state"))
     app = aq.App("state-clean", {"raw": selection(ref)}, {"out": aq.ReplacementOutput()},
                  aq.PythonFunction.from_file(module, "passthrough"))

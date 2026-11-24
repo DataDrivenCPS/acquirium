@@ -2,34 +2,22 @@
 title: How-to guides
 ---
 
-Each guide answers one practical question. They assume you have worked through
-the [tutorials](../tutorials/_index.md).
+Each guide in this section shows how to do one task with Acquirium.
+The guides assume that you followed the [tutorial](../tutorials/_index.md), and most of them use the plant of [5 - A Full Example](../tutorials/a-full-example.md).
 
-**Running Acquirium**
+## Querying
 
-- [Acquirium in Python scripts](local-runtime.md): `aq.init()`, sharing one server between scripts, and shutdown.
-- [Server startup](run-the-server.md): the server command, startup, and Docker.
+- [Explore a plant model](explore-a-model.md): build a query step by step, and list the values that occur in a model.
+- [Debug an empty or unexpected query result](debug-an-empty-query.md): the common causes, each with a way to check it.
+- [Query cookbook](query-cookbook.md): queries for common questions about a plant.
 
-**The plant model**
+## Apps
 
-- [Plant model loading](load-a-plant-model.md): insert it, check it landed, and validate it.
-- [Model exploration](explore-a-model.md): find out what a model holds with `options()` and `facets()`.
-- [Query troubleshooting](debug-an-empty-query.md): the usual causes, and how to check each.
-- [Node metadata](attach-metadata.md): your own values on equipment and points, queryable like the built-in attributes.
-- [Text resolution to URIs](resolve-text.md): see what free text matches, and convert units.
+- [Calculate derived streams](write-soft-sensors.md): apps with several inputs, parameters, and apps that read other apps.
+- [Check, deploy, and repair an app](check-deploy-apps.md): read a check result, deploy, repair a failed app, apply a code change to old data, and remove an app.
 
-**Data**
+## Experiments
 
-- [Direct data insertion](write-data.md): register streams and insert rows directly.
-- [Streaming change feed](consume-streaming-changes.md): follow every committed change, resuming where you left off.
-
-**Soft sensors**
-
-- [Soft sensor examples](soft-sensor-examples.md): calculations, cleaning pipelines, multiple outputs, parameters, and profiling.
-- [App deployment and recovery](check-deploy-apps.md): start soft sensors, inspect their state, update calculations, recover from failures, and remove apps.
-
-**Experiments**
-
-- [Experiment recording](record-experiments.md): record an analysis's inputs and results, and find runs again.
-- [Recording complete models](record-a-whole-model.md): declare a model's components once and record snapshots of them.
-- [Compare runs with formulas](compare-experiment-runs.md): one row per run, and formulas across runs.
+- [Record experiments](record-experiments.md): text, tables, files, objects and logs as variables, failed runs and resuming a run.
+- [Record a whole model](record-a-whole-model.md): declare and record every value of a model in one call.
+- [Compare experiment runs](compare-experiment-runs.md): one row per run, formulas over the results, selecting and deleting runs.

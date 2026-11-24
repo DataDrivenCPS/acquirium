@@ -23,7 +23,7 @@ from pathlib import Path
 
 import acquirium as aq
 from acquirium.apps import output_reference
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import compute_stream_uri
 
 from .chain import MAX_GAP, SOFT_SENSORS, SOURCE, SUSTAINED_MINUTES
 from .chain import MINUTE as MINUTE_NS
@@ -203,7 +203,7 @@ def run(args):
         before = client.engine_status()
         names = [f"turbidity-{i}" for i in range(len(LOCATIONS))]
         names += [f"filler-{i}" for i in range(args.filler_columns)]
-        refs = [str(compute_ref_uri(SOURCE, name)) for name in names]
+        refs = [str(compute_stream_uri(SOURCE, name)) for name in names]
         started = time.monotonic()
         for path in sorted(staging.iterdir()):
             path.rename(incoming / path.name)

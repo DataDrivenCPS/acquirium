@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
+    import polars as pl
     import pyarrow as pa
 
 from rdflib import URIRef
@@ -13,14 +14,20 @@ from rdflib import URIRef
 from acquirium.Client.explore.core import Query
 from acquirium.Client.explore.expr import AttrProxy
 from acquirium.apps import App
-
-
+from acquirium.internals._names import accepts_old_names, new_names
 from acquirium.Client.client import AcquiriumClient, CAPACITY_RETRY_S, DEFAULT_HEALTH_REQUEST_TIMEOUT
 from acquirium.Client.streams import Stream
 from acquirium.Experiments import Point, StudyService
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import MAX_REQUEST_ROWS, compute_stream_uri
 
 
+def _dt_to_iso(v: "str | datetime | None") -> "str | None":
+    if v is None:
+        return None
+    return v.isoformat() if isinstance(v, datetime) else v
+
+
+@accepts_old_names
 @dataclass
 class Acquirium:
     """
@@ -38,6 +45,7 @@ class Acquirium:
             server_url: str = "127.0.0.1",
             server_port: int = 8000,
             use_ssl: bool = False,
+            insert_batch_rows: int = 50_000,
             health_timeout: float | None = 60.0,
         ):
         """Connect to an Acquirium server.
@@ -47,6 +55,9 @@ class Acquirium:
         raises ``ConnectionError`` if it never does. Pass
         ``health_timeout=None`` (or 0) to skip the check.
         """
+        self.insert_batch_rows = int(insert_batch_rows)
+        if self.insert_batch_rows <= 0:
+            raise ValueError("insert_batch_rows must be greater than zero")
         self.client = AcquiriumClient(
             server_url=server_url,
             server_port=server_port,
@@ -100,8 +111,8 @@ class Acquirium:
         """
         Insert RDF graph into an explicitly owned deployment data graph.
 
-        The server refreshes the embedding index synchronously before
-        responding, so inserted concepts are resolvable once this returns.
+        The text matcher searches the bundled ontologies only, so an insert
+        does not change what text is matched to.
 
         Args:
             rdf_graph: RDF graph content as text.
@@ -133,8 +144,11 @@ class Acquirium:
             source_id=source_id,
         )
 
-    def insert_metadata(self, uri: str | URIRef, values: Mapping[str, Any]) -> dict[str, Any]:
+    def insert_metadata(self, uri: "str | URIRef | Stream", values: Mapping[str, Any]) -> dict[str, Any]:
         """Attach metadata to one node (entity or measurement) by URI or CURIE.
+
+        A stream handle from ``aq.stream()`` is accepted in place of the URI:
+        the metadata is written on the property the stream is linked to.
 
         ``values`` is a plain map. A key that names a built-in attribute
         (``unit``, ``medium``, ``label``, ``type``, ...) is written with that
@@ -154,6 +168,8 @@ class Acquirium:
         Writing a key replaces its previous value; ``None`` removes it. Keys
         not mentioned stay. Metadata lives as long as the node does.
         """
+        if isinstance(uri, Stream):
+            uri = self.client.stream_property(uri.stream_uri)
         return self.client.insert_metadata({str(uri): values})
 
     def sparql_update(self, update: str, *, source_id: str) -> dict[str, Any]:
@@ -197,24 +213,13 @@ class Acquirium:
     # TIMESERIES API
     # ------------------------------------------------------------------
 
-    def register_datasource(self, source_id: str) -> str:
-        """Register a named datasource in the knowledge graph.
-
-        The ``source_id`` is a user-provided string that scopes stream
-        ``ref_name`` values so two sources with the same ``ref_name`` never
-        produce colliding canonical reference URIs. Safe to call on every startup —
-        the graph write is idempotent.
-
-        Returns ``source_id``.
-        """
-        return self.client.register_datasource(source_id)
-
     def insert_timeseries(
         self,
         source_id: str,
-        ref_name: str,
+        stream_name: str,
         rows: list[tuple[datetime, Any]],
         *,
+        property_uri: str | None = None,
         request_id: str | None = None,
         replace: bool = False,
         wait: float = 30,
@@ -231,8 +236,9 @@ class Acquirium:
         """
         return self.client.insert_timeseries(
             source_id=source_id,
-            ref_name=ref_name,
+            stream_name=stream_name,
             rows=rows,
+            property_uri=property_uri,
             request_id=request_id,
             replace=replace,
             wait=wait, timeout=timeout, retry_for=retry_for,
@@ -240,18 +246,21 @@ class Acquirium:
 
     def insert_timeseries_batch(self, source_id, streams, *, request_id=None, replace=(), wait=30,
                                 timeout=60, retry_for=CAPACITY_RETRY_S):
-        """Upsert ``{ref_name: rows}``; each stream named in ``replace`` holds
+        """Upsert ``{stream_name: rows}``; each stream named in ``replace`` holds
         exactly its supplied rows. Large inputs are split into requests of at
         most 10,000 rows, each atomic; pass the whole dataset in one call."""
-        return self.client.insert_timeseries_batch(source_id, streams, request_id=request_id,
-                                                  replace=replace, wait=wait, timeout=timeout,
-                                                  retry_for=retry_for)
+        result = self.client.insert_timeseries_batch(
+            source_id, streams, request_id=request_id, replace=replace, wait=wait,
+            timeout=timeout, retry_for=retry_for,
+            batch_rows=min(self.insert_batch_rows, MAX_REQUEST_ROWS),
+        )
+        return {**result, "batches": len(result["receipts"])}
 
     def insert_timeseries_arrow(
         self, source_id: str, table: "pa.Table", *, request_id: str | None = None,
         wait: float = 30, timeout: float = 60, retry_for: float = CAPACITY_RETRY_S,
     ) -> dict[str, Any]:
-        """Insert a ``(ts, ref_name, value)`` Arrow table. Tables over 10,000
+        """Insert a ``(ts, stream_name, value)`` Arrow table. Tables over 10,000
         rows are split into requests in order, each atomic.
 
         Reuse ``request_id`` and the exact normalized payload on retry.
@@ -264,14 +273,18 @@ class Acquirium:
             retry_for=retry_for,
         )
 
-    def resolve_point_metadata(
+    def resolve_point_metadata(self, *args, **kwargs):
+        """Alias of :meth:`resolve_property_metadata`."""
+        return self.resolve_property_metadata(*args, **kwargs)
+
+    def resolve_property_metadata(
         self, fields: dict[str, Any], min_score: float = 0.6
     ) -> dict[str, str | None]:
         """Resolve the semantic metadata of a single point/property.
 
         ``fields`` maps known semantic field names to a raw value::
 
-            aq.resolve_point_metadata({
+            aq.resolve_property_metadata({
                 "unit": "gal/min",
                 "quantity_kind": "flow rate",
                 "medium": "water",
@@ -292,7 +305,7 @@ class Acquirium:
         registration. For arbitrary labels and explicit kinds use
         :meth:`AcquiriumClient.resolve` directly.
         """
-        return self.client.resolve_point_metadata(fields, min_score=min_score)
+        return self.client.resolve_property_metadata(fields, min_score=min_score)
 
 
     def graph_version(self) -> int:
@@ -307,19 +320,19 @@ class Acquirium:
         """Validate all registered deployment data against ontology shapes."""
         return self.client.validate_graph()
 
-    def reference_uri(self, source_id: str, ref_name: str) -> URIRef:
-        """Return the canonical Acquirium reference URI for ``(source_id, ref_name)``."""
-        return compute_ref_uri(source_id, ref_name)
+    def reference_uri(self, source_id: str, stream_name: str) -> URIRef:
+        """Return the canonical Acquirium reference URI for ``(source_id, stream_name)``."""
+        return compute_stream_uri(source_id, stream_name)
 
     def stream(self, source_id_or_uri: str | URIRef, name: str | None = None) -> Stream:
         """Return a handle for one stored stream.
 
         ``ac.stream(source_id, name)`` names a stream by the source and stream
-        name its driver writes with; ``ac.stream(ref_uri)`` wraps a reference
+        name its driver writes with; ``ac.stream(stream_uri)`` wraps a reference
         URI. Use ``stream.between(start, end)`` to select a time range.
         """
-        ref_uri = compute_ref_uri(str(source_id_or_uri), name) if name is not None else source_id_or_uri
-        return Stream(str(ref_uri), self.client)
+        stream_uri = compute_stream_uri(str(source_id_or_uri), name) if name is not None else source_id_or_uri
+        return Stream(str(stream_uri), self.client)
 
     def point(self, uri: str) -> Point:
         """Return a lightweight semantic point handle for experiment variables."""
@@ -346,25 +359,32 @@ class Acquirium:
 
         Each stream item is a dictionary with these commonly used keys:
 
-        - ``point_uri``: optional semantic URI. When provided, a point node is
-          created and linked to the external reference. When omitted, only the
-          external reference node is written.
-        - ``source_id`` and ``ref_name``: source-local stream identity. When
+        - ``property_uri``: optional semantic URI. When provided, the property is
+          linked to the stream. When omitted, Acquirium generates a property
+          for the stream and marks it ``is_disconnected``. Registering the
+          stream again with a ``property_uri`` connects it: the generated
+          property is replaced, and its metadata moves to ``property_uri``
+          (see :meth:`AcquiriumClient.register_streams` for the rules).
+        - ``source_id`` and ``stream_name``: source-local stream identity. When
           both are present, Acquirium mints the canonical reference URI and
           writes ``acq:sourceId``, ``acq:refName``, and ``ref:storedAt`` on it.
-        - ``label``: optional ``rdfs:label`` written on ``point_uri``.
+        - ``label``: optional ``rdfs:label`` written on ``property_uri``.
         - ``data_source``: optional datasource marker written on the point.
         - ``properties``: optional mapping of predicate URIRefs to values,
-          written on the reference node (or ``point_uri`` when no ref node exists).
+          written on the reference node (or ``property_uri`` when no ref node exists).
 
         Plain strings for ``unit``/``quantity_kind``/``medium``/``substance``
-        are resolved jointly per stream via :meth:`resolve_point_metadata`;
+        are resolved jointly per stream via :meth:`resolve_property_metadata`;
         URI / URIRef / None values pass through.
 
         Drivers should still insert rows with ``insert_timeseries_arrow`` using
-        the same ``source_id`` and source-local ``ref_name``. Acquirium resolves
-        those inserts to the same canonical reference URI internally.
+        the same ``source_id`` and source-local ``stream_name``. Acquirium resolves
+        those inserts to the same canonical stream URI internally.
+
+        The old keys ``point_uri`` and ``ref_name`` are still accepted;
+        ``ref_name`` is deprecated.
         """
+        streams = [new_names(stream) for stream in streams]
         self.client.register_streams(streams)
 
     def deploy_app(self, declaration: App, *, dry_run: bool = False) -> dict[str, Any]:
@@ -393,9 +413,9 @@ class Acquirium:
         """Page committed native changes; persist the cursor with sink updates."""
         return self.client.changes(epoch=epoch, ordinal=ordinal, limit=limit, timeout=timeout)
 
-    def delete_timeseries(self, source_id, ref_name, timestamps, *, request_id=None, wait=30, timeout=60,
+    def delete_timeseries(self, source_id, stream_name, timestamps, *, request_id=None, wait=30, timeout=60,
                           retry_for=CAPACITY_RETRY_S):
-        return self.client.delete_timeseries(source_id, ref_name, timestamps, request_id=request_id,
+        return self.client.delete_timeseries(source_id, stream_name, timestamps, request_id=request_id,
                                              wait=wait, timeout=timeout, retry_for=retry_for)
 
     def list_apps(self) -> dict[str, Any]:
@@ -408,6 +428,68 @@ class Acquirium:
 
     def remove_app(self, name: str) -> dict[str, Any]:
         return self.client.remove_app(name)
+
+    # ------------------------------------------------------------------
+    # LOGGING API (plant-level convenience methods)
+    # ------------------------------------------------------------------
+
+    def insert_log(
+        self,
+        message: str,
+        log_time: str | datetime | None = None,
+        observation_start: str | datetime | None = None,
+        observation_end: str | datetime | None = None,
+    ) -> dict:
+        """Insert a plant-level log entry (no specific property URI needed).
+
+        Args:
+            message: The log message.
+            log_time: Timestamp of the log entry (ISO 8601 string or datetime).
+                Defaults to now.
+            observation_start: Optional observation period start.
+            observation_end: Optional observation period end.
+        """
+        return self.client.insert_log(
+            log_time=_dt_to_iso(log_time),
+            log_message=message,
+            observation_start=_dt_to_iso(observation_start),
+            observation_end=_dt_to_iso(observation_end),
+        )
+
+    def read_logs(
+        self,
+        log_time_start: str | datetime | None = None,
+        log_time_end: str | datetime | None = None,
+        observation_start: str | datetime | None = None,
+        observation_end: str | datetime | None = None,
+    ) -> "pl.DataFrame":
+        """Read plant-level log entries (no query/object needed).
+
+        Returns a list of LogEntry objects for the generic plant URI.
+        """
+        import polars as pl
+
+        logs = self.client.query_logs(
+            log_time_start=_dt_to_iso(log_time_start),
+            log_time_end=_dt_to_iso(log_time_end),
+            observation_start=_dt_to_iso(observation_start),
+            observation_end=_dt_to_iso(observation_end),
+        )
+        if not logs:
+            return pl.DataFrame({"property_uri": [], "message": [], "log_time": [], "observation_start": [], "observation_end": []})
+        frames = [log.to_dict() for log in logs]
+        schema = {
+            "property_uri": pl.Utf8,
+            "message": pl.Utf8,
+            "log_time": pl.Datetime(time_zone="UTC"),
+            "observation_start": pl.Datetime(time_zone="UTC"),
+            "observation_end": pl.Datetime(time_zone="UTC"),
+        }
+        return pl.concat([pl.DataFrame(f, schema=schema) for f in frames], how="vertical").sort("log_time")
+
+    def delete_logs(self) -> dict:
+        """Delete all plant-level log entries."""
+        return self.client.delete_logs()
 
     # ------------------------------------------------------------------
     # SPARQL / GRAPH UTILITIES

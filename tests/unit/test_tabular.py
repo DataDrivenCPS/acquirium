@@ -198,8 +198,8 @@ def _wide() -> pl.DataFrame:
 
 def test_wide_melts_to_observations():
     out = to_observations(_wide(), layout="wide")
-    assert out.columns == ["ts", "ref_name", "value"]
-    assert set(out["ref_name"].unique()) == {"temp", "rh"}
+    assert out.columns == ["ts", "stream_name", "value"]
+    assert set(out["stream_name"].unique()) == {"temp", "rh"}
     assert out.height == 4
 
 
@@ -210,7 +210,7 @@ def test_narrow_uses_id_and_value_columns():
         "value": [22.5, 55.0],
     })
     out = to_observations(df, layout="narrow")
-    assert set(out["ref_name"].to_list()) == {"sensor/temp", "sensor/rh"}
+    assert set(out["stream_name"].to_list()) == {"sensor/temp", "sensor/rh"}
 
 
 def test_layout_must_be_explicit_when_both_columns_present():
@@ -221,7 +221,7 @@ def test_layout_must_be_explicit_when_both_columns_present():
 
 def test_stream_names_are_preserved():
     df = pl.DataFrame({"time": ["2024-01-01T00:00:00Z"], "UV Intensity (mW/cm^2)": [1.5]})
-    assert to_observations(df, layout="wide")["ref_name"].to_list() == ["UV Intensity (mW/cm^2)"]
+    assert to_observations(df, layout="wide")["stream_name"].to_list() == ["UV Intensity (mW/cm^2)"]
 
 
 def test_distinct_names_that_used_to_normalize_together_remain_distinct():
@@ -231,14 +231,14 @@ def test_distinct_names_that_used_to_normalize_together_remain_distinct():
         "a_b": [2.0],
     })
     out = to_observations(df, layout="wide")
-    assert set(out["ref_name"].to_list()) == {"a b", "a_b"}
+    assert set(out["stream_name"].to_list()) == {"a b", "a_b"}
 
 
 def test_narrow_stream_names_are_preserved():
     df = pl.DataFrame({
         "time": ["2024-01-01T00:00:00Z"], "id": ["UV Intensity (mW/cm^2)"], "value": [1.5],
     })
-    assert to_observations(df, layout="narrow")["ref_name"].to_list() == ["UV Intensity (mW/cm^2)"]
+    assert to_observations(df, layout="narrow")["stream_name"].to_list() == ["UV Intensity (mW/cm^2)"]
 
 
 def test_null_and_nan_values_are_dropped():
@@ -263,7 +263,7 @@ def test_common_ts_name_is_discovered():
     out = to_observations(
         pl.DataFrame({"ts": ["2024-01-01"], "temp": [1.0]}), layout="wide"
     )
-    assert out["ref_name"].to_list() == ["temp"]
+    assert out["stream_name"].to_list() == ["temp"]
 
 
 def test_split_date_time_names_are_discovered_and_not_streams():
@@ -273,7 +273,7 @@ def test_split_date_time_names_are_discovered_and_not_streams():
         "temp": [1.0],
     }), layout="wide")
     assert out["ts"].to_list() == [datetime(2024, 12, 1, 17, 32, 52, tzinfo=timezone.utc)]
-    assert out["ref_name"].to_list() == ["temp"]
+    assert out["stream_name"].to_list() == ["temp"]
 
 
 def test_prefixed_date_time_pair_is_discovered():
@@ -298,7 +298,7 @@ def test_custom_column_names():
     out = to_observations(
         df, time_col="timestamp", id_col="tag", value_col="reading", layout="narrow"
     )
-    assert out["ref_name"].to_list() == ["a"]
+    assert out["stream_name"].to_list() == ["a"]
     assert out["value"].to_list() == [1.5]
 
 
@@ -309,6 +309,6 @@ def test_text_cells_travel_as_text():
         "mode": ["AUTO", "Bad"],
     })
     out = to_observations(df, layout="wide")
-    assert sorted(zip(out["ref_name"], out["value"])) == [
+    assert sorted(zip(out["stream_name"], out["value"])) == [
         ("mode", "AUTO"), ("mode", "Bad"), ("temp", "21.5"),
     ]

@@ -18,6 +18,7 @@ from typing import Any
 
 # Dropped by ``recreate``, dependents first.
 LEDGER_TABLES = (
+    "acquirium_logs",
     "experiment_observation_accepted",
     "experiment_metadata_outbox",
     "experiment_metadata_state",

@@ -43,9 +43,11 @@ STORED_AT = BRICK_REF.storedAt
 ACQUIRIUM_SOURCE_ID  = ACQUIRIUM_NS.sourceId   # the registered datasource name
 ACQUIRIUM_REF_NAME   = ACQUIRIUM_NS.refName    # the source-local stream identifier
 ACQUIRIUM_VALUE_KIND = ACQUIRIUM_NS.valueKind  # "numeric" or "text"
+INFERRED_VALUE_KIND = ACQUIRIUM_NS.inferredValueKind
 
-# Class for registered datasource nodes
-ACQUIRIUM_DATASOURCE = ACQUIRIUM_NS.DataSourceRegistry
+# Marks the property Acquirium generates for a stream registered without a
+# ``property_uri``: the stream is not connected to a plant property yet.
+IS_DISCONNECTED = ACQUIRIUM_NS.isDisconnected
 
 HAS_MEDIUM = S223.hasMedium
 OF_MEDIUM = S223.ofMedium
@@ -113,3 +115,7 @@ def _canonical_namespace_manager() -> NamespaceManager:
 
 
 CANONICAL_NAMESPACES: NamespaceManager = _canonical_namespace_manager()
+
+HAS_LOG = ACQUIRIUM_NS.hasLog
+LOGBOOK = ACQUIRIUM_NS.Logbook
+PLANT_URI = str(ACQUIRIUM_NS.Plant)  # Generic URI representing the entire plant

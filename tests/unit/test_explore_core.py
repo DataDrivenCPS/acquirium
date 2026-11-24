@@ -14,7 +14,7 @@ from rdflib.plugins.sparql import prepareQuery
 
 from acquirium.Client.explore.core import Query
 from acquirium.Client.streams import Stream
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import compute_stream_uri
 
 CLS_A = "urn:test#TypeA"
 CLS_B = "urn:test#TypeB"
@@ -378,38 +378,38 @@ class TestMeasurementUri:
 
 
 class TestMeasurementRef:
-    R1 = str(compute_ref_uri("hist", "FT_feed"))
-    R2 = str(compute_ref_uri("hist", "FT_perm"))
+    R1 = str(compute_stream_uri("hist", "FT_feed"))
+    R2 = str(compute_stream_uri("hist", "FT_perm"))
 
     def test_root_measurement_pinned_to_one_stream(self):
-        sparql = q().measurement(alias="m", ref=self.R1).to_sparql()
+        sparql = q().measurement(alias="m", stream=self.R1).to_sparql()
         assert f"VALUES ?ext0 {{ <{self.R1}> }}" in sparql
         prepareQuery(sparql)
 
     def test_stream_handles_and_uris_are_deduplicated(self):
         refs = [Stream(self.R1), self.R1, URIRef(self.R2)]
-        sparql = q().measurement(alias="m", ref=refs).to_sparql()
+        sparql = q().measurement(alias="m", stream=refs).to_sparql()
         assert f"VALUES ?ext0 {{ <{self.R1}> <{self.R2}> }}" in sparql
 
     def test_every_data_node_of_a_frm_list_is_pinned(self):
         b = (q().entity(CLS_A, alias="a").entity(CLS_A, alias="b")
-             .measurement(frm=["a", "b"], ref=self.R1))
+             .measurement(frm=["a", "b"], stream=self.R1))
         sparql = b.to_sparql()
         for nid in b.query_graph.data_nodes:
             assert f"VALUES ?ext{nid} {{ <{self.R1}> }}" in sparql
         prepareQuery(sparql)
 
     def test_directional_measurement_keeps_the_refs(self):
-        b = q().entity(CLS_A, alias="a").measurement(direction="downstream", ref=self.R1)
+        b = q().entity(CLS_A, alias="a").measurement(direction="downstream", stream=self.R1)
         (info,) = b.query_graph.data_nodes.values()
         assert info.refs == (self.R1,)
 
     def test_refs_survive_later_attribute_filters(self):
-        b = q().measurement(alias="m", ref=self.R1).where(type="urn:test#Sensor")
+        b = q().measurement(alias="m", stream=self.R1).where(type="urn:test#Sensor")
         assert b.query_graph.data_nodes[0].refs == (self.R1,)
 
     def test_empty_list_matches_nothing(self):
-        sparql = q().measurement(alias="m", ref=[]).to_sparql()
+        sparql = q().measurement(alias="m", stream=[]).to_sparql()
         assert "VALUES ?ext0 {  }" in sparql
         prepareQuery(sparql)
 
@@ -418,11 +418,11 @@ class TestMeasurementRef:
 
     @pytest.mark.parametrize("bad", ["FT_feed", "hist:FT_feed", "urn:x> } ?s ?p ?o {", 3])
     def test_non_uris_and_sparql_breaking_text_rejected(self, bad):
-        with pytest.raises(ValueError, match="ref must be stream reference URIs"):
-            q().measurement(alias="m", ref=bad)
+        with pytest.raises(ValueError, match="stream must be stream URIs"):
+            q().measurement(alias="m", stream=bad)
 
     def test_to_dict_carries_the_refs(self):
-        (node,) = q().measurement(alias="m", ref=self.R1).to_dict()["data_nodes"]
+        (node,) = q().measurement(alias="m", stream=self.R1).to_dict()["data_nodes"]
         assert node["refs"] == [self.R1]
 
 
@@ -441,3 +441,106 @@ class TestMetadataCompaction:
         assert sorted(meta["a"].to_list()) == ["t:a1", "t:a1", "t:a2", "t:a2"]
         assert meta["m"].null_count() == 1
         assert client.compact_uri.call_count == 4          # a1, a2, p1, p2, not 8 cells
+
+
+class TestProperty:
+    HAS_REF = "<https://brickschema.org/schema/Brick/ref#hasExternalReference>"
+    HAS_PROPERTY = "<http://data.ashrae.org/standard223#hasProperty>"
+
+    def test_root_form_selects_every_property(self):
+        b = q().property()
+        g = b.query_graph
+        assert g.nodes[0].constraints == {"is_property_node": True}
+        assert g.aliases["property"] == 0 and not g.data_nodes and not g.edges
+        sparql = b.to_sparql()
+        prepareQuery(sparql)
+        assert "subClassOf>* <http://data.ashrae.org/standard223#Property>" in sparql
+        assert f"?v0_pown {self.HAS_PROPERTY} ?v0" in sparql
+        assert f"?v0 {self.HAS_REF} ?v0_pext" in sparql
+        assert "FILTER(isIRI(?v0))" in sparql
+        assert "EXISTS" not in sparql
+
+    @pytest.mark.parametrize("has_stream, clause", [(True, "FILTER EXISTS"), (False, "FILTER NOT EXISTS")])
+    def test_has_stream_filters_on_the_stream_link(self, has_stream, clause):
+        b = q().property(has_stream=has_stream)
+        assert b.query_graph.nodes[0].constraints == {"is_property_node": True, "has_stream": has_stream}
+        sparql = b.to_sparql()
+        prepareQuery(sparql)
+        assert f"{clause} {{ ?v0 {self.HAS_REF} ?v0_pstream . }}" in sparql
+
+    def test_has_stream_must_be_a_bool(self):
+        with pytest.raises(ValueError, match="has_stream must be True, False or None"):
+            q().property(has_stream="no")
+
+    def test_after_an_entity_selects_its_properties(self):
+        b = q().entity(CLS_A, alias="a").property(has_stream=False)
+        g = b.query_graph
+        assert g.aliases["a_property"] == 1 and g.current_pointer == 1
+        assert g.edges[0].relation_name == "property"
+        sparql = b.to_sparql()
+        prepareQuery(sparql)
+        assert f"?v0 {self.HAS_PROPERTY} ?v1" in sparql
+        assert "hasConnectionPoint" in sparql
+
+    def test_include_connection_points_false_keeps_own_properties(self):
+        sparql = q().entity(CLS_A, alias="a").property(include_connection_points=False).to_sparql()
+        prepareQuery(sparql)
+        assert "hasConnectionPoint" not in sparql
+
+    def test_uri_pins_one_property(self):
+        sparql = q().property(uri=INST).to_sparql()
+        assert f"VALUES ?v0 {{ <{INST}> }}" in sparql
+
+    def test_a_measurement_cannot_be_the_source(self):
+        with pytest.raises(ValueError, match="source node is a measurement"):
+            q().measurement().property()
+
+    def test_summary_names_the_node(self):
+        assert repr(q().property(has_stream=False)) == "Query\n  property: property, without a stream"
+        assert repr(q().entity(CLS_A, alias="a").property()) == (
+            "Query\n  a: entity, TypeA\n  a_property: property, of a")
+
+
+class TestDisplay:
+    def _client(self, rows):
+        from unittest.mock import MagicMock
+        client = MagicMock()
+        client.sparql_query.return_value = {"columns": ["v0"], "rows": [[row] for row in rows]}
+        client.compact_uri.side_effect = lambda u: "t:" + str(u).rsplit("#", 1)[-1]
+        return client
+
+    def test_repr_is_a_summary_and_does_not_contact_the_server(self):
+        client = self._client(["urn:t#a1"])
+        query = Query(client=client).entity(CLS_A, alias="a").measurement(alias="m")
+        assert repr(query) == "Query\n  a: entity, TypeA\n  m: measurement, of a"
+        assert client.mock_calls == []
+
+    def test_repr_of_an_empty_query(self):
+        assert repr(q()) == str(q()) == "Query (empty)"
+
+    def test_str_adds_the_first_five_matches(self):
+        client = self._client([f"urn:t#a{i}" for i in range(7)])
+        text = str(Query(client=client).entity(CLS_A, alias="a"))
+        assert text.startswith("Query\n  a: entity, TypeA\n7 matches, first 5:\n")
+        assert "t:a4" in text and "t:a5" not in text
+
+    def test_str_runs_the_query_once(self):
+        client = self._client(["urn:t#a1"])
+        query = Query(client=client).entity(CLS_A, alias="a")
+        str(query), str(query), query._repr_html_()
+        assert client.sparql_query.call_count == 1
+
+    def test_str_without_matches(self):
+        text = str(Query(client=self._client([])).entity(CLS_A, alias="a"))
+        assert text == "Query\n  a: entity, TypeA\n0 matches"
+
+    def test_str_survives_a_failing_server(self):
+        client = self._client([])
+        client.sparql_query.side_effect = ConnectionError("down")
+        text = str(Query(client=client).entity(CLS_A, alias="a"))
+        assert text == "Query\n  a: entity, TypeA\n(preview unavailable: ConnectionError)"
+
+    def test_html_escapes_the_summary_and_holds_the_table(self):
+        html = Query(client=self._client(["urn:t#a1"])).entity(CLS_A, alias="a")._repr_html_()
+        assert html.startswith("<pre>Query\n  a: entity, TypeA\n1 match:</pre>")
+        assert "<table" in html and "t:a1" in html

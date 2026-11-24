@@ -66,7 +66,7 @@ The active plan records the chain. A historical read uses that epoch's chain
 as well as its values. If the final stage fails, its last successful values
 remain stale. A new stage that has never succeeded has no values; it does not
 silently fall back to an earlier stage. See
-[replacement outputs](../reference/apps.md#replacement-outputs).
+[replacement outputs](../reference/apps/outputs.md#replacement-outputs).
 
 ## Group identity and membership
 

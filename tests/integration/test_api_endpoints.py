@@ -104,14 +104,13 @@ class TestTimeseriesEndpoints:
 
     @pytest.fixture(scope="class", autouse=True)
     def _register_stream(self, own_acquirium):
-        own_acquirium.register_datasource(self.TEST_SOURCE)
-        own_acquirium.register_streams([{"source_id": self.TEST_SOURCE, "ref_name": self.TEST_REF_NAME,
-                                         "point_uri": self.TEST_POINT, "value_kind": "numeric"}])
+        own_acquirium.register_streams([{"source_id": self.TEST_SOURCE, "stream_name": self.TEST_REF_NAME,
+                                         "property_uri": self.TEST_POINT, "value_kind": "numeric"}])
 
     def _post_rows(self, url, values, *, replace=False):
         return requests.post(f"{url}/insert_timeseries", json=[{
             "source_id": self.TEST_SOURCE,
-            "ref_name": self.TEST_REF_NAME,
+            "stream_name": self.TEST_REF_NAME,
             "request_id": str(uuid.uuid4()),
             "replace": replace,
             "values": values,
@@ -189,6 +188,70 @@ class TestTimeseriesEndpoints:
         reader = ipc.open_stream(resp.content)
         table = reader.read_all()
         assert table.num_rows == 0
+
+# ── Logbook Endpoints ───────────────────────────────────────
+
+
+class TestLogEndpoints:
+    LOG_POINT = "urn:test:api_log_point"
+
+    def _cleanup(self, url):
+        requests.delete(f"{url}/delete_logs", params={"property_uri": self.LOG_POINT})
+
+    def test_insert_and_query(self, url):
+        self._cleanup(url)
+        resp = requests.post(f"{url}/insert_log", params={
+            "property_uri": self.LOG_POINT,
+            "log_timestamp": "2025-06-15T10:00:00Z",
+            "message": "api test log",
+        })
+        assert resp.status_code == 200
+
+        resp = requests.get(f"{url}/query_logs", params={
+            "property_uri": self.LOG_POINT,
+        })
+        assert resp.status_code == 200
+        logs = resp.json()
+        assert len(logs) >= 1
+        assert any("api test log" in log.get("message", "") for log in logs)
+
+    def test_with_observation_period(self, url):
+        self._cleanup(url)
+        resp = requests.post(f"{url}/insert_log", params={
+            "property_uri": self.LOG_POINT,
+            "log_timestamp": "2025-06-15T10:00:00Z",
+            "observation_start": "2025-06-15T09:00:00Z",
+            "observation_end": "2025-06-15T11:00:00Z",
+            "message": "observed event",
+        })
+        assert resp.status_code == 200
+
+    def test_delete_logs(self, url):
+        requests.post(f"{url}/insert_log", params={
+            "property_uri": self.LOG_POINT,
+            "log_timestamp": "2025-06-20T10:00:00Z",
+            "message": "to delete",
+        })
+        resp = requests.delete(f"{url}/delete_logs", params={
+            "property_uri": self.LOG_POINT,
+        })
+        assert resp.status_code == 200
+
+        resp = requests.get(f"{url}/query_logs", params={
+            "property_uri": self.LOG_POINT,
+        })
+        logs = resp.json()
+        assert len(logs) == 0
+
+    def test_no_period(self, url):
+        self._cleanup(url)
+        resp = requests.post(f"{url}/insert_log", params={
+            "property_uri": self.LOG_POINT,
+            "log_timestamp": "2025-06-15T10:00:00Z",
+            "message": "no period log",
+        })
+        assert resp.status_code == 200
+
 
 # ── SPARQL Endpoints ───────────────────────────────────────
 

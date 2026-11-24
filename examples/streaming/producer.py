@@ -107,10 +107,10 @@ class WorkloadDriver(Driver):
             )
             receipt = result["receipts"][0]
         else:
-            ref_name, timestamps = next(iter(record["streams"].items()))
+            stream_name, timestamps = next(iter(record["streams"].items()))
             receipt = self.aq.delete_timeseries(
                 SOURCE,
-                ref_name,
+                stream_name,
                 timestamps,
                 request_id=record["request_id"],
                 wait=0,

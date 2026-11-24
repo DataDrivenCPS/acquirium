@@ -83,7 +83,6 @@ MINUTE = 60 * 1_000_000_000
 start = aq.to_timestamp("2026-01-01T00:00:00 UTC")
 client = aq.init(data_dir="./cleaning-pipeline-data")
 
-client.register_datasource("cleaning-pipeline")
 client.register_streams([{
     "source_id": "cleaning-pipeline",
     "ref_name": "signal",

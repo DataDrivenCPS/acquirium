@@ -11,7 +11,7 @@ from acquirium import Acquirium, App, Selection, Output
 from acquirium.apps import output_reference
 from acquirium.Server.manager import Manager
 from acquirium.Server.app import app as api
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import compute_stream_uri
 
 
 @pytest.fixture(scope="module")
@@ -37,14 +37,14 @@ def register(system, source):
         [
             dict(
                 source_id=source,
-                ref_name="temperature",
+                stream_name="temperature",
                 value_kind="numeric",
-                point_uri=f"urn:{source}:point",
+                property_uri=f"urn:{source}:point",
                 unit="http://qudt.org/vocab/unit/DEG_F",
             )
         ]
     )
-    return str(compute_ref_uri(source, "temperature"))
+    return str(compute_stream_uri(source, "temperature"))
 
 
 def mean(name, stream, group="urn:tank"):
@@ -75,12 +75,15 @@ def test_semantic_query_native_plan_http_ingestion_and_arrow_read(system):
     )
     response = http.put(f"/apps/{declaration.name}", json=declaration.to_dict())
     assert response.status_code == 200, response.text
+    output = output_reference("semantic-mean", ref, "mean")
+    matched = client.query().measurement(app="semantic-mean").execute()
+    assert output in str(matched)
     response = http.post(
         "/insert_timeseries",
         json=[
             dict(
                 source_id="semantic",
-                ref_name="temperature",
+                stream_name="temperature",
                 request_id="initial",
                 values=[[1001, 21.5], [2002, 25]],
             )
@@ -89,15 +92,12 @@ def test_semantic_query_native_plan_http_ingestion_and_arrow_read(system):
     assert response.status_code == 200, response.text
     receipt = response.json()["receipts"][0]
     assert receipt["published"]
-    output = output_reference("semantic-mean", ref, "mean")
     response = http.get("/timeseries", params={"uri": output})
     assert response.status_code == 200
     data = ipc.open_stream(response.content).read_all()
     assert data["ts"].type == pa.timestamp("ns", tz="UTC")
     assert data["ts"].cast(pa.int64()).to_pylist() == [1001, 2002]
     assert data["value"].to_pylist() == [21.5, 25]
-    matched = client.query().measurement(app="semantic-mean").execute()
-    assert output in str(matched)
     assert not (manager.data_dir / "timeseries.duckdb").exists()
     assert (manager.data_dir / "escapement-epoch.duckdb").exists()
 
@@ -132,7 +132,7 @@ def test_epoch_server_deploys_repairs_and_recovers_existing_python_app(tmp_path,
 
     def write(http, request_id, value):
         response = http.post("/insert_timeseries", json=[{
-            "source_id": "conversion", "ref_name": "temperature",
+            "source_id": "conversion", "stream_name": "temperature",
             "request_id": request_id, "values": [[1000, value]],
         }])
         assert response.status_code == 200, response.text
@@ -284,7 +284,7 @@ def test_two_apps_retain_each_other_and_form_a_chain(system):
     response = http.put(f"/apps/{second.name}", json=second.to_dict())
     assert response.status_code == 200, response.text
     receipt = manager.insert_timeseries(
-        source_id="chain", ref_name="temperature", rows=[(7777, 9)], request_id="one"
+        source_id="chain", stream_name="temperature", rows=[(7777, 9)], request_id="one"
     )
     snapshot = manager.core.wait(receipt)
     assert value(snapshot, output_reference(second.name, "urn:tank", "mean"), 7777) == 9
@@ -318,7 +318,7 @@ def test_metadata_move_keeps_group_outputs_stable_and_repairs_history(system):
     manager.core.wait(
         manager.insert_timeseries(
             source_id="moving",
-            ref_name="temperature",
+            stream_name="temperature",
             rows=[(9999, 42)],
             request_id="one",
         )
@@ -350,7 +350,7 @@ def test_atomic_request_retry_and_explicit_delete_over_http(system):
     payload = [
         dict(
             source_id="retry",
-            ref_name="temperature",
+            stream_name="temperature",
             request_id="one",
             values=[[1234, 10]],
         )
@@ -367,7 +367,7 @@ def test_atomic_request_retry_and_explicit_delete_over_http(system):
         "/delete_timeseries",
         json=dict(
             source_id="retry",
-            ref_name="temperature",
+            stream_name="temperature",
             timestamps=[1234],
             request_id="delete",
         ),
@@ -388,7 +388,7 @@ def test_text_on_a_numeric_stream_is_kept_and_legacy_declarations_are_rejected(s
         json=[
             dict(
                 source_id="invalid",
-                ref_name="temperature",
+                stream_name="temperature",
                 request_id="fault",
                 values=[[1, "Bad"]],
             )
@@ -412,7 +412,7 @@ def test_failed_activation_is_isolated_and_can_be_retried(system, tmp_path):
     manager.core.wait(
         manager.insert_timeseries(
             source_id="artifact",
-            ref_name="temperature",
+            stream_name="temperature",
             rows=[(4444000, 12)],
             request_id="one",
         )
@@ -477,7 +477,7 @@ def test_python_source_is_cached_by_content_and_updates_at_the_same_path(system,
         return App(base.name, base.inputs, base.outputs, PythonFunction.from_file(path, "calculate"))
 
     def write(value, request_id):
-        receipt = manager.insert_timeseries(source_id="content-hash", ref_name="temperature",
+        receipt = manager.insert_timeseries(source_id="content-hash", stream_name="temperature",
             rows=[(1000, value)], request_id=request_id)
         return manager.core.wait(receipt)
 
@@ -539,9 +539,9 @@ def test_invalid_cycle_keeps_the_previous_plan_and_projection(system):
 
 def test_restart_reconciles_desired_plan_and_retains_history(tmp_path):
     import json
-    from acquirium.internals.models import compute_ref_uri
+    from acquirium.internals.models import compute_stream_uri
 
-    ref = str(compute_ref_uri("restart", "temperature"))
+    ref = str(compute_stream_uri("restart", "temperature"))
     manager = Manager(data_dir=tmp_path, exact_only=True)
     try:
         manager.insert_graph(
@@ -552,7 +552,7 @@ def test_restart_reconciles_desired_plan_and_retains_history(tmp_path):
         manager.core.wait(
             manager.insert_timeseries(
                 source_id="restart",
-                ref_name="temperature",
+                stream_name="temperature",
                 rows=[(1111, 33)],
                 request_id="original",
             )
@@ -575,7 +575,7 @@ def test_restart_reconciles_desired_plan_and_retains_history(tmp_path):
         )
         receipt = manager.insert_timeseries(
             source_id="restart",
-            ref_name="temperature",
+            stream_name="temperature",
             rows=[(1111, 55)],
             request_id="correction",
         )
@@ -594,7 +594,7 @@ def test_restart_preserves_failure_status_and_retries_without_new_writes(tmp_pat
     import time
     from acquirium import PythonFunction
 
-    ref = str(compute_ref_uri("halted", "temperature"))
+    ref = str(compute_stream_uri("halted", "temperature"))
     output = output_reference("halted-app", "urn:tank", "mean")
     flag = tmp_path / "fail"
     module = tmp_path / "calculation.py"
@@ -616,7 +616,7 @@ def test_restart_preserves_failure_status_and_retries_without_new_writes(tmp_pat
     def write(manager, time, value):
         return manager.insert_timeseries(
             source_id="halted",
-            ref_name="temperature",
+            stream_name="temperature",
             rows=[(time, value)],
             request_id=f"write-{time}",
         )
@@ -712,7 +712,7 @@ def test_frozen_unit_factors_execute_in_native_python_worker(system):
     snapshot = manager.core.wait(
         manager.insert_timeseries(
             source_id="units",
-            ref_name="temperature",
+            stream_name="temperature",
             rows=[(2222000, 68)],
             request_id="one",
         )
@@ -728,7 +728,7 @@ def test_http_range_strings_preserve_nanosecond_boundaries(system):
     manager.core.wait(
         manager.insert_timeseries(
             source_id="precision",
-            ref_name="temperature",
+            stream_name="temperature",
             rows=[(1001, 1), (1002, 2), (1003, 3)],
             request_id="boundary",
         )
@@ -778,7 +778,7 @@ def test_group_output_links_are_owned_and_removed_with_membership(system):
     manager.core.wait(
         manager.insert_timeseries(
             source_id="attached",
-            ref_name="temperature",
+            stream_name="temperature",
             rows=[(1234, 32)],
             request_id="one",
         )
@@ -858,7 +858,7 @@ def test_outputs_of_chains_by_port_combines_groups_and_guards_dependencies(syste
     assert same["matches"] == {"mean": 1} and not same["warnings"]
     snapshot = manager.core.wait(
         manager.insert_timeseries(
-            source_id="ports", ref_name="temperature", rows=[(5555, 7)], request_id="one"
+            source_id="ports", stream_name="temperature", rows=[(5555, 7)], request_id="one"
         )
     )
     # The default keeps the upstream group; combine uses one group for the app.
@@ -934,7 +934,7 @@ def test_python_functions_read_typed_parameters_and_the_window(system, tmp_path)
     manager.core.wait(
         manager.insert_timeseries(
             source_id="typed-parameters",
-            ref_name="temperature",
+            stream_name="temperature",
             rows=[(5000, 12)],
             request_id="typed-parameters",
         )
@@ -968,7 +968,7 @@ def test_python_context_includes_group_key_without_configured_parameters(system,
     source = f"group-context-{mode}-{grouping or 'combined'}"
     ref = register(system, source)
     manager.core.wait(manager.insert_timeseries(
-        source_id=source, ref_name="temperature", rows=[(1000, 20), (2000, 22)],
+        source_id=source, stream_name="temperature", rows=[(1000, 20), (2000, 22)],
         request_id=source,
     ))
     module = tmp_path / "identity.py"
@@ -1021,7 +1021,7 @@ def test_arrow_pandas_and_polars_functions_share_a_pipeline(system, tmp_path, mo
     source = f"pandas-{mode}"
     ref = register(system, source)
     manager.core.wait(manager.insert_timeseries(
-        source_id=source, ref_name="temperature", rows=[(1000, 10), (2000, 20)],
+        source_id=source, stream_name="temperature", rows=[(1000, 10), (2000, 20)],
         request_id="initial",
     ))
     module = tmp_path / "calculations.py"
@@ -1062,7 +1062,7 @@ def test_arrow_pandas_and_polars_functions_share_a_pipeline(system, tmp_path, mo
         snapshot = manager.core.engine.snapshot()
         assert [value(snapshot, out, t) for t in (1000, 2000)] == (
             [20, 60] if mode == "sequential" else [20, 40])
-        receipt = manager.insert_timeseries(source_id=source, ref_name="temperature",
+        receipt = manager.insert_timeseries(source_id=source, stream_name="temperature",
             rows=[(1000, 5)], request_id="corrected")
         snapshot = manager.core.wait(receipt)
         assert [value(snapshot, out, t) for t in (1000, 2000)] == (
@@ -1124,7 +1124,7 @@ def test_as_of_selections_read_the_latest_reading_of_a_slower_stream(system, tmp
     for source, rows in (("as-of-reading", [(t, 1.0) for t in range(1000, 9000, 1000)]),
                          ("as-of-gain", [(1000, 2.0), (5000, 3.0)])):
         manager.core.wait(manager.insert_timeseries(
-            source_id=source, ref_name="temperature", rows=rows, request_id=source))
+            source_id=source, stream_name="temperature", rows=rows, request_id=source))
     reference = output_reference(template.name, "urn:tank", "mean")
     def values():
         snapshot = manager.core.engine.snapshot()
@@ -1169,7 +1169,7 @@ def test_native_function_arguments_bind_to_each_groups_parameters(system):
     manager.core.wait(
         manager.insert_timeseries(
             source_id="native-parameters",
-            ref_name="temperature",
+            stream_name="temperature",
             rows=[(6000, 12), (7000, 8)],
             request_id="native-parameters",
         )
@@ -1202,7 +1202,7 @@ def test_a_flow_totalizer_repairs_every_later_volume(system):
 
     def insert(rows, request_id):
         manager.core.wait(manager.insert_timeseries(
-            source_id="flow-totalizer", ref_name="temperature", rows=rows, request_id=request_id,
+            source_id="flow-totalizer", stream_name="temperature", rows=rows, request_id=request_id,
         ))
 
     def volumes(*hours):
@@ -1227,7 +1227,7 @@ def test_dry_run_reports_the_work_of_a_deploy_without_making_it(system):
     manager.core.wait(
         manager.insert_timeseries(
             source_id="dry-run",
-            ref_name="temperature",
+            stream_name="temperature",
             rows=[(8000, 12), (9000, 14)],
             request_id="dry-run",
         )
@@ -1292,7 +1292,7 @@ def test_engine_status_reports_published_and_admitted_frontiers(system):
     client.deploy_app(declaration)
     manager.core.wait(
         manager.insert_timeseries(
-            source_id="totals", ref_name="temperature", rows=[(3333, 1), (3334, 2)], request_id="one"
+            source_id="totals", stream_name="temperature", rows=[(3333, 1), (3334, 2)], request_id="one"
         )
     )
     status = http.get("/engine/status").json()
@@ -1306,16 +1306,16 @@ def test_engine_status_reports_published_and_admitted_frontiers(system):
 def test_text_streams_store_and_read_text(system):
     manager, http, client = system
     client.register_streams(
-        [dict(source_id="pumps", ref_name="mode", value_kind="text", point_uri="urn:pumps:mode")]
+        [dict(source_id="pumps", stream_name="mode", value_kind="text", property_uri="urn:pumps:mode")]
     )
     numeric = register(system, "pumps")
-    ref = str(compute_ref_uri("pumps", "mode"))
+    ref = str(compute_stream_uri("pumps", "mode"))
     response = http.post(
         "/insert_timeseries",
         json=[
-            dict(source_id="pumps", ref_name="mode", request_id="modes",
+            dict(source_id="pumps", stream_name="mode", request_id="modes",
                  values=[[1, "AUTO"], [2, 3]]),
-            dict(source_id="pumps", ref_name="temperature", request_id="modes",
+            dict(source_id="pumps", stream_name="temperature", request_id="modes",
                  values=[[1, 70.5], [2, "Bad"]]),
         ],
     )
@@ -1344,7 +1344,7 @@ def test_engine_snapshot_waits_for_the_plan_to_catch_up_with_the_graph(system):
     manager.insert_graph(f"<{ref}> <urn:catch-up> <urn:room:A> .", source_id="catch-up-groups")
     manager.deploy_app(declaration)
     manager.core.wait(manager.insert_timeseries(
-        source_id="catch-up", ref_name="temperature", rows=[(4242, 7)], request_id="one",
+        source_id="catch-up", stream_name="temperature", rows=[(4242, 7)], request_id="one",
     ))
     moved = output_reference(declaration.name, "urn:room:B", "mean")
     # The graph moves the stream, as any graph write does before the apps
@@ -1390,7 +1390,7 @@ def test_engine_failures_are_retryable_and_bad_input_is_not(system, monkeypatch)
 
     manager, http, client = system
     register(system, "errors")
-    body = [dict(source_id="errors", ref_name="temperature", request_id="r", values=[[1, 2.0]])]
+    body = [dict(source_id="errors", stream_name="temperature", request_id="r", values=[[1, 2.0]])]
 
     def fail(*args, **kwargs):
         raise Fault("database connection lost")
@@ -1400,7 +1400,7 @@ def test_engine_failures_are_retryable_and_bad_input_is_not(system, monkeypatch)
     assert response.status_code == 503
     assert response.headers["Retry-After"] == "1"
     monkeypatch.undo()
-    body[0]["ref_name"] = "unregistered"
+    body[0]["stream_name"] = "unregistered"
     assert http.post("/insert_timeseries", json=body).status_code == 400
 
 

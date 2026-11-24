@@ -105,7 +105,7 @@ def plan(streams):
 
 def frame(streams, times, values):
     return pl.DataFrame({
-        "ref_uri": streams,
+        "stream_uri": streams,
         "ts": pl.Series(times, dtype=pl.Int64).cast(pl.Datetime("ns", "UTC")),
         "value": values,
     })

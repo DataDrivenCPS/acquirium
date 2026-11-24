@@ -55,7 +55,7 @@ IMPORTS_WATER_TURTLE = """\
 @prefix ex: <http://example.org/> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 
-ex:deployment owl:imports <urn:nawi-water-ontology> .
+ex:deployment owl:imports <https://watermetadata.org/ontology/watr> .
 """
 
 

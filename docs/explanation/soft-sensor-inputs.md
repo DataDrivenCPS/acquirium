@@ -170,7 +170,7 @@ client.insert_timeseries("input-demo", "a2", [(sample_time, 26.0)])
 
 `aq.to_timestamp` returns a timezone-aware UTC datetime. You can also write
 `"2026-01-01T10:00:40Z"` or `"2026-01-01T03:00:40-07:00"`; both represent
-the same instant. See [timestamp conversion](../reference/client-api.md#timestamp-conversion)
+the same instant. See [timestamp conversion](../reference/client/_index.md#timestamp-conversion)
 for accepted formats and timezone rules.
 
 ### Group and window selection
@@ -519,6 +519,6 @@ earlier output timestamps remain distinct from the current output timestamp.
 
 For runnable calculations, continue with the
 [soft sensor examples](../how-to/soft-sensor-examples.md). For every frame
-column and option, see the [app reference](../reference/apps.md#python-functions).
+column and option, see the [app reference](../reference/apps/_index.md#python-functions).
 [Derived stream updates](apps.md) explains what happens when an old
 reading, a group membership, or a function changes.

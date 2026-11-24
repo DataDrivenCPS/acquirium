@@ -23,7 +23,7 @@ dataframe, start with [Soft sensor inputs](../explanation/soft-sensor-inputs.md)
 Use `aq.to_timestamp("2026-01-01T10:00:40 UTC")` to create a sample timestamp.
 It returns a timezone-aware UTC datetime and also accepts RFC 3339 / ISO 8601
 strings with `Z` or numeric offsets. With no timezone, UTC is assumed. See
-[timestamp conversion](../reference/client-api.md#timestamp-conversion).
+[timestamp conversion](../reference/client/_index.md#timestamp-conversion).
 
 A sample has one timestamp, which you supply when inserting it:
 

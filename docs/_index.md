@@ -2,62 +2,44 @@
 title: Acquirium documentation
 ---
 
-A treatment plant's data is scattered. Flows and pressures sit in the SCADA
-historian, lab results in spreadsheets, and setpoints in a model someone built
-for a study. Each source names its signals its own way, so the first job of
-any analysis is working out which tag is the feed pressure on the second RO
-train.
+:::{div} version-warning
+Acquirium is under rapid development. This documentation only explains version **{{ acquirium_version }}**.
+:::
 
-Acquirium keeps a model of the plant beside the data: the equipment, how it is
-piped together, and what each sensor measures, described with the
-[WaTr](https://github.com/DataDrivenCPS/water-ontology) and ASHRAE 223P
-vocabularies. You ask for data in those terms, such as *the pressures on the
-RO's inlet*, and Acquirium finds the streams. Apps compute derived streams,
-such as averages, alarms and soft sensors, and keep them correct as readings
-arrive late or are corrected.
+Acquirium is a data-metadata management platform for water treatment plants. It
+pairs with [WaTr](https://github.com/DataDrivenCPS/water-ontology), an
+ontology for water treatment operations that extends ASHRAE 223P with
+treatment processes, substance flows, chemical media and references to
+external data sources.
 
-## Architecture
+:::{div} sd-text-center sd-fs-2 sd-font-weight-bold sd-mt-5 sd-mb-3
+New to Acquirium?
+:::
 
-```text
-                     ┌──────────────── Acquirium server ────────────────┐
- SCADA, historians,  │                                                  │
- CSV, MQTT,          │  Plant model                Readings             │  query
- lab sheets          │  equipment, sensors  ◀───▶  every value from     │ ◀────── your code,
-     │               │  and what each one          every sensor, with   │ ──────▶ notebooks
-     ▼               │  measures                   its corrections      │  data
-  drivers ─────────▶ │  (WaTr, ASHRAE 223P)          │          ▲       │
-  points, readings   │                               ▼          │       │
-                     │                            Apps: averages,       │
-                     │                            alarms, soft sensors, │
-                     │                            kept current          │
-                     └──────────────────────────────────────────────────┘
+```{button-ref} getting-started
+:ref-type: doc
+:color: primary
+:shadow:
+:align: center
+:class: sd-fs-4 sd-px-5 sd-py-3 sd-mb-5
+
+Get started
 ```
 
-Drivers read from plant systems and send readings to the server, along with
-the points they belong to in the plant model. Queries name equipment and
-measurements in the model's terms and return the matching readings. Apps
-compute derived streams from readings and update them when a reading arrives
-late or is corrected. [Server internals](explanation/server-internals.md)
-shows the parts of the server and where each one keeps its data.
+## Get help and contribute
 
-## Documentation structure
+1. Found a bug or a performance issue? Open a [GitHub issue](https://github.com/DataDrivenCPS/acquirium/issues).
+2. Feel free to fork the repo and open a [pull request](https://github.com/DataDrivenCPS/acquirium/pulls).
+3. Join our community on [Slack](https://join.slack.com/t/acquirium/shared_invite/zt-4ek0gz21f-M~3mwGxSC1VgyPrzjyq9wQ)
 
-[Tutorials](tutorials/_index.md) are the place to start. They build on each
-other, from starting a server and querying a simulated plant to writing
-drivers and apps of your own. The notebooks under
-[`notebooks/watertap/`](https://github.com/DataDrivenCPS/acquirium/tree/main/notebooks/watertap)
-cover the same ground interactively.
+## About this documentation
 
-[How-to guides](how-to/_index.md) answer specific questions once you know
-your way around: loading a plant model, recording experiments, running the
-server in production.
+This documentation follows [Diátaxis](https://diataxis.fr):
 
-[Reference](reference/_index.md) pages list every method, configuration key
-and endpoint.
-
-[Explanation](explanation/_index.md) pages describe how Acquirium works and
-why it was built that way: how a query finds its measurements, how derived
-streams stay correct when data changes, and what the server does underneath.
+- [Tutorials](tutorials/_index.md) are lessons. Start here if you are learning Acquirium.
+- [How-to guides](how-to/_index.md) are steps for a specific task.
+- [Reference](reference/_index.md) describes every method, config key and endpoint.
+- [Explanation](explanation/_index.md) covers how Acquirium works and why.
 
 ## Citation
 

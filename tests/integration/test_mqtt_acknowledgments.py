@@ -16,7 +16,7 @@ import polars as pl
 import pytest
 
 from acquirium.Drivers.BuiltInDrivers.mqtt_ingestion import MQTTIngestDriver, parse_mqtt_broker
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import compute_stream_uri
 
 BROKER = os.getenv("ACQUIRIUM_TEST_MQTT", "localhost:1883")
 HOST, PORT = parse_mqtt_broker(BROKER)
@@ -35,7 +35,7 @@ pytestmark = pytest.mark.skipif(not _broker_reachable(), reason=f"no MQTT broker
 
 def server(topic: str, source_id: str, *, refuse: bool) -> MagicMock:
     """A fake Acquirium client whose graph declares one MQTT stream."""
-    ref = str(compute_ref_uri(source_id, "temp"))
+    ref = str(compute_stream_uri(source_id, "temp"))
     aq = MagicMock()
     aq.client.sparql_query.return_value = {
         "rows": [["urn:point", ref, "temp", "numeric", BROKER, topic, "Timestamp", "Value"]]

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Literal, Any
 from pydantic import BaseModel, ConfigDict, Field
 from acquirium.internals.internals_namespaces import ACQUIRIUM_NS
 from rdflib import URIRef
 # Fixed UUID namespace for deterministic reference URI generation.
-# All (source_id, ref_name) pairs are hashed within this namespace so ref URIs
+# All (source_id, stream_name) pairs are hashed within this namespace so stream URIs
 # are globally unique and reproducible without any state.
 _REF_URI_NAMESPACE = uuid.UUID("6a8f3c2e-4b1d-5e7f-9012-3a4b5c6d7e8f")
 
@@ -26,17 +27,27 @@ def looks_like_uri(value: object) -> bool:
     )
 
 
-def compute_ref_uri(source_id: str, ref_name: str) -> URIRef:
-    """Return a deterministic UUID5 ref URI for a (source_id, ref_name) pair.
+def compute_stream_uri(source_id: str, stream_name: str) -> URIRef:
+    """Return a deterministic UUID5 stream URI for a (source_id, stream_name) pair.
 
-    The ref URI is the canonical stream identity exposed by the graph and
+    The stream URI is the canonical stream identity exposed by the graph and
     client APIs. A point links to this reference node through
     ``ref:hasExternalReference``. Escapement uses this reference as its stream
     key. It is stable across restarts and
     can be recomputed from the same inputs.
     """
-    ref_uri_str = str(uuid.uuid5(_REF_URI_NAMESPACE, f"{source_id}:{ref_name}"))
-    return ACQUIRIUM_NS[ref_uri_str]
+    stream_uri_str = str(uuid.uuid5(_REF_URI_NAMESPACE, f"{source_id}:{stream_name}"))
+    return ACQUIRIUM_NS[stream_uri_str]
+
+
+compute_handle = compute_stream_uri
+
+
+def compute_ref_uri(source_id: str, ref_name: str) -> URIRef:
+    """Deprecated name of :func:`compute_stream_uri`."""
+    from acquirium.internals._names import warn_deprecated
+    warn_deprecated("compute_ref_uri", "compute_stream_uri")
+    return compute_stream_uri(source_id, ref_name)
 
 
 class TimeseriesInfo(BaseModel):
@@ -45,28 +56,22 @@ class TimeseriesInfo(BaseModel):
     latest: datetime | None = None
 
 
-
 class Point(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     uri: str
     handle: str | None = None
-    ref_uri: str | URIRef | list[str] | list[URIRef] | None = None
+    stream_uri: str | URIRef | list[str] | list[URIRef] | None = None
     types: list[str] = Field(default_factory=list)
     unit: str | None = None
     last_reported: datetime | None = None
     stream: TimeseriesInfo | None = None
 
 
-class RegisterDatasourceRequest(BaseModel):
-    """Request to register a named datasource."""
-    source_id: str
-
-
 class StreamInsert(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source_id: str = Field(min_length=1)
-    ref_name: str = Field(min_length=1)
+    stream_name: str = Field(min_length=1)
     values: list[tuple[Any, Any]]
     request_id: str = Field(min_length=1)
     # The stream holds exactly ``values`` afterwards; empty clears it.
@@ -78,3 +83,66 @@ class StreamInsert(BaseModel):
 MAX_REQUEST_ROWS = 10_000
 
 Order = Literal["asc", "desc"]
+
+
+@dataclass(frozen=True)
+class TimeInterval:
+    start: datetime
+    end: datetime
+
+    def __init__(self, start: datetime | None = None, end: datetime | None = None, duration: float | None = None):
+        if start is None and end is None:
+            raise ValueError("Either start or end must be provided")
+
+        if duration is not None:
+            if start is not None and end is None:
+                end = start + timedelta(seconds=duration)
+            elif end is not None and start is None:
+                start = end - timedelta(seconds=duration)
+            else:
+                raise ValueError("If duration is provided, only one of start or end should be provided")
+
+        # If duration is not provided, require both bounds
+        if start is None or end is None:
+            raise ValueError("Both start and end must be provided (or provide duration)")
+
+        if end <= start:
+            raise ValueError("end must be after start")
+
+        object.__setattr__(self, "start", start)
+        object.__setattr__(self, "end", end)
+
+    def serialize(self) -> dict[str, str]:
+        return {"start": self.start.isoformat(), "end": self.end.isoformat()}
+
+    def to_str(self) -> str:
+        return f"{self.start.isoformat()}/{self.end.isoformat()}"
+
+    @classmethod
+    def from_str(cls, s: str) -> "TimeInterval":
+        start_str, end_str = s.split("/")
+        return cls(start=datetime.fromisoformat(start_str), end=datetime.fromisoformat(end_str))
+
+
+class TimeIntervalModel(BaseModel):
+    start: datetime | None = None
+    end: datetime | None = None
+
+    def to_interval(self) -> TimeInterval:
+        return TimeInterval(start=self.start, end=self.end)
+
+
+class LogEntry(BaseModel):
+    property_uri: str
+    timestamp: datetime
+    period: TimeIntervalModel
+    message: str | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "property_uri": self.property_uri,
+            "log_time": self.timestamp.isoformat(),
+            "observation_start": self.period.start.isoformat() if self.period.start else None,
+            "observation_end": self.period.end.isoformat() if self.period.end else None,
+            "message": self.message,
+        }

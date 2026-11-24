@@ -13,7 +13,7 @@ from acquirium.Server.app import app as api
 def submit(core, request, values):
     frame = pl.DataFrame(
         {
-            "ref_uri": ["urn:probe"] * len(values),
+            "stream_uri": ["urn:probe"] * len(values),
             "ts": pl.Series([time for time, _ in values], dtype=pl.Int64).cast(
                 pl.Datetime("ns", "UTC")
             ),
@@ -34,7 +34,7 @@ def test_signed_feed_pages_split_updates_and_keep_complete_epoch_frontiers(tmp_p
                 "delete",
                 pl.DataFrame(
                     {
-                        "ref_uri": ["urn:probe"],
+                        "stream_uri": ["urn:probe"],
                         "ts": pl.Series([2], dtype=pl.Int64).cast(
                             pl.Datetime("ns", "UTC")
                         ),
@@ -140,12 +140,12 @@ def test_feed_rejects_invalid_bounds_and_future_cursors(tmp_path):
 def test_http_capacity_is_retryable_and_unpublished_admission_is_not_in_feed(
     tmp_path, monkeypatch
 ):
-    from acquirium.internals.models import compute_ref_uri
+    from acquirium.internals.models import compute_stream_uri
     from tests.epoch_helpers import pause_publication
     from acquirium.Server.manager import Manager
 
     manager = Manager(data_dir=tmp_path, exact_only=True, max_pending_requests=1)
-    ref = str(compute_ref_uri("pressure", "probe"))
+    ref = str(compute_stream_uri("pressure", "probe"))
     try:
         manager.insert_graph(
             f'<{ref}> <urn:acquirium#sourceId> "pressure" ; '
@@ -159,7 +159,7 @@ def test_http_capacity_is_retryable_and_unpublished_admission_is_not_in_feed(
                 payload = [
                     {
                         "source_id": "pressure",
-                        "ref_name": "probe",
+                        "stream_name": "probe",
                         "values": [[1, 20]],
                         "request_id": "first",
                     }

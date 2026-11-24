@@ -36,10 +36,10 @@ def _poll(check, *, timeout: float, message: str):
     raise AssertionError(f"timed out after {timeout}s: {message}")
 
 
-def _frame(rows: int, ref_name: str) -> pl.DataFrame:
+def _frame(rows: int, stream_name: str) -> pl.DataFrame:
     return pl.DataFrame({
         "ts": [START + timedelta(seconds=i) for i in range(rows)],
-        "ref_name": [ref_name] * rows,
+        "stream_name": [stream_name] * rows,
         "value": [float(i) for i in range(rows)],
     })
 
@@ -51,7 +51,7 @@ class _BulkDriver(PollingIngestDriver):
 
     def setup(self) -> None:
         self.source_id = "bulk"
-        self.declare("level", point_uri="urn:test:bulk-level")
+        self.declare("level", property_uri="urn:test:bulk-level")
 
     def collect(self) -> pl.DataFrame:
         return _frame(self.rows, "level")
@@ -61,9 +61,9 @@ def test_client_inserts_round_trip_without_request_ids(tmp_path):
     client = aq.init(data_dir=tmp_path, exact_only=True, timeout=120)
     try:
         client.register_streams([
-            {"source_id": "gateway", "ref_name": "flow", "point_uri": "urn:test:flow",
+            {"source_id": "gateway", "stream_name": "flow", "property_uri": "urn:test:flow",
              "value_kind": "numeric"},
-            {"source_id": "gateway", "ref_name": "pressure", "point_uri": "urn:test:pressure",
+            {"source_id": "gateway", "stream_name": "pressure", "property_uri": "urn:test:pressure",
              "value_kind": "numeric"},
         ])
 
@@ -106,7 +106,7 @@ class CounterDriver(PollingIngestDriver):
         # Driver output on stdout must not corrupt the runner's status line.
         print("counter driver starting")
         self.source_id = "counter"
-        self.declare("count", point_uri="urn:test:counter")
+        self.declare("count", property_uri="urn:test:counter")
         self.n = 0
 
     def read(self):

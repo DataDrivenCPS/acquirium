@@ -2,17 +2,16 @@
 title: Tutorials
 ---
 
-The tutorials build on each other, and each one leaves you with something that
-runs.
+The tutorial teaches Acquirium step by step. Start with [Getting started](../getting-started.md), which installs Acquirium and runs a first script.
+Then follow the pages in number order:
 
-1. [Installation and startup](getting-started.md): install Acquirium, generate a config file, and start a server.
-2. [Querying](querying.md) and [Data retrieval and formats](data.md): ask a simulated
-   RO plant about its equipment and read its measurements. The
-   [query cookbook](query-cookbook.md) works through more plant questions.
-3. [File ingestion driver](first-driver.md) and
-   [Drivers and existing plant models](driver-with-a-plant-model.md): bring your
-   own data in, then give it a place in the plant.
-4. [Soft sensor app](first-app.md) and [Turbidity alarm pipeline](turbidity.md):
-   compute new streams from the data and keep them current.
-5. [Your first experiment](first-experiment.py): record the inputs and results
-   of an analysis so that runs can be compared.
+- [0 - Fundamentals](fundamentals.md): the server, the client, streams and metadata
+- [1 - Inserting Data](inserting-data.md): register streams and insert their data
+- [2 - Querying Data](querying-data.md): select streams and read their data
+- [3 - Inserting Metadata](inserting-metadata.md): annotate streams with units and your own keys, and use them in queries
+- [4 - Inserting a Plant Model](inserting-plant-model.md): insert a plant model and connect streams to it
+- [5 - A Full Example](a-full-example.md): a desalination plant with one year of data
+
+The [advanced topics](advanced/_index.md) continue from there with drivers, apps and experiments.
+
+Pages 1 to 5 are also available as scripts and notebooks in [examples/documentation](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/documentation).

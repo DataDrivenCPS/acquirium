@@ -30,8 +30,8 @@ def register(client):
         [
             {
                 "source_id": SOURCE,
-                "ref_name": probe,
-                "point_uri": f"urn:soft-sensors:probe-{probe}",
+                "stream_name": probe,
+                "property_uri": f"urn:soft-sensors:probe-{probe}",
                 "unit": UNIT,
                 "quantity_kind": QUANTITY,
                 "value_kind": "numeric",

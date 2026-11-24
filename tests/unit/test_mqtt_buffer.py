@@ -77,7 +77,7 @@ def test_one_message_spanning_several_flushes_is_decoded_once_and_acked_last(dri
     client.ack.assert_called_once_with(1, 1)
     assert driver.decode_payload.call_count == 3  # Once for each stream spec.
     frames = sent(driver)
-    assert [frame["ref_name"].item() for frame in frames] == ["a", "b", "c"]
+    assert [frame["stream_name"].item() for frame in frames] == ["a", "b", "c"]
     assert all(frame["ts"].item() == when for frame in frames)
     assert driver._windows["broker"]._unacked == 0
 

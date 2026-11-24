@@ -9,7 +9,7 @@ class SineWaveDriver(PollingIngestDriver):
     def setup(self):
         self.phase = 0.0
         self.declare(
-            "signal", point_uri="urn:example:sine-wave", value_kind="numeric"
+            "signal", property_uri="urn:example:sine-wave", value_kind="numeric"
         )
 
     def read(self):

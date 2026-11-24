@@ -298,9 +298,9 @@ def test_hand_declared_keyed_series_remain_supported(model_api):
     run = model_api.study.start()
     streams = flow.record({("p1", "a,b"): [(T0, np.float32(5))], (1, "x"): [(T0, 2)], ("1", "x"): [(T0, 3)]})
     assert set(streams) == {("p1", "a,b"), (1, "x"), ("1", "x")}
-    from acquirium.internals.models import compute_ref_uri
-    refs = [stream.ref_uri for stream in streams.values()]
-    assert refs == [str(compute_ref_uri(f"experiment/{run.run_id}", _stream_name(flow.variable_id, key))) for key in (("p1", "a,b"), (1, "x"), ("1", "x"))]
+    from acquirium.internals.models import compute_stream_uri
+    refs = [stream.stream_uri for stream in streams.values()]
+    assert refs == [str(compute_stream_uri(f"experiment/{run.run_id}", _stream_name(flow.variable_id, key))) for key in (("p1", "a,b"), (1, "x"), ("1", "x"))]
     assert len(run.observations().all()) == 3
     for value in ({"p1": [(T0, 5)]}, {("p1",): [(T0, 5)]}, {("p1", None): [(T0, 5)]}):
         with pytest.raises(ValueError, match="key"):
@@ -313,7 +313,7 @@ def test_keyed_registration_distinguishes_numeric_types(model_api):
     for key in (1, True, 1.0, 0.0, -0.0):
         flow.record({(key,): [(T0, 5)]})
     assert model_api.client.record_experiment_batch.call_count == 5
-    assert len({item.ref_uri for item in run.observations(flow).all()}) == 5
+    assert len({item.stream_uri for item in run.observations(flow).all()}) == 5
 
 
 def test_importing_core_does_not_import_pyomo():

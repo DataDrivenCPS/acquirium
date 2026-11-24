@@ -4,6 +4,7 @@ import json
 import re
 import time
 import uuid
+import warnings
 import requests
 from requests import HTTPError
 from pathlib import Path
@@ -14,16 +15,18 @@ from acquirium.internals.models import (
     MAX_REQUEST_ROWS,
     Order,
     StreamInsert,
-    RegisterDatasourceRequest,
+    LogEntry, compute_stream_uri,
     looks_like_uri,
 )
 from acquirium.internals.internals_namespaces import *
-from acquirium.Client.explore.attributes import ATTR_NS, RESOLVE_MIN_SCORE
-from acquirium.Client.metadata import plan_write, update_text
+from acquirium.Client.explore.attributes import ATTR_NS, REGISTRY, RESOLVE_MIN_SCORE, raw_predicate
+from acquirium.Client.metadata import is_uri, plan_write, update_text
 from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
+from acquirium.Storage.values import normalize_value_mode
 from rdflib import Graph, URIRef
-from rdflib.namespace import NamespaceManager
+from rdflib.namespace import NamespaceManager, RDFS
 import logging
+from acquirium.internals._names import accepts_old_names, new_names
 logger = logging.getLogger(__name__)
 
 DEFAULT_HEALTH_REQUEST_TIMEOUT = 30.0
@@ -35,8 +38,8 @@ _CURIE = re.compile(r"[A-Za-z_][\w.-]*:[^\s:]+")
 
 
 def _insert_chunks(streams, replace, size=MAX_REQUEST_ROWS):
-    """Split ``{ref_name: rows}`` into requests of at most ``size`` rows, as
-    ``(ref_name, rows, replace)`` items. A replaced stream's clear counts as a
+    """Split ``{stream_name: rows}`` into requests of at most ``size`` rows, as
+    ``(stream_name, rows, replace)`` items. A replaced stream's clear counts as a
     row and travels with its first piece, so it lands before that stream's
     rows. Every stream appears at least once, so the server checks the name
     of a stream with no rows too."""
@@ -105,12 +108,31 @@ RDF_FORMATS = {
 }
 
 from acquirium.StreamMetadata import (
-    POINT_FIELD_KINDS, POINT_FIELD_PREDICATES, _build_stream_triples,
+    POINT_FIELD_KINDS, POINT_FIELD_PREDICATES, _build_stream_triples, _coerce_resolved,
 )
 
 # Fields a stream registration already takes at top level; a ``metadata``
 # key naming one of them is merged into the stream.
 STREAM_FIELDS = frozenset({"unit", "quantity_kind", "medium", "substance", "data_source", "label"})
+
+
+# Built-in keys of a property that hold one value: see ``_settle_builtins``.
+SETTLED_KEYS = ("unit", "quantity_kind", "medium", "substance", "label")
+
+
+def _builtin_removal(nodes: Mapping[str, Iterable[str]]) -> str:
+    """A SPARQL update removing built-in keys from nodes, ``{node: [key]}``:
+    every predicate the key is read from, and the text it was resolved from."""
+    ops = []
+    for node, keys in nodes.items():
+        predicates = [
+            pred for key in dict.fromkeys(keys)
+            for pred in (*REGISTRY[key].predicates, raw_predicate(key))
+        ]
+        if predicates:
+            terms = " || ".join(f"?p = <{pred}>" for pred in predicates)
+            ops.append(f"DELETE {{ <{node}> ?p ?o }}\nWHERE {{\n  <{node}> ?p ?o .\n  FILTER({terms})\n}}")
+    return " ;\n".join(ops)
 
 
 def _split_stream_metadata(stream: dict) -> tuple[dict, dict]:
@@ -136,6 +158,7 @@ def _split_stream_metadata(stream: dict) -> tuple[dict, dict]:
     return merged, rest
 
 
+@accepts_old_names
 class AcquiriumClient:
     # 127.0.0.1 rather than "localhost": the server listens on IPv4 only, and
     # "localhost" resolves to ::1 first on most systems. The failed IPv6
@@ -195,8 +218,8 @@ class AcquiriumClient:
     def observe_experiment(self, run_id: str, variable_id: str, **body: Any) -> dict: return self._experiment_post(f"/experiments/runs/{run_id}/variables/{quote(variable_id, safe='')}/observations", body)
     def observe_experiment_batch(self, run_id: str, observations: list[dict]) -> list[dict]:
         return self._experiment_post(f"/experiments/runs/{run_id}/observations/batch", observations)
-    def annotate_experiment_stream(self, run_id: str, ref_uri: str, *, start: str, end: str | None = None, metadata: dict | None = None) -> dict:
-        return self._experiment_post(f"/experiments/runs/{run_id}/stream-annotations", {"ref_uri": ref_uri, "start": start, "end": end, "metadata": {} if metadata is None else metadata})
+    def annotate_experiment_stream(self, run_id: str, stream_uri: str, *, start: str, end: str | None = None, metadata: dict | None = None) -> dict:
+        return self._experiment_post(f"/experiments/runs/{run_id}/stream-annotations", {"stream_uri": stream_uri, "start": start, "end": end, "metadata": {} if metadata is None else metadata})
     def close_experiment_stream_annotation(self, annotation_id: str, *, end: str) -> dict:
         return self._experiment_post(f"/experiments/stream-annotations/{annotation_id}/close", {"end": end})
     def list_experiment_stream_annotations(self, **filters: Any) -> list[dict]:
@@ -328,6 +351,7 @@ class AcquiriumClient:
         ``view`` selects the final replacement ("current"), original input
         ("raw"), or exact physical stream ("stored") at the read's epoch.
         """
+        value_mode = normalize_value_mode(value_mode)
         url = f"{self.base_url}/timeseries"
         params = {
             "uri": uri,
@@ -363,7 +387,7 @@ class AcquiriumClient:
                     return pl.from_arrow(pa.Table.from_batches([], schema=reader.schema))
             except Exception as e:
                 raise RuntimeError("could not read timeseries Arrow response") from e
-            
+
 
     def timeseries_batches(
         self,
@@ -385,6 +409,7 @@ class AcquiriumClient:
         This requires the server to return a *single* Arrow IPC stream that contains
         multiple record batches (not multiple concatenated streams).
         """
+        value_mode = normalize_value_mode(value_mode)
         url = f"{self.base_url}/timeseries"
         params = {
             "uri": uri,
@@ -498,7 +523,7 @@ class AcquiriumClient:
     def namespace_manager(self) -> NamespaceManager:
         """Return the Graph that has the ``prefix -> namespace URI`` map from the server.
 
-        Stores (caches) in a rdf Graph object for use by other methods. 
+        Stores (caches) in a rdf Graph object for use by other methods.
         """
         if self._namespaces_cache is None:
             url = f"{self.base_url}/namespace/list"
@@ -508,7 +533,7 @@ class AcquiriumClient:
             for prefix, ns_uri in response.json().items():
                 self._namespaces_cache.bind(prefix, ns_uri)
         return self._namespaces_cache.namespace_manager
-      
+
     def compact_uri(self, item: str|URIRef) -> str:
         """Return ``prefix:local`` for a URI using bound namespaces.
 
@@ -629,14 +654,18 @@ class AcquiriumClient:
             return matches[0]["uri"] if matches else None
         return matches
 
-    def resolve_point_metadata(
+    def resolve_point_metadata(self, *args, **kwargs):
+        """Alias of :meth:`resolve_property_metadata`."""
+        return self.resolve_property_metadata(*args, **kwargs)
+
+    def resolve_property_metadata(
         self, fields: dict[str, Any], min_score: float = 0.6
     ) -> dict[str, str | None]:
         """Resolve the semantic metadata of a single point/property.
 
         ``fields`` maps known semantic field names to a raw value::
 
-            client.resolve_point_metadata({
+            client.resolve_property_metadata({
                 "unit": "gal/min",
                 "quantity_kind": "flow rate",
                 "medium": "water",
@@ -760,6 +789,41 @@ class AcquiriumClient:
             raise ValueError(f"conversion_factors failed: {detail}")
         return response.json()
 
+    def insert_log(
+        self,
+        property_uri: Optional[str] = None,
+        log_time: Optional[str] = None,
+        observation_start: Optional[str] = None,
+        observation_end: Optional[str] = None,
+        log_message: str = "",
+    ) -> dict:
+        """
+        Insert a log entry for a given property URI.
+
+        Args:
+            property_uri: The URI of the time series point. If None, defaults to the
+                generic plant URI on the server.
+            log_time: The timestamp of the log entry in ISO 8601 format.
+                If None, uses the current time.
+            log_message: The log message.
+        Returns:
+            A dictionary with the result of the insertion.
+        """
+        if log_time is None:
+            log_time = datetime.now(timezone.utc).isoformat()
+        url = f"{self.base_url}/insert_log"
+        data = {
+            "log_timestamp": log_time,
+            "observation_start": observation_start,
+            "observation_end": observation_end,
+            "message": log_message,
+        }
+        if property_uri is not None:
+            data["property_uri"] = property_uri
+        response = self._http.post(url, params=data)
+        response.raise_for_status()
+        return response.json()
+
     def list_apps(self) -> dict:
         """Read summaries of every deployed app from the server."""
         response = self._http.get(f"{self.base_url}/apps", timeout=30)
@@ -811,13 +875,6 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
-    def register_datasource(self, source_id: str) -> str:
-        """Register a named datasource. Returns source_id."""
-        url = f"{self.base_url}/register_datasource"
-        response = self._http.post(url, json=RegisterDatasourceRequest(source_id=source_id).model_dump())
-        _raise_for_status(response)
-        return response.json()["source_id"]
-
     def _units_compatible(self, from_unit: Any, to_unit: Any) -> bool:
         """True when the server can convert between the two unit URIs."""
         try:
@@ -826,7 +883,7 @@ class AcquiriumClient:
         except Exception:
             return False
 
-    def _point_metadata(self, point_uri: str) -> dict[str, "str | None"]:
+    def _property_metadata(self, property_uri: str) -> dict[str, "str | None"]:
         """Return the semantic metadata a point already has in the graph.
 
         Keys match the stream-registration field names (``unit``,
@@ -837,7 +894,7 @@ class AcquiriumClient:
         fields = {**POINT_FIELD_PREDICATES, "data_source": DATA_SOURCE}
         select = " ".join(f"?{name}" for name in fields)
         optionals = "\n".join(
-            f"            OPTIONAL {{ <{point_uri}> <{pred}> ?{name} . }}"
+            f"            OPTIONAL {{ <{property_uri}> <{pred}> ?{name} . }}"
             for name, pred in fields.items()
         )
         sparql = f"SELECT {select} WHERE {{\n{optionals}\n        }}"
@@ -847,6 +904,68 @@ class AcquiriumClient:
             return {}
         return dict(zip(result["columns"], rows[0]))
 
+    def _builtin_values(self, property_uri: str) -> dict[str, set[str]]:
+        """``{key: {value, ...}}`` for the unit, quantity kind, medium and
+        substance of a property, read from every predicate the key has
+        (``insert_metadata`` writes the medium of a property with another
+        predicate than a registration does)."""
+        keys = {
+            pred: key for key in POINT_FIELD_PREDICATES for pred in REGISTRY[key].predicates
+        }
+        terms = " ".join(f"<{pred}>" for pred in keys)
+        result = self.sparql_query(
+            f"SELECT ?p ?o WHERE {{ VALUES ?p {{ {terms} }} <{property_uri}> ?p ?o . }}",
+            include_dependencies=False,
+        )
+        found: dict[str, set[str]] = {}
+        for pred, value in result.get("rows") or []:
+            found.setdefault(keys[str(pred)], set()).add(str(value))
+        return found
+
+    def _stream_properties(self, stream_uris: Iterable[str]) -> dict[str, list[str]]:
+        """``{stream_uri: [property_uri, ...]}`` for the streams the graph
+        links to a property; a stream without one is left out."""
+        uris = list(dict.fromkeys(str(u) for u in stream_uris))
+        found: dict[str, list[str]] = {}
+        for i in range(0, len(uris), 500):
+            chunk = " ".join(f"<{u}>" for u in uris[i:i + 500])
+            result = self.sparql_query(
+                f"SELECT DISTINCT ?s ?p WHERE {{ VALUES ?s {{ {chunk} }} "
+                f"?p <{HAS_EXTERNAL_REFERENCE}> ?s . }}",
+                include_dependencies=False,
+            )
+            for stream_uri, property_uri in result.get("rows") or []:
+                found.setdefault(str(stream_uri), []).append(str(property_uri))
+        return {uri: sorted(properties) for uri, properties in found.items()}
+
+    def stream_property(self, stream_uri: str) -> str:
+        """The property a stream is linked to: where its metadata is written."""
+        properties = self._stream_properties([str(stream_uri)]).get(str(stream_uri), [])
+        if not properties:
+            raise ValueError(f"stream <{stream_uri}> is not registered")
+        if len(properties) > 1:
+            raise ValueError(
+                f"stream <{stream_uri}> is connected to several properties "
+                f"({', '.join(properties)}); pass the URI of one of them"
+            )
+        return properties[0]
+
+    def _node_labels(self, node_uris: Iterable[str]) -> dict[str, list[str]]:
+        """``{node_uri: [label, ...]}``, sorted; a node without a label is
+        left out."""
+        uris = list(dict.fromkeys(str(u) for u in node_uris))
+        found: dict[str, list[str]] = {}
+        for i in range(0, len(uris), 500):
+            chunk = " ".join(f"<{u}>" for u in uris[i:i + 500])
+            result = self.sparql_query(
+                f"SELECT DISTINCT ?n ?label WHERE {{ VALUES ?n {{ {chunk} }} "
+                f"?n <{RDFS.label}> ?label . }}",
+                include_dependencies=False,
+            )
+            for node, label in result.get("rows") or []:
+                found.setdefault(str(node), []).append(str(label))
+        return {uri: sorted(labels) for uri, labels in found.items()}
+
     def register_streams(
         self,
         streams: Iterable[dict[str, Any]],
@@ -855,25 +974,29 @@ class AcquiriumClient:
 
         Each stream item is a dictionary with these commonly used keys:
 
-        - ``point_uri``: optional semantic URI. When provided, the point is
+        - ``property_uri``: optional semantic URI, or a CURIE with a prefix
+          the server binds (``"wbs:P1-out-pressure"``). When provided, the point is
           linked to the external reference and its provided metadata is
           checked against what the graph already has (see below). When
-          omitted, a dummy point (``<ref_uri>__point``) is minted and
-          linked to the external reference.
-        - ``source_id`` and ``ref_name``: source-local stream identity. When
+          omitted, a dummy point (``<stream_uri>__point``) is minted, linked
+          to the external reference and marked ``acq:isDisconnected``
+          (``where(is_disconnected=True)`` lists such streams).
+        - ``source_id`` and ``stream_name``: source-local stream identity. When
           both are present, Acquirium mints the canonical reference URI and
           writes ``acq:sourceId``, ``acq:refName``, and ``ref:storedAt`` on it.
         - ``label``: optional ``rdfs:label`` written on the point. A dummy
-          point without one gets its ``ref_name`` (e.g. the CSV column name).
+          point without one gets its ``stream_name`` (e.g. the CSV column name).
+          Registering again with a ``label`` replaces the label this source
+          wrote; registering again without one keeps it.
         - ``data_source``: optional datasource marker written on the point.
         - ``properties``: optional mapping of predicate URIRefs to values,
           written on the reference node (or the point when no ref node exists).
 
         Plain strings for ``unit``/``quantity_kind``/``medium``/``substance``
-        are resolved jointly per stream via :meth:`resolve_point_metadata`;
+        are resolved jointly per stream via :meth:`resolve_property_metadata`;
         URI / URIRef / None values pass through.
 
-        For a ``point_uri`` the graph already knows, a provided field the
+        For a ``property_uri`` the graph already knows, a provided field the
         point lacks is added to it; a value that conflicts with the point's
         raises ``ValueError`` before anything is inserted. Units are the
         one exception: a provided unit that differs from the point's is
@@ -882,32 +1005,164 @@ class AcquiriumClient:
         access defaults to the point's unit and converts automatically.
         A non-convertible unit raises ``ValueError``.
 
+        A stream registered without a ``property_uri`` can be connected
+        later: register it again with one. The dummy point is then replaced
+        by ``property_uri``, and what was attached to it moves along: its
+        unit, quantity kind and medium go through the checks above, so a
+        mismatch raises ``ValueError`` and nothing is written. Its substance,
+        data source and the keys of its own are written on ``property_uri``
+        where it has none; where it has a different value, it keeps its own
+        and a warning says so (use ``insert_metadata`` to change it). A value
+        given in the call wins over both. The dummy point's label moves only
+        when ``property_uri`` has none. Once connected, registering the
+        stream again without a ``property_uri`` describes that property.
+
         Drivers should still insert rows with ``insert_timeseries_arrow`` using
-        the same ``source_id`` and source-local ``ref_name``. Acquirium resolves
+        the same ``source_id`` and source-local ``stream_name``. Acquirium resolves
         those inserts to the same canonical reference URI internally.
         """
+        # ``point_uri`` and the deprecated ``ref_name`` are still accepted
+        items = [_split_stream_metadata(new_names(stream)) for stream in streams]
+        for stream, _ in items:
+            source_id = stream.get("source_id")
+            if not isinstance(source_id, str) or not source_id:
+                raise ValueError("each stream registration requires a non-empty source_id")
+            # a property_uri may be a CURIE, as metadata() prints them
+            given = stream.get("property_uri")
+            if given is not None and not str(given).startswith(("urn:", "http://", "https://")):
+                expanded = self._expand_curie(str(given))
+                if expanded is not None:
+                    stream["property_uri"] = expanded
+
+        def stream_uri_of(stream: dict) -> Optional[str]:
+            if stream.get("stream_name") is None:
+                return None
+            return str(compute_stream_uri(stream["source_id"], stream["stream_name"]))
+
+        # What the graph already holds for these streams: the properties each
+        # one is linked to, and the labels of every property involved.
+        linked = self._stream_properties(
+            uri for uri in (stream_uri_of(stream) for stream, _ in items) if uri is not None
+        )
+        nodes: list[str] = []
+        for stream, _ in items:
+            stream_uri = stream_uri_of(stream)
+            if stream.get("property_uri") is not None:
+                nodes.append(str(stream["property_uri"]))
+            if stream_uri is not None:
+                nodes.append(f"{stream_uri}__point")
+                nodes.extend(linked.get(stream_uri, []))
+        labels = self._node_labels(nodes)
+
         graphs: dict[str, Graph] = {}
         # the ``metadata`` maps per point; a later stream on the same point
         # wins key by key
         extras: dict[str, dict[str, Any]] = {}
-        for stream in streams:
-            stream, extra = _split_stream_metadata(stream)
-            source_id = stream.get("source_id")
-            if not isinstance(source_id, str) or not source_id:
-                raise ValueError("each stream registration requires a non-empty source_id")
+        # properties whose label is being replaced, per source
+        relabeled: dict[str, list[str]] = {}
+        # generated properties replaced by a plant property, per source
+        replaced: dict[str, list[str]] = {}
+        # built-in keys of a generated property that get a new value, per
+        # source: {source_id: {node: [key, ...]}}
+        rewritten: dict[str, dict[str, list[str]]] = {}
+        for stream, extra in items:
+            source_id = stream["source_id"]
             graph = graphs.setdefault(source_id, Graph())
+            stream_uri = stream_uri_of(stream)
+            generated = f"{stream_uri}__point" if stream_uri is not None else None
+            properties = linked.get(stream_uri, []) if stream_uri is not None else []
+            property_uri = stream.get("property_uri")
+            carried: dict[str, Any] = {}
+            connecting = False
+            if property_uri is None and generated not in properties and properties:
+                # Already connected: registering again without a property_uri
+                # describes the property the stream is connected to.
+                if len(properties) > 1:
+                    raise ValueError(
+                        f"stream {stream['source_id']!r}/{stream['stream_name']!r} is "
+                        f"connected to several properties ({', '.join(properties)}); "
+                        "pass property_uri to choose one"
+                    )
+                property_uri = properties[0]
+                stream = {**stream, "property_uri": property_uri}
+            elif (property_uri is not None and generated in properties
+                    and str(property_uri) != generated):
+                # Connecting a stream that was registered on its own: the
+                # generated property is replaced by the given one, and what
+                # was attached to it moves along. A value given in this call
+                # wins over the one the generated property had.
+                stream, carried = self._carry_generated_property(
+                    stream, extra, generated, str(property_uri), labels)
+                replaced.setdefault(source_id, []).append(generated)
+                connecting = True
             meta = {
                 f: stream.get(f)
                 for f in POINT_FIELD_KINDS
                 if stream.get(f) is not None
             }
-            resolved = self.resolve_point_metadata(meta) if meta else {}
-            point_uri = stream.get("point_uri")
-            existing = self._point_metadata(str(point_uri)) if point_uri is not None else {}
-            subj = _build_stream_triples(graph, stream, resolved, existing, self._units_compatible)
-            if extra:
-                extras.setdefault(str(subj), {}).update(extra)
+            resolved = self.resolve_property_metadata(meta) if meta else {}
+            existing = self._property_metadata(str(property_uri)) if property_uri is not None else {}
+            if property_uri is None and generated in properties:
+                # Registered before, still on its own. The property is
+                # Acquirium's, so a new value replaces the old one (as
+                # insert_metadata does) instead of being checked against it.
+                held = self._builtin_values(generated)
+                changed = [
+                    f for f in POINT_FIELD_PREDICATES
+                    if held.get(f)
+                    and (resolved.get(f) is not None or is_uri(stream.get(f)))
+                    and held[f] != {str(_coerce_resolved(resolved, f, stream.get(f)))}
+                ]
+                if changed:
+                    rewritten.setdefault(source_id, {})[generated] = changed
+            # A property keeps one label per source: a given label replaces
+            # the ones this source wrote, and the stream_name default is
+            # only used while the generated property has no label.
+            node = str(property_uri) if property_uri is not None else generated
+            current = labels.get(node, []) if node is not None else []
+            if stream.get("label") is None:
+                if property_uri is None and current:
+                    stream = {**stream, "label": current[0]}
+            elif current != [str(stream["label"])]:
+                relabeled.setdefault(source_id, []).append(str(node))
+            try:
+                subj = _build_stream_triples(graph, stream, resolved, existing, self._units_compatible)
+            except ValueError as exc:
+                if not connecting:
+                    raise
+                raise ValueError(
+                    f"{exc}. The stream's value comes from its earlier registration; "
+                    "pass the key in this call to say which value is right"
+                ) from None
+            moved = {**carried, **extra}
+            if moved:
+                extras.setdefault(str(subj), {}).update(moved)
         writes = self._plan_metadata(extras, dict.fromkeys(extras, "data"))
+        for source_id, graph in graphs.items():
+            if relabeled.get(source_id):
+                self.sparql_update(
+                    " ;\n".join(
+                        f"DELETE WHERE {{ <{node}> <{RDFS.label}> ?label }}"
+                        for node in dict.fromkeys(relabeled[source_id])
+                    ),
+                    source_id=source_id,
+                )
+            removal = _builtin_removal(rewritten.get(source_id, {}))
+            if removal:
+                self.sparql_update(removal, source_id=source_id)
+        # A value insert_metadata wrote on a generated property is replaced
+        # as well, so the property is left with the one value of this call.
+        own = {
+            node: keys for nodes in rewritten.values() for node, keys in nodes.items()
+        }
+        for source_id, nodes in relabeled.items():
+            for node in nodes:
+                if node.endswith("__point"):
+                    own.setdefault(node, [])
+                    own[node] = [*own[node], "label"]
+        removal = _builtin_removal(own)
+        if removal:
+            self.sparql_update(removal, source_id=METADATA_SOURCE_ID)
         for source_id, graph in graphs.items():
             if len(graph):
                 self.insert_graph(
@@ -921,6 +1176,68 @@ class AcquiriumClient:
         # leaves only the new one. Runs after the stream triples, which make
         # the point a node the metadata graph may describe.
         self._write_metadata(writes)
+        # Last, so a failure above leaves the generated properties in place.
+        for source_id, generated_nodes in replaced.items():
+            removal = " ;\n".join(
+                f"DELETE WHERE {{ <{node}> ?p ?o }}" for node in dict.fromkeys(generated_nodes)
+            )
+            self.sparql_update(removal, source_id=source_id)
+            self.sparql_update(removal, source_id=METADATA_SOURCE_ID)
+
+    def _carry_generated_property(
+        self, stream: dict, extra: dict, generated: str, property_uri: str,
+        labels: Mapping[str, list[str]],
+    ) -> tuple[dict, dict[str, Any]]:
+        """What moves from a stream's generated property to ``property_uri``.
+
+        Returns the stream with the generated property's built-in fields
+        filled in where the call gave none, and the keys of its own to write
+        on ``property_uri``. Where both properties have a value and the two
+        differ, ``property_uri`` keeps its own and a warning says so. The
+        unit, quantity kind and medium are the exception: they are carried
+        regardless, so the checks of a registration with a ``property_uri``
+        apply to them and a mismatch raises.
+        """
+        from acquirium.Metadata import dumps
+
+        def kept(key: str, ours: Any, theirs: Any) -> None:
+            warnings.warn(
+                f"{key!r} of stream {stream['source_id']!r}/{stream['stream_name']!r} "
+                f"is not moved: <{property_uri}> has {theirs!r}, the stream had "
+                f"{ours!r}. Use insert_metadata() to change it",
+                stacklevel=4,
+            )
+
+        stream = dict(stream)
+        had = self._property_metadata(generated)
+        has = self._property_metadata(property_uri)
+        for field in (*POINT_FIELD_KINDS, "data_source"):
+            value = had.get(field)
+            if stream.get(field) is not None or value is None:
+                continue
+            current = has.get(field)
+            if (field in ("substance", "data_source") and current is not None
+                    and str(current) != str(value)):
+                kept(field, value, current)
+                continue
+            stream[field] = URIRef(str(value)) if field in POINT_FIELD_KINDS else value
+        # The default label is the stream_name, which names the generated
+        # property only; a label that was given moves when the property has none.
+        if stream.get("label") is None and not labels.get(property_uri):
+            given = [label for label in labels.get(generated, []) if label != stream.get("stream_name")]
+            if given:
+                stream["label"] = given[0]
+        documents = self.metadata_documents([generated, property_uri])
+        ours, theirs = documents.get(generated, {}), documents.get(property_uri, {})
+        carried: dict[str, Any] = {}
+        for key, value in ours.items():
+            if key in STREAM_FIELDS or key in extra:
+                continue
+            if key not in theirs:
+                carried[key] = value
+            elif dumps(theirs[key]) != dumps(value):
+                kept(key, value, theirs[key])
+        return stream, carried
 
     def _resolve_one(self, text: str, kind: str) -> Optional[str]:
         """Resolve one text value of the given kind to a URI, or None."""
@@ -984,7 +1301,66 @@ class AcquiriumClient:
         if missing:
             raise ValueError(f"unknown node(s), not in any data graph: {missing}")
         writes = self._plan_metadata(subjects, roles)
+        for owner, nodes in self._settle_builtins(subjects, roles, writes).items():
+            self.sparql_update(_builtin_removal(nodes), source_id=owner)
         return {**self._write_metadata(writes), "nodes": len(writes)}
+
+    def asserted_values(self, subjects: Iterable[str]) -> dict[str, list[list[str]]]:
+        """``{node: [[predicate, value, source_id], ...]}``: what the plant
+        model and the stream registrations wrote on nodes, without what
+        ``insert_metadata`` wrote."""
+        response = self._http.post(f"{self.base_url}/metadata/asserted", json=list(subjects))
+        _raise_for_status(response)
+        return response.json()
+
+    def _settle_builtins(self, subjects: Mapping[str, Mapping[str, Any]],
+                         roles: Mapping[str, str], writes: list) -> dict[str, dict[str, list[str]]]:
+        """Apply the rule of ``register_streams`` to the built-in keys of a
+        property: unit, quantity kind, medium, substance and label.
+
+        - A property Acquirium generated for a stream holds one value: the
+          value another source wrote is removed. Returned as
+          ``{source_id: {node: [key, ...]}}`` for the caller to delete.
+        - On any other property the value of the plant model, or of the
+          stream registration that wrote it, stays. A different value
+          raises ``ValueError``. The label is left out of this check: a
+          property has one label per source.
+        """
+        wanted = {
+            uri: [key for key in SETTLED_KEYS if key in values]
+            for uri, values in subjects.items() if roles.get(uri) == "data"
+        }
+        wanted = {uri: keys for uri, keys in wanted.items() if keys}
+        if not wanted:
+            return {}
+        asserted = self.asserted_values(wanted)
+        planned = {str(w.subject): w for w in writes}
+        removals: dict[str, dict[str, list[str]]] = {}
+        for uri, keys in wanted.items():
+            rows = asserted.get(uri, [])
+            generated = any(pred == str(IS_DISCONNECTED) for pred, _, _ in rows)
+            for key in keys:
+                predicates = set(REGISTRY[key].predicates)
+                if generated:
+                    for pred, _, owner in rows:
+                        if pred in predicates or pred == raw_predicate(key):
+                            kept = removals.setdefault(owner, {}).setdefault(uri, [])
+                            if key not in kept:
+                                kept.append(key)
+                    continue
+                if key == "label" or subjects[uri][key] is None:
+                    continue
+                held = {value: owner for pred, value, owner in rows if pred in predicates}
+                given = [str(o) for s, p, o in planned[uri].triples if str(p) in predicates]
+                different = [value for value in given if value not in held]
+                if held and different:
+                    value, owner = next(iter(held.items()))
+                    raise ValueError(
+                        f"{key} mismatch for <{uri}>: it has <{value}>, written by "
+                        f"source {owner!r}, and insert_metadata gave <{different[0]}>. "
+                        "Change it where it was written"
+                    )
+        return removals
 
     def _plan_metadata(self, records: Mapping[str, Mapping[str, Any]],
                        roles: Mapping[str, str]) -> list:
@@ -1025,15 +1401,16 @@ class AcquiriumClient:
             logger.debug("%s refused (%s), resending in %.1f s", path, response.text[:200], delay)
             time.sleep(delay)
 
-    def insert_timeseries(self, *, source_id, ref_name, rows, request_id=None, replace=False,
+    def insert_timeseries(self, *, source_id, stream_name, rows, property_uri=None, request_id=None, replace=False,
                           wait=30, timeout=60, retry_for=CAPACITY_RETRY_S):
-        return self.insert_timeseries_batch(source_id, {ref_name: rows}, request_id=request_id,
-                                            replace=[ref_name] if replace else (),
+        # property_uri is a compatibility argument. Registration owns the link.
+        return self.insert_timeseries_batch(source_id, {stream_name: rows}, request_id=request_id,
+                                            replace=[stream_name] if replace else (),
                                             wait=wait, timeout=timeout, retry_for=retry_for)
 
     def insert_timeseries_batch(self, source_id, streams, *, request_id=None, replace=(), wait=30,
-                                timeout=60, retry_for=CAPACITY_RETRY_S):
-        """Upsert ``{ref_name: rows}``. Each stream named in ``replace`` holds
+                                timeout=60, retry_for=CAPACITY_RETRY_S, batch_rows=MAX_REQUEST_ROWS):
+        """Upsert ``{stream_name: rows}``. Each stream named in ``replace`` holds
         exactly its supplied rows afterwards.
 
         Up to ``MAX_REQUEST_ROWS`` rows go in one atomic request. Larger inputs
@@ -1044,10 +1421,12 @@ class AcquiriumClient:
         replace = set(replace)
         if replace - streams.keys():
             raise ValueError(f"replace names streams not in the insert: {sorted(replace - streams.keys())}")
-        chunks = list(_insert_chunks(streams, replace))
+        if not 0 < batch_rows <= MAX_REQUEST_ROWS:
+            raise ValueError(f"batch_rows must be between 1 and {MAX_REQUEST_ROWS}")
+        chunks = list(_insert_chunks(streams, replace, size=batch_rows))
 
         def send(chunk, request_id, wait):
-            payload = [StreamInsert(source_id=source_id, ref_name=name, values=rows, replace=clear,
+            payload = [StreamInsert(source_id=source_id, stream_name=name, values=rows, replace=clear,
                                     request_id=request_id).model_dump(mode="json")
                        for name, rows, clear in chunk]
             return self._post_admitted("/insert_timeseries", retry_for=retry_for, json=payload,
@@ -1095,11 +1474,11 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
-    def delete_timeseries(self, source_id, ref_name, timestamps, *, request_id=None, wait=30, timeout=60,
+    def delete_timeseries(self, source_id, stream_name, timestamps, *, request_id=None, wait=30, timeout=60,
                           retry_for=CAPACITY_RETRY_S):
         from acquirium.core import time_ns
         return self._post_admitted("/delete_timeseries", retry_for=retry_for, json={
-            "source_id": source_id, "ref_name": ref_name,
+            "source_id": source_id, "stream_name": stream_name,
             "timestamps": [time_ns(value) for value in timestamps],
             "request_id": request_id or str(uuid.uuid4())}, params={"wait": wait}, timeout=timeout).json()
 
@@ -1107,7 +1486,7 @@ class AcquiriumClient:
         self, source_id: str, table: "pa.Table", *, request_id: Optional[str] = None,
         wait=30, timeout=60, retry_for=CAPACITY_RETRY_S,
     ) -> dict[str, Any]:
-        """Insert a ``(ts, ref_name, value)`` table, split into requests of at
+        """Insert a ``(ts, stream_name, value)`` table, split into requests of at
         most ``MAX_REQUEST_ROWS`` rows as ``insert_timeseries_batch`` splits."""
         import io
         import pyarrow as pa
@@ -1126,3 +1505,55 @@ class AcquiriumClient:
                                        data=buf.getvalue(), headers=headers,
                                        params={"wait": wait}, timeout=timeout).json()
         return _send_in_order(chunks, request_id or str(uuid.uuid4()), wait, send)
+
+    def query_logs(
+        self,
+        property_uri: Optional[str] = None,
+        log_time_start: Optional[str] = None,
+        log_time_end: Optional[str] = None,
+        observation_start: Optional[str] = None,
+        observation_end: Optional[str] = None,
+    ) -> list[LogEntry]:
+        """
+        Query log entries for a given property URI within optional time intervals.
+
+        Args:
+            property_uri: The URI of the time series point. If None, defaults to the
+                generic plant URI (retrieves plant-level logs).
+            log_time_start: Start of the log time interval in ISO 8601 format.
+            log_time_end: End of the log time interval in ISO 8601 format.
+            observation_start: Start of the observation time interval in ISO 8601 format.
+            observation_end: End of the observation time interval in ISO 8601 format.
+
+        Returns:
+            A list of log entries matching the query.
+        """
+        url = f"{self.base_url}/query_logs"
+        params = {
+            "property_uri": property_uri,
+            "log_time_start": log_time_start,
+            "log_time_end": log_time_end,
+            "observation_start": observation_start,
+            "observation_end": observation_end,
+        }
+        params = {k: v for k, v in params.items() if v is not None}
+        response = self._http.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
+        return [LogEntry.model_validate(x) for x in data]
+
+    def delete_logs(self, property_uri: Optional[str] = None) -> dict:
+        """
+        Delete all log entries for a given property URI.
+
+        Args:
+            property_uri: The URI of the time series point. If None, defaults to the
+                generic plant URI.
+        """
+        url = f"{self.base_url}/delete_logs"
+        params = {}
+        if property_uri is not None:
+            params["property_uri"] = property_uri
+        response = self._http.delete(url, params=params)
+        response.raise_for_status()
+        return response.json()

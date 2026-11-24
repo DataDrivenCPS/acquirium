@@ -11,7 +11,7 @@ from requests import HTTPError
 
 from acquirium.Client.streams import Stream, _after_ns
 from acquirium.Experiments import Study, StudyService, timestamp, _stream_name
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import compute_stream_uri
 
 
 def _declare(client, template_id, label, role, kind, metadata=None):
@@ -27,12 +27,12 @@ def _recorded_stream(ac, run, variable, rows):
     receipt = ac.client.record_experiment_batch(run["run_id"], [{
         "form": "samples", "variable_id": variable["variable_id"],
         "samples": [[when.isoformat(), value] for when, value in rows]}])
-    return receipt[0]["ref_uri"]
+    return receipt[0]["stream_uri"]
 
 
 def _site_stream(ac, name, rows):
     """A stream a driver wrote, outside any experiment."""
-    ac.register_streams([{"source_id": "site", "ref_name": name}])
+    ac.register_streams([{"source_id": "site", "stream_name": name}])
     ac.insert_timeseries("site", name, rows)
     return str(ac.reference_uri("site", name))
 
@@ -231,7 +231,7 @@ def test_delete_keeps_streams_that_other_runs_reference(ac):
     source = client.start_experiment(simulation["template_id"], {})
     ref = _recorded_stream(ac, source, level, [(T0, 1.0)])
     reader = client.start_experiment(analysis["template_id"], {})
-    client.observe_experiment(reader["run_id"], used["variable_id"], ref_uri=ref)
+    client.observe_experiment(reader["run_id"], used["variable_id"], stream_uri=ref)
     for run in (source, reader):
         client.finish_experiment(run["run_id"])
     for delete in (lambda: client.delete_experiments([source["run_id"]]),
@@ -322,7 +322,7 @@ def test_ledger_enforces_what_each_kind_stores(ac):
     # NaN and infinity are not JSON, so the client cannot send them at all.
     rejected = [
         (scalar, {"value": "abc"}), (scalar, {"value": None}), (scalar, {"value": [1]}), (text, {"value": 5}),
-        (scalar, {"value": 1, "ref_uri": "urn:ref"}), (series, {"value": 1}), (file, {"value": "x"}),
+        (scalar, {"value": 1, "stream_uri": "urn:ref"}), (series, {"value": 1}), (file, {"value": "x"}),
     ]
     for variable, body in rejected:
         with pytest.raises(HTTPError):
@@ -373,7 +373,7 @@ def test_collections_preserve_handles_and_roles(study_api):
     log = study.log("events")
     assert study.output("cost").scalar(unit="USD") is cost
     assert study.output["cost"] is cost
-    assert cost.variable_id == str(compute_ref_uri(f"study/{study.study_id}", "cost"))
+    assert cost.variable_id == str(compute_stream_uri(f"study/{study.study_id}", "cost"))
     assert list(study.output) == [cost]
     assert list(study.output.items()) == [("cost", cost)]
     assert list(study.output.keys()) == ["cost"]
@@ -432,12 +432,12 @@ def test_stream_annotations_support_historical_and_live_intervals(study_api):
     run.finish()
 
     reopened = StudyService(ac).get("study")
-    matches = reopened.stream_annotations(ref_uri="urn:plant:gas-flow", start=end)
+    matches = reopened.stream_annotations(stream_uri="urn:plant:gas-flow", start=end)
     assert [annotation.annotation_id for annotation in matches] == [historical.annotation_id, live.annotation_id]
     assert reopened.experiments.get(run.run_id).observations().all() == []
     assert reopened.experiments.get(run.run_id).stream_annotations()[0].metadata == {"treatment": "new membrane"}
-    assert StudyService(ac).stream_annotations(ref_uri="urn:plant:gas-flow", end=start)[0].run_id == run.run_id
-    assert not reopened.stream_annotations(ref_uri="urn:another-stream")
+    assert StudyService(ac).stream_annotations(stream_uri="urn:plant:gas-flow", end=start)[0].run_id == run.run_id
+    assert not reopened.stream_annotations(stream_uri="urn:another-stream")
 
     study_api.client.timeseries_df.return_value = _stream_frame("urn:plant:gas-flow", [(start, 1.0)])
     assert historical.dataframe().rows() == [(start, 1.0)]
@@ -474,7 +474,7 @@ def test_stream_annotation_rejects_invalid_range_and_keeps_parallel_runs(study_a
     second = second_study.start()
     other = second.annotate_stream("urn:plant:flow", start=start)
     assert other.run_id != annotation.run_id
-    assert len(StudyService(study_api.ac).stream_annotations(ref_uri="urn:plant:flow")) == 2
+    assert len(StudyService(study_api.ac).stream_annotations(stream_uri="urn:plant:flow")) == 2
 
 
 def test_long_running_experiment_resumes_in_another_session(study_api):
@@ -586,11 +586,11 @@ def test_reopened_study_hydrates_variables_and_reads_experiments(study_api):
 
     power_observation = reopened.experiments.get(first.run_id).observations(power.variable_id).latest()
     client.timeseries_df.return_value = _stream_frame("urn:acquirium:power-1", [(start, 3.0), (end, 4.0)])
-    assert power_observation.ref_uri == "urn:acquirium:power-1"
+    assert power_observation.stream_uri == "urn:acquirium:power-1"
     assert power_observation.dataframe().columns == ["time", "value"]
     assert power_observation.dataframe()["value"].to_list() == [3.0, 4.0]
     client.timeseries_df.assert_called_with(
-        power_observation.ref_uri,
+        power_observation.stream_uri,
         start=start.isoformat(),
         end_ns=_after_ns(end),
     )
@@ -731,13 +731,13 @@ def test_record_files_and_streams(study_api, tmp_path):
         "samples": [[when.isoformat(), 10]],
     }])
     ac.register_streams.assert_not_called()
-    assert run.observations(stream).latest().ref_uri == recorded.ref_uri
-    client.timeseries_df.return_value = _stream_frame(recorded.ref_uri, [(when, 10.0)])
+    assert run.observations(stream).latest().stream_uri == recorded.stream_uri
+    client.timeseries_df.return_value = _stream_frame(recorded.stream_uri, [(when, 10.0)])
     assert recorded.dataframe(limit=5).rows() == [(when, 10.0)]
     # The handle reads its own samples even before they publish.
     assert isinstance(recorded._after, int)
-    client.timeseries_df.assert_called_once_with(recorded.ref_uri, start=None, end_ns=None, after=recorded._after, limit=5)
-    assert str(recorded) == recorded.ref_uri == str(compute_ref_uri(f"experiment/{run.run_id}", _stream_name(stream.variable_id, ())))
+    client.timeseries_df.assert_called_once_with(recorded.stream_uri, start=None, end_ns=None, after=recorded._after, limit=5)
+    assert str(recorded) == recorded.stream_uri == str(compute_stream_uri(f"experiment/{run.run_id}", _stream_name(stream.variable_id, ())))
     for variable in (file, stream):
         with pytest.raises(TypeError, match="occurred_at"):
             variable.record(None, occurred_at=when)
@@ -752,14 +752,14 @@ def test_timeseries_result_does_not_require_plant_model(study_api):
     run = study.start()
     simulated_power.record([("2026-01-01T00:00:00Z", 42.0)])
     ac.register_streams.assert_not_called()
-    assert run.observations("simulated power").latest().ref_uri is not None
+    assert run.observations("simulated power").latest().stream_uri is not None
 
 
 def test_timeseries_registration_is_reused_per_run_and_variable(study_api):
     study, ac = study_api.study, study_api.ac
     power = study.output("power").timeseries(unit="kW")
     volume = study.output("volume").timeseries(unit="M3")
-    ac.reference_uri.side_effect = compute_ref_uri
+    ac.reference_uri.side_effect = compute_stream_uri
     first = study.start()
     assert power.record([]) is None
     ac.register_streams.assert_not_called()
@@ -769,7 +769,7 @@ def test_timeseries_registration_is_reused_per_run_and_variable(study_api):
 
     ac.register_streams.assert_not_called()
     assert study_api.client.record_experiment_batch.call_count == 2
-    assert recorded.ref_uri == appended.ref_uri
+    assert recorded.stream_uri == appended.stream_uri
     observations = first.observations(power).all()
     assert [item.sequence for item in observations] == [1, 2]
     assert [item.range_start.hour for item in observations] == [0, 1]
@@ -782,7 +782,7 @@ def test_timeseries_registration_is_reused_per_run_and_variable(study_api):
     new_recording = power.record([("2026-01-01T00:00:00Z", 50)])
     power.record([("2026-01-01T01:00:00Z", 60)])
     assert study_api.client.record_experiment_batch.call_count == 6
-    assert new_recording.ref_uri != recorded.ref_uri
+    assert new_recording.stream_uri != recorded.stream_uri
     assert study_api.client.record_experiment_batch.call_args.args[0] == second.run_id
     assert len(second.observations(power).all()) == 2
 
@@ -807,7 +807,7 @@ def test_timeseries_atomic_request_can_be_retried(study_api):
 def test_resumed_run_registers_stream_once_in_new_session(study_api):
     study, ac = study_api.study, study_api.ac
     power = study.output("power").timeseries(unit="kW")
-    ac.reference_uri.side_effect = compute_ref_uri
+    ac.reference_uri.side_effect = compute_stream_uri
     run = study.start()
     original = power.record([("2026-01-01T00:00:00Z", 10)])
     ac.register_streams.reset_mock()
@@ -818,7 +818,7 @@ def test_resumed_run_registers_stream_once_in_new_session(study_api):
     reopened.output["power"].record([("2026-01-01T02:00:00Z", 30)])
 
     ac.register_streams.assert_not_called()
-    assert recorded.ref_uri == original.ref_uri
+    assert recorded.stream_uri == original.stream_uri
     assert [item.range_start.hour for item in resumed.observations("power").all()] == [0, 1, 2]
 
 
@@ -857,10 +857,10 @@ def test_http_routes_accept_reference_uri_variable_ids_and_stream_annotations(ac
     assert client.experiment_usage()["files"] == 0
     tagged = _post(
         ac, f"/experiments/runs/{run['run_id']}/stream-annotations",
-        json={"ref_uri": "urn:plant:flow", "start": "2026-01-01T00:00:00Z", "metadata": {"phase": "trial"}},
+        json={"stream_uri": "urn:plant:flow", "start": "2026-01-01T00:00:00Z", "metadata": {"phase": "trial"}},
     )
     assert tagged.status_code == 200
-    listed = _get(ac, "/experiments/stream-annotations", params={"ref_uri": "urn:plant:flow"})
+    listed = _get(ac, "/experiments/stream-annotations", params={"stream_uri": "urn:plant:flow"})
     assert listed.status_code == 200
     assert listed.json()[0]["metadata"] == {"phase": "trial"}
     assert _post(
@@ -902,7 +902,7 @@ def test_http_observation_ranges_require_both_bounds(study_api, ac, batch):
     start, end = T0.isoformat(), T0.replace(hour=1).isoformat()
     saved = lambda: ac.client.list_experiment_observations(study.study_id)
     def record(bounds):
-        body = {"ref_uri": "urn:site:flow", **bounds}
+        body = {"stream_uri": "urn:site:flow", **bounds}
         return _post(ac, path, json=[{"variable_id": variable.variable_id, **body}] if batch else body)
     for bounds in ({"start": start}, {"end": end},
                    {"start": start, "end": None}, {"start": None, "end": end}):
@@ -1032,18 +1032,18 @@ def test_stream_handles_name_a_stream_and_a_range():
 
     client = Mock()
     by_name = Acquirium.stream(SimpleNamespace(client=client), "site-driver", "biogas-flow")
-    assert by_name == Stream(str(compute_ref_uri("site-driver", "biogas-flow")))
-    assert Acquirium.stream(SimpleNamespace(client=client), by_name.ref_uri) == by_name
-    assert str(by_name) == by_name.ref_uri and repr(by_name) == f"<Stream {by_name.ref_uri}>"
+    assert by_name == Stream(str(compute_stream_uri("site-driver", "biogas-flow")))
+    assert Acquirium.stream(SimpleNamespace(client=client), by_name.stream_uri) == by_name
+    assert str(by_name) == by_name.stream_uri and repr(by_name) == f"<Stream {by_name.stream_uri}>"
     interval = by_name.between("2026-01-01T00:00:00", "2026-01-02T00:00:00Z")
     assert (interval.start, interval.end) == (T0, T0.replace(day=2))  # naive times are UTC
-    assert isinstance(interval, StreamInterval) and interval.ref_uri == by_name.ref_uri
+    assert isinstance(interval, StreamInterval) and interval.stream_uri == by_name.stream_uri
     with pytest.raises(ValueError, match="end at or after"):
         by_name.between(T0.replace(day=2), T0)
     client.timeseries_df.return_value = pl.DataFrame()
     empty = interval.dataframe()
     assert (empty.height, empty.schema["time"], empty.schema["value"]) == (0, pl.Datetime("us", "UTC"), pl.Float64)
-    client.timeseries_df.assert_called_once_with(by_name.ref_uri, start=T0.isoformat(), end_ns=_after_ns(T0.replace(day=2)))
+    client.timeseries_df.assert_called_once_with(by_name.stream_uri, start=T0.isoformat(), end_ns=_after_ns(T0.replace(day=2)))
     with pytest.raises(RuntimeError, match="not bound"):
         Stream("urn:x").dataframe()
 
@@ -1060,7 +1060,7 @@ def test_time_series_record_a_reference_or_a_copy(study_api):
     # A range records a reference; no samples are written.
     biogas.record(window)
     client.record_experiment_batch.assert_called_with(run.run_id, [{
-        "form": "reference", "variable_id": biogas.variable_id, "ref_uri": "urn:site:biogas",
+        "form": "reference", "variable_id": biogas.variable_id, "stream_uri": "urn:site:biogas",
         "interval": [T0.isoformat(), T0.replace(hour=2).isoformat()]}])
     ac.insert_timeseries.assert_not_called()
 
@@ -1069,10 +1069,10 @@ def test_time_series_record_a_reference_or_a_copy(study_api):
     ac.reference_uri.return_value = "urn:acquirium#copied"
     copied = biogas.record(window.dataframe())
     assert client.record_experiment_batch.call_args.args[1][0]["samples"] == [[T0.isoformat(), 1.0], [T0.replace(hour=1).isoformat(), 2.0]]
-    assert copied == Stream(str(compute_ref_uri(f"experiment/{run.run_id}", _stream_name(biogas.variable_id, ()))))
+    assert copied == Stream(str(compute_stream_uri(f"experiment/{run.run_id}", _stream_name(biogas.variable_id, ()))))
 
     # Stream query frames use ts or time, and value or value_numeric.
-    narrow = pl.DataFrame({"data_alias": ["flow"] * 2, "point_uri": ["urn:p"] * 2, "ref_uri": ["urn:ref"] * 2,
+    narrow = pl.DataFrame({"data_alias": ["flow"] * 2, "property_uri": ["urn:p"] * 2, "stream_uri": ["urn:ref"] * 2,
                            "time": [T0, T0.replace(hour=1)], "value_numeric": [3.0, 4.0], "value_text": [None, None]})
     for rows in (narrow, narrow.to_arrow()):
         trajectory.record(rows)
@@ -1080,7 +1080,7 @@ def test_time_series_record_a_reference_or_a_copy(study_api):
     # So do wide query frames with one stream column.
     trajectory.record(pl.DataFrame({"time": [T0], "biogas": [5.0]}))
     assert client.record_experiment_batch.call_args.args[1][0]["samples"] == [[T0.isoformat(), 5.0]]
-    for rows, message in ((narrow.with_columns(point_uri=pl.Series(["urn:p", "urn:q"])), "several streams"),
+    for rows, message in ((narrow.with_columns(property_uri=pl.Series(["urn:p", "urn:q"])), "several streams"),
                           (pl.DataFrame({"time": [T0], "value_numeric": [None]}, schema_overrides={"value_numeric": pl.Float64}), "numeric value"),
                           (pl.DataFrame({"time": [T0], "value": ["high"]}), "numeric value"),
                           (pl.DataFrame({"time": [T0], "a": [1.0], "b": [2.0]}), "time \\(or ts\\)"),
@@ -1102,19 +1102,19 @@ def test_time_series_record_a_reference_or_a_copy(study_api):
     assert copy.stream == copied
     second = study.start()
     biogas.record(copy.interval)
-    assert client.record_experiment_batch.call_args.args[1][0]["ref_uri"] == copied.ref_uri
+    assert client.record_experiment_batch.call_args.args[1][0]["stream_uri"] == copied.stream_uri
     second.finish()
 
 
 @pytest.mark.parametrize("arrow", [False, True])
-@pytest.mark.parametrize("identifier", ["point_uri", "ref_uri"])
+@pytest.mark.parametrize("identifier", ["property_uri", "stream_uri"])
 def test_time_series_record_rejects_multiple_query_streams_before_sending(study_api, arrow, identifier):
     study, client = study_api.study, study_api.client
     variable = study.output("flow").timeseries()
     study.start()
     # Query frames can use one alias for several streams at the same timestamp.
-    frame = pl.DataFrame({"data_alias": ["data"] * 2, "point_uri": ["urn:point"] * 2,
-                          "ref_uri": ["urn:ref"] * 2, "time": [T0] * 2,
+    frame = pl.DataFrame({"data_alias": ["data"] * 2, "property_uri": ["urn:point"] * 2,
+                          "stream_uri": ["urn:ref"] * 2, "time": [T0] * 2,
                           "value_numeric": [1.0, 2.0], "value_text": [None, None]})
     frame = frame.with_columns(pl.Series(identifier, ["urn:first", "urn:second"]))
     with pytest.raises(ValueError, match="several streams"):

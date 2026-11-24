@@ -17,11 +17,11 @@ class BulkIngestDriver(CSVIngestDriver):
         for location in range(LOCATIONS):
             self.declare_stream(f"turbidity-{location}")
 
-    def declare_stream(self, ref_name: str) -> None:
+    def declare_stream(self, stream_name: str) -> None:
         # "turbidity-2" is the turbidity sensor at urn:bulk/loc-2; filler
         # columns have no model point.
-        if ref_name.startswith("turbidity-"):
-            location = ref_name.removeprefix("turbidity-")
-            self.declare(ref_name, point_uri=f"urn:bulk/loc-{location}-turbidity")
+        if stream_name.startswith("turbidity-"):
+            location = stream_name.removeprefix("turbidity-")
+            self.declare(stream_name, property_uri=f"urn:bulk/loc-{location}-turbidity")
         else:
-            self.declare(ref_name)
+            self.declare(stream_name)

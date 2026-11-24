@@ -14,7 +14,7 @@ from tests.epoch_helpers import plan, readings, value
 def frame(times, values, stream="urn:sensor"):
     return pl.DataFrame(
         {
-            "ref_uri": [stream] * len(times),
+            "stream_uri": [stream] * len(times),
             "ts": pl.Series(times, dtype=pl.Int64).cast(pl.Datetime("ns", "UTC")),
             "value": pl.Series(values, dtype=pl.Object),
         }
@@ -286,12 +286,12 @@ def test_values_are_stored_as_their_stream_kind(core):
     snapshot = core.wait(core.ingest("gateway", "kinds", pl.concat([numeric, text])))
     # Numbers (and numeric strings) are numbers on a numeric stream, anything
     # else is kept as text, and rows with no reading are dropped on either kind.
-    assert readings(snapshot, "urn:sensor") == [20, 21.5, "Bad", "True"]
+    assert readings(snapshot, "urn:sensor") == [20, 21.5, "Bad", 1.0]
     assert readings(snapshot, "urn:status") == ["20", "21.5"]
     read = lambda mode: pa.Table.from_batches(list(core.batches("urn:sensor", mode=mode)))
-    assert read("numeric")["value"].to_pylist() == [20, 21.5]
-    assert read("text")["value"].to_pylist() == ["Bad", "True"]
-    assert read("coalesce")["value"].to_pylist() == ["20.0", "21.5", "Bad", "True"]
+    assert read("numeric")["value"].to_pylist() == [20, 21.5, 1.0]
+    assert read("text")["value"].to_pylist() == ["Bad"]
+    assert read("coalesce")["value"].to_pylist() == ["20.0", "21.5", "Bad", "1.0"]
     assert read("text").schema.field("value").type == pa.string()
     assert pa.Table.from_batches(list(core.batches("urn:none", mode="text"))).num_rows == 0
 
@@ -372,3 +372,16 @@ def test_fixed_buckets_repair_complete_groups_and_clear_downstream(epoch_core, t
     assert value(snapshot, "urn:bucket", 0) is None
     assert value(snapshot, "urn:child", 0) is None
     assert value(snapshot, "urn:child", 1000) == 50
+
+
+def test_timestamp_inputs_assume_utc_and_preserve_nanoseconds():
+    from datetime import datetime, timezone
+
+    from acquirium.core import time_ns
+
+    instant = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    stamp = time_ns(instant)
+    assert time_ns(instant.replace(tzinfo=None)) == stamp
+    assert time_ns("2026-01-01") == stamp
+    assert time_ns("2026-01-01T00:00:00.000000001") == stamp + 1
+    assert time_ns("2026-01-01T01:00:00.000000001+01:00") == stamp + 1

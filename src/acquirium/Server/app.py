@@ -30,13 +30,16 @@ from escapement import Capacity, Closed, Fault, NotFound, Refused, Timeout
 
 from acquirium.internals.models import (
     StreamInsert,
-    RegisterDatasourceRequest,
+    LogEntry, TimeIntervalModel,
 )
 
 import pyarrow.ipc as ipc
 import pyarrow as pa
 import polars as pl
 
+from acquirium.ExperimentValues import timestamp
+from acquirium.internals.internals_namespaces import PLANT_URI
+from acquirium.Storage.values import normalize_value_mode
 from acquirium.Server.insert_stats import insert_stats, start_insert_summary_thread
 from acquirium.Drivers.supervisor import DriverSupervisor
 
@@ -103,7 +106,7 @@ class ExperimentStartRequest(BaseModel):
 class ExperimentObservationRequest(BaseModel):
     value: Any = None
     occurred_at: datetime | None = None
-    ref_uri: str | None = None
+    stream_uri: str | None = None
     start: datetime | None = None
     end: datetime | None = None
     key: list[Any] | None = None
@@ -139,7 +142,7 @@ class ExperimentSampleEntry(ExperimentRecordingEntry):
 
 class ExperimentReferenceEntry(ExperimentRecordingEntry):
     form: Literal["reference"]
-    ref_uri: str
+    stream_uri: str
     interval: tuple[datetime, datetime] | None = None
 
 ExperimentRecordEntry = Annotated[
@@ -150,7 +153,7 @@ ExperimentRecordEntry = Annotated[
 class ExperimentFinishRequest(BaseModel):
     error: Any = None
 class ExperimentStreamAnnotationRequest(BaseModel):
-    ref_uri: str
+    stream_uri: str
     start: datetime
     end: datetime | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -319,7 +322,7 @@ def record_experiment_batch(run_id: str, request: list[ExperimentRecordEntry]):
 def annotate_experiment_stream(run_id: str, request: ExperimentStreamAnnotationRequest):
     try:
         return app.state.manager.experiments.annotate_stream(
-            run_id, request.ref_uri, request.start, request.end, request.metadata)
+            run_id, request.stream_uri, request.start, request.end, request.metadata)
     except KeyError: raise HTTPException(status_code=404, detail="unknown experiment run")
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
 
@@ -329,13 +332,13 @@ def close_experiment_stream_annotation(annotation_id: str, request: ExperimentSt
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
 
 def list_experiment_stream_annotations(
-    run_id: str | None = None, template_id: str | None = None, ref_uri: str | None = None,
+    run_id: str | None = None, template_id: str | None = None, stream_uri: str | None = None,
     start: datetime | None = None, end: datetime | None = None,
 ):
     try:
         ledger = app.state.manager.experiments
         items = ledger.stream_annotations(
-            run_id=run_id, template_id=template_id, ref_uri=ref_uri, start=start, end=end)
+            run_id=run_id, template_id=template_id, stream_uri=stream_uri, start=start, end=end)
         return items
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
 
@@ -953,18 +956,13 @@ def metadata_documents(subjects: Annotated[list[str], Body()]) -> dict[str, str]
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
-@app.post("/register_datasource")
-def register_datasource(req: RegisterDatasourceRequest) -> dict[str, Any]:
-    """Register a named datasource in the knowledge graph.
-
-    The source_id is a user-provided string that scopes stream ref_names so
-    two sources with the same ref_name never collide in the timeseries store.
-    """
+@app.post("/metadata/asserted")
+def metadata_asserted(subjects: Annotated[list[str], Body()]) -> dict[str, list[list[str]]]:
+    """What each source wrote on the given nodes, the metadata graph left out."""
     try:
-        source_id = app.state.manager.register_datasource(req.source_id)
-        return {"ok": True, "source_id": source_id}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        return app.state.manager.graph_store.asserted_values(subjects)
+    except (TypeError, ValueError, RuntimeError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 class ResolveStorageKeysRequest(TimeseriesInfoRequest):
@@ -977,9 +975,9 @@ class StreamViewsRequest(BaseModel):
 
 @app.post("/resolve_storage_keys")
 def resolve_storage_keys(req: ResolveStorageKeysRequest) -> dict[str, str]:
-    """Map each semantic point_uri (or already-canonical ref_uri) in *uris*
-    to its canonical ref_uri. Callers do this before reading or subscribing;
-    the database's internal integer ref_id is never exposed."""
+    """Map each semantic property_uri (or already-canonical stream_uri) in *uris*
+    to its canonical stream_uri. Callers do this before reading or subscribing;
+    the database's internal integer stream_id is never exposed."""
     try:
         return app.state.manager.resolve_storage_keys(req.uris, view=req.view, epoch=req.epoch)
     except Exception as e:
@@ -1016,9 +1014,9 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()], wait: floa
     groups, replaced = {}, {}
     for stream in streams:
         key = (stream.source_id, stream.request_id)
-        groups.setdefault(key, {}).setdefault(stream.ref_name, []).extend(stream.values)
+        groups.setdefault(key, {}).setdefault(stream.stream_name, []).extend(stream.values)
         if stream.replace:
-            replaced.setdefault(key, set()).add(stream.ref_name)
+            replaced.setdefault(key, set()).add(stream.stream_name)
         total += len(stream.values)
     for (source_id, request_id), observations in groups.items():
         receipt = app.state.manager.insert_timeseries_batch(
@@ -1026,7 +1024,7 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()], wait: floa
             replace=replaced.get((source_id, request_id), ()),
         )
         receipts.append(_receipt(receipt, source_id, request_id, wait))
-    insert_stats.record(origin="http", rows=total, streams=[s.ref_name for s in streams])
+    insert_stats.record(origin="http", rows=total, streams=[s.stream_name for s in streams])
     return {"ok": True, "rows_inserted": total, "receipts": receipts}
 
 
@@ -1046,13 +1044,13 @@ async def insert_timeseries_arrow(request: Request, wait: float = Query(30, ge=0
             source_id, source_frame.drop("source_id").to_arrow(), request_id=request_id)
         receipts.append(await asyncio.to_thread(_receipt, receipt, source_id, request_id, wait))
     insert_stats.record(origin="arrow", rows=len(frame),
-                        streams=frame["ref_name"].unique().to_list())
+                        streams=frame["stream_name"].unique().to_list())
     return {"ok": True, "rows_inserted": len(frame), "receipts": receipts}
 
 
 class DeleteObservations(BaseModel):
     source_id: str
-    ref_name: str
+    stream_name: str
     timestamps: list[int]
     request_id: str
 
@@ -1060,7 +1058,7 @@ class DeleteObservations(BaseModel):
 @app.post("/delete_timeseries")
 @_engine_errors
 def delete_timeseries(request: DeleteObservations, wait: float = Query(30, ge=0)):
-    receipt = app.state.manager.delete_timeseries(request.source_id, request.ref_name,
+    receipt = app.state.manager.delete_timeseries(request.source_id, request.stream_name,
         request.timestamps, request_id=request.request_id)
     return _receipt(receipt, request.source_id, request.request_id, wait)
 
@@ -1085,6 +1083,7 @@ def get_timeseries(
     if order not in ("asc", "desc"):
         raise ValueError("order must be 'asc' or 'desc'")
 
+    normalize_value_mode(value_mode)
     batches: Iterator[pa.RecordBatch] = app.state.manager.timeseries_batch(
         uri=uri,
         start=start_ns if start_ns is not None else start,
@@ -1259,6 +1258,80 @@ def resolve_record(req: ResolveRecordRequest) -> dict[str, Any]:
 
 
 
+
+
+def _parse_dt(value: str | None) -> datetime | None:
+    return timestamp(value) if value is not None else None
+
+
+@app.post("/insert_log")
+def insert_log(
+        property_uri: Optional[str] = None,
+        log_timestamp: str = "",
+        observation_start: Optional[str] = None,
+        observation_end: Optional[str] = None,
+        message: str = "",
+    ) -> dict[str, Any]:
+    try:
+        uri = property_uri if property_uri else PLANT_URI
+        log_time = timestamp(log_timestamp)
+        obs_start = _parse_dt(observation_start)
+        obs_end = _parse_dt(observation_end)
+        log_entry = LogEntry(
+            property_uri=uri,
+            timestamp=log_time,
+            period=TimeIntervalModel(start=obs_start, end=obs_end),
+            message=message,
+        )
+        log.info(f"Inserting log entry: {log_entry}")
+        app.state.manager.insert_log(log_entry)
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/query_logs", response_model=list[LogEntry])
+def query_logs(
+        property_uri: Optional[str] = None,
+        log_time_start: Optional[str] = None,
+        log_time_end: Optional[str] = None,
+        observation_start: Optional[str] = None,
+        observation_end: Optional[str] = None,
+    ) -> list[LogEntry]:
+    try:
+        log_time_interval = None
+        if log_time_start is not None or log_time_end is not None:
+            log_time_interval = TimeIntervalModel(
+                start=_parse_dt(log_time_start) if log_time_start is not None else None,
+                end=_parse_dt(log_time_end) if log_time_end is not None else None,
+            )
+        obs_time_interval = None
+        if observation_start is not None or observation_end is not None:
+            obs_time_interval = TimeIntervalModel(
+                start=_parse_dt(observation_start) if observation_start is not None else None,
+                end=_parse_dt(observation_end) if observation_end is not None else None,
+            )
+        uri = property_uri if property_uri else PLANT_URI
+        logs = app.state.manager.query_logs(
+            property_uri=uri,
+            log_time_interval=log_time_interval,
+            obs_time_interval=obs_time_interval,
+        )
+        return logs
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.delete("/delete_logs")
+def delete_logs(
+        property_uri: Optional[str] = None,
+    ) -> dict[str, Any]:
+    try:
+        uri = property_uri if property_uri else PLANT_URI
+        if app.state.manager.delete_logs(uri):
+            return {"ok": True}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to delete logs")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # -------------------- Unit conversion --------------------

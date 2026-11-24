@@ -11,7 +11,7 @@ import logging
 from threading import Lock, RLock
 import pyoxigraph as ox
 from time import perf_counter
-from rdflib import Graph, URIRef, Literal, RDF, RDFS
+from rdflib import Graph, Literal, RDF, URIRef
 from rdflib.namespace import NamespaceManager
 from acquirium.Storage.graph_store import OxigraphGraphStore
 import sys
@@ -21,12 +21,16 @@ from acquirium.apps import MODULE_DIRECTORY, Apps
 from acquirium.Storage.graph_store import select_values
 from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
 from acquirium.Storage.ledger import is_postgres, open_ledger
-from acquirium.Storage.values import normalize_value_kind, normalize_value_mode
+from acquirium.Storage.logbook import Logbook
+from acquirium.Storage.values import (
+    UNDECLARED_VALUE_KIND, normalize_value_kind, normalize_value_mode,
+    stored_value_kind, streams_with_numeric_values, typed_value_series,
+)
 from acquirium.Experiments import ExperimentStore
 from acquirium.ExperimentSamples import EscapementSamples
 from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.Server.config import OntologySource
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import LogEntry, TimeIntervalModel, compute_stream_uri
 from acquirium.internals.internals_namespaces import *
 
 from typing import Any
@@ -170,6 +174,9 @@ class Manager:
                 experiments_path = engine_path if engine_path is not None and is_postgres(engine_path) \
                     else base / "experiments.duckdb"
             self.ledger = open_ledger(experiments_path, samples=EscapementSamples(self.core), recreate=recreate)
+            ledger_backend = "postgres" if is_postgres(experiments_path) else "duckdb"
+            self.logbook = Logbook(self.ledger, backend=ledger_backend)
+            self._logbook_lock = Lock()
             self.experiments = ExperimentStore(
                 self.ledger, graph_store=graph, resolve=self._resolve_experiment_metadata,
                 metadata_lock=semantic_lock, on_metadata_published=self._refresh_experiment_apps,
@@ -274,11 +281,13 @@ class Manager:
     def _sync_stream_refs_from_graph(self) -> int:
         """Rebuild the reference lookup from a fresh inferred RDF view."""
         q = f"""
-        SELECT ?point ?ref_node ?source_id ?ref_name ?value_kind
+        SELECT ?point ?ref_node ?source_id ?stream_name ?value_kind
         WHERE {{
           ?ref_node <{ACQUIRIUM_SOURCE_ID}> ?source_id .
-          ?ref_node <{ACQUIRIUM_REF_NAME}> ?ref_name .
-          OPTIONAL {{ ?ref_node <{ACQUIRIUM_VALUE_KIND}> ?value_kind . }}
+          ?ref_node <{ACQUIRIUM_REF_NAME}> ?stream_name .
+          OPTIONAL {{ ?ref_node <{ACQUIRIUM_VALUE_KIND}> ?declared_kind . }}
+          OPTIONAL {{ ?ref_node <{INFERRED_VALUE_KIND}> ?inferred_kind . }}
+          BIND(COALESCE(?declared_kind, ?inferred_kind) AS ?value_kind)
           OPTIONAL {{ ?point <{HAS_EXTERNAL_REFERENCE}> ?ref_node . }}
         }}
         """
@@ -299,22 +308,22 @@ class Manager:
         # Built aside and swapped in whole, so readers never see a partial map.
         stream_refs: dict[str, dict[str, str]] = {}
         point_refs: dict[str, set[str]] = {}
-        for point_uri, ref_node, source_id, ref_name, value_kind in rows:
-            sid, name, ref = str(source_id), str(ref_name), str(ref_node)
-            expected = str(compute_ref_uri(sid, name))
+        for property_uri, ref_node, source_id, stream_name, value_kind in rows:
+            sid, name, ref = str(source_id), str(stream_name), str(ref_node)
+            expected = str(compute_stream_uri(sid, name))
             if ref != expected:
                 raise ValueError(
-                    f"Managed reference URI mismatch for point {point_uri}: "
+                    f"Managed reference URI mismatch for point {property_uri}: "
                     f"graph has {ref}, expected {expected} from "
-                    f"source_id={sid!r}, ref_name={name!r}"
+                    f"source_id={sid!r}, stream_name={name!r}"
                 )
             try:
-                kind = normalize_value_kind(value_kind)
+                kind = stored_value_kind(value_kind)
             except ValueError as error:
                 raise ValueError(f"stream {ref}: {error}") from error
-            stream_refs[ref] = {"source_id": sid, "ref_name": name, "value_kind": kind}
-            if point_uri is not None:
-                point_refs.setdefault(str(point_uri), set()).add(ref)
+            stream_refs[ref] = {"source_id": sid, "stream_name": name, "value_kind": kind}
+            if property_uri is not None:
+                point_refs.setdefault(str(property_uri), set()).add(ref)
         self._stream_refs, self._point_refs = stream_refs, point_refs
         self._refs_revision = revision
         return len(stream_refs)
@@ -509,10 +518,8 @@ class Manager:
         """
         Insert RDF graph into one explicitly owned deployment data graph.
 
-        The embedding index is refreshed synchronously before returning, so
-        once this call completes the just-inserted concepts are resolvable.
-        The refresh is incremental (only new concepts are embedded) unless
-        ``replace=True``, which triggers a full rebuild.
+        The embedding indexes cover the bundled ontologies only, so an insert
+        does not rebuild them.
 
         Args:
             :param rdf_graph: An `xml.sax.xmlreader.InputSource`, file-like object,
@@ -574,10 +581,16 @@ class Manager:
                 self.apps.refresh()
 
     def deploy_app(self, app):
-        return self.apps.deploy(app)
+        result = self.apps.deploy(app)
+        # Deployment projects new output metadata. Publish the matching query
+        # view before a client can query those outputs using the result.
+        self._current_refs()
+        return result
 
     def remove_app(self, name):
-        return self.apps.remove(name)
+        result = self.apps.remove(name)
+        self._current_refs()
+        return result
 
     def _current_refs(self) -> None:
         """Resync the reference maps if the graph changed since the last sync.
@@ -598,7 +611,7 @@ class Manager:
         for uri in uris:
             refs = self._point_refs.get(uri, {uri})
             if len(refs) != 1:
-                raise ValueError(f"point {uri!r} has multiple references; select an explicit ref_uri")
+                raise ValueError(f"point {uri!r} has multiple references; select an explicit stream_uri")
             result[uri] = next(iter(refs))
         plan = self.apps.plan_at(epoch)
         resolved = resolve(plan, result.values(), view=view)
@@ -621,7 +634,7 @@ class Manager:
             if declared not in self._stream_refs:
                 # A removed historical stage still has its original kind.
                 declared = self.resolve_storage_keys([stream], view="raw", epoch=epoch)[stream]
-            mode = self._stream_refs.get(declared, {}).get("value_kind", "numeric")
+            mode = normalize_value_kind(self._stream_refs.get(declared, {}).get("value_kind", "numeric"))
         return self.core.batches(stream, start=start, end=end, limit=limit, order=order,
                                  batch_size=batch_size, epoch=epoch, mode=mode)
 
@@ -664,63 +677,70 @@ class Manager:
         info = self.timeseries_info_batch(uris, view=view)
         return sorted(uri for uri, stats in info.items() if stats["row_count"])
 
-    def register_datasource(self, source_id: str) -> str:
-        """Register a named datasource in the knowledge graph.
-
-        Writes a graph node typed as acquirium:DataSourceRegistry so the
-        datasource is discoverable via SPARQL.  Idempotent — safe to call
-        on every startup.  Returns source_id.
-        """
-        node = URIRef(f"urn:acquirium:datasource:{source_id}")
-        g = Graph()
-        g.add((node, RDF.type,   ACQUIRIUM_DATASOURCE))
-        g.add((node, RDFS.label, Literal(source_id)))
-        self.graph_store.insert_graph(
-            g,
-            format="turtle",
-            replace=False,
-            graph_uri=self.graph_store.source_graph_uri(source_id),
-        )
-        return source_id
-
-    def insert_timeseries(self, *, source_id, ref_name, rows, request_id=None):
-        return self.insert_timeseries_batch(source_id, {ref_name: rows}, request_id=request_id)
+    def insert_timeseries(self, *, source_id, stream_name, rows, request_id=None):
+        return self.insert_timeseries_batch(source_id, {stream_name: rows}, request_id=request_id)
 
     def insert_timeseries_batch(self, source_id, streams, *, request_id=None, replace=()):
-        """Upsert ``{ref_name: rows}`` in one request; each stream named in
+        """Upsert ``{stream_name: rows}`` in one request; each stream named in
         ``replace`` holds exactly its supplied rows afterwards."""
         import polars as pl
         from acquirium.core import time_ns
         refs, times, values = [], [], []
         for name, rows in streams.items():
-            ref = str(compute_ref_uri(source_id, name))
+            ref = str(compute_stream_uri(source_id, name))
             for timestamp, value in rows:
                 refs.append(ref)
                 times.append(time_ns(timestamp))
                 values.append(value)
-        frame = pl.DataFrame({"ref_uri": pl.Series(refs, dtype=pl.String),
+        frame = pl.DataFrame({"stream_uri": pl.Series(refs, dtype=pl.String),
                               "ts": pl.Series(times, dtype=pl.Int64).cast(pl.Datetime("ns", "UTC")),
-                              "value": pl.Series(values, dtype=pl.Object)})
-        replaced = {str(compute_ref_uri(source_id, name)) for name in replace}
+                              "value": typed_value_series(values)})
+        replaced = {str(compute_stream_uri(source_id, name)) for name in replace}
         return self._ingest(source_id, frame, request_id, replace=replaced)
 
     def insert_timeseries_arrow(self, source_id, table, *, request_id=None):
         import polars as pl
         frame = pl.from_arrow(table)
-        names = frame["ref_name"].unique().to_list()
+        names = frame["stream_name"].unique().to_list()
         if any(not isinstance(name, str) or not name for name in names):
-            raise ValueError("ref_name must be a nonempty string")
-        refs = {name: str(compute_ref_uri(source_id, name)) for name in names}
-        frame = frame.with_columns(pl.col("ref_name").replace_strict(refs).alias("ref_uri"))
-        return self._ingest(source_id, frame.drop("ref_name"), request_id)
+            raise ValueError("stream_name must be a nonempty string")
+        refs = {name: str(compute_stream_uri(source_id, name)) for name in names}
+        frame = frame.with_columns(pl.col("stream_name").replace_strict(refs).alias("stream_uri"))
+        return self._ingest(source_id, frame.drop("stream_name"), request_id)
 
     def _ingest(self, source_id, frame, request_id, replace=()):
-        """Submit ``ref_uri``/``ts``/``value`` rows, each value stored as its
+        """Submit ``stream_uri``/``ts``/``value`` rows, each value stored as its
         stream's declared kind."""
         import polars as pl
-        kinds = self._validate_refs(source_id, set(frame["ref_uri"].unique().to_list()) | set(replace))
+        refs = set(frame["stream_uri"].unique().to_list()) | set(replace)
+        kinds = self._validate_refs(source_id, refs)
+        undeclared = [uri for uri, kind in kinds.items() if kind == UNDECLARED_VALUE_KIND]
+        if undeclared:
+            observed = frame.filter(pl.col("stream_uri").is_in(undeclared))
+            inferred = streams_with_numeric_values(observed)
+            if inferred:
+                # A first numeric observation changes registration metadata.
+                # Serialize that transition with other graph edits.
+                with self.apps.lock:
+                    kinds = self._validate_refs(source_id, refs)
+                    inferred = {uri for uri in inferred if kinds[uri] == UNDECLARED_VALUE_KIND}
+                    kinds.update(dict.fromkeys(inferred, "numeric"))
+                    receipt = self._submit_readings(source_id, frame, request_id, kinds, replace)
+                    if inferred:
+                        graph = Graph()
+                        for uri in inferred:
+                            graph.add((URIRef(uri), INFERRED_VALUE_KIND, Literal("numeric")))
+                        self.graph_store.insert_graph(
+                            graph, graph_uri=self.graph_store.source_graph_uri(source_id),
+                        )
+                    return receipt
+        return self._submit_readings(source_id, frame, request_id, kinds, replace)
+
+    def _submit_readings(self, source_id, frame, request_id, kinds, replace):
+        import polars as pl
+
         frame = frame.with_columns(
-            pl.col("ref_uri").replace_strict(kinds, return_dtype=pl.String).alias("value_kind")
+            pl.col("stream_uri").replace_strict(kinds, return_dtype=pl.String).alias("value_kind")
         )
         return self.core.ingest(source_id, request_id or str(uuid.uuid4()), frame, replace=replace)
 
@@ -738,16 +758,40 @@ class Manager:
             kinds[reference] = declaration["value_kind"]
         return kinds
 
-    def delete_timeseries(self, source_id, ref_name, timestamps, *, request_id=None):
+    def delete_timeseries(self, source_id, stream_name, timestamps, *, request_id=None):
         import polars as pl
         from acquirium.core import time_ns
-        reference = str(compute_ref_uri(source_id, ref_name))
+        reference = str(compute_stream_uri(source_id, stream_name))
         self._validate_refs(source_id, {reference})
-        frame = pl.DataFrame({"ref_uri": [reference] * len(timestamps),
+        frame = pl.DataFrame({"stream_uri": [reference] * len(timestamps),
                               "ts": pl.Series([time_ns(value) for value in timestamps], dtype=pl.Int64).cast(pl.Datetime("ns", "UTC")),
                               "value": pl.Series([None] * len(timestamps), dtype=pl.Float64),
                               "operation": ["delete"] * len(timestamps)})
         return self.core.ingest(source_id, request_id or str(uuid.uuid4()), frame)
+
+    def insert_log(self, entry: LogEntry) -> None:
+        property_uri = URIRef(entry.property_uri)
+        log_uri = URIRef(f"{property_uri}_log")
+        graph = Graph()
+        graph.add((property_uri, HAS_LOG, log_uri))
+        graph.add((log_uri, RDF.type, LOGBOOK))
+        with self._logbook_lock:
+            self.logbook.insert(entry)
+            self.graph_store.insert_graph(graph, graph_uri=self.graph_store.acquirium_graph_uri)
+
+    def query_logs(self, property_uri: str, log_time_interval: TimeIntervalModel | None = None,
+                   obs_time_interval: TimeIntervalModel | None = None) -> list[LogEntry]:
+        return self.logbook.query(property_uri, log_time_interval, obs_time_interval)
+
+    def delete_logs(self, property_uri: str) -> bool:
+        uri = URIRef(property_uri).n3()
+        with self._logbook_lock:
+            self.logbook.delete(property_uri)
+            self.graph_store.sparql_update(
+                f"DELETE WHERE {{ {uri} <{HAS_LOG}> ?log . ?log a <{LOGBOOK}> . }}",
+                graph_uri=self.graph_store.acquirium_graph_uri,
+            )
+        return True
 
     @semantic_operation
     def sparql_update(self, update: str, source_id: str) -> dict[str, Any]:

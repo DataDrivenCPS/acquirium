@@ -55,9 +55,9 @@ class TestMaybeLiteralDt:
 
 class TestExternalUri:
     def test_point_ns_stripped(self):
-        uri = URIRef(str(ACQUIRIUM_POINT_NS) + "some_point_id")
+        uri = URIRef(str(ACQUIRIUM_POINT_NS) + "some_property_id")
         result = _external_uri(uri)
-        assert result == "some_point_id"
+        assert result == "some_property_id"
 
     def test_other_uri_unchanged(self):
         uri = URIRef("http://example.org/sensor1")

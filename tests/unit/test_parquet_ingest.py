@@ -13,7 +13,6 @@ from acquirium.Drivers.BuiltInDrivers.parquet_ingest import ParquetIngestDriver
 
 def make_driver(cfg_overrides: dict | None = None, tmp_path: Path | None = None) -> ParquetIngestDriver:
     aq = MagicMock()
-    aq.register_datasource.return_value = None
     aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0, "receipts": []}
     watch = str(tmp_path) if tmp_path else "/tmp/parquet_test_watch"
     # Per-test driver state: the default <cwd>/.acquirium is shared across runs,
@@ -34,7 +33,7 @@ def parse(driver, path, cursor=None):
     batch: dict[str, list] = {}
     if observations is not None:
         for row in observations.iter_rows(named=True):
-            batch.setdefault(row["ref_name"], []).append((row["ts"], row["value"]))
+            batch.setdefault(row["stream_name"], []).append((row["ts"], row["value"]))
     return batch, next_cursor
 
 
@@ -102,4 +101,4 @@ def test_loop_uses_explicit_source_id(tmp_path):
     driver.tick()
     source_id, table = driver.aq.insert_timeseries_arrow.call_args[0]
     assert source_id == "parquet_files"
-    assert "temp" in pl.from_arrow(table)["ref_name"].to_list()
+    assert "temp" in pl.from_arrow(table)["stream_name"].to_list()

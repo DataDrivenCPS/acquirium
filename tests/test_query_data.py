@@ -52,7 +52,7 @@ def test_find_all_data_2(acquirium_client_csv):
     assert meta["b_data"].null_count() + meta["e_data"].null_count() == 12
 
     meta_full = all_data_query.metadata(include_internals=True)
-    # per data node: ref, unit, ref unit, source id, ref name
+    # per data node: ref, unit, ref unit, source id, stream name
     assert len(meta_full.columns) == 4 + 2 * 5
 
     df_long = all_data_query.dataframe(shape="narrow")
@@ -197,13 +197,13 @@ def test_dataframe_cast_float_is_per_frame(acquirium_client_csv):
     p1 = acq.client.compact_uri("urn:ex/point_1")   # numeric
     p9 = acq.client.compact_uri("urn:ex/point_9")   # text
 
-    numeric = df.filter(pl.col("point_id") == p1)
+    numeric = df.filter(pl.col("property_id") == p1)
     assert len(numeric) > 0
     # numeric point populated value_numeric (cast succeeded) and not value_text
     assert numeric["value_numeric"].null_count() < len(numeric)
     assert numeric["value_text"].null_count() == len(numeric)
 
-    text = df.filter(pl.col("point_id") == p9)
+    text = df.filter(pl.col("property_id") == p9)
     assert len(text) > 0
     # un-castable text point gracefully stayed in value_text
     assert text["value_numeric"].null_count() == len(text)
@@ -216,7 +216,7 @@ def test_dataframe_cast_int_warns_when_truncating(acquirium_client_csv):
     with pytest.warns(UserWarning, match="cast_value='int' truncates"):
         df = acq.find_all_data().dataframe(shape="narrow", cast_value="int", limit=5)
     assert df["value_numeric"].dtype == pl.Int64
-    assert acq.client.compact_uri("urn:ex/point_9") in set(df["point_id"].to_list())   # text point still present
+    assert acq.client.compact_uri("urn:ex/point_9") in set(df["property_id"].to_list())   # text point still present
 
 
 def test_dataframe_cast_value_is_validated(acquirium_client_csv):

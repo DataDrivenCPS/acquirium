@@ -174,7 +174,7 @@ def test_stream_delivery_preserves_each_triples_subject(experiment_ledger, tmp_p
     ledger, graph, study = ledger_for(experiment_ledger, tmp_path)
     variable = ledger.declare(study, "flow", "output", "timeseries", {})
     run = ledger.start(study, {})["run_id"]
-    ref = ledger.record_batch(run, [{"form": "samples", "variable_id": variable["variable_id"], "samples": [(T0, 1)]}])[0]["ref_uri"]
+    ref = ledger.record_batch(run, [{"form": "samples", "variable_id": variable["variable_id"], "samples": [(T0, 1)]}])[0]["stream_uri"]
     ledger.sync_metadata_graph()
     point = URIRef(ref + "__point")
     assert set(graph.dataset.objects(point, RDFS.label)) == {Literal("flow")}
@@ -232,5 +232,5 @@ def test_committed_sample_intent_replays_after_graph_flush_failure(experiment_le
     assert counts(experiment_ledger)["experiment_observations"] == 1
     assert counts(experiment_ledger)["experiment_metadata_outbox"] > 0
     reopened = ExperimentStore(experiment_ledger, graph_store=graph)
-    assert reopened.observations(study)[0]["ref_uri"] == receipt["ref_uri"]
+    assert reopened.observations(study)[0]["stream_uri"] == receipt["stream_uri"]
     assert counts(experiment_ledger)["experiment_metadata_outbox"] == 0
