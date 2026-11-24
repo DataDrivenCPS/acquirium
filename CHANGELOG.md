@@ -134,9 +134,6 @@ change in any release.
   records. Logbook client methods and HTTP endpoints stay available.
 - Acquirium depends on `escapement-db`, imported as `escapement`, in place of
   `escapement-next`.
-- The operating-limits harnesses (`examples/operating_limits`) run on
-  Acquirium's engine core, with the 15-minute mean compiled as the `mean`
-  built-in.
 - Acquirium requires DuckDB 2.0 (`duckdb>=2.0.0`) for the experiment ledger. An
   new DuckDB ledger uses the 2.0 storage format.
 - **Breaking:** an app's `inputs` map input names to selections,

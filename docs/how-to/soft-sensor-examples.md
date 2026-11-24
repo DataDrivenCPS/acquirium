@@ -42,6 +42,3 @@ the result with this output timestamp.
 Function dataframe columns use `Datetime("us", "UTC")`; context values are
 timezone-aware Python datetimes. Both have microsecond precision. A late
 reading keeps the timestamp supplied with it.
-
-For ingest and publication costs, see the
-[operating limits harness](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/operating_limits).
