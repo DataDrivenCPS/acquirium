@@ -18,54 +18,6 @@ def _tall(keys):
     })
 
 
-def test_replacement_units_and_samples_use_one_epoch(monkeypatch):
-    from types import SimpleNamespace
-    from unittest.mock import Mock
-
-    from acquirium.Client.data_object import DataObject
-
-    raw, stage = "urn:raw", "urn:stage"
-    fahrenheit, celsius = "urn:unit:F", "urn:unit:C"
-    epoch = 1
-    client = Mock()
-    client.stream_views.side_effect = lambda refs: {
-        "epoch": epoch,
-        "streams": {
-            ref: {"raw": raw, "current": stage if epoch == 2 else raw, "unit": celsius if epoch == 2 else None}
-            for ref in refs
-        },
-    }
-    client._stream_units.return_value = {raw: (fahrenheit, fahrenheit)}
-
-    def timeseries_df(ref, *, epoch, view, **kwargs):
-        value = 20.0 if view == "current" and epoch == 2 else 68.0
-        return pl.DataFrame({"ts": [datetime(2026, 1, 1, tzinfo=timezone.utc)], "uri": [ref], "value": [value]})
-
-    client.timeseries_df.side_effect = timeseries_df
-    graph = SimpleNamespace(
-        data_nodes={1: SimpleNamespace(filters={}, refs=None, exprs=[])},
-        aliases_reverse={1: "temperature"},
-    )
-    query = SimpleNamespace(query_graph=graph, client=client)
-
-    def selected(ref, unit):
-        key = (1, f"{ref}:point", ref)
-        monkeypatch.setattr("acquirium.Client.data_object._parse_sparql_bindings",
-                            lambda *args, **kwargs: ([key], {}, {key: unit}, {key: unit}, {}, {}))
-
-    selected(raw, fahrenheit)
-    before = DataObject._from_query(query)
-    epoch = 2
-    after = DataObject._from_query(query)
-    selected(stage, celsius)
-    original = DataObject._from_query(query, view="raw")
-    for data, unit, value in [(before, fahrenheit, 68.0), (after, celsius, 20.0), (original, fahrenheit, 68.0)]:
-        assert data["temperature"]["value"].to_list() == [value]
-        assert data.units() == {"temperature": [unit]}
-    client._stream_units.assert_called_once_with({raw})
-    client.engine_snapshot.assert_not_called()
-
-
 @pytest.mark.parametrize("getter, route", [
     ("get", "timeseries_info_batch"),
     ("with_rows", "timeseries_exists_batch"),

@@ -1,10 +1,52 @@
 """Read stored readings through the epoch engine's Arrow API in tests."""
 
-from contextlib import contextmanager
+from contextlib import closing, contextmanager, nullcontext
 from hashlib import sha256
+from io import BytesIO
 
 import pyarrow as pa
 from escapement import NotFound
+
+
+class _TestTransport:
+    """Give the Acquirium client its requests-style read interface over TestClient."""
+
+    def __init__(self, http):
+        self.http = http
+
+    def __getattr__(self, name):
+        return getattr(self.http, name)
+
+    def get(self, *args, stream=False, **kwargs):
+        if (params := kwargs.get("params")) is not None:
+            kwargs["params"] = {key: value for key, value in params.items() if value is not None}
+        response = self.http.get(*args, **kwargs)
+        if stream:
+            response.raw = BytesIO(response.content)
+            return nullcontext(response)
+        return response
+
+
+@contextmanager
+def epoch_server(directory, *, read_batch_size=101, **options):
+    """Run HTTP requests against an in-process manager, restoring app state on exit."""
+    import pytest
+    from fastapi.testclient import TestClient
+
+    from acquirium import Acquirium
+    from acquirium.Server.app import app
+    from acquirium.Server.manager import Manager
+
+    with closing(Manager(data_dir=directory, exact_only=True, **options)) as manager:
+        manager.recover_apps()
+        # The manager above owns startup and shutdown for this test.
+        with pytest.MonkeyPatch.context() as patch, closing(TestClient(app)) as http:
+            patch.setattr(app.state, "manager", manager, raising=False)
+            patch.setattr(app.state, "read_batch_size", read_batch_size, raising=False)
+            client = Acquirium(health_timeout=None)
+            client.client._http.close()
+            client.client._http = _TestTransport(http)
+            yield manager, http, client
 
 
 def readings(snapshot, stream, *, start=None, end=None):

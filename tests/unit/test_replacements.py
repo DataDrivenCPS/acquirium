@@ -1,11 +1,8 @@
 """Replacement identity, output ownership, and reads across plan changes."""
 from copy import deepcopy
 from dataclasses import replace
-from contextlib import nullcontext
-from io import BytesIO
 from pathlib import Path
 
-from fastapi.testclient import TestClient
 import polars as pl
 import pytest
 from escapement import NotFound
@@ -13,10 +10,9 @@ from escapement import NotFound
 import acquirium as aq
 from acquirium import replacements
 from acquirium.apps import output_reference
-from acquirium.functions import _epoch_outputs, _public_parameters
+from acquirium.functions import _epoch_outputs
 from acquirium.internals.models import compute_stream_uri
-from acquirium.Server.app import app as api
-from acquirium.Server.manager import Manager
+from tests.epoch_helpers import epoch_server
 
 NTU = "http://qudt.org/vocab/unit/NTU"
 TURBIDITY = "http://qudt.org/vocab/quantitykind/Turbidity"
@@ -116,9 +112,6 @@ def test_plan_resolution_and_corrupt_cycles():
 @pytest.mark.parametrize("library", ["pandas", "polars"])
 @pytest.mark.parametrize("batch", [False, True])
 def test_adapter_selects_only_replacement_times(library, batch):
-    import pandas as pd
-
-    assert _public_parameters({"group": ["urn:tank"]}) == {"group": ("urn:tank",)}
     times = [0, 1_000, 2_000]
     values = pl.DataFrame({
         "time": pl.Series(times).cast(pl.Datetime("ns", "UTC")),
@@ -136,26 +129,6 @@ def test_adapter_selects_only_replacement_times(library, batch):
 @pytest.fixture(scope="module")
 def runtime(tmp_path_factory):
     root = tmp_path_factory.mktemp("replacements")
-    manager = Manager(data_dir=root, exact_only=True)
-    manager.recover_apps()
-    api.state.manager, api.state.read_batch_size = manager, 1
-    http = TestClient(api)
-    client = aq.Acquirium(health_timeout=None)
-    class Transport:
-        # The production client speaks requests; TestClient speaks httpx.
-        def __getattr__(self, name):
-            return getattr(http, name)
-
-        def get(self, *args, stream=False, **kwargs):
-            if "params" in kwargs:
-                kwargs["params"] = {key: value for key, value in kwargs["params"].items() if value is not None}
-            response = http.get(*args, **kwargs)
-            if stream:
-                response.raw = BytesIO(response.content)
-                return nullcontext(response)
-            return response
-
-    client.client._http = Transport()
     module = root / "functions.py"
     module.write_text('''import polars as pl
 from acquirium.functions import emit
@@ -173,11 +146,8 @@ def empty(frame: pl.DataFrame, context):
 def passthrough(frame: pl.DataFrame, context):
     return {"out": frame.select("time", "value", "text")}
 ''')
-    try:
-        yield manager, http, client, module
-    finally:
-        http.close()
-        manager.close()
+    with epoch_server(root, read_batch_size=1) as server:
+        yield (*server, module)
 
 
 @pytest.fixture
@@ -340,11 +310,15 @@ def test_competing_claims_metadata_and_group_cardinality(system):
     manager.deploy_app(replace(app, outputs={"out": aq.ReplacementOutput(unit=URIRef(NTU))}))
 
 
-def test_replacements_inherit_metadata_and_may_change_to_a_compatible_unit(system, tmp_path):
+def test_replacements_inherit_metadata_and_may_change_to_a_compatible_unit(system, tmp_path, monkeypatch):
+    from unittest.mock import Mock
+
     from acquirium.internals.internals_namespaces import HAS_QUANTITY_KIND, HAS_UNIT
     from rdflib import URIRef
 
     manager, _, client, _, source, _, _ = system
+    snapshot = Mock(wraps=client.client.engine_snapshot)
+    monkeypatch.setattr(client.client, "engine_snapshot", snapshot)
     point = f"urn:replacement:{source}:temperature"
     client.register_streams([dict(source_id=source, stream_name="temperature", property_uri=point,
                                   unit=DEG_F, quantity_kind="http://qudt.org/vocab/quantitykind/Temperature")])
@@ -381,6 +355,7 @@ def test_replacements_inherit_metadata_and_may_change_to_a_compatible_unit(syste
     raw = client.query().measurement(alias="t", uri=f"{clean}__point").data(view="raw")
     assert raw.units() == {"t": [DEG_F]}
     assert raw["t"]["value"].to_list() == [68., 212.]
+    snapshot.assert_not_called()
     # A consumer that selected the Fahrenheit stream converts from the stage it binds.
     normalize = aq.PythonFunction.from_file(
         Path(__file__).resolve().parents[2] / "scripts/apps/temperature_normalization.py", "normalize")

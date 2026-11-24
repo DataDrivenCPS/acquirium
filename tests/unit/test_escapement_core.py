@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from datetime import datetime, timezone
 import time
 
@@ -7,7 +8,7 @@ import pyarrow as pa
 import pytest
 from escapement import Closed, Refused
 
-from acquirium.core import Core, SCHEMA
+from acquirium.core import Core, SCHEMA, time_ns
 from tests.epoch_helpers import plan, readings, value
 
 
@@ -53,6 +54,8 @@ def test_epoch_arrow_transport_preserves_selected_limits_and_pinned_reads(epoch_
     assert table.schema == SCHEMA
     assert table["ts"].cast(pa.int64()).to_pylist() == [3003, 1001]
     assert table["value"].to_pylist() == [3, 1]
+    historical = pa.Table.from_batches(list(core.batches("urn:sensor", epoch=old.epoch)))
+    assert historical["value"].to_pylist() == [1, 3]
     assert next(core.batches("urn:sensor", mode="text", epoch=old.epoch))["value"].to_pylist() == ["Bad"]
     assert next(core.batches("urn:sensor", epoch=latest.epoch))["value"].to_pylist() == [99]
     assert core.info(["urn:none", "urn:sensor"], snapshot=old) == {
@@ -99,29 +102,25 @@ def test_epoch_arrow_transport_repairs_and_follows_versions(epoch_core, tmp_path
     assert table["until"].to_pylist() == [latest.epoch, None, latest.epoch]
 
 
-def test_epoch_store_reopens_with_receipts_and_enforces_retention(tmp_path):
+def test_restart_preserves_retry_identity_and_enforces_retention(tmp_path):
     path = tmp_path / "epoch.duckdb"
-    core = Core(path)
-    try:
-        original = frame([1001], [1])
+    original = frame([1001], [1])
+    with closing(Core(path)) as core:
         receipt = core.ingest("gateway", "one", original).receipt
         before = core.wait(receipt).epoch
         latest = core.wait(core.ingest("gateway", "two", frame([1001], [2])).receipt).epoch
         assert core.engine.prune(latest) == latest
-        assert core.close()
-    finally:
-        core.close()
 
-    core = Core(path)
-    try:
+    with closing(Core(path)) as core:
         assert next(core.batches("urn:sensor"))["value"].to_pylist() == [2]
         assert core.engine.epochs_of([receipt]) == [before]
+        assert core.ingest("gateway", "one", original).receipt == receipt
+        with pytest.raises(Refused):
+            core.ingest("gateway", "one", frame([1001], [21]))
         with pytest.raises(Refused, match="retention"):
             core.batches("urn:sensor", epoch=before)
         with pytest.raises(Refused, match="retention"):
             core.engine.snapshot().versions(after=before)
-    finally:
-        core.close()
 
 
 def test_configured_retention_advances_and_drops_expired_history(tmp_path):
@@ -141,24 +140,6 @@ def test_configured_retention_advances_and_drops_expired_history(tmp_path):
         assert core.changes(epoch=latest, ordinal=2**64 - 1)["changes"] == []
     finally:
         core.close()
-
-
-def test_restart_restores_readings_and_native_retry_identity(tmp_path):
-    path = tmp_path / "persist.duckdb"
-    owner = Core(path)
-    payload = frame([1001], [20])
-    receipt = owner.ingest("gateway", "batch", payload).receipt
-    owner.wait(receipt)
-    sequence = receipt.sequence
-    owner.close()
-    owner = Core(path)
-    try:
-        assert owner.ingest("gateway", "batch", payload).receipt.sequence == sequence
-        with pytest.raises(Refused):
-            owner.ingest("gateway", "batch", frame([1001], [21]))
-        assert value(owner.engine.snapshot(), "urn:sensor", 1001) == 20
-    finally:
-        owner.close()
 
 
 def test_concurrent_ingests_share_admission_commits(core):
@@ -303,41 +284,29 @@ def test_duplicate_key_last_wins_and_transport_order_does_not_change_retry(core)
     assert value(core.engine.snapshot(), "urn:sensor", 1001) == 30
 
 
-@pytest.mark.parametrize("operations, values, expected", [
-    (["upsert", "delete"], [10, None], None),
-    (["delete", "upsert"], [None, 20], 20),
-    (["delete", "upsert", "delete"], [None, 20, None], None),
-    (["upsert", "delete", "upsert"], [10, None, 30], 30),
-    # Rows with no reading remain absent from normalization.
-    (["upsert", "upsert"], [10, None], 10),
-    (["delete", "upsert"], [None, None], None),
-])
-def test_mixed_mutations_keep_the_last_surviving_operation(core, operations, values, expected):
-    core.wait(core.ingest("gateway", "seed", frame([1001], [5])).receipt)
-    mixed = frame([1001] * len(values), values).with_columns(pl.Series("operation", operations))
-    receipt = core.ingest("gateway", "mixed", mixed).receipt
-    assert value(core.wait(receipt), "urn:sensor", 1001) == expected
-    canonical = frame([1001], [expected]).with_columns(
-        pl.lit("delete" if expected is None else "upsert").alias("operation")
-    )
-    assert core.ingest("gateway", "mixed", canonical).receipt == receipt
-
-
-def test_snapshot_is_captured_before_iterator_is_consumed(core):
-    core.wait(core.ingest("gateway", "a", frame([1001], [10])).receipt)
-    pages = core.batches("urn:sensor")
-    core.wait(core.ingest("gateway", "b", frame([1001], [20])).receipt)
-    assert next(pages)["value"].to_pylist() == [10]
-
-
-def test_historical_epoch_read(core):
-    old = core.wait(core.ingest("gateway", "a", frame([1001], [10])).receipt)
-    core.wait(core.ingest("gateway", "b", frame([1001], [20])).receipt)
-    assert next(core.batches("urn:sensor", epoch=old.epoch))["value"].to_pylist() == [
-        10
+def test_mixed_mutations_keep_the_last_surviving_operation_per_key(core):
+    cases = [
+        (["upsert", "delete"], [10, None], None),
+        (["delete", "upsert"], [None, 20], 20),
+        (["delete", "upsert", "delete"], [None, 20, None], None),
+        (["upsert", "delete", "upsert"], [10, None, 30], 30),
+        (["upsert", "upsert"], [10, None], 10),
+        (["delete", "upsert"], [None, None], None),
     ]
-    with pytest.raises(ValueError):
-        core.batches("urn:sensor", epoch=old.epoch + 100)
+    times = list(range(1, len(cases) + 1))
+    core.wait(core.ingest("gateway", "seed", frame(times, [5] * len(times))).receipt)
+    mixed = pl.concat([
+        frame([ts] * len(ops), values).with_columns(pl.Series("operation", ops))
+        for ts, (ops, values, _) in zip(times, cases)
+    ])
+    result = core.ingest("gateway", "mixed", mixed)
+    snapshot = core.wait(result.receipt)
+    expected = [outcome for _, _, outcome in cases]
+    assert [value(snapshot, "urn:sensor", ts) for ts in times] == expected
+    canonical = frame(times, expected).with_columns(
+        pl.Series("operation", ["delete" if outcome is None else "upsert" for outcome in expected])
+    )
+    assert core.ingest("gateway", "mixed", canonical.reverse()) == result
 
 
 def test_fixed_buckets_repair_complete_groups_and_clear_downstream(epoch_core, tmp_path):
@@ -375,21 +344,12 @@ def test_fixed_buckets_repair_complete_groups_and_clear_downstream(epoch_core, t
 
 
 def test_timestamp_inputs_assume_utc_and_preserve_nanoseconds():
-    from datetime import datetime, timezone
-
-    from acquirium.core import time_ns
-
     instant = datetime(2026, 1, 1, tzinfo=timezone.utc)
     stamp = time_ns(instant)
     assert time_ns(instant.replace(tzinfo=None)) == stamp
     assert time_ns("2026-01-01") == stamp
     assert time_ns("2026-01-01T00:00:00.000000001") == stamp + 1
     assert time_ns("2026-01-01T01:00:00.000000001+01:00") == stamp + 1
-
-
-def test_iso_timestamps_reject_nanosecond_wraparound():
-    from acquirium.core import time_ns
-
     assert time_ns("1677-09-21T00:12:43.145224192Z") == -(2**63)
     assert time_ns("2262-04-11T23:47:16.854775807Z") == 2**63 - 1
     for timestamp in ("1677-09-21T00:12:43.145224191Z", "2262-04-11T23:47:16.854775808Z", "2500-01-01"):

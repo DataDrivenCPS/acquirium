@@ -2,14 +2,10 @@
 
 import math
 
-from fastapi.testclient import TestClient
 import pyarrow as pa
 import pytest
 
-from acquirium import Acquirium
 from acquirium.apps import output_reference
-from acquirium.Server.app import app as api
-from acquirium.Server.manager import Manager
 from examples.membrane_monitoring.declarations import (
     DRIFT,
     DRIFT_LIMITS,
@@ -26,21 +22,13 @@ from examples.membrane_monitoring.declarations import (
     register,
 )
 from examples.membrane_monitoring.run import readings
+from tests.epoch_helpers import epoch_server
 
 
 @pytest.fixture
-def client(tmp_path):
-    manager = Manager(data_dir=tmp_path, exact_only=True)
-    manager.recover_apps()
-    api.state.manager = manager
-    http = TestClient(api)
-    client = Acquirium(health_timeout=None)
-    client.client._http = http
-    try:
-        yield client
-    finally:
-        http.close()
-        manager.close()
+def system(tmp_path):
+    with epoch_server(tmp_path) as server:
+        yield server
 
 
 def name(skid, measurement):
@@ -102,8 +90,9 @@ def recompute(observations):
     return expected
 
 
-def test_sequential_apps_match_a_full_recomputation_after_late_data(client):
-    engine = api.state.manager.core.engine
+def test_sequential_apps_match_a_full_recomputation_after_late_data(system):
+    manager, _, client = system
+    engine = manager.core.engine
     register(client)
     deploy(client)
     observations = readings(hours=12)

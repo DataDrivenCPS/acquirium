@@ -1,17 +1,15 @@
 from datetime import datetime, timezone
 from unittest.mock import Mock
 
-from fastapi.testclient import TestClient
 import pyarrow as pa
 import pyarrow.ipc as ipc
 import pytest
 
-from tests.epoch_helpers import value
+from tests.epoch_helpers import epoch_server, value
 
-from acquirium import Acquirium, App, Selection, Output
+from acquirium import App, Selection, Output
 from acquirium.apps import Apps, output_reference
 from acquirium.Server.manager import Manager
-from acquirium.Server.app import app as api
 from acquirium.internals.models import compute_stream_uri
 
 
@@ -32,19 +30,8 @@ def test_list_settles_pending_removal_before_selecting_app_names(tmp_path):
 
 @pytest.fixture(scope="module")
 def system(tmp_path_factory):
-    directory = tmp_path_factory.mktemp("semantic-core")
-    manager = Manager(data_dir=directory, exact_only=True)
-    manager.recover_apps()
-    api.state.manager = manager
-    api.state.read_batch_size = 101
-    http = TestClient(api)
-    client = Acquirium(health_timeout=None)
-    client.client._http = http
-    try:
-        yield manager, http, client
-    finally:
-        http.close()
-        manager.close()
+    with epoch_server(tmp_path_factory.mktemp("semantic-core")) as server:
+        yield server
 
 
 def register(system, source):
@@ -118,7 +105,7 @@ def test_semantic_query_native_plan_http_ingestion_and_arrow_read(system):
     assert (manager.data_dir / "escapement-epoch.duckdb").exists()
 
 
-def test_epoch_server_deploys_repairs_and_recovers_existing_python_app(tmp_path, monkeypatch):
+def test_python_chain_repairs_history_and_recovers_without_source_files(tmp_path):
     from dataclasses import replace
     from pathlib import Path
 
@@ -140,12 +127,6 @@ def test_epoch_server_deploys_repairs_and_recovers_existing_python_app(tmp_path,
         encoding="utf-8",
     )
 
-    def server():
-        manager = Manager(data_dir=data, exact_only=True)
-        monkeypatch.setattr(api.state, "manager", manager, raising=False)
-        monkeypatch.setattr(api.state, "read_batch_size", 101, raising=False)
-        return manager, TestClient(api)
-
     def write(http, request_id, value):
         response = http.post("/insert_timeseries", json=[{
             "source_id": "conversion", "stream_name": "temperature",
@@ -161,11 +142,7 @@ def test_epoch_server_deploys_repairs_and_recovers_existing_python_app(tmp_path,
         assert response.status_code == 200, response.text
         return ipc.open_stream(response.content).read_all()["value"].to_pylist()
 
-    manager, http = server()
-    try:
-        manager.recover_apps()
-        client = Acquirium(health_timeout=None)
-        client.client._http = http
+    with epoch_server(data) as (manager, http, client):
         ref = register((manager, http, client), "conversion")
         original = temperature_conversion.fahrenheit_to_celsius(client, {})
         declaration = replace(original, function=PythonFunction.from_file(module, "convert"))
@@ -202,6 +179,7 @@ def test_epoch_server_deploys_repairs_and_recovers_existing_python_app(tmp_path,
         write(http, "correction", 86)
         assert read(http) == [30]
         assert read(http, epoch=observed["epoch"]) == [20]
+        published = http.get("/engine/snapshot").json()
 
         # Only the active engine plan should be needed to rebuild this graph
         # and run the captured Python module after restarting.
@@ -211,22 +189,19 @@ def test_epoch_server_deploys_repairs_and_recovers_existing_python_app(tmp_path,
         for artifact in (data / "app-functions").glob("*.py"):
             artifact.rename(artifact.with_suffix(".removed"))
         manager.graph_store.clear_graphs([manager.graph_store.source_graph_uri(f"derived:{declaration.name}")])
-    finally:
-        http.close()
-        manager.close()
-
-    manager, http = server()
-    try:
-        manager.recover_apps()
+    with epoch_server(data) as (manager, http, _):
+        recovered = http.get("/engine/snapshot").json()
+        assert (recovered["epoch"], recovered["plan"]) == (published["epoch"], published["plan"])
         assert manager.graph_store.data_graph(f"derived:{declaration.name}")
         assert http.get(endpoint).json()["app"]["status"] == "active"
         assert read(http) == [30]
+        assert read(http, epoch=observed["epoch"]) == [20]
         write(http, "after-restart", 104)
         assert read(http) == [40]
         assert read(http, chained_output) == [80]
-    finally:
-        http.close()
-        manager.close()
+        manager.remove_app(chained.name)
+        assert read(http, chained_output) == []
+        assert read(http) == [40]
 
 
 @pytest.mark.parametrize("delivery", ["sync_metadata_graph", "publish_queued_metadata"])
@@ -287,33 +262,6 @@ def test_experiment_metadata_retries_app_refresh_after_delivery(system, monkeypa
     experiments.sync_metadata_graph()
     assert calls == [True]
     manager.remove_app("retry-experiment-app")
-
-
-def test_two_apps_retain_each_other_and_form_a_chain(system):
-    manager, http, client = system
-    ref = register(system, "chain")
-    first = mean("chain-first", ref)
-    response = http.put(f"/apps/{first.name}", json=first.to_dict())
-    assert response.status_code == 200, response.text
-    output = output_reference(first.name, "urn:tank", "mean")
-    second = mean("chain-second", output)
-    response = http.put(f"/apps/{second.name}", json=second.to_dict())
-    assert response.status_code == 200, response.text
-    receipt = manager.insert_timeseries(
-        source_id="chain", stream_name="temperature", rows=[(7777, 9)], request_id="one"
-    ).receipt
-    snapshot = manager.core.wait(receipt)
-    assert value(snapshot, output_reference(second.name, "urn:tank", "mean"), 7777) == 9
-    assert (
-        len([op for op in snapshot.plan()["instances"] if op["template"].startswith("chain-")])
-        == 2
-    )
-    manager.remove_app(second.name)
-    snapshot = manager.core.engine.snapshot()
-    assert value(snapshot, output, 7777) == 9
-    assert (
-        value(snapshot, output_reference(second.name, "urn:tank", "mean"), 7777) is None
-    )
 
 
 def test_metadata_move_keeps_group_outputs_stable_and_repairs_history(system):
@@ -551,58 +499,6 @@ def test_invalid_cycle_keeps_the_previous_plan_and_projection(system):
     assert response.status_code == 400
     assert manager.core.engine.snapshot().plan() == previous
     assert not list(manager.graph_store.data_graph(f"derived:{name}"))
-
-
-def test_restart_reconciles_desired_plan_and_retains_history(tmp_path):
-    import json
-    from acquirium.internals.models import compute_stream_uri
-
-    ref = str(compute_stream_uri("restart", "temperature"))
-    manager = Manager(data_dir=tmp_path, exact_only=True)
-    try:
-        manager.insert_graph(
-            f'<{ref}> <urn:acquirium#sourceId> "restart" ; <urn:acquirium#refName> "temperature" .',
-            source_id="restart",
-        )
-        manager.deploy_app(mean("restart-app", ref))
-        manager.core.wait(
-            manager.insert_timeseries(
-                source_id="restart",
-                stream_name="temperature",
-                rows=[(1111, 33)],
-                request_id="original",
-            ).receipt
-        )
-        plan = manager.core.engine.snapshot().plan()
-        epoch = manager.core.engine.snapshot().epoch
-    finally:
-        manager.close()
-    manager = Manager(data_dir=tmp_path, exact_only=True)
-    try:
-        manager.recover_apps()
-        snapshot = manager.core.engine.snapshot()
-        assert snapshot.plan() == plan
-        assert (
-            snapshot.epoch == epoch
-        )  # Recovery does not manufacture a new activation.
-        assert (
-            value(snapshot, output_reference("restart-app", "urn:tank", "mean"), 1111)
-            == 33
-        )
-        receipt = manager.insert_timeseries(
-            source_id="restart",
-            stream_name="temperature",
-            rows=[(1111, 55)],
-            request_id="correction",
-        ).receipt
-        assert (
-            value(manager.core.wait(receipt),
-                output_reference("restart-app", "urn:tank", "mean"), 1111
-            )
-            == 55
-        )
-    finally:
-        manager.close()
 
 
 def test_restart_preserves_failure_status_and_retries_without_new_writes(tmp_path, caplog):
