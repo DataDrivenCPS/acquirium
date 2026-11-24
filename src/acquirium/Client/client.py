@@ -5,7 +5,7 @@ import re
 import requests
 from requests import HTTPError
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 import warnings
 import polars as pl
 import pyarrow.ipc as ipc
@@ -113,6 +113,29 @@ def _split_stream_metadata(stream: dict) -> tuple[dict, dict]:
     return merged, rest
 
 
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def _base_url(server_url: str, server_port: int, use_ssl: bool) -> str:
+    """The address every request path is appended to, without a trailing slash."""
+    if "://" not in server_url:
+        return f"{'https' if use_ssl else 'http'}://{server_url}:{server_port}"
+    url = urlsplit(server_url)
+    if (
+        url.scheme not in {"http", "https"}
+        or not url.hostname
+        or url.username
+        or url.password
+        or url.query
+        or url.fragment
+    ):
+        raise ValueError(
+            "server_url must be a host name or an http(s) address without "
+            f"credentials, query or fragment, got {server_url!r}"
+        )
+    return server_url.rstrip("/")
+
+
 @accepts_old_names
 class AcquiriumClient:
     # 127.0.0.1 rather than "localhost": the server listens on IPv4 only, and
@@ -121,12 +144,28 @@ class AcquiriumClient:
     def __init__(self,
                  server_url: str = "127.0.0.1",
                  server_port: int = 8000,
-                 use_ssl: bool = False):
-        self.base_url = f"{'https' if use_ssl else 'http'}://{server_url}:{server_port}"
+                 use_ssl: bool = False,
+                 token: str | None = None):
+        """``server_url`` is a host name, or a full address such as
+        ``https://example.org/api`` for a server behind a reverse proxy. A full
+        address carries its own scheme, port and path, so ``server_port`` and
+        ``use_ssl`` are ignored. ``token`` is sent with every request as
+        ``Authorization: Bearer <token>``.
+        """
+        self.base_url = _base_url(server_url, server_port, use_ssl)
         # One Session per client so HTTP keep-alive reuses the TCP connection.
         # Bare requests.get/post open a new connection per call, which paid the
         # connect cost (and the ::1 miss above) on every request.
         self._http = requests.Session()
+        if token:
+            host = urlsplit(self.base_url).hostname or ""
+            if self.base_url.startswith("http://") and host not in _LOOPBACK_HOSTS:
+                warnings.warn(
+                    f"The token is sent unencrypted to {self.base_url}. "
+                    "Use an https address.",
+                    stacklevel=3,
+                )
+            self._http.headers["Authorization"] = f"Bearer {token}"
         self._namespaces_cache: dict[str, str] | None = None
 
     @property
