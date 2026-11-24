@@ -971,6 +971,7 @@ class ResolveStorageKeysRequest(TimeseriesInfoRequest):
 
 class StreamViewsRequest(BaseModel):
     uris: list[str]
+    epoch: int | None = Field(default=None, ge=0)
 
 
 @app.post("/resolve_storage_keys")
@@ -987,9 +988,8 @@ def resolve_storage_keys(req: ResolveStorageKeysRequest) -> dict[str, str]:
 @app.post("/stream_views")
 @_engine_errors
 def stream_views(req: StreamViewsRequest) -> dict[str, Any]:
-    """The streams each reference's ``current`` and ``raw`` views read now,
-    and the unit its current view reports when a replacement declares one."""
-    return app.state.manager.stream_views(req.uris)
+    """The pinned epoch, resolved views, and replacement head units."""
+    return app.state.manager.stream_views(req.uris, epoch=req.epoch)
 
 
 
@@ -1017,35 +1017,39 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()], wait: floa
         groups.setdefault(key, {}).setdefault(stream.stream_name, []).extend(stream.values)
         if stream.replace:
             replaced.setdefault(key, set()).add(stream.stream_name)
-        total += len(stream.values)
     for (source_id, request_id), observations in groups.items():
-        receipt = app.state.manager.insert_timeseries_batch(
+        result = app.state.manager.insert_timeseries_batch(
             source_id, observations, request_id=request_id,
             replace=replaced.get((source_id, request_id), ()),
         )
-        receipts.append(_receipt(receipt, source_id, request_id, wait))
-    insert_stats.record(origin="http", rows=total, streams=[s.stream_name for s in streams])
+        total += result.rows_inserted
+        receipts.append(_receipt(result.receipt, source_id, request_id, wait))
+    insert_stats.record(origin="http", rows=sum(len(s.values) for s in streams),
+                        streams=[s.stream_name for s in streams])
     return {"ok": True, "rows_inserted": total, "receipts": receipts}
 
 
 @app.post("/insert_timeseries_arrow")
 @_engine_errors
 async def insert_timeseries_arrow(request: Request, wait: float = Query(30, ge=0)):
-    body = await request.body()
-    table = ipc.RecordBatchStreamReader(pa.BufferReader(body)).read_all()
-    frame = pl.from_arrow(table)
     request_id = request.headers.get("X-Acquirium-Request-Id")
     if not request_id:
         raise ValueError("X-Acquirium-Request-Id is required")
-    receipts = []
-    for key, source_frame in frame.partition_by("source_id", as_dict=True).items():
-        source_id = str(key[0])
-        receipt = await asyncio.to_thread(app.state.manager.insert_timeseries_arrow,
-            source_id, source_frame.drop("source_id").to_arrow(), request_id=request_id)
-        receipts.append(await asyncio.to_thread(_receipt, receipt, source_id, request_id, wait))
+    return await asyncio.to_thread(_insert_arrow_body, await request.body(), request_id, wait)
+
+
+def _insert_arrow_body(body: bytes, request_id: str, wait: float):
+    with ipc.open_stream(body) as reader:
+        frame = pl.from_arrow(reader.read_all())
+    receipts, total = [], 0
+    for (source,), source_frame in frame.partition_by("source_id", as_dict=True).items():
+        source_id = str(source)
+        result = app.state.manager.insert_timeseries_frame(source_id, source_frame, request_id=request_id)
+        total += result.rows_inserted
+        receipts.append(_receipt(result.receipt, source_id, request_id, wait))
     insert_stats.record(origin="arrow", rows=len(frame),
                         streams=frame["stream_name"].unique().to_list())
-    return {"ok": True, "rows_inserted": len(frame), "receipts": receipts}
+    return {"ok": True, "rows_inserted": total, "receipts": receipts}
 
 
 class DeleteObservations(BaseModel):
@@ -1058,9 +1062,9 @@ class DeleteObservations(BaseModel):
 @app.post("/delete_timeseries")
 @_engine_errors
 def delete_timeseries(request: DeleteObservations, wait: float = Query(30, ge=0)):
-    receipt = app.state.manager.delete_timeseries(request.source_id, request.stream_name,
+    result = app.state.manager.delete_timeseries(request.source_id, request.stream_name,
         request.timestamps, request_id=request.request_id)
-    return _receipt(receipt, request.source_id, request.request_id, wait)
+    return _receipt(result.receipt, request.source_id, request.request_id, wait)
 
 
 #### TIMESERIES API ENDPOINTS ####

@@ -7,6 +7,23 @@ import pytest
 from acquirium.Server.manager import Manager
 
 
+def test_manager_refuses_legacy_duckdb_before_creating_new_store(tmp_path):
+    legacy = tmp_path / "timeseries.duckdb"
+    legacy.write_bytes(b"legacy data")
+    with pytest.raises(ValueError, match="Legacy Acquirium storage"):
+        Manager(data_dir=tmp_path, exact_only=True)
+    assert list(tmp_path.iterdir()) == [legacy]
+    assert legacy.read_bytes() == b"legacy data"
+
+
+def test_manager_refuses_legacy_location_from_active_config(tmp_path, monkeypatch):
+    config = tmp_path / "acquirium.toml"
+    config.write_text('[server]\ntimeseries_backend = "timescale"\n')
+    monkeypatch.setenv("ACQUIRIUM_CONFIG", str(config))
+    with pytest.raises(ValueError, match="Legacy DuckDB or TimescaleDB storage settings"):
+        Manager.from_env()
+
+
 @pytest.mark.parametrize("recreate", [False, True])
 def test_manager_recreation_resets_an_external_experiment_ledger(tmp_path, monkeypatch, recreate):
     # Exercise the real storage/reset path without loading ontology indexes.

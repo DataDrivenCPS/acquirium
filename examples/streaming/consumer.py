@@ -2,6 +2,8 @@
 
 from copy import deepcopy
 
+from acquirium.core import END_OF_EPOCH
+
 from .state import key, load, save
 
 
@@ -47,10 +49,7 @@ class ChangeConsumer:
                 else:
                     raise RuntimeError("unsupported change weight")
             state["rows"] = [rows[slot] for slot in sorted(rows)]
-            if ready:
-                state["cursor"] = {
-                    name: ready[-1][name] for name in ("epoch", "ordinal")
-                }
+            state["cursor"] = {"epoch": complete, "ordinal": END_OF_EPOCH}
             state["changes"] += len(ready)
             state["complete_through"] = complete
             # Cursor and visible rows share one durable replacement. Partial

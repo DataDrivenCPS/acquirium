@@ -1,16 +1,60 @@
 """Both insert routes feed the periodic insert summary."""
 
+import asyncio
 import io
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pyarrow as pa
 import pyarrow.ipc as ipc
 from fastapi.testclient import TestClient
 
-from acquirium.internals.models import compute_stream_uri
-from acquirium.Server.app import app as api
+from acquirium.core import Core
+from acquirium.internals.models import StreamInsert, compute_stream_uri
+from acquirium.Server.app import app as api, insert_timeseries, insert_timeseries_arrow
 from acquirium.Server.insert_stats import insert_stats
 from acquirium.Server.manager import Manager
+
+
+def test_insert_replies_count_normalized_rows_and_project_arrow_columns(tmp_path, monkeypatch):
+    manager = Manager.__new__(Manager)
+    manager.core = Core(tmp_path / "engine.duckdb")
+    ref = str(compute_stream_uri("plant", "a"))
+    manager._validate_refs = lambda source, refs: dict.fromkeys(refs, "numeric")
+    monkeypatch.setattr(api.state, "manager", manager, raising=False)
+    monkeypatch.setattr(insert_stats, "record", lambda **kwargs: None)
+    try:
+        result = insert_timeseries([
+            StreamInsert(source_id="plant", stream_name="a", request_id="json",
+                         values=[(1, 1), (1, 2), (2, None)])
+        ], wait=5)
+        assert result["rows_inserted"] == 1
+
+        table = pa.table({
+            "source_id": ["plant"] * 3,
+            "stream_name": ["a"] * 3,
+            "ts": pa.array([1, 1, 3], pa.timestamp("ns", tz="UTC")),
+            "value": [3, 4, None],
+            # Extra columns must not influence the ingestion operation.
+            "operation": pa.nulls(3, pa.string()),
+        })
+        buffer = io.BytesIO()
+        with ipc.new_stream(buffer, table.schema) as writer:
+            writer.write_table(table)
+
+        async def body():
+            return buffer.getvalue()
+
+        request = SimpleNamespace(body=body, headers={"X-Acquirium-Request-Id": "arrow"})
+        result = asyncio.run(insert_timeseries_arrow(request, wait=5))
+        assert result["rows_inserted"] == 1
+        assert next(manager.core.batches(ref))["value"].to_pylist() == [4.0]
+        result = insert_timeseries([
+            StreamInsert(source_id="plant", stream_name="a", request_id="null", values=[(4, None)])
+        ], wait=5)
+        assert result["rows_inserted"] == 0
+    finally:
+        manager.core.close()
 
 
 def test_json_and_arrow_inserts_are_counted(tmp_path, monkeypatch):

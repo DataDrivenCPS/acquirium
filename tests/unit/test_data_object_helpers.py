@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 
 import polars as pl
+import pytest
 
 from acquirium.Client.data_object import _pivot_split_values
 
@@ -15,6 +16,78 @@ def _tall(keys):
         "value_numeric": [1.0] * len(keys),
         "value_text": [None] * len(keys),
     })
+
+
+def test_replacement_units_and_samples_use_one_epoch(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from acquirium.Client.data_object import DataObject
+
+    raw, stage = "urn:raw", "urn:stage"
+    fahrenheit, celsius = "urn:unit:F", "urn:unit:C"
+    epoch = 1
+    client = Mock()
+    client.stream_views.side_effect = lambda refs: {
+        "epoch": epoch,
+        "streams": {
+            ref: {"raw": raw, "current": stage if epoch == 2 else raw, "unit": celsius if epoch == 2 else None}
+            for ref in refs
+        },
+    }
+    client._stream_units.return_value = {raw: (fahrenheit, fahrenheit)}
+
+    def timeseries_df(ref, *, epoch, view, **kwargs):
+        value = 20.0 if view == "current" and epoch == 2 else 68.0
+        return pl.DataFrame({"ts": [datetime(2026, 1, 1, tzinfo=timezone.utc)], "uri": [ref], "value": [value]})
+
+    client.timeseries_df.side_effect = timeseries_df
+    graph = SimpleNamespace(
+        data_nodes={1: SimpleNamespace(filters={}, refs=None, exprs=[])},
+        aliases_reverse={1: "temperature"},
+    )
+    query = SimpleNamespace(query_graph=graph, client=client)
+
+    def selected(ref, unit):
+        key = (1, f"{ref}:point", ref)
+        monkeypatch.setattr("acquirium.Client.data_object._parse_sparql_bindings",
+                            lambda *args, **kwargs: ([key], {}, {key: unit}, {key: unit}, {}, {}))
+
+    selected(raw, fahrenheit)
+    before = DataObject._from_query(query)
+    epoch = 2
+    after = DataObject._from_query(query)
+    selected(stage, celsius)
+    original = DataObject._from_query(query, view="raw")
+    for data, unit, value in [(before, fahrenheit, 68.0), (after, celsius, 20.0), (original, fahrenheit, 68.0)]:
+        assert data["temperature"]["value"].to_list() == [value]
+        assert data.units() == {"temperature": [unit]}
+    client._stream_units.assert_called_once_with({raw})
+    client.engine_snapshot.assert_not_called()
+
+
+@pytest.mark.parametrize("getter, route", [
+    ("get", "timeseries_info_batch"),
+    ("with_rows", "timeseries_exists_batch"),
+])
+def test_stream_statistics_retry_all_views_after_failure(getter, route):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from acquirium.Client.data_object import _StreamStats
+
+    client = Mock()
+    targets = [("a", "current"), ("b", "raw")]
+    stats = _StreamStats(client, targets)
+    values = [{"a": SimpleNamespace(row_count=1)}, {"b": SimpleNamespace(row_count=1)}]
+    if getter == "with_rows":
+        values = [{"a"}, {"b"}]
+    request = getattr(client, route)
+    request.side_effect = [values[0], RuntimeError("HTTP failure"), *values]
+    with pytest.raises(RuntimeError, match="HTTP failure"):
+        getattr(stats, getter)()
+    assert set(getattr(stats, getter)()) == set(targets)
+    assert request.call_count == 4
 
 
 class TestWideColumnOrder:
@@ -340,7 +413,8 @@ class TestLazyStats:
         }
         # No replacements: every stream reads as itself.
         client.stream_views.side_effect = lambda uris: {
-            uri: {"current": uri, "raw": uri, "unit": None} for uri in uris
+            "epoch": 1,
+            "streams": {uri: {"current": uri, "raw": uri, "unit": None} for uri in uris},
         }
         client.timeseries_info_batch.return_value = {
             self.R1: SimpleNamespace(row_count=3, earliest=self.T0, latest=self.T1),

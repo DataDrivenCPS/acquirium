@@ -197,7 +197,7 @@ def system(runtime, request):
 def put(system, rows, request="data"):
     manager, _, _, _, source, _, _ = system
     return manager.core.wait(manager.insert_timeseries(
-        source_id=source, stream_name="ntu", rows=rows, request_id=request))
+        source_id=source, stream_name="ntu", rows=rows, request_id=request).receipt)
 
 
 def values(client, ref, **kwargs):
@@ -230,10 +230,13 @@ def test_chain_views_history_pagination_and_middle_removal(system):
     assert client.client.resolve_storage_keys([head], view="raw") == {head: ref}
     assert client.client.timeseries_info_batch([ref])[ref].row_count == 2
     assert client.client.timeseries_exists_batch([ref], view="raw") == {ref}
-    assert client.client.stream_views([ref, clean]) == {
+    resolved = client.client.stream_views([ref, clean])
+    assert resolved["epoch"] == manager.core.engine.snapshot().epoch
+    assert resolved["streams"] == {
         ref: {"current": head, "raw": ref, "unit": NTU},
         clean: {"current": head, "raw": ref, "unit": NTU},
     }
+    assert client.client.stream_views([ref], epoch=first_epoch)["streams"][ref]["current"] == clean
     assert http.get("/timeseries", params={"uri": ref, "view": "typo"}).status_code == 422
     # The iterator captures both the resolved head and its epoch before deployment.
     pages = manager.timeseries_batch(ref, batch_size=1)
@@ -347,7 +350,8 @@ def test_replacements_inherit_metadata_and_may_change_to_a_compatible_unit(syste
                                   unit=DEG_F, quantity_kind="http://qudt.org/vocab/quantitykind/Temperature")])
     ref = str(compute_stream_uri(source, "temperature"))
     manager.core.wait(manager.insert_timeseries(source_id=source, stream_name="temperature",
-                                               rows=[(0, 68.), (1_000, 212.)], request_id="temperature"))
+                                               rows=[(0, 68.), (1_000, 212.)], request_id="temperature").receipt)
+    before = client.query().measurement(alias="t", uri=point).data()
     module = tmp_path / "celsius.py"
     module.write_text(
         "import polars as pl\n"
@@ -369,6 +373,14 @@ def test_replacements_inherit_metadata_and_may_change_to_a_compatible_unit(syste
     data = client.query().measurement(alias="t", uri=point).data()
     assert data.bindings[0].property_unit == DEG_C
     assert data.bindings[0].stream_unit == DEG_C
+    assert data["t"]["value"].to_list() == pytest.approx([20., 100.])
+    # An already-resolved object retains the pre-deployment snapshot.
+    assert before.units() == {"t": [DEG_F]}
+    assert before["t"]["value"].to_list() == [68., 212.]
+    # Even when only the replacement matches, raw values use the base unit.
+    raw = client.query().measurement(alias="t", uri=f"{clean}__point").data(view="raw")
+    assert raw.units() == {"t": [DEG_F]}
+    assert raw["t"]["value"].to_list() == [68., 212.]
     # A consumer that selected the Fahrenheit stream converts from the stage it binds.
     normalize = aq.PythonFunction.from_file(
         Path(__file__).resolve().parents[2] / "scripts/apps/temperature_normalization.py", "normalize")
@@ -464,7 +476,7 @@ def test_whole_series_cleaner_corrections_and_deletions(system):
     assert values(client, ref) == pytest.approx([.3, .45, .6])
     put(system, [(30_000_000_000, .6)], "correction")
     assert values(client, ref) == pytest.approx([.4, .5, .6])
-    manager.core.wait(manager.delete_timeseries(source, "ntu", [0, 30_000_000_000], request_id="deleted"))
+    manager.core.wait(manager.delete_timeseries(source, "ntu", [0, 30_000_000_000], request_id="deleted").receipt)
     assert values(client, ref) == [.6]
     manager.core.wait(manager.core.clear(source, "all-deleted", [ref]))
     assert values(client, ref) == []
@@ -475,7 +487,7 @@ def test_removed_text_replacement_keeps_its_historical_read_kind(system):
     client.register_streams([dict(source_id=source, stream_name="state", value_kind="text")])
     ref = str(compute_stream_uri(source, "state"))
     manager.core.wait(manager.insert_timeseries(source_id=source, stream_name="state",
-                                               rows=[(0, "running")], request_id="state"))
+                                               rows=[(0, "running")], request_id="state").receipt)
     app = aq.App("state-clean", {"raw": selection(ref)}, {"out": aq.ReplacementOutput()},
                  aq.PythonFunction.from_file(module, "passthrough"))
     manager.deploy_app(app)

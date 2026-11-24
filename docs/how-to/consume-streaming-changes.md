@@ -34,8 +34,10 @@ This is the wave's first reading. The `key` says which stream and which moment
 the row belongs to, and `data` holds the value. A `weight` of 1 means the row
 was inserted.
 
-`(0, 0)` starts at the beginning of the feed. Each page returns a `cursor`, the
-position of its last change, and passing it back continues from there:
+`(0, 0)` starts at the beginning of the feed. Each page returns a `cursor`
+that advances through complete epochs, including those with no changes. If a
+page ends within an epoch, the cursor identifies the last change in that epoch.
+Passing it back continues from that position:
 
 ```python
 page = client.changes(**page["cursor"], limit=1000)
@@ -77,7 +79,7 @@ alarm:
 
 ```python
 alarm = client.query().measurement(alias="alarm", app="high-mean")
-stream = alarm.data().stream_info()["ref_uri"][0]
+stream = alarm.data().stream_info()["stream_uri"][0]
 ```
 
 The consumer reads every change in the feed and skips those for other streams.
@@ -171,15 +173,14 @@ announced.
 
 ## Cursor persistence and restart
 
-A consumer that stops must resume without missing an alarm. After handling a
-page, it saves the position of the last change it handled:
+A consumer that stops must resume without missing an alarm. After handling
+the completed epochs, it saves the position just after the last complete epoch.
+The largest unsigned 64-bit ordinal represents the end of an epoch.
 
 ```python
-if ready:
-    last = ready[-1]
-    SAVED.write_text(
-        json.dumps({"epoch": last["epoch"], "ordinal": last["ordinal"]})
-    )
+if done > saved_through:
+    SAVED.write_text(json.dumps({"epoch": done, "ordinal": 2**64 - 1}))
+    saved_through = done
 ```
 
 `ready` holds every complete change, including those for other streams, so the

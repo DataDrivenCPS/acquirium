@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from unittest.mock import Mock
 
 from fastapi.testclient import TestClient
 import pyarrow as pa
@@ -8,10 +9,25 @@ import pytest
 from tests.epoch_helpers import value
 
 from acquirium import Acquirium, App, Selection, Output
-from acquirium.apps import output_reference
+from acquirium.apps import Apps, output_reference
 from acquirium.Server.manager import Manager
 from acquirium.Server.app import app as api
 from acquirium.internals.models import compute_stream_uri
+
+
+def test_list_settles_pending_removal_before_selecting_app_names(tmp_path):
+    core, graph = Mock(), Mock()
+    core.engine.snapshot.return_value.epoch = 2
+    core.engine.snapshot.return_value.plan.return_value = {"templates": [], "instances": [], "bindings": []}
+    core.engine.epochs_of.return_value = [2]
+    graph.project_app_sources.return_value = (1, 2)
+    apps = Apps(core, graph, tmp_path)
+    apps.state["apps"] = {"removed": {}}
+    apps._pending = (object(), 1)
+
+    assert apps.list() == []
+    core.engine.snapshot.assert_called_once_with()
+    core.wait.assert_not_called()
 
 
 @pytest.fixture(scope="module")
@@ -285,7 +301,7 @@ def test_two_apps_retain_each_other_and_form_a_chain(system):
     assert response.status_code == 200, response.text
     receipt = manager.insert_timeseries(
         source_id="chain", stream_name="temperature", rows=[(7777, 9)], request_id="one"
-    )
+    ).receipt
     snapshot = manager.core.wait(receipt)
     assert value(snapshot, output_reference(second.name, "urn:tank", "mean"), 7777) == 9
     assert (
@@ -321,7 +337,7 @@ def test_metadata_move_keeps_group_outputs_stable_and_repairs_history(system):
             stream_name="temperature",
             rows=[(9999, 42)],
             request_id="one",
-        )
+        ).receipt
     )
     manager.insert_graph(
         f"<{ref}> <urn:group> <urn:room:B> .", source_id="membership", replace=True
@@ -415,7 +431,7 @@ def test_failed_activation_is_isolated_and_can_be_retried(system, tmp_path):
             stream_name="temperature",
             rows=[(4444000, 12)],
             request_id="one",
-        )
+        ).receipt
     )
     module = tmp_path / "calculation.py"
     flag = tmp_path / "fail"
@@ -478,7 +494,7 @@ def test_python_source_is_cached_by_content_and_updates_at_the_same_path(system,
 
     def write(value, request_id):
         receipt = manager.insert_timeseries(source_id="content-hash", stream_name="temperature",
-            rows=[(1000, value)], request_id=request_id)
+            rows=[(1000, value)], request_id=request_id).receipt
         return manager.core.wait(receipt)
 
     manager.deploy_app(app())
@@ -555,7 +571,7 @@ def test_restart_reconciles_desired_plan_and_retains_history(tmp_path):
                 stream_name="temperature",
                 rows=[(1111, 33)],
                 request_id="original",
-            )
+            ).receipt
         )
         plan = manager.core.engine.snapshot().plan()
         epoch = manager.core.engine.snapshot().epoch
@@ -578,7 +594,7 @@ def test_restart_reconciles_desired_plan_and_retains_history(tmp_path):
             stream_name="temperature",
             rows=[(1111, 55)],
             request_id="correction",
-        )
+        ).receipt
         assert (
             value(manager.core.wait(receipt),
                 output_reference("restart-app", "urn:tank", "mean"), 1111
@@ -619,7 +635,7 @@ def test_restart_preserves_failure_status_and_retries_without_new_writes(tmp_pat
             stream_name="temperature",
             rows=[(time, value)],
             request_id=f"write-{time}",
-        )
+        ).receipt
 
     manager = Manager(data_dir=tmp_path / "data", exact_only=True)
     try:
@@ -715,7 +731,7 @@ def test_frozen_unit_factors_execute_in_native_python_worker(system):
             stream_name="temperature",
             rows=[(2222000, 68)],
             request_id="one",
-        )
+        ).receipt
     )
     assert value(snapshot,
         output_reference(declaration.name, "urn:tank", "temperature"), 2222000
@@ -731,7 +747,7 @@ def test_http_range_strings_preserve_nanosecond_boundaries(system):
             stream_name="temperature",
             rows=[(1001, 1), (1002, 2), (1003, 3)],
             request_id="boundary",
-        )
+        ).receipt
     )
     response = http.get(
         "/timeseries",
@@ -781,7 +797,7 @@ def test_group_output_links_are_owned_and_removed_with_membership(system):
             stream_name="temperature",
             rows=[(1234, 32)],
             request_id="one",
-        )
+        ).receipt
     )
     client.insert_graph("", source_id="attached-layout", replace=True)
     assert not list(manager.graph_store.data_graph("derived:attached-mean"))
@@ -859,7 +875,7 @@ def test_outputs_of_chains_by_port_combines_groups_and_guards_dependencies(syste
     snapshot = manager.core.wait(
         manager.insert_timeseries(
             source_id="ports", stream_name="temperature", rows=[(5555, 7)], request_id="one"
-        )
+        ).receipt
     )
     # The default keeps the upstream group; combine uses one group for the app.
     assert value(snapshot, output_reference("ports-same", "urn:tank", "mean"), 5555) == 7
@@ -937,7 +953,7 @@ def test_python_functions_read_typed_parameters_and_the_window(system, tmp_path)
             stream_name="temperature",
             rows=[(5000, 12)],
             request_id="typed-parameters",
-        )
+        ).receipt
     )
     module = tmp_path / "scaled.py"
     module.write_text(
@@ -970,7 +986,7 @@ def test_python_context_includes_group_key_without_configured_parameters(system,
     manager.core.wait(manager.insert_timeseries(
         source_id=source, stream_name="temperature", rows=[(1000, 20), (2000, 22)],
         request_id=source,
-    ))
+    ).receipt)
     module = tmp_path / "identity.py"
     module.write_text(
         "import polars as pl\n"
@@ -1023,7 +1039,7 @@ def test_arrow_pandas_and_polars_functions_share_a_pipeline(system, tmp_path, mo
     manager.core.wait(manager.insert_timeseries(
         source_id=source, stream_name="temperature", rows=[(1000, 10), (2000, 20)],
         request_id="initial",
-    ))
+    ).receipt)
     module = tmp_path / "calculations.py"
     module.write_text(
         "from __future__ import annotations\n"
@@ -1063,7 +1079,7 @@ def test_arrow_pandas_and_polars_functions_share_a_pipeline(system, tmp_path, mo
         assert [value(snapshot, out, t) for t in (1000, 2000)] == (
             [20, 60] if mode == "sequential" else [20, 40])
         receipt = manager.insert_timeseries(source_id=source, stream_name="temperature",
-            rows=[(1000, 5)], request_id="corrected")
+            rows=[(1000, 5)], request_id="corrected").receipt
         snapshot = manager.core.wait(receipt)
         assert [value(snapshot, out, t) for t in (1000, 2000)] == (
             [10, 50] if mode == "sequential" else [10, 40])
@@ -1124,7 +1140,7 @@ def test_as_of_selections_read_the_latest_reading_of_a_slower_stream(system, tmp
     for source, rows in (("as-of-reading", [(t, 1.0) for t in range(1000, 9000, 1000)]),
                          ("as-of-gain", [(1000, 2.0), (5000, 3.0)])):
         manager.core.wait(manager.insert_timeseries(
-            source_id=source, stream_name="temperature", rows=rows, request_id=source))
+            source_id=source, stream_name="temperature", rows=rows, request_id=source).receipt)
     reference = output_reference(template.name, "urn:tank", "mean")
     def values():
         snapshot = manager.core.engine.snapshot()
@@ -1172,7 +1188,7 @@ def test_native_function_arguments_bind_to_each_groups_parameters(system):
             stream_name="temperature",
             rows=[(6000, 12), (7000, 8)],
             request_id="native-parameters",
-        )
+        ).receipt
     )
     reference = output_reference(template.name, "urn:tank", "alarm")
     snapshot = manager.core.engine.snapshot()
@@ -1203,7 +1219,7 @@ def test_a_flow_totalizer_repairs_every_later_volume(system):
     def insert(rows, request_id):
         manager.core.wait(manager.insert_timeseries(
             source_id="flow-totalizer", stream_name="temperature", rows=rows, request_id=request_id,
-        ))
+        ).receipt)
 
     def volumes(*hours):
         snapshot = manager.core.engine.snapshot()
@@ -1230,7 +1246,7 @@ def test_dry_run_reports_the_work_of_a_deploy_without_making_it(system):
             stream_name="temperature",
             rows=[(8000, 12), (9000, 14)],
             request_id="dry-run",
-        )
+        ).receipt
     )
     declaration = mean("dry-run-mean", ref)
     preview = client.deploy_app(declaration, dry_run=True)["app"]
@@ -1293,7 +1309,7 @@ def test_engine_status_reports_published_and_admitted_frontiers(system):
     manager.core.wait(
         manager.insert_timeseries(
             source_id="totals", stream_name="temperature", rows=[(3333, 1), (3334, 2)], request_id="one"
-        )
+        ).receipt
     )
     status = http.get("/engine/status").json()
     assert status["applied"] == status["accepted"]
@@ -1345,7 +1361,7 @@ def test_engine_snapshot_waits_for_the_plan_to_catch_up_with_the_graph(system):
     manager.deploy_app(declaration)
     manager.core.wait(manager.insert_timeseries(
         source_id="catch-up", stream_name="temperature", rows=[(4242, 7)], request_id="one",
-    ))
+    ).receipt)
     moved = output_reference(declaration.name, "urn:room:B", "mean")
     # The graph moves the stream, as any graph write does before the apps
     # that read it install a plan; nothing has refreshed them yet.

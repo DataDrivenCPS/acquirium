@@ -56,6 +56,16 @@ class CollectDriver(PollingIngestDriver):
         })
 
 
+@pytest.mark.parametrize("dtype", [pl.Int64, pl.Object])
+def test_driver_value_transport_preserves_large_integers(dtype):
+    from acquirium.Drivers.Driver import _value_column
+
+    values = [7, 2**53 + 1]
+    column = pl.Series("value", values, dtype=dtype)
+    transport = column.to_frame().select(_value_column(column)).to_arrow()
+    assert transport["value"].to_pylist() == values
+
+
 def make_driver(cls, tmp_path, **cfg):
     driver = cls(make_aq(), {"driver": {**cfg}, "server": {"data_dir": str(tmp_path)}})
     driver.setup()
@@ -309,19 +319,26 @@ def test_false_insert_result_keeps_rows_for_retry(tmp_path):
     assert inserted(driver)[1][1]["value"] == [21.5]
 
 
-def test_failed_flush_preserves_order_against_newer_rows(tmp_path):
+def test_failed_flush_retries_the_same_batch_before_newer_rows(tmp_path):
     driver = make_driver(AddDriver, tmp_path)
+    accepted = []
     driver.aq.insert_timeseries_arrow.side_effect = RuntimeError("server down")
     driver.add("temp", 1.0)
+    driver.when_accepted(lambda: accepted.append("first"))
     with pytest.raises(RuntimeError):
         driver.flush()
+    assert accepted == []
 
     driver.aq.insert_timeseries_arrow.side_effect = None
+    driver.aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 1, "receipts": []}
     driver.add("temp", 2.0)
-    driver.flush()
+    driver.when_accepted(lambda: accepted.append("second"))
+    assert driver.flush()["rows_inserted"] == 2
 
-    (_, cols), = inserted(driver)[1:]
-    assert cols["value"] == [1.0, 2.0]
+    assert [cols["value"] for _, cols in inserted(driver)] == [[1.0], [1.0], [2.0]]
+    first, retry, newer = driver.aq.insert_timeseries_arrow.call_args_list
+    assert first.kwargs["request_id"] == retry.kwargs["request_id"] != newer.kwargs["request_id"]
+    assert accepted == ["first", "second"]
 
 
 def test_retry_backlog_rejects_new_rows_at_the_limit(tmp_path):

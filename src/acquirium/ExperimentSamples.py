@@ -35,8 +35,8 @@ class EscapementSamples:
             return self.core.engine.status()["accepted"]
         frame = frame.unique(subset=["stream_uri", "ts"], keep="last", maintain_order=True)
         for chunk in frame.iter_slices(MAX_REQUEST_ROWS):
-            receipt = self.core.ingest(source, str(uuid.uuid4()), chunk)
-        return receipt.sequence
+            result = self.core.ingest(source, str(uuid.uuid4()), chunk)
+        return result.receipt.sequence
 
     def wait(self, sequence: int) -> None:
         """Wait until the request at ``sequence`` is published."""

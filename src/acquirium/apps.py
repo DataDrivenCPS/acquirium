@@ -886,19 +886,18 @@ class Apps:
         self._revision = after if revision == before else -1
         self.error = None
 
-    def _settle(self, *, wait=True):
-        """Adopt the plan of the activation under way once it publishes;
-        without ``wait``, only if it already has. Changes to the app set
-        wait, since they compile against the adopted plan; reads do not."""
+    def _settle(self, *, snapshot=None):
+        """Adopt the pending plan once it publishes. A reader supplies its
+        snapshot so adoption and inspection use the same publication cut."""
         if self._pending is None:
             return
         receipt, revision = self._pending
-        if wait:
-            self.core.wait(receipt)
+        if snapshot is None:
+            snapshot = self.core.wait(receipt)
         (epoch,) = self.core.engine.epochs_of([receipt])
-        if epoch is None:
+        if epoch is None or epoch > snapshot.epoch:
             return
-        self._adopt(self.core.engine.snapshot().plan(), revision, epoch=epoch)
+        self._adopt(snapshot.plan(), revision, epoch=epoch)
         self._pending = None
 
     def recover(self):
@@ -1014,54 +1013,78 @@ class Apps:
             }
 
     def inspect(self, name):
+        return self._inspect([name])[0]
+
+    def list(self):
+        return self._inspect()
+
+    def _inspect(self, names=None):
         with self.lock:
-            self._settle(wait=False)
-            definition = self.state["apps"][name]
-            # The adopted plan; while an activation is pending, the one it replaces.
-            snapshot, plan = self.core.engine.snapshot(), self.state["plan"]
-            instances = [row for row in plan["instances"] if row["template"] == name]
-            streams = [stream for row in instances for stream in row["outputs"].values()]
-            failures = {
-                _operator_id(*stream["instance"]): stream["behind"]
-                for stream in self.core.failures(snapshot, streams)
-            }
-            report = self.report[name]
-            template = next(row for row in plan["templates"] if row["id"] == name)
-            spec = template["definition"]
-            inputs = {}
-            for binding in plan["bindings"]:
-                if binding["template"] == name:
-                    key = binding["instance"]
-                    inputs.setdefault(key, []).append({
-                        "stream": binding["stream"], "role": binding["role"],
-                        "valid_from": binding["valid_from"], "valid_to": binding["valid_to"],
-                        "context": json.loads(binding["context"]),
-                    })
+            snapshot = self.core.engine.snapshot()
+            self._settle(snapshot=snapshot)
+            declarations, plan = self.state["apps"], self.state["plan"]
+            report, pending, error = self.report, self._pending is not None, self.error
+        names = sorted(declarations) if names is None else names
+        if not names:
+            return []
+        for name in names:
+            if name not in declarations:
+                raise KeyError(name)
+
+        selected = set(names)
+        specs = {row["id"]: row["definition"] for row in plan["templates"] if row["id"] in selected}
+        instances = {}
+        streams = []
+        for row in plan["instances"]:
+            name = row["template"]
+            if name in selected:
+                instances.setdefault(name, []).append(row)
+                streams.extend(row["outputs"].values())
+        inputs = {}
+        for binding in plan["bindings"]:
+            name = binding["template"]
+            if name in selected:
+                key = (name, binding["instance"])
+                inputs.setdefault(key, []).append({
+                    "stream": binding["stream"], "role": binding["role"],
+                    "valid_from": binding["valid_from"], "valid_to": binding["valid_to"],
+                    "context": json.loads(binding["context"]),
+                })
+        failures_by_app = {}
+        failed_streams = self.core.failures(snapshot, streams) if streams else []
+        for stream in failed_streams:
+            name, group = stream["instance"]
+            failures_by_app.setdefault(name, {})[_operator_id(name, group)] = stream["behind"]
+
+        active_plan = _plan_id(plan)
+        result = []
+        for name in names:
+            definition, spec = declarations[name], specs[name]
+            failures = failures_by_app.get(name, {})
+            as_of = {role: {"max_age_ns": row["reach"]["latest"]["max_age"]}
+                     for role, row in spec["roles"].items() if row["reads"] == "bound" and "latest" in row["reach"]}
             operators = []
-            for instance in instances:
+            for instance in instances.get(name, []):
                 group = instance["key"]
                 outputs = {key: value for key, value in instance["outputs"].items() if key in definition["outputs"]}
                 operator = {
-                    "id": _operator_id(name, group), "inputs": inputs.get(group, []),
+                    "id": _operator_id(name, group), "inputs": inputs.get((name, group), []),
                     "outputs": outputs, "parameters": instance["parameters"],
                     "function": _bind_parameters(definition["function"], instance["parameters"], name, group),
                     "window": definition["window"],
                 }
-                as_of = {role: {"max_age_ns": row["reach"]["latest"]["max_age"]}
-                         for role, row in spec["roles"].items() if row["reads"] == "bound" and "latest" in row["reach"]}
                 if as_of:
                     operator["as_of"] = as_of
                 operator["version"] = _digest([spec, instance["parameters"], outputs, instance["annotations"]])
                 operators.append(operator)
             errors = [item["message"] for item in failures.values() if "message" in item]
-            status = ("failed" if errors else "pending" if self._pending is not None
+            status = ("failed" if errors else "pending" if pending
                       else "blocked" if failures else "active")
-            return {
+            result.append({
                 "name": name, "definition": definition, "operators": operators, "status": status,
-                "active_plan": _plan_id(plan),
-                "error": self.error or "\n".join(dict.fromkeys(errors)) or None,
+                "active_plan": active_plan,
+                "error": error or "\n".join(dict.fromkeys(errors)) or None,
                 "stale": bool(failures), "failures": failures,
-                "matches": report["matches"], "warnings": _warnings(report),
-            }
-    def list(self):
-        return [self.inspect(name) for name in sorted(self.state["apps"])]
+                "matches": report[name]["matches"], "warnings": _warnings(report[name]),
+            })
+        return result

@@ -16,7 +16,7 @@ from rdflib.namespace import NamespaceManager
 from acquirium.Storage.graph_store import OxigraphGraphStore
 import sys
 
-from acquirium.core import Core
+from acquirium.core import Core, IngestResult
 from acquirium.apps import MODULE_DIRECTORY, Apps
 from acquirium.Storage.graph_store import select_values
 from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
@@ -115,6 +115,13 @@ class Manager:
             configure_logging()
 
         base = Path(data_dir) if data_dir is not None else DEFAULT_DATA_DIR
+        if not recreate:
+            for name in ("timeseries.duckdb", "timeseries.duckdb.wal"):
+                if (legacy := base / name).exists():
+                    raise ValueError(
+                        f"Legacy Acquirium storage at {legacy} cannot be opened by Escapement. "
+                        "Choose a fresh data directory and keep the original store for export."
+                    )
         if recreate:
             logger.warning(RECREATE_WARNING)
             if base.exists():
@@ -257,9 +264,22 @@ class Manager:
         # Ontology sources are read directly from acquirium.toml —
         # ACQUIRIUM_CONFIG points at it. Keeps the environment-variable
         # surface small.
-        from acquirium.Server.config import load_ontology_config
+        from acquirium.Server.config import load_active_config, load_ontology_config
 
-        ont_cfg = load_ontology_config()
+        loaded = load_active_config()
+        server = loaded.data.get("server", {})
+        legacy = (
+            server.get("duckdb_path") or server.get("pg_dsn")
+            or str(server.get("timeseries_backend", "")).lower() == "timescale"
+            or os.getenv("ACQUIRIUM_DUCKDB_PATH")
+            or os.getenv("ACQUIRIUM_TIMESERIES_BACKEND", "").lower() == "timescale"
+        )
+        if legacy:
+            raise ValueError(
+                "Legacy DuckDB or TimescaleDB storage settings are still configured. "
+                "Remove those settings and choose a fresh data directory and storage locations."
+            )
+        ont_cfg = load_ontology_config(loaded)
         return cls(
             data_dir=_data_dir,
             engine_path=os.getenv("ACQUIRIUM_ENGINE_PATH"),
@@ -638,17 +658,23 @@ class Manager:
         return self.core.batches(stream, start=start, end=end, limit=limit, order=order,
                                  batch_size=batch_size, epoch=epoch, mode=mode)
 
-    def stream_views(self, uris):
-        """How each stream reads now: the stream its ``current`` and ``raw``
-        views resolve to, and the unit a replacement head reports, if any."""
+    def stream_views(self, uris, *, epoch=None):
+        """Pin an epoch and resolve each stream's views at that snapshot."""
         from acquirium.replacements import resolve, units
 
-        plan = self.apps.plan_at()
+        if epoch is None:
+            snapshot, _ = self.engine_snapshot()
+        else:
+            snapshot = self.core.engine.snapshot(epoch)
+        plan = snapshot.plan()
         heads = resolve(plan, uris, view="current")
         bases = resolve(plan, uris, view="raw")
         stage_units = units(plan)
-        return {uri: {"current": heads[uri], "raw": bases[uri], "unit": stage_units.get(heads[uri])}
-                for uri in uris}
+        streams = {
+            uri: {"current": heads[uri], "raw": bases[uri], "unit": stage_units.get(heads[uri])}
+            for uri in uris
+        }
+        return {"epoch": snapshot.epoch, "streams": streams}
 
     def engine_snapshot(self, *, timeout: float = 30.0):
         """The latest snapshot, once its plan reflects the metadata graph as
@@ -677,10 +703,10 @@ class Manager:
         info = self.timeseries_info_batch(uris, view=view)
         return sorted(uri for uri, stats in info.items() if stats["row_count"])
 
-    def insert_timeseries(self, *, source_id, stream_name, rows, request_id=None):
+    def insert_timeseries(self, *, source_id, stream_name, rows, request_id=None) -> IngestResult:
         return self.insert_timeseries_batch(source_id, {stream_name: rows}, request_id=request_id)
 
-    def insert_timeseries_batch(self, source_id, streams, *, request_id=None, replace=()):
+    def insert_timeseries_batch(self, source_id, streams, *, request_id=None, replace=()) -> IngestResult:
         """Upsert ``{stream_name: rows}`` in one request; each stream named in
         ``replace`` holds exactly its supplied rows afterwards."""
         import polars as pl
@@ -698,17 +724,17 @@ class Manager:
         replaced = {str(compute_stream_uri(source_id, name)) for name in replace}
         return self._ingest(source_id, frame, request_id, replace=replaced)
 
-    def insert_timeseries_arrow(self, source_id, table, *, request_id=None):
+    def insert_timeseries_frame(self, source_id, frame, *, request_id=None) -> IngestResult:
         import polars as pl
-        frame = pl.from_arrow(table)
+
         names = frame["stream_name"].unique().to_list()
         if any(not isinstance(name, str) or not name for name in names):
             raise ValueError("stream_name must be a nonempty string")
         refs = {name: str(compute_stream_uri(source_id, name)) for name in names}
-        frame = frame.with_columns(pl.col("stream_name").replace_strict(refs).alias("stream_uri"))
-        return self._ingest(source_id, frame.drop("stream_name"), request_id)
+        frame = frame.select(pl.col("stream_name").replace_strict(refs).alias("stream_uri"), "ts", "value")
+        return self._ingest(source_id, frame, request_id)
 
-    def _ingest(self, source_id, frame, request_id, replace=()):
+    def _ingest(self, source_id, frame, request_id, *, replace=()) -> IngestResult:
         """Submit ``stream_uri``/``ts``/``value`` rows, each value stored as its
         stream's declared kind."""
         import polars as pl
@@ -725,7 +751,7 @@ class Manager:
                     kinds = self._validate_refs(source_id, refs)
                     inferred = {uri for uri in inferred if kinds[uri] == UNDECLARED_VALUE_KIND}
                     kinds.update(dict.fromkeys(inferred, "numeric"))
-                    receipt = self._submit_readings(source_id, frame, request_id, kinds, replace)
+                    result = self._submit_readings(source_id, frame, request_id, kinds, replace)
                     if inferred:
                         graph = Graph()
                         for uri in inferred:
@@ -733,10 +759,10 @@ class Manager:
                         self.graph_store.insert_graph(
                             graph, graph_uri=self.graph_store.source_graph_uri(source_id),
                         )
-                    return receipt
+                    return result
         return self._submit_readings(source_id, frame, request_id, kinds, replace)
 
-    def _submit_readings(self, source_id, frame, request_id, kinds, replace):
+    def _submit_readings(self, source_id, frame, request_id, kinds, replace) -> IngestResult:
         import polars as pl
 
         frame = frame.with_columns(
@@ -758,7 +784,7 @@ class Manager:
             kinds[reference] = declaration["value_kind"]
         return kinds
 
-    def delete_timeseries(self, source_id, stream_name, timestamps, *, request_id=None):
+    def delete_timeseries(self, source_id, stream_name, timestamps, *, request_id=None) -> IngestResult:
         import polars as pl
         from acquirium.core import time_ns
         reference = str(compute_stream_uri(source_id, stream_name))

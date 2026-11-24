@@ -353,18 +353,19 @@ def _parse_timestamp_text(
 
 
 def _values(df: pl.DataFrame, columns: list[str], names: list[str]) -> list[pl.Expr]:
-    """Value columns as Float64 when all are numeric, otherwise as text (the
-    server stores each value as its stream's kind). Float NaN is absent."""
-    if all(df[column].dtype.is_numeric() for column in columns):
+    """Preserve a common numeric dtype or use text to avoid coercion in unpivot."""
+    dtypes = {df.schema[column] for column in columns}
+    if len(dtypes) == 1 and (dtype := next(iter(dtypes))).is_numeric():
         return [
-            pl.col(column).cast(pl.Float64).fill_nan(None).alias(name)
+            (pl.col(column).fill_nan(None) if dtype.is_float() else pl.col(column)).alias(name)
             for column, name in zip(columns, names)
         ]
     return [_as_text(df, column).alias(name) for column, name in zip(columns, names)]
 
 
 def _as_text(df: pl.DataFrame, column: str) -> pl.Expr:
-    """Cast a value column to text, treating float NaN as absent."""
-    if df[column].dtype in (pl.Float32, pl.Float64):
-        return pl.col(column).fill_nan(None).cast(pl.Utf8)
+    """Cast a value column to text, treating non-finite floats as absent."""
+    if df.schema[column].is_float():
+        value = pl.col(column)
+        return pl.when(value.is_finite()).then(value.cast(pl.Utf8))
     return pl.col(column).cast(pl.Utf8, strict=False)

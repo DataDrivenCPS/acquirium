@@ -1,8 +1,5 @@
 # Memory and restart cost against history size
 
-The [recorded results](../../docs/profiling/2026-11-02-history/README.md) were
-measured on the previous engine.
-
 Run from the repository root, using a **new** output directory:
 
 ```sh

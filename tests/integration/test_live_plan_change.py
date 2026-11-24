@@ -220,12 +220,12 @@ class Writer(threading.Thread):
                         self.oracle[(name, at)] = value
                 self.receipt = self.manager.insert_timeseries_batch(
                     SOURCE, batch, request_id=f"put-{i}"
-                )
+                ).receipt
                 if i % 9 == 8:
                     old = BASE + (i - 3) * STEP
                     self.receipt = self.manager.core.ingest(
                         SOURCE, f"delete-{i}", delete_frame(REFS["c"], old)
-                    )
+                    ).receipt
                     self.oracle.pop(("c", old), None)
                 self.tick += 1
                 time.sleep(0.002)

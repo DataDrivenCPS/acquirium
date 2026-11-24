@@ -74,4 +74,3 @@ unit-test:
 
 unit-test-cov:
 	uv run pytest tests/unit/ -v --tb=short --cov=acquirium --cov-report=term-missing
-

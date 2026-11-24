@@ -206,7 +206,7 @@ The server compares the graph's `owl:imports` and `owl:Ontology` triples before 
 | Endpoint | Contract |
 | --- | --- |
 | `POST /resolve_storage_keys` | Property and stream URIs to the selected streams; ambiguous properties fail |
-| `POST /stream_views` | `{uris: [...]}` to each reference's current `current` and `raw` streams and the unit a replacement head reports, or null |
+| `POST /stream_views` | `{uris: [...], epoch: optional}` returns `{epoch, streams}` with each reference's `current` and `raw` streams at the pinned epoch and the replacement head's unit, if any |
 | `POST /insert_timeseries` | JSON list of `{source_id, stream_name, request_id, values, replace: false}`; items sharing a `request_id` form one atomic request, and `replace` makes that stream hold exactly `values` |
 | `POST /insert_timeseries_arrow` | Arrow `source_id, stream_name, ts, value`; required `X-Acquirium-Request-Id` |
 | `POST /delete_timeseries` | `{source_id, stream_name, timestamps: [UTC-ns], request_id}` |
@@ -242,7 +242,9 @@ JSON rows sharing a source/request ID commit as one request. Different sources
 or IDs commit independently. Ingestion's `wait` query parameter is a nonnegative
 publication timeout in seconds (default 30, zero for immediate durable admission).
 Responses include database-scoped receipt sequences and `accepted`/`published`
-state. Failed or timed-out computation after admission remains accepted/pending;
+state. `rows_inserted` counts normalized observations after missing values
+are dropped and duplicate keys are collapsed. Failed or timed-out computation
+after admission remains accepted/pending;
 inspect the receipt and engine status before retrying with the same identity.
 Admission capacity rejection returns HTTP 503 with `Retry-After: 1`.
 
@@ -252,7 +254,7 @@ The change-feed endpoint accepts `epoch=0`, `ordinal=0`, and `limit=1000`
 | Field | Meaning |
 | --- | --- |
 | `changes` | signed rows, in epoch and ordinal order |
-| `cursor` | the `epoch` and `ordinal` of the last row returned, exclusive; an empty page returns the cursor it was given |
+| `cursor` | exclusive resume position, either the last row in a partial epoch or the end of the last completed epoch (ordinal `18446744073709551615`) |
 | `published_epoch` | the publication frontier when the page was cut |
 | `complete_through` | every change up to this epoch has now been returned |
 | `has_more` | more rows remain at or below `published_epoch` |

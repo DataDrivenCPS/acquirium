@@ -312,16 +312,29 @@ def test_large_inserts_are_split_in_order_and_only_the_last_waits(offline):
     rows = [(start + timedelta(seconds=i), float(i)) for i in range(MAX_REQUEST_ROWS + 5)]
     reply = b'{"ok": true, "rows_inserted": 0, "receipts": [{"sequence": 1}]}'
     with patch.object(offline._http, "post", return_value=_response(200, reply)) as post:
-        result = offline.insert_timeseries_batch("src", {"a": rows, "b": rows[:3]}, request_id="r",
-                                                 replace=["a"])
+        result = offline.insert_timeseries_batch("src", {"a": rows, "b": rows[:3]}, request_id="r")
     bodies = [call.kwargs["json"] for call in post.call_args_list]
-    assert [sum(len(item["values"]) + item["replace"] for item in body) for body in bodies] == [MAX_REQUEST_ROWS, 9]
-    # The clear travels with the stream's first rows, so it lands before them.
+    assert [sum(len(item["values"]) for item in body) for body in bodies] == [MAX_REQUEST_ROWS, 8]
     assert [(item["stream_name"], item["replace"]) for body in bodies for item in body] == [
-        ("a", True), ("a", False), ("b", False)]
+        ("a", False), ("a", False), ("b", False)]
     assert {item["request_id"] for item in bodies[0]} == {"r:0"} and {item["request_id"] for item in bodies[1]} == {"r:1"}
     assert [call.kwargs["params"]["wait"] for call in post.call_args_list] == [0, 30]
     assert len(result["receipts"]) == 2
+
+
+def test_replace_fits_one_request_or_is_refused_before_writing(offline):
+    rows = [(1, 1.0), (2, 2.0), (3, 3.0)]
+    reply = b'{"ok": true, "rows_inserted": 0, "receipts": []}'
+    with patch.object(offline._http, "post", return_value=_response(200, reply)) as post:
+        with pytest.raises(ValueError, match="replacement.*at most 2 rows"):
+            offline.insert_timeseries_batch("src", {"a": rows[:1], "b": rows},
+                                            replace=["b"], batch_rows=3)
+        post.assert_not_called()
+        offline.insert_timeseries_batch("src", {"a": rows[:1], "b": rows[:2]},
+                                        replace=["b"], batch_rows=3)
+    first, second = [call.kwargs["json"] for call in post.call_args_list]
+    assert [(item["stream_name"], item["replace"]) for item in first + second] == [("a", False), ("b", True)]
+    assert second[0]["values"] == [[1, 1.0], [2, 2.0]]
 
 
 def test_replace_keeps_exactly_the_supplied_rows(client):

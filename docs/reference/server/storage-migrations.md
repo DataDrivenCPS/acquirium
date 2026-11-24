@@ -17,6 +17,9 @@ versions or changed migration names raise an error.
 Version 1 creates the current experiment ledger schema. The logbook has its own migration history in the same SQL store.
 
 Start the Escapement version with a fresh data directory and new database locations.
+Startup rejects legacy DuckDB files in the data directory and legacy storage
+settings so an upgrade cannot silently serve an empty store. Keep the original
+data directory and databases for export.
 
 `recreate=True` erases the configured data directory and experiment ledger.
 Use it only when those records can be discarded.

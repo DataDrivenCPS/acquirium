@@ -135,7 +135,7 @@ def submit(target, request_id, rows):
     blocked = 0.0
     while True:
         try:
-            return target.ingest("limits", request_id, rows), blocked
+            return target.ingest("limits", request_id, rows).receipt, blocked
         except Capacity:
             started = time.perf_counter()
             time.sleep(0.05)
@@ -227,7 +227,7 @@ def reopen(args):
         middle = extent["first"] + (extent["last"] - extent["first"]) // 2
         middle -= middle % (args.interval * SECOND)
         corrected, correction_seconds = timed(lambda: target.wait(
-            target.ingest("limits", "correction", frame([first], [middle], [-1.0])), timeout=600))
+            target.ingest("limits", "correction", frame([first], [middle], [-1.0])).receipt, timeout=600))
         verified = value_at(corrected, first, middle) == -1.0
         if args.derived:
             verified = verified and bucket_mean_matches(corrected, middle - middle % BUCKET)

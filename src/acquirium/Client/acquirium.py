@@ -229,7 +229,8 @@ class Acquirium:
         """Upsert observations; wait=0 returns after durable acceptance.
 
         ``replace=True`` keeps exactly the supplied rows, removing readings at
-        other timestamps; an empty replacement clears the stream.
+        other timestamps; an empty replacement clears the stream. A replacement
+        must fit in one request, with one slot reserved for the clear.
         timeout bounds the HTTP call. A transport failure leaves acceptance
         unknown; retry the same request ID and payload. A request the server
         refuses with 503 is resent for up to ``retry_for`` seconds.
@@ -248,7 +249,8 @@ class Acquirium:
                                 timeout=60, retry_for=CAPACITY_RETRY_S):
         """Upsert ``{stream_name: rows}``; each stream named in ``replace`` holds
         exactly its supplied rows. Large inputs are split into requests of at
-        most 10,000 rows, each atomic; pass the whole dataset in one call."""
+        most 10,000 rows, each atomic. Each replacement must fit in one
+        request, including its clear."""
         result = self.client.insert_timeseries_batch(
             source_id, streams, request_id=request_id, replace=replace, wait=wait,
             timeout=timeout, retry_for=retry_for,

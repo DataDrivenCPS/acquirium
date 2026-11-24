@@ -267,12 +267,13 @@ def _parse_entry(entry: object, base_dir: Path) -> OntologySource | None:
     return None
 
 
-def load_ontology_config() -> OntologyConfig:
+def load_ontology_config(loaded: LoadedConfig | None = None) -> OntologyConfig:
     """Read ontology settings from the acquirium.toml pointed to by
     ``ACQUIRIUM_CONFIG`` (set by the CLI). Returns an empty config when
     no file is reachable — bundled ontology defaults still load."""
     try:
-        loaded = load_active_config()
+        if loaded is None:
+            loaded = load_active_config()
     except Exception as exc:
         _logger.warning("failed to load Acquirium config: %s", exc)
         return OntologyConfig()

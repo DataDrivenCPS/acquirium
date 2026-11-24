@@ -42,6 +42,14 @@ class FileBatch:
     observations: "pl.DataFrame | None"
     next_cursor: Any
 
+
+@dataclass(frozen=True)
+class _IngestBatch:
+    request_id: str
+    rows: list[tuple[str, datetime, str, Any]]
+    callbacks: list[Callable[[], None]]
+
+
 if TYPE_CHECKING:
     import polars as pl
 
@@ -49,25 +57,28 @@ if TYPE_CHECKING:
 
 
 def _value_column(col: "pl.Series") -> "pl.Expr":
-    """A column of numbers travels as Float64 and any other as text; the
-    server stores each value as its stream's declared kind."""
+    """Keep the value's representation until the server applies its stream kind."""
     import math
-    from numbers import Real
+    from numbers import Integral
     import polars as pl
 
     name = col.name
+    if col.dtype in (pl.Int128, getattr(pl, "UInt128", None)):
+        return pl.col(name).cast(pl.String)
     if col.dtype.is_numeric():
-        return pl.col(name).cast(pl.Float64)
+        return pl.col(name)
     if col.dtype == pl.Boolean:
         return pl.col(name).cast(pl.Utf8).str.to_titlecase()
-    if col.dtype == pl.Object and all(
-        isinstance(v, Real) and not isinstance(v, bool) for v in col if v is not None
-    ):
-        return pl.lit(pl.Series(name, [None if v is None else float(v) for v in col],
-                                dtype=pl.Float64))
     if col.dtype == pl.Object:
+        values = col.to_list()
+        present = [v for v in values if v is not None]
+        if present and all(isinstance(v, Integral) and not isinstance(v, bool) for v in present):
+            if all(-(2**63) <= v < 2**63 for v in present):
+                return pl.lit(pl.Series(name, values, dtype=pl.Int64))
+        if present and all(isinstance(v, float) for v in present):
+            return pl.lit(pl.Series(name, values, dtype=pl.Float64))
         return pl.col(name).map_elements(
-            lambda v: None if (v is None or (isinstance(v, float) and math.isnan(v))) else str(v),
+            lambda v: None if isinstance(v, float) and not math.isfinite(v) else str(v),
             return_dtype=pl.Utf8,
         )
     return pl.col(name).cast(pl.Utf8)
@@ -310,12 +321,7 @@ class IngestDriver(Driver):
         self._on_accepted: list[Callable[[], None]] = []
         self._pending_lock = threading.Lock()
         self._flush_lock = threading.Lock()
-        self._inflight_rows = 0
-        # (request_id, rows) of the most recent flush that failed and was
-        # put back unmodified. A retry of exactly that batch keeps the same
-        # request identifier, so Escapement recognizes it as a retry within
-        # its retry window instead of applying it again.
-        self._last_failed_batch: tuple[str, list[tuple[str, datetime, str, Any]]] | None = None
+        self._active_batch: _IngestBatch | None = None
         self._declaration_lock = threading.Lock()
         self._declarations: dict[tuple[str, str], dict[str, Any]] = {}
         self._registered: set[tuple[str, str]] = set()
@@ -451,7 +457,7 @@ class IngestDriver(Driver):
             ts = ts.replace(tzinfo=timezone.utc)
 
         with self._pending_lock:
-            if len(self._pending) + self._inflight_rows >= self.max_buffered_rows:
+            if self._buffered_rows() >= self.max_buffered_rows:
                 raise DriverBufferFull(
                     f"{type(self).__name__} buffer is full "
                     f"(max_buffered_rows={self.max_buffered_rows})"
@@ -470,45 +476,40 @@ class IngestDriver(Driver):
         with self._pending_lock:
             self._on_accepted.append(callback)
 
+    def _buffered_rows(self) -> int:
+        """Count queued and in-flight rows with the pending lock held."""
+        active = len(self._active_batch.rows) if self._active_batch is not None else 0
+        return len(self._pending) + active
+
     def flush(self) -> dict[str, Any]:
         """Insert everything buffered by :meth:`add` and clear the buffer.
 
         Called for you at the end of every tick. It returns once the server has
         accepted the rows, without waiting for them to publish. On insert
-        failure the rows are put back and the exception propagates; they are
-        not retried until the next tick, so a failing server is polled at the
-        driver's interval rather than on every :meth:`add`.
+        failure the exception propagates. The next flush retries the same
+        batch with its original request ID before sending new rows.
         """
+        result = {"ok": True, "rows_inserted": 0, "receipts": []}
         with self._flush_lock:
+            if self._active_batch is not None:
+                self._send_batch(self._active_batch, result)
             with self._pending_lock:
-                rows, self._pending = self._pending, []
-                callbacks, self._on_accepted = self._on_accepted, []
-                self._inflight_rows = len(rows)
-            if not rows:
-                self._accepted(callbacks)
-                return {"ok": True, "rows_inserted": 0, "receipts": []}
+                if not self._pending and not self._on_accepted:
+                    return result
+                batch = _IngestBatch(str(uuid.uuid4()), self._pending, self._on_accepted)
+                self._pending, self._on_accepted = [], []
+                self._active_batch = batch
+            self._send_batch(batch, result)
+        return result
 
-            if self._last_failed_batch is not None and self._last_failed_batch[1] == rows:
-                request_id = self._last_failed_batch[0]
-            else:
-                request_id = str(uuid.uuid4())
-
-            frame = self._pending_frame(rows)
-            try:
-                result = self.insert_observations(frame, request_id=request_id)
-            except Exception:
-                with self._pending_lock:
-                    self._pending[:0] = rows
-                    self._on_accepted[:0] = callbacks
-                    self._inflight_rows = 0
-                self._last_failed_batch = (request_id, rows)
-                raise
-
-            self._last_failed_batch = None
-            with self._pending_lock:
-                self._inflight_rows = 0
-            self._accepted(callbacks)
-            return result
+    def _send_batch(self, batch: _IngestBatch, result: dict[str, Any]) -> None:
+        if batch.rows:
+            reply = self.insert_observations(self._pending_frame(batch.rows), request_id=batch.request_id)
+            result["rows_inserted"] += reply["rows_inserted"]
+            result["receipts"].extend(reply["receipts"])
+        with self._pending_lock:
+            self._active_batch = None
+        self._accepted(batch.callbacks)
 
     def _accepted(self, callbacks: list[Callable[[], None]]) -> None:
         for callback in callbacks:
@@ -685,7 +686,7 @@ class IngestDriver(Driver):
             self.flush()
         except Exception:
             with self._pending_lock:
-                unsent = len(self._pending) + self._inflight_rows
+                unsent = self._buffered_rows()
             logger.exception("%s: final flush failed with %d unsent row(s)", type(self).__name__, unsent)
             raise
         if stop_error is not None:

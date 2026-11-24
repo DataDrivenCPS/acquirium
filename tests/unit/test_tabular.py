@@ -10,6 +10,21 @@ import pytest
 from acquirium import to_observations, to_timestamp
 
 
+def test_mixed_numeric_columns_do_not_round_integer_identifiers():
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    identifier = 2**53 + 1
+    frame = pl.DataFrame({"time": [now], "identifier": [identifier], "reading": [1.5]})
+    wide = to_observations(frame, time_col="time", layout="wide")
+    assert dict(wide.select("stream_name", "value").iter_rows()) == {
+        "identifier": str(identifier), "reading": "1.5"
+    }
+    narrow = to_observations(
+        frame.rename({"identifier": "value"}).with_columns(pl.lit("id").alias("id")),
+        time_col="time", layout="narrow",
+    )
+    assert narrow["value"].to_list() == [identifier]
+
+
 # ------------------------------------------------------------------ timestamps
 
 

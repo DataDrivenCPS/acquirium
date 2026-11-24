@@ -379,7 +379,7 @@ class _StreamStats:
     The root ``DataObject`` owns one and hands the same instance to the
     sub-objects ``by()`` and ``convert_to()`` derive, so whichever of them
     reads a statistic first fetches the whole family's in batches per read view,
-    at one epoch, and the rest share those results. ``exists`` is the cheaper answer
+    and the rest share those results. ``exists`` is the cheaper answer
     ``is_empty()`` needs, which streams have any row, cached the same way.
     ``refresh()`` forgets both.
     """
@@ -394,24 +394,25 @@ class _StreamStats:
 
     def get(self):
         if self.info is None:
-            self.info = {}
+            result = {}
             if self.client is not None:
                 for view, refs in self._groups():
                     info = self.client.timeseries_info_batch(refs, view=view)
-                    self.info.update({(ref, view): value for ref, value in info.items()})
+                    result.update({(ref, view): value for ref, value in info.items()})
+            self.info = result
         return self.info
 
-    def with_rows(self) -> set[str]:
-        """The stream URIs that have any row: from the statistics when they are
-        loaded, else one existence request covering every stream."""
+    def with_rows(self) -> set[tuple[str, str]]:
+        """The stream and view pairs that have any row."""
         if self.info is not None:
             return {target for target, info in self.info.items() if info.row_count > 0}
         if self.exists is None:
-            self.exists = set()
+            result = set()
             if self.client is not None:
                 for view, refs in self._groups():
                     found = self.client.timeseries_exists_batch(refs, view=view)
-                    self.exists.update((ref, view) for ref in found)
+                    result.update((ref, view) for ref in found)
+            self.exists = result
         return self.exists
 
     def refresh(self) -> None:
@@ -424,7 +425,8 @@ class _StreamStats:
 class DataObject:
     """Lazy, alias-driven structured access to sensor data.
 
-    Construction resolves SPARQL bindings and their measurement identities.
+    Construction resolves SPARQL bindings and pins an epoch for replacement
+    resolution, units and sample reads.
     Per-stream statistics (row count, time range) are fetched in batches per view the
     first time ``total_rows``, ``time_range``, or ``bindings`` needs them;
     ``is_empty()`` (before materialization) asks only which streams have a
@@ -544,9 +546,16 @@ class DataObject:
                 ) else "current"),
             ))
 
+        resolved = query.client.stream_views(sorted({b.stream_uri for b in bindings}))
+        epoch, streams = resolved["epoch"], resolved["streams"]
+        redirected_raw = {
+            streams[b.stream_uri]["raw"] for b in bindings
+            if b.view == "raw" and streams[b.stream_uri]["raw"] != b.stream_uri
+        }
+        raw_units = query.client._stream_units(redirected_raw) if redirected_raw else {}
+
         # Keep one logical measurement per node and entity context. Prefer
         # the base point's label and units when both it and a stage matched.
-        streams = query.client.stream_views(sorted({b.stream_uri for b in bindings}))
         logical = {}
         for binding in sorted(bindings, key=lambda b: b.stream_uri != streams[b.stream_uri]["raw"]):
             stream = streams[binding.stream_uri]
@@ -554,6 +563,9 @@ class DataObject:
             # A current read returns the final stage's values, in that stage's unit.
             unit = stream["unit"] if binding.view == "current" else None
             units = dict(property_unit=unit, stream_unit=unit) if unit else {}
+            if binding.view == "raw" and ref != binding.stream_uri:
+                property_unit, stream_unit = raw_units.get(ref, (None, None))
+                units = dict(property_unit=property_unit, stream_unit=stream_unit)
             for context in binding.entity_contexts or [{}]:
                 key = (binding.nid, ref, binding.view, tuple(sorted(context.items())))
                 logical.setdefault(key, replace(binding, stream_uri=ref, entity_contexts=[context], **units))
@@ -578,6 +590,7 @@ class DataObject:
                 "order": order,
                 "cast_value": cast_value,
                 "value_mode": value_mode,
+                "epoch": epoch,
             },
             _tall=None,
             _materialized=False,
@@ -728,10 +741,10 @@ class DataObject:
                 _factors_cache[key] = self._client.get_conversion_factors(from_u, to_u)
             return _factors_cache[key]
 
-        # Every stream is read at one epoch, so the frame is one consistent
-        # view. The server returns it once that epoch's plan has caught up
-        # with the metadata graph, so app outputs the graph names are there.
-        epoch = self._client.engine_snapshot()["epoch"]
+        # Read the epoch used to select the replacement and its units.
+        epoch = self._query_params.get("epoch")
+        if epoch is None:
+            epoch = self._client.engine_snapshot()["epoch"]
         bounds = inclusive_bounds(start, end)
         # One request per stream. A stream matched by several data nodes
         # (a pump's measurement node and its connection point's, say) has one

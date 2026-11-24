@@ -15,8 +15,9 @@ change in any release.
   `app_dag()` interfaces. Preview a deployment with `deploy_app(dry_run=True)`.
   Escapement repairs affected windows as readings or definitions change.
 - Upgrades of experiment ledgers from earlier releases. The ledger schema is
-  now a single baseline migration. Stores and ledgers written by earlier
-  releases are not migrated or detected; start with a new data directory.
+  now a single baseline migration. Earlier stores require a fresh data
+  directory and database locations. Startup rejects legacy storage settings
+  and legacy DuckDB stores in the data directory.
 - **Breaking:** `acquirium.functions.previous_rows` and
   `context["previous"]["rows"]`. Escapement does not keep a window's input
   rows; a sequential calculation reads its earlier results with

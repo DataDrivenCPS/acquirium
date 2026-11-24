@@ -6,6 +6,7 @@ no stream registry, SQL connections, revision ledger, or computation scheduler.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
@@ -28,7 +29,14 @@ SCHEMA = pa.schema(
 )
 # Text and coalesced reads return the value column as strings.
 TEXT_SCHEMA = SCHEMA.set(1, pa.field("value", pa.string()))
+END_OF_EPOCH = 2**64 - 1
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class IngestResult:
+    receipt: Receipt
+    rows_inserted: int
 
 
 def schema(mode: str) -> pa.Schema:
@@ -70,12 +78,16 @@ def time_ns(value: int | datetime | str | None) -> int | None:
         return value
     if isinstance(value, str):
         try:
-            series = pl.Series([value]).str.to_datetime(
-                time_unit="ns", time_zone="UTC", strict=True
-            )
+            parser = pl.Series([value]).str
+            micros = parser.to_datetime(time_unit="us", time_zone="UTC", strict=True).cast(pl.Int64).item()
+            nanos = parser.to_datetime(time_unit="ns", time_zone="UTC", strict=True).cast(pl.Int64).item()
         except pl.exceptions.PolarsError as error:
             raise ValueError(f"invalid timestamp {value!r}") from error
-        return series.cast(pl.Int64).item()
+        # The nanosecond parser can wrap. The wider microsecond range lets
+        # us detect it while retaining all nine fractional digits.
+        if nanos // 1000 != micros:
+            raise ValueError("timestamp exceeds signed UTC nanoseconds")
+        return nanos
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return (
@@ -159,13 +171,14 @@ class Core:
             except EscapementError:
                 logger.exception("could not advance Escapement retention")
 
-    def ingest(self, source: str, request_id: str, frame: pl.DataFrame, *, replace=()):
+    def ingest(self, source: str, request_id: str, frame: pl.DataFrame, *, replace=()) -> IngestResult:
         """Submit ``stream_uri``, timezone-aware ``ts`` and ``value`` rows, or rows
         with ``operation`` ``"delete"``. Each value is stored as its row's
         ``value_kind`` (numeric when absent; see ``split_values``).
 
         Each stream in ``replace`` first loses all its readings, in the same
-        request, so it holds exactly the rows supplied for it."""
+        request, so it holds exactly the rows supplied for it. The result
+        includes the receipt and the normalized upsert count."""
         replace = sorted(set(replace))
         if frame.height + len(replace) > MAX_REQUEST_ROWS:
             raise ValueError(
@@ -198,11 +211,14 @@ class Core:
         rows = (
             rows.unique(subset=["stream_uri", "ts"], keep="last")
             .sort(["stream_uri", "ts"])
-            .select(pl.col("stream_uri").alias("stream"), pl.col("ts").alias("time"), "number", "text")
-            .to_arrow()
         )
+        count = rows.height - rows["operation"].eq("delete").sum()
+        payload = rows.select(
+            pl.col("stream_uri").alias("stream"), pl.col("ts").alias("time"), "number", "text"
+        ).to_arrow()
         deletes = [(stream, None, None) for stream in replace]
-        return self._submit(lambda: self.engine.write(source, request_id, rows, deletes=deletes))
+        receipt = self._submit(lambda: self.engine.write(source, request_id, payload, deletes=deletes))
+        return IngestResult(receipt, count)
 
     def _submit(self, submit):
         """Keep close from overtaking a running submission."""
@@ -346,11 +362,11 @@ class Core:
             raise ValueError("cursor must refer to published history")
         if epoch < retention:
             raise Refused(f"cursor epoch {epoch} is before retention epoch {retention}")
-        if retention and epoch == retention and ordinal != 2**64 - 1:
+        if retention and epoch == retention and ordinal != END_OF_EPOCH:
             raise Refused(f"change ordinals at retention epoch {retention} are unavailable")
         first = max(1, retention + 1, epoch)
         # Resuming inside the cursor's epoch skips the changes it has seen.
-        skip = min(ordinal + 1, 2**64 - 1) if first == epoch else 0
+        skip = min(ordinal + 1, END_OF_EPOCH) if first == epoch else 0
         feed = self.engine.snapshot(frontier).changes(first - 1, skip=skip, limit=limit + 1)
         with pa.RecordBatchReader.from_stream(feed) as reader:
             table = reader.read_all()
@@ -371,6 +387,8 @@ class Core:
         # One change past the page tells where the complete epochs end.
         complete = frontier if len(page) <= limit else page.pop()["epoch"] - 1
         last = page[-1] if page else {"epoch": epoch, "ordinal": ordinal}
+        if complete and last["epoch"] <= complete:
+            last = {"epoch": complete, "ordinal": END_OF_EPOCH}
         return {
             "changes": page, "cursor": {"epoch": last["epoch"], "ordinal": last["ordinal"]},
             "published_epoch": frontier, "complete_through": complete, "has_more": complete != frontier,

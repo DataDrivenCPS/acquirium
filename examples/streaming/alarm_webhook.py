@@ -17,6 +17,7 @@ from pathlib import Path
 import requests
 
 import acquirium as aq
+from acquirium.core import END_OF_EPOCH
 
 WEBHOOK = os.environ["WEBHOOK"]
 SAVED = Path("alarm-cursor.json")
@@ -33,6 +34,7 @@ else:
     catching_up = True
 
 waiting = []
+saved_through = cursor["epoch"]
 while True:
     page = client.changes(**cursor, limit=1000)
     cursor = page["cursor"]
@@ -71,11 +73,9 @@ while True:
             timeout=10,
         ).raise_for_status()
 
-    if ready:
-        last = ready[-1]
-        SAVED.write_text(
-            json.dumps({"epoch": last["epoch"], "ordinal": last["ordinal"]})
-        )
+    if done > saved_through:
+        SAVED.write_text(json.dumps({"epoch": done, "ordinal": END_OF_EPOCH}))
+        saved_through = done
 
     if not page["has_more"]:
         catching_up = False

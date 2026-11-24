@@ -40,14 +40,17 @@ _CURIE = re.compile(r"[A-Za-z_][\w.-]*:[^\s:]+")
 def _insert_chunks(streams, replace, size=MAX_REQUEST_ROWS):
     """Split ``{stream_name: rows}`` into requests of at most ``size`` rows, as
     ``(stream_name, rows, replace)`` items. A replaced stream's clear counts as a
-    row and travels with its first piece, so it lands before that stream's
-    rows. Every stream appears at least once, so the server checks the name
-    of a stream with no rows too."""
+    row and is sent atomically with all of its rows. Every stream appears
+    at least once, so the server checks the name of a stream with no rows too."""
+    for name in replace:
+        if len(streams[name]) + 1 > size:
+            raise ValueError(f"replacement of {name!r} may contain at most {size - 1:,} rows")
+
     chunk, used = [], 0
     for name, rows in streams.items():
         start, clear = 0, name in replace
         while True:
-            if chunk and used + clear >= size:
+            if chunk and (used == size or (clear and used + len(rows) + 1 > size)):
                 yield chunk
                 chunk, used = [], 0
             room = size - used - clear
@@ -853,12 +856,9 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
-    def stream_views(self, uris: list[str]) -> dict[str, dict]:
-        """For each stream reference, the streams its ``current`` and ``raw``
-        views read now, and the unit (or None) its current view reports."""
-        if not uris:
-            return {}
-        response = self._http.post(f"{self.base_url}/stream_views", json={"uris": uris})
+    def stream_views(self, uris: list[str], *, epoch: int | None = None) -> dict[str, Any]:
+        """The pinned epoch and each reference's current and raw views."""
+        response = self._http.post(f"{self.base_url}/stream_views", json={"uris": uris, "epoch": epoch})
         _raise_for_status(response)
         return response.json()
 
@@ -949,6 +949,23 @@ class AcquiriumClient:
                 f"({', '.join(properties)}); pass the URI of one of them"
             )
         return properties[0]
+
+    def _stream_units(self, stream_uris: Iterable[str]) -> dict[str, tuple[str | None, str | None]]:
+        """The property and external-reference units for redirected raw reads."""
+        uris = sorted(set(stream_uris))
+        found = {}
+        for i in range(0, len(uris), 500):
+            terms = " ".join(URIRef(uri).n3() for uri in uris[i:i + 500])
+            result = self.sparql_query(
+                f"SELECT DISTINCT ?s ?property_unit ?stream_unit WHERE {{ VALUES ?s {{ {terms} }} "
+                f"OPTIONAL {{ ?p <{HAS_EXTERNAL_REFERENCE}> ?s . ?p <{HAS_UNIT}> ?property_unit . }} "
+                f"OPTIONAL {{ ?s <{HAS_UNIT}> ?stream_unit . }} }}",
+            )
+            for stream_uri, property_unit, stream_unit in result.get("rows", []):
+                units = (property_unit, stream_unit)
+                if found.setdefault(stream_uri, units) != units:
+                    raise ValueError(f"raw stream {stream_uri!r} has conflicting unit metadata")
+        return found
 
     def _node_labels(self, node_uris: Iterable[str]) -> dict[str, list[str]]:
         """``{node_uri: [label, ...]}``, sorted; a node without a label is
@@ -1415,7 +1432,8 @@ class AcquiriumClient:
 
         Up to ``MAX_REQUEST_ROWS`` rows go in one atomic request. Larger inputs
         are split into several, sent in order; only the last waits for
-        publication, and the result lists every request's receipt. Retrying
+        publication, and the result lists every request's receipt. Large
+        replacements that cannot fit in one request are rejected. Retrying
         with the same ``request_id`` and streams resends the same requests.
         """
         replace = set(replace)

@@ -6,7 +6,7 @@ import polars as pl
 import pytest
 from fastapi.testclient import TestClient
 
-from acquirium.core import Core
+from acquirium.core import Core, END_OF_EPOCH
 from acquirium.Server.app import app as api
 
 
@@ -20,7 +20,7 @@ def submit(core, request, values):
             "value": [value for _, value in values],
         }
     )
-    return core.ingest("probe", request, frame)
+    return core.ingest("probe", request, frame).receipt
 
 
 def test_signed_feed_pages_split_updates_and_keep_complete_epoch_frontiers(tmp_path):
@@ -42,7 +42,7 @@ def test_signed_feed_pages_split_updates_and_keep_complete_epoch_frontiers(tmp_p
                         "operation": ["delete"],
                     }
                 ),
-            )
+            ).receipt
         )
         cursor, rows, complete = {"epoch": 0, "ordinal": 0}, [], 0
         while True:
@@ -90,6 +90,26 @@ def test_page_excludes_publications_after_its_captured_frontier(tmp_path, monkey
         core.close()
 
 
+def test_empty_page_advances_caught_up_cursor_through_retention(tmp_path):
+    core = Core(tmp_path / "core.duckdb")
+    try:
+        core.wait(submit(core, "initial", [(1, 20.0)]))
+        first = core.changes()
+        core.wait(submit(core, "identical", [(1, 20.0)]))
+
+        empty = core.changes(**first["cursor"])
+        assert empty["changes"] == []
+        assert empty["cursor"] == {"epoch": empty["complete_through"], "ordinal": END_OF_EPOCH}
+        assert empty["cursor"]["epoch"] > first["cursor"]["epoch"]
+
+        core.engine.prune(empty["complete_through"])
+        core.wait(submit(core, "next", [(2, 30.0)]))
+        resumed = core.changes(**empty["cursor"])
+        assert [change["row"]["key"]["time"] for change in resumed["changes"]] == [2]
+    finally:
+        core.close()
+
+
 def test_consumer_resumes_checkpoints_with_old_native_fields(tmp_path):
     import json
 
@@ -110,7 +130,7 @@ def test_consumer_resumes_checkpoints_with_old_native_fields(tmp_path):
     }
     page = {
         "changes": [{"epoch": 2, "ordinal": 0, "weight": -1, "row": public}],
-        "cursor": {"epoch": 2, "ordinal": 0}, "complete_through": 2, "has_more": False,
+        "cursor": {"epoch": 2, "ordinal": END_OF_EPOCH}, "complete_through": 2, "has_more": False,
     }
     consumer = ChangeConsumer(SimpleNamespace(changes=lambda **kwargs: page), checkpoint)
     assert consumer.values() == {("urn:probe", 1000): 20.}
