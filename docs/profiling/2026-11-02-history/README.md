@@ -8,7 +8,7 @@ Measured on 2026-11-02 with release Escapement built from `e663c44`,
 Python 3.12.11, Linux x86_64, 16 logical CPUs and 93 GiB of memory. These are
 single sequential runs on a shared developer machine, whose load average from
 other work was between 4 and 10; they are not repeated estimates. The
-[harness](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/operating_limits) drives the native
+[harness](https://github.com/DataDrivenCPS/acquirium/tree/8ae469475c33fb0c106f86eecbe6e5b20f78c752/examples/operating_limits) drives the native
 engine directly with Acquirium's server defaults; [summary.md](summary.md)
 and [results.json](results.json) hold every measurement, and
 [before-summary.md](before-summary.md) the same sweep on `b539b60`, before

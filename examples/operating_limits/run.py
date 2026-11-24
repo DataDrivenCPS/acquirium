@@ -1,11 +1,12 @@
-"""Memory and restart cost against history size, through the native engine.
+"""Memory and restart cost against history size, through Acquirium's engine core.
 
 Run with the locked Acquirium environment; no HTTP server is involved. Each
 history size loads in one fresh process and reopens in another, so the reopen
-measures only what the engine rebuilds from its log.
+measures only what the engine reads back from its store.
 """
 
 import argparse
+from hashlib import sha256
 import importlib.metadata
 import json
 import os
@@ -18,28 +19,26 @@ import sys
 import time
 from pathlib import Path
 
-import pyarrow  # noqa: F401  (imported before the timed reads)
-from escapement import (
-    CapacityError,
-    Engine,
-    FixedBucket,
-    Input,
-    Mutation,
-    Native,
-    Operator,
-    Plan,
-    build_info,
-)
+import polars as pl
+import pyarrow as pa
+from escapement_next import Capacity
+
+from acquirium.core import Core
 
 SECOND = 1_000_000_000
 MINUTE = 60 * SECOND
 HOUR = 60 * MINUTE
+BUCKET = 15 * MINUTE
 START = 1_767_225_600 * SECOND  # 2026-01-01T00:00:00Z
-REQUEST_MUTATIONS = 10_000
+REQUEST_READINGS = 10_000
 # Acquirium's server defaults (Server/manager.py).
 WORKERS = 2
 EPOCH_REQUESTS = 128
 MAX_PENDING = 100_000
+# What Native.mean compiles to: one call per batch of 15-minute buckets.
+MEAN_MODULE = """from acquirium.functions import _builtin_batch_function
+calculate = _builtin_batch_function({"kind": "mean", "port": "mean"}, ["mean"])
+"""
 
 
 def source(index):
@@ -66,47 +65,110 @@ def database_mib(path):
     return sum(item.stat().st_size for item in path.parent.glob(path.name + "*")) / 2**20
 
 
+def modules(path):
+    """The directory beside the store that holds the mean's module."""
+    directory = path.parent / "modules"
+    directory.mkdir(exist_ok=True)
+    (directory / "limits_mean.py").write_text(MEAN_MODULE)
+    return directory
+
+
 def engine(path):
-    return Engine(path, workers=WORKERS, epoch_requests=EPOCH_REQUESTS,
-                  max_pending_requests=MAX_PENDING)
+    return Core(path, workers=WORKERS, epoch_requests=EPOCH_REQUESTS, max_pending=MAX_PENDING,
+                module_paths=[*sys.path, str(modules(path))])
 
 
 def plan(streams):
-    return Plan("limits-means", [
-        Operator(f"mean-{index}", [Input(source(index), "value")],
-                 {"mean": derived(index)}, FixedBucket(15 * MINUTE), Native.mean("mean"))
-        for index in range(streams)
-    ])
+    """A 15-minute mean of each stream, as Acquirium compiles Native.mean."""
+    digest = sha256(MEAN_MODULE.encode()).hexdigest()
+    return {
+        "templates": [{
+            "id": "limits-mean",
+            "definition": {
+                "function": {"module": "limits_mean", "name": "calculate", "digest": digest,
+                             "mode": "vectorized"},
+                "window": {"anchors": {"grid": {"origin": 0, "step": BUCKET}}, "body": "bucket"},
+                "roles": {"value": {"reach": {"span": {"before": 0, "after": 0}},
+                                    "reads": "bound", "driving": True}},
+                "ports": ["mean"],
+                "freshness": "synchronous",
+            },
+            "annotations": None,
+        }],
+        "instances": [{"template": "limits-mean", "key": str(index), "outputs": {"mean": derived(index)},
+                       "parameters": {}, "annotations": None} for index in range(streams)],
+        "bindings": [{"template": "limits-mean", "instance": str(index), "stream": source(index),
+                      "role": "value", "valid_from": None, "valid_to": None, "context": ""}
+                     for index in range(streams)],
+    }
+
+
+def frame(streams, times, values):
+    return pl.DataFrame({
+        "ref_uri": streams,
+        "ts": pl.Series(times, dtype=pl.Int64).cast(pl.Datetime("ns", "UTC")),
+        "value": values,
+    })
 
 
 def requests(readings, streams, interval_ns, seed):
-    """Time-major requests of about REQUEST_MUTATIONS: every stream's readings
+    """Time-major requests of about REQUEST_READINGS: every stream's readings
     for consecutive instants, as a driver sends them. Values random-walk at a
     sensor's three-decimal resolution."""
     rng = random.Random(seed)
     values = [rng.uniform(10, 100) for _ in range(streams)]
     instants = readings // streams
-    per_request = max(1, REQUEST_MUTATIONS // streams)
+    per_request = max(1, REQUEST_READINGS // streams)
     for first in range(0, instants, per_request):
-        batch = []
+        names, times, batch = [], [], []
         for instant in range(first, min(first + per_request, instants)):
-            time_ns = START + instant * interval_ns
             for index in range(streams):
                 values[index] += rng.uniform(-0.05, 0.05)
-                batch.append(Mutation.put(source(index), time_ns, round(values[index], 3)))
-        yield batch
+                names.append(source(index))
+                times.append(START + instant * interval_ns)
+                batch.append(round(values[index], 3))
+        yield frame(names, times, batch)
 
 
-def submit(target, request_id, batch):
+def submit(target, request_id, rows):
     """Ingest, waiting out a full inbox; returns the receipt and seconds blocked."""
     blocked = 0.0
     while True:
         try:
-            return target.ingest("limits", request_id, batch), blocked
-        except CapacityError:
+            return target.ingest("limits", request_id, rows), blocked
+        except Capacity:
             started = time.perf_counter()
             time.sleep(0.05)
             blocked += time.perf_counter() - started
+
+
+def counts(snapshot, streams):
+    return {row["stream"]: row["count"] for row in snapshot.extent(streams)}
+
+
+def read(snapshot, stream, **bounds):
+    with pa.RecordBatchReader.from_stream(snapshot.read([stream], **bounds)) as reader:
+        return reader.read_all()
+
+
+def value_at(snapshot, stream, time_ns):
+    rows = read(snapshot, stream, start=time_ns, end=time_ns + 1)["number"].to_pylist()
+    return rows[0] if rows else None
+
+
+def bucket_mean_matches(snapshot, bucket):
+    """Whether stream 0's stored mean for ``bucket`` is the mean of its readings."""
+    values = read(snapshot, source(0), start=bucket, end=bucket + BUCKET)["number"].to_pylist()
+    stored = value_at(snapshot, derived(0), bucket)
+    return stored is not None and abs(stored - sum(values) / len(values)) < 1e-9
+
+
+def engine_version():
+    """The installed escapement-next, and the revision it was built from."""
+    distribution = importlib.metadata.distribution("escapement-next")
+    origin = json.loads(distribution.read_text("direct_url.json") or "{}")
+    return {"version": distribution.version, "url": origin.get("url"),
+            "revision": origin.get("vcs_info", {}).get("commit_id")}
 
 
 def load(args):
@@ -114,31 +176,32 @@ def load(args):
     baseline = rss_mib()
     started = time.perf_counter()
     blocked = 0.0
-    with engine(path) as target:
+    target = engine(path)
+    try:
         if args.derived:
-            receipt, _ = target.activate("plan", plan(args.streams)), 0
-        processor = target.start()
+            target.activate("plan", plan(args.streams))
         receipt = None
         for number, batch in enumerate(requests(args.readings, args.streams,
                                                 args.interval * SECOND, args.seed)):
             receipt, waited = submit(target, str(number), batch)
             blocked += waited
-        processor.read_after(receipt, timeout=3600)
+        snapshot = target.wait(receipt, timeout=3600)
         elapsed = time.perf_counter() - started
-        status = target.status()
-        processor.stop()
+        derived_rows = (sum(counts(snapshot, [derived(index) for index in range(args.streams)]).values())
+                        if args.derived else 0)
         result = {
             "phase": "load",
             "readings": args.readings,
-            "derived_rows": sum((target.snapshot().stats(derived(index)) or {"count": 0})["count"]
-                                for index in range(args.streams)) if args.derived else 0,
+            "derived_rows": derived_rows,
             "seconds": elapsed,
             "readings_per_second": args.readings / elapsed,
             "blocked_seconds": blocked,
-            "epochs": status.get("epoch"),
+            "epochs": snapshot.epoch,
             "rss_mib": rss_mib() - baseline,
             "peak_mib": peak_mib() - baseline,
         }
+    finally:
+        target.close()
     result["database_mib"] = database_mib(path)
     return result
 
@@ -153,27 +216,21 @@ def reopen(args):
     path = Path(args.database)
     baseline = rss_mib()
     target, open_seconds = timed(lambda: engine(path))
-    with target:
+    try:
         rss = rss_mib() - baseline
-        snapshot = target.snapshot()
+        snapshot = target.engine.snapshot()
         first = source(0)
-        stats = snapshot.stats(first)
-        hour, hour_seconds = timed(lambda: snapshot.query_arrow(
-            first, start=stats["last_ns"] - HOUR, end=stats["last_ns"] + 1, limit=10**9))
-        whole, whole_seconds = timed(lambda: snapshot.query_arrow(first, limit=10**9))
-        processor = target.start()
-        middle = stats["first_ns"] + (stats["last_ns"] - stats["first_ns"]) // 2
+        (extent,) = snapshot.extent([first])
+        hour, hour_seconds = timed(lambda: read(snapshot, first, start=extent["last"] - HOUR,
+                                                end=extent["last"] + 1))
+        whole, whole_seconds = timed(lambda: read(snapshot, first))
+        middle = extent["first"] + (extent["last"] - extent["first"]) // 2
         middle -= middle % (args.interval * SECOND)
-        corrected, correction_seconds = timed(lambda: processor.read_after(
-            target.ingest("limits", "correction", [Mutation.put(first, middle, -1.0)]),
-            timeout=600))
-        processor.stop()
-        verified = corrected.value(first, middle) == -1.0
+        corrected, correction_seconds = timed(lambda: target.wait(
+            target.ingest("limits", "correction", frame([first], [middle], [-1.0])), timeout=600))
+        verified = value_at(corrected, first, middle) == -1.0
         if args.derived:
-            bucket = middle - (middle % (15 * MINUTE))
-            rows = corrected.query(first, start=bucket, end=bucket + 15 * MINUTE, limit=10**6)
-            mean = sum(row.value for row in rows) / len(rows)
-            verified = verified and abs(corrected.value(derived(0), bucket) - mean) < 1e-9
+            verified = verified and bucket_mean_matches(corrected, middle - middle % BUCKET)
         return {
             "verified": verified,
             "phase": "reopen",
@@ -186,6 +243,8 @@ def reopen(args):
             "stream_read_seconds": whole_seconds,
             "correction_seconds": correction_seconds,
         }
+    finally:
+        target.close()
 
 
 def child(phase, args, size, database):
@@ -202,7 +261,7 @@ def child(phase, args, size, database):
 def summary(results, args):
     lines = [
         f"{args.streams} streams, one reading per stream every {args.interval} s"
-        + (", a native 15-minute mean of each" if args.derived else "") + ".",
+        + (", a 15-minute mean of each" if args.derived else "") + ".",
         "",
         "| Readings | Derived rows | Load s | Readings/s | Load RSS MiB | Load peak MiB "
         "| Bytes/row loaded | DB MiB | Reopen s | Reopen RSS MiB | Bytes/row reopened "
@@ -233,7 +292,7 @@ def main():
     parser.add_argument("--streams", type=int, default=100)
     parser.add_argument("--interval", type=int, default=1, help="Seconds between readings")
     parser.add_argument("--derived", action="store_true",
-                        help="Also maintain a native 15-minute mean of every stream")
+                        help="Also maintain a 15-minute mean of every stream")
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--phase", choices=("load", "reopen"), help=argparse.SUPPRESS)
     parser.add_argument("--database", help=argparse.SUPPRESS)
@@ -256,16 +315,15 @@ def main():
             raise SystemExit(f"{size:,} readings: the correction was not applied after reopening")
         results.append(item)
         print(json.dumps(item), flush=True)
-        # The store's files, and the Parquet directory beside it that seals
-        # and staged rebuilds write.
         for path in database.parent.glob(database.name + "*"):
             shutil.rmtree(path) if path.is_dir() else path.unlink()
+        shutil.rmtree(args.output / "modules", ignore_errors=True)
     environment = {
         "python": platform.python_version(),
         "platform": platform.platform(),
         "cpus": os.cpu_count(),
         "acquirium": importlib.metadata.version("acquirium"),
-        "escapement": build_info(),
+        "escapement": engine_version(),
     }
     (args.output / "results.json").write_text(json.dumps(
         {"arguments": {key: value for key, value in vars(args).items()

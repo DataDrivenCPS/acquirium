@@ -1,8 +1,7 @@
 # Memory and restart cost against history size
 
-> This historical benchmark uses the previous Escapement build and its worker instrumentation. Run it from a revision that pins that build. For the epoch engine, see the benchmarks under Escapement's `crates/python`.
-
-See the [results](../../docs/profiling/2026-11-02-history/README.md).
+The [recorded results](../../docs/profiling/2026-11-02-history/README.md) were
+measured on the previous engine.
 
 Run from the repository root, using a **new** output directory:
 
@@ -14,9 +13,10 @@ uv run --locked python -m examples.operating_limits.run \
 Each size is a number of source readings, spread over `--streams` streams
 (default 100) with one reading per stream every `--interval` seconds (default
 1). Values random-walk at three decimals, as a sensor reports them. With
-`--derived`, a native 15-minute mean of every stream is maintained as the
-readings arrive. The engine uses Acquirium's server defaults: two workers,
-128 requests per epoch, 100,000 pending requests.
+`--derived`, a 15-minute mean of every stream is maintained as the readings
+arrive, compiled as Acquirium compiles the `mean` built-in. The engine is
+Acquirium's `Core` with the server defaults: two workers, 128 requests per
+epoch, 100,000 pending requests.
 
 Each size runs in two fresh processes against one DuckDB file:
 
@@ -48,18 +48,15 @@ uv run --locked python -m examples.operating_limits.sustained \
 
 It offers each of `--rates` readings per second in turn (default 10,000 up to
 300,000) for `--duration` seconds (default 20), in requests of
-`--request-readings` (default 1,000). `--batch-requests` sends that many
-requests at a time with `ingest_many`, which admits them in one transaction;
-`ingest` times are then per call.
+`--request-readings` (default 1,000).
 `--senders` splits the streams among that many threads, each pacing its share
 of the rate as a separate driver would; the engine admits requests that
 arrive together in one transaction. `--history` loads that many readings
 first. The engine uses the same
-defaults as the history harness, and the processor is woken after every
-request, as Acquirium's server does.
+defaults as the history harness.
 
-Each request's latency runs from just before `ingest` until the processor
-reports the epoch that applied it, both on the processor's clock. A line about
+Each request's latency runs from just before `ingest` until the engine
+commits the epoch that applied it, from the engine's epoch records. A line about
 once a second shows the last second's sent and published readings, epochs,
 pending requests, latency percentiles and the slowest `ingest` calls. The
 first `--warmup` seconds of each rate (default 2) are left out of its summary.

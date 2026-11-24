@@ -108,6 +108,8 @@ sequential state, see the [app interface](../../reference/apps.md).
 
 ## Reproduction and inspection
 
+Run these from revision `8ae4694`, the last with the previous engine and this harness; the current tree no longer has it.
+
 ```sh
 uv sync --locked --extra mqtt
 uv run --locked python -m examples.profiling.run \

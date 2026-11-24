@@ -121,9 +121,7 @@ isolated engine benchmark. It does not start drivers or an MQTT broker. The sour
 journal is retained for verification; the JSON sink rewrites its current view and
 buffers a whole epoch. Both are deliberately small examples. Native current
 state still fits in RAM and its history/feed are unpruned. Use finite runs to
-establish operating bounds before claiming unattended capacity. The native
-[model benchmark](../model_workload/README.md) isolates engine costs from these
-source/sink costs and exercises resident model arrays.
+establish operating bounds before claiming unattended capacity.
 
 Initial local smoke measurements on 2026-10-18 (macOS arm64, Python 3.12):
 

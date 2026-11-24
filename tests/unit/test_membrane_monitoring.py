@@ -3,6 +3,7 @@
 import math
 
 from fastapi.testclient import TestClient
+import pyarrow as pa
 import pytest
 
 from acquirium import Acquirium
@@ -115,10 +116,15 @@ def test_sequential_apps_match_a_full_recomputation_after_late_data(client):
 
     def actual():
         snapshot = engine.snapshot()
-        return {
-            reference: {r.event_time_ns: r.value for r in snapshot.readings(reference)}
-            for reference in recompute(observations)
-        }
+        result = {reference: {} for reference in recompute(observations)}
+        with pa.RecordBatchReader.from_stream(snapshot.read(list(result))) as reader:
+            for batch in reader:
+                for stream, time, number in zip(
+                    batch["stream"].to_pylist(), batch["time"].cast(pa.int64()).to_pylist(),
+                    batch["number"].to_pylist(),
+                ):
+                    result[stream][time] = number
+        return result
 
     def check():
         result, expected = actual(), recompute(observations)

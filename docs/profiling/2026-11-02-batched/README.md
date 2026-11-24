@@ -7,7 +7,7 @@ orphan: true
 Measured on 2026-11-02 with release Escapement built from `6244ebf`. Python
 3.12.11, Linux x86_64, 16 logical CPUs, on a shared developer machine whose
 load average was between 3.3 and 4.5. Each case is one run of the
-[harness](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/operating_limits#sustained-ingest), set
+[harness](https://github.com/DataDrivenCPS/acquirium/tree/8ae469475c33fb0c106f86eecbe6e5b20f78c752/examples/operating_limits#sustained-ingest), set
 up as in the [earlier measurements](../2026-11-02-sustained/README.md): 100
 streams, a native 15-minute mean of each, 20 s per rate. Each case's directory
 holds its `results.json` and `summary.md`.

@@ -12,7 +12,7 @@ with persistent workers, see the [pool measurements](../2026-10-18-pool/README.m
 
 ## Experiment
 
-The [reusable profiling harness](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/profiling) executes
+The [reusable profiling harness](https://github.com/DataDrivenCPS/acquirium/tree/8ae469475c33fb0c106f86eecbe6e5b20f78c752/examples/profiling) executes
 the actual temperature functions through the pinned release Escapement engine.
 Five workload shapes × three worker limits × paired instrumented/control cases
 × five measured epochs produced **150 verified epochs and 390 instrumented
@@ -23,7 +23,8 @@ Run on macOS arm64, eight logical CPUs, Python 3.12.12, Polars 1.44.2, PyArrow
 23.0.1, and Escapement release `fe7e50f483a07088a682935e83b6d7095760e1cb`.
 The machine had background activity (initial load averages 4.32/4.86/4.68).
 These controlled native epochs exclude HTTP, graph compilation, producer and
-consumer work, live queueing, and batch-fill waiting.
+consumer work, live queueing, and batch-fill waiting. Run these from revision
+`8ae4694`, the last with the previous engine and this harness.
 
 ```sh
 uv run --locked python -m examples.profiling.run \

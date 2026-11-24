@@ -7,7 +7,7 @@ orphan: true
 Measured on 2026-11-02 with release Escapement built from `dbab4f2`, Python
 3.12.11, Linux x86_64, 16 logical CPUs and 93 GiB of memory, on a shared
 developer machine whose load average was between 1.7 and 3.5. Each case is one
-run. The [harness](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/operating_limits#sustained-ingest)
+run. The [harness](https://github.com/DataDrivenCPS/acquirium/tree/8ae469475c33fb0c106f86eecbe6e5b20f78c752/examples/operating_limits#sustained-ingest)
 drives the native engine with Acquirium's server defaults and wakes the
 processor after every request, as the server does. Each case's directory
 holds its `results.json` and `summary.md`.

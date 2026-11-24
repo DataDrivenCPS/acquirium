@@ -11,7 +11,7 @@ machine, not repeated estimates of production capacity. No integration tests ran
 during the original five measurements; other applications were not isolated. Environment files
 retain each run's native source identity, model hash, and initial load average.
 
-The [benchmark](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/model_workload) runs four independent
+The [benchmark](https://github.com/DataDrivenCPS/acquirium/tree/8ae469475c33fb0c106f86eecbe6e5b20f78c752/examples/model_workload) runs four independent
 pointwise soft sensors, each with temperature, conductivity, flow, and pressure
 inputs. Every worker loads the same immutable synthetic RBF model once. Its
 arrays occupy 10 MiB; process RSS also includes interpreter/libraries and work
@@ -109,6 +109,8 @@ accuracy, crash-safe source delivery, or a universal worker recommendation.
 These cases do not measure automatic scaling or sequential functions.
 
 ## Reproduction and retained evidence
+
+Run these from revision `8ae4694`, the last with the previous engine and this harness; the current tree no longer has it.
 
 ```sh
 uv run --locked python -m examples.model_workload.run \

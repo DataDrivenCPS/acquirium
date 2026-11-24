@@ -1,4 +1,4 @@
-"""Publication latency under sustained ingest, through the native engine.
+"""Publication latency under sustained ingest, through Acquirium's engine core.
 
 Offers readings at each rate in turn, paced on a clock by one or more
 senders, and records how long each request takes from submission until the
@@ -20,50 +20,31 @@ import time
 from collections import deque
 from pathlib import Path
 
-from escapement import CapacityError, Mutation, build_info
-
-from .run import START, SECOND, derived, engine, plan, rss_mib, source, submit
+from .run import (
+    BUCKET, SECOND, START, bucket_mean_matches, counts, engine, engine_version, frame, plan,
+    rss_mib, source, submit,
+)
 
 RATES = (10_000, 25_000, 50_000, 100_000, 150_000, 200_000, 250_000, 300_000)
 # Backlog that drains within this long after the last request counts as kept up.
 DRAINED_SECONDS = 1.0
 # Fraction of the offered rate the senders must reach for a rate to count.
 SENT_FRACTION = 0.95
-BUCKET = 15 * 60 * SECOND
+
+
+def clock():
+    # Epoch records carry their commit time on this clock.
+    return time.time_ns()
 
 
 def verdict(step):
     """Sustained, falling behind, or why the offered rate was not reached:
-    admission when most of the senders' time went to ingest, which waits while
-    an epoch holds the store, and the senders themselves otherwise."""
+    admission when most of the senders' time went to ingest, and the senders
+    themselves otherwise."""
     if step["sender_limited"]:
         return ("admission-limited" if step["sender_ingest_fraction"] > 0.5
                 else "sender-limited")
     return "sustained" if step["sustained"] else "falling behind"
-
-
-def submit_many(target, label, requests):
-    """`ingest_many`, resending requests refused for a full inbox; returns
-    the receipts and seconds blocked."""
-    receipts = [None] * len(requests)
-    blocked = 0.0
-    todo = list(range(len(requests)))
-    while True:
-        results = target.ingest_many("limits", [(f"{label}-{i}", requests[i]) for i in todo])
-        refused = []
-        for i, result in zip(todo, results):
-            if isinstance(result, CapacityError):
-                refused.append(i)
-            elif isinstance(result, Exception):
-                raise result
-            else:
-                receipts[i] = result
-        if not refused:
-            return receipts, blocked
-        todo = refused
-        started = time.perf_counter()
-        time.sleep(0.05)
-        blocked += time.perf_counter() - started
 
 
 def percentile(values, fraction):
@@ -88,64 +69,73 @@ class Readings:
         self.values = [self.rng.uniform(10, 100) for _ in indices]
         self.interval_ns = interval_ns
         self.position = 0  # readings generated so far
-        self.unsent = []  # generated ahead of a request that was not sent
+        self.unsent = None  # generated ahead of a request that was not sent
 
     def sent(self):
-        return self.position - len(self.unsent)
+        return self.position - (self.unsent.height if self.unsent is not None else 0)
 
     def batch(self, size):
-        if len(self.unsent) == size:
-            mutations, self.unsent = self.unsent, []
-            return mutations
-        if self.unsent:
-            raise ValueError("requests change size only between runs")
-        mutations = []
+        if self.unsent is not None:
+            if self.unsent.height != size:
+                raise ValueError("requests change size only between runs")
+            rows, self.unsent = self.unsent, None
+            return rows
+        names, times, values = [], [], []
         streams = len(self.names)
         for position in range(self.position, self.position + size):
             instant, index = divmod(position, streams)
             self.values[index] += self.rng.uniform(-0.05, 0.05)
-            mutations.append(Mutation.put(self.names[index], START + instant * self.interval_ns,
-                                          round(self.values[index], 3)))
+            names.append(self.names[index])
+            times.append(START + instant * self.interval_ns)
+            values.append(round(self.values[index], 3))
         self.position += size
-        return mutations
+        return frame(names, times, values)
 
 
 class Publications:
-    """Matches submitted requests to the epochs that publish them, using the
-    processor's clock for both. Senders record requests from their threads;
-    only the main thread collects epochs."""
+    """Matches submitted requests to the epochs that publish them, from the
+    engine's epoch records. Senders record requests from their threads; only
+    the main thread collects epochs."""
 
-    def __init__(self, processor):
-        self.processor = processor
+    def __init__(self, engine):
+        self.engine = engine
         self.lock = threading.Lock()
         self.waiting = []  # heap of (sequence, submitted_ns, measured)
+        self.readings = {}  # readings in each submitted request, by sequence
         self.recent = deque()  # (submitted_ns, readings, ingest_ns), for progress
         self.last = 0  # highest sequence submitted
         self.published = []  # (published_ns, latency_ns, measured)
-        self.epochs = []  # (completed_ns, report)
+        self.epochs = []  # (committed_ns, requests applied, readings applied)
+        self.seen = engine.status()["published"]
         self.applied = 0
 
     def sent(self, sequence, submitted_ns, readings, ingest_ns, measured):
         with self.lock:
             heapq.heappush(self.waiting, (sequence, submitted_ns, measured))
+            self.readings[sequence] = readings
             self.recent.append((submitted_ns, readings, ingest_ns))
             self.last = max(self.last, sequence)
 
     def collect(self):
-        reports = self.processor.take_reports()
+        records = self.engine.epochs(after=self.seen, limit=10_000)
         with self.lock:
-            for item in reports:
-                completed, report = item["completed_ns"], item["report"]
-                self.epochs.append((completed, report))
-                self.applied = max(self.applied, report["applied"])
-                while self.waiting and self.waiting[0][0] <= report["applied"]:
+            for record in records:
+                self.seen = record["epoch"]
+                if record["requests"] is None:
+                    continue
+                first, last = record["requests"]
+                committed = record["committed"]
+                readings = sum(self.readings.pop(sequence, 0) for sequence in range(first, last + 1))
+                self.epochs.append((committed, last - first + 1, readings))
+                self.applied = max(self.applied, last)
+                while self.waiting and self.waiting[0][0] <= last:
                     _, submitted, measured = heapq.heappop(self.waiting)
-                    self.published.append((completed, completed - submitted, measured))
+                    self.published.append((committed, committed - submitted, measured))
 
     def progress(self, label, started_ns):
         """Prints the last second: rates, pending requests and latencies."""
         self.collect()
-        now = self.processor.clock_ns()
+        now = clock()
         since = now - SECOND
         with self.lock:
             while self.recent and self.recent[0][0] < since:
@@ -154,9 +144,9 @@ class Publications:
             ingest = percentile([ingest for _, _, ingest in self.recent], 0.99)
             latencies = [latency for published, latency, _ in reversed(self.published)
                          if published > since]
-            epochs = [report for completed, report in reversed(self.epochs) if completed > since]
+            epochs = [item for item in reversed(self.epochs) if item[0] > since]
             pending = self.last - self.applied
-        published = sum(report["source_mutations"] for report in epochs)
+        published = sum(readings for _, _, readings in epochs)
         latency = (f"p50 {ms(percentile(latencies, 0.5)):6.1f} ms  "
                    f"p99 {ms(percentile(latencies, 0.99)):7.1f} ms" if latencies
                    else "p50      - ms  p99       - ms")
@@ -174,16 +164,12 @@ class Sender:
         self.number = number
         self.readings = Readings(indices, args.interval * SECOND, args.seed + number)
 
-    def offer(self, target, publications, size, group, interval_ns, first_ns, ends_ns,
-              measured_ns, label):
-        """Sends `group` requests of `size` readings every `interval_ns`: with
-        `ingest` alone, or `ingest_many` for more than one."""
-        processor = publications.processor
-        clock = processor.clock_ns
+    def offer(self, target, publications, size, interval_ns, first_ns, ends_ns, measured_ns, label):
+        """Sends a request of `size` readings every `interval_ns`."""
         self.sent = self.sent_measured = self.generate_ns = self.lag_ns = 0
         self.blocked = 0.0
-        self.ingests = []  # nanoseconds each measured call spent in ingest
-        batch = self.readings.batch(size * group)
+        self.ingests = []  # nanoseconds each measured request spent in ingest
+        batch = self.readings.batch(size)
         count = 0
         try:
             while (due := first_ns + count * interval_ns) < ends_ns:
@@ -193,53 +179,40 @@ class Sender:
                 else:
                     self.lag_ns = max(self.lag_ns, now - due)
                 submitted = clock()
-                request_id = f"{label}-{self.number}-{count}"
-                if group == 1:
-                    receipt, waited = submit(target, request_id, batch)
-                    receipts = [receipt]
-                else:
-                    receipts, waited = submit_many(
-                        target, request_id,
-                        [batch[i:i + size] for i in range(0, len(batch), size)])
+                receipt, waited = submit(target, f"{label}-{self.number}-{count}", batch)
                 accepted = clock()
-                processor.wake()
                 self.blocked += waited
                 measured = due >= measured_ns
-                for receipt in receipts:
-                    publications.sent(receipt.sequence, submitted, size, accepted - submitted,
-                                      measured)
-                self.sent += len(batch)
+                publications.sent(receipt.sequence, submitted, size, accepted - submitted, measured)
+                self.sent += size
                 if measured:
-                    self.sent_measured += len(batch)
+                    self.sent_measured += size
                     self.ingests.append(accepted - submitted)
                 count += 1
-                batch = self.readings.batch(size * group)
+                batch = self.readings.batch(size)
                 self.generate_ns += clock() - accepted
         finally:
             self.readings.unsent = batch
-            self.requests = count * group
+            self.requests = count
 
 
 def offer(target, publications, senders, args, rate, number):
     """Offers `rate` readings a second for args.duration seconds, then waits
     for the backlog to drain. Returns the rate's summary."""
-    size, group = args.request_readings, args.batch_requests
-    processor = publications.processor
-    clock = processor.clock_ns
+    size = args.request_readings
     # Each sender sends every interval_ns, staggered evenly among them.
-    interval_ns = SECOND * size * group * len(senders) // rate
+    interval_ns = SECOND * size * len(senders) // rate
     duration_ns, warmup_ns = int(args.duration * SECOND), int(args.warmup * SECOND)
     print(f"{rate:,} readings/s for {args.duration:g} s, requests of {size:,}"
-          + (f" in calls of {group}" if group > 1 else "")
-          + f" from {len(senders)} sender{'s' if len(senders) > 1 else ''}", flush=True)
-    admission = target.status()
+          f" from {len(senders)} sender{'s' if len(senders) > 1 else ''}", flush=True)
+    admissions = target.engine.status()["admissions"]
     started_ns = clock()
     ends_ns, measured_ns = started_ns + duration_ns, started_ns + warmup_ns
     failures = []
 
     def run(sender):
         try:
-            sender.offer(target, publications, size, group, interval_ns,
+            sender.offer(target, publications, size, interval_ns,
                          started_ns + sender.number * interval_ns // len(senders),
                          ends_ns, measured_ns, number)
         except BaseException as error:
@@ -274,45 +247,39 @@ def offer(target, publications, senders, args, rate, number):
         if clock() >= next_print:
             next_print += SECOND
             pending_peak = max(pending_peak, publications.progress("drain", started_ns))
-    drained_ns = max(completed for completed, _ in publications.epochs)
-    status = target.status()
-    commits = status["admission_commits"] - admission["admission_commits"]
-    admitted = status["admitted_requests"] - admission["admitted_requests"]
+    drained_ns = max(committed for committed, _, _ in publications.epochs)
+    commits = target.engine.status()["admissions"] - admissions
     drain_seconds = max(0.0, (drained_ns - stopped_ns) / 1e9)
 
     latencies = [latency for published, latency, measured in publications.published
                  if measured and published > started_ns]
-    epochs = [report for completed, report in publications.epochs
-              if measured_ns < completed <= stopped_ns]
+    epochs = [item for item in publications.epochs if measured_ns < item[0] <= stopped_ns]
     ingests = [ingest for sender in senders for ingest in sender.ingests]
     seconds = (stopped_ns - measured_ns) / 1e9
     sent_rate = sum(sender.sent_measured for sender in senders) / seconds
-    published_rate = sum(report["source_mutations"] for report in epochs) / seconds
+    published_rate = sum(readings for _, _, readings in epochs) / seconds
     sender_limited = sent_rate < SENT_FRACTION * rate
+    requests = sum(sender.requests for sender in senders)
     result = {
         "offered_per_second": rate,
         "senders": len(senders),
         "sent_per_second": sent_rate,
         "published_per_second": published_rate,
-        "requests": sum(sender.requests for sender in senders),
+        "requests": requests,
         "readings": sum(sender.sent for sender in senders),
         "latency_ms": {name: ms(percentile(latencies, fraction)) for name, fraction in
                        (("p50", 0.5), ("p95", 0.95), ("p99", 0.99), ("max", 1.0))},
-        # Time inside ingest, which waits while an epoch holds the store.
+        # Time inside ingest, until the request's admission commits.
         "ingest_ms": {name: ms(percentile(ingests, fraction)) for name, fraction in
                       (("p50", 0.5), ("p99", 0.99), ("max", 1.0))},
-        # Requests admitted in each transaction, over the whole rate.
-        "requests_per_commit": admitted / commits if commits else 0,
+        # Requests admitted in each transaction: concurrent senders share one.
+        "requests_per_commit": requests / commits if commits else 0,
         # Shares of the senders' time spent in ingest and generating requests.
         "sender_ingest_fraction": sum(ingests) / max(1, len(senders) * (sending_ns - warmup_ns)),
         "sender_generate_fraction": (sum(sender.generate_ns for sender in senders)
                                      / max(1, len(senders) * sending_ns)),
         "epochs_per_second": len(epochs) / seconds,
-        "requests_per_epoch": (sum(report["requests"] for report in epochs) / len(epochs)
-                               if epochs else 0),
-        "epoch_ms": {phase: (sum(report["timings"][phase] for report in epochs) / len(epochs)
-                             if epochs else 0)
-                     for phase in ("prepare_ms", "compute_ms", "publish_ms", "total_ms")},
+        "requests_per_epoch": sum(count for _, count, _ in epochs) / len(epochs) if epochs else 0,
         "pending_peak": pending_peak,
         "drain_seconds": drain_seconds,
         "sender_lag_seconds": max(sender.lag_ns for sender in senders) / 1e9,
@@ -340,10 +307,9 @@ def preload(target, publications, senders, args):
         sender = senders[number % len(senders)]
         size = min(args.request_readings, args.history - loaded)
         receipt, _ = submit(target, f"history-{number}", sender.readings.batch(size))
-        publications.processor.wake()
         loaded += size
         number += 1
-    publications.processor.read_after(receipt, timeout=3600)
+    target.wait(receipt, timeout=3600)
     publications.collect()
     seconds = time.perf_counter() - started
     print(f"  loaded in {seconds:.1f} s\n", flush=True)
@@ -352,37 +318,30 @@ def preload(target, publications, senders, args):
 
 def verify(target, senders, args):
     """Every sent reading is stored, and stream 0's last full mean is right."""
-    snapshot = target.snapshot()
-    counts = [(snapshot.stats(source(index)) or {"count": 0})["count"]
-              for index in range(args.streams)]
-    if sum(counts) != sum(sender.readings.sent() for sender in senders):
+    snapshot = target.engine.snapshot()
+    stored = counts(snapshot, [source(index) for index in range(args.streams)])
+    if sum(stored.values()) != sum(sender.readings.sent() for sender in senders):
         return False
-    if not args.derived or not counts[0]:
+    if not args.derived or not stored.get(source(0)):
         return True
-    last = snapshot.stats(source(0))["last_ns"]
-    bucket = last - last % BUCKET - BUCKET
-    if bucket < START:
-        return True
-    rows = snapshot.query(source(0), start=bucket, end=bucket + BUCKET, limit=10**6)
-    mean = sum(row.value for row in rows) / len(rows)
-    return abs(snapshot.value(derived(0), bucket) - mean) < 1e-9
+    (extent,) = snapshot.extent([source(0)])
+    bucket = extent["last"] - extent["last"] % BUCKET - BUCKET
+    return bucket < START or bucket_mean_matches(snapshot, bucket)
 
 
 def summary(arguments, steps):
-    senders, group = arguments["senders"], arguments.get("batch_requests", 1)
+    senders = arguments["senders"]
     lines = [
         f"{arguments['streams']} streams in requests of {arguments['request_readings']:,} "
-        f"readings"
-        + (f", {group} to a call of `ingest_many`," if group > 1 else "")
-        + f" from {senders} sender{'s' if senders > 1 else ''}, "
+        f"readings from {senders} sender{'s' if senders > 1 else ''}, "
         f"{arguments['duration']:g} s per rate after {arguments['history']:,} readings of history"
-        + (", a native 15-minute mean of each stream" if arguments["derived"] else "")
+        + (", a 15-minute mean of each stream" if arguments["derived"] else "")
         + ". Latency is from submission to publication.",
         "",
         "| Offered/s | Sent/s | Published/s | p50 ms | p95 ms | p99 ms | Max ms | Epochs/s "
-        "| Requests/epoch | Epoch ms | Ingest p50 ms | Ingest p99 ms | Requests/commit "
+        "| Requests/epoch | Ingest p50 ms | Ingest p99 ms | Requests/commit "
         "| Peak pending | Drain s | Result |",
-        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: "
+        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: "
         "| ---: | ---: | ---: | --- |",
     ]
     for step in steps:
@@ -392,7 +351,7 @@ def summary(arguments, steps):
             f"| {step['published_per_second']:,.0f} | {latency['p50']:.1f} "
             f"| {latency['p95']:.1f} | {latency['p99']:.1f} | {latency['max']:.1f} "
             f"| {step['epochs_per_second']:.1f} | {step['requests_per_epoch']:.1f} "
-            f"| {step['epoch_ms']['total_ms']:.1f} | {step['ingest_ms']['p50']:.1f} "
+            f"| {step['ingest_ms']['p50']:.1f} "
             f"| {step['ingest_ms']['p99']:.1f} | {step['requests_per_commit']:.1f} "
             f"| {step['pending_peak']:,} "
             f"| {step['drain_seconds']:.2f} | {verdict(step)} |")
@@ -411,22 +370,18 @@ def main():
     parser.add_argument("--interval", type=int, default=1, help="Seconds between readings")
     parser.add_argument("--request-readings", type=int, default=1_000,
                         help="Readings per request")
-    parser.add_argument("--batch-requests", type=int, default=1,
-                        help="Requests per call: more than one uses ingest_many")
     parser.add_argument("--senders", type=int, default=1,
                         help="Concurrent senders, each with its share of the streams")
     parser.add_argument("--history", type=int, default=0,
                         help="Readings loaded before the first rate")
     parser.add_argument("--derived", action="store_true",
-                        help="Also maintain a native 15-minute mean of every stream")
+                        help="Also maintain a 15-minute mean of every stream")
     parser.add_argument("--keep-going", action="store_true",
                         help="Offer every rate, even after one is not sustained")
     parser.add_argument("--seed", type=int, default=7)
     args = parser.parse_args()
     if args.warmup >= args.duration:
         parser.error("--warmup must be shorter than --duration")
-    if args.batch_requests < 1:
-        parser.error("--batch-requests must be positive")
     if not 1 <= args.senders <= args.streams:
         parser.error("--senders must be between 1 and --streams")
 
@@ -435,25 +390,23 @@ def main():
     senders = [Sender(number, range(number, args.streams, args.senders), args)
                for number in range(args.senders)]
     steps = []
-    with engine(database) as target:
+    target = engine(database)
+    try:
         if args.derived:
-            target.activate("plan", plan(args.streams))
-        processor = target.start(report_capacity=100_000)
-        publications = Publications(processor)
+            target.wait(target.activate("plan", plan(args.streams)))
+        publications = Publications(target.engine)
         history = preload(target, publications, senders, args) if args.history else None
         for number, rate in enumerate(args.rates):
             step = offer(target, publications, senders, args, rate, number)
             steps.append(step)
             if not step["sustained"] and not args.keep_going:
                 break
-        processor.stop()
-        if processor.status()["stats"]["reports_dropped"]:
-            raise SystemExit("epoch reports were dropped; latencies are incomplete")
         verified = verify(target, senders, args)
-    # The store's files, and the Parquet directory beside it that seals
-    # and staged rebuilds write.
+    finally:
+        target.close()
     for path in database.parent.glob(database.name + "*"):
         shutil.rmtree(path) if path.is_dir() else path.unlink()
+    shutil.rmtree(args.output / "modules", ignore_errors=True)
     if not verified:
         raise SystemExit("the stored readings do not match those sent")
 
@@ -464,7 +417,7 @@ def main():
         "platform": platform.platform(),
         "cpus": os.cpu_count(),
         "acquirium": importlib.metadata.version("acquirium"),
-        "escapement": build_info(),
+        "escapement": engine_version(),
     }
     (args.output / "results.json").write_text(json.dumps(
         {"arguments": arguments, "environment": environment, "history": history,

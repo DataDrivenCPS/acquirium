@@ -24,6 +24,11 @@ change in any release.
 - **Breaking:** the `instances`, `desired_plan` and `graph_revision` fields of
   `inspect_app`. `operators` describes each instance, and `active_plan` is the
   plan the app runs under.
+- The `examples/profiling` and `examples/model_workload` benchmarks, which
+  measured the previous engine's Python worker pool. Their recorded results
+  link to revision `8ae4694`, which still has them.
+- The `--batch-requests` option of the sustained-ingest harness. Concurrent
+  senders still share admission transactions.
 
 ### Fixed
 - `inspect_app` and `list_apps` no longer wait up to 30 seconds while a
@@ -122,6 +127,9 @@ change in any release.
   read it. Requires the Escapement rolling-window release.
 
 ### Changed
+- The operating-limits harnesses (`examples/operating_limits`) run on
+  Acquirium's engine core, with the 15-minute mean compiled as the `mean`
+  built-in.
 - Acquirium requires DuckDB 2.0 (`duckdb>=2.0.0`) for the experiment ledger. An
   existing ledger file opens as is and keeps its storage format. A file created
   by DuckDB 2.0 uses the 2.0 storage format, which DuckDB 1.x cannot open.
