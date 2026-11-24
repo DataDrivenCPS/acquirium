@@ -39,7 +39,7 @@ def declaration(name, ref, function, **kwargs):
     return aq.App(name, {"raw": selection(ref)}, {"out": aq.ReplacementOutput()}, function, **kwargs)
 
 
-def test_declaration_roundtrip_and_reserved_parameters():
+def test_declaration_roundtrip():
     app = declaration("clean", "urn:raw", aq.Native.mean("out"))
     assert app.to_dict()["outputs"] == {"out": {"replaces": "raw", "unit": None, "label": None}}
     assert aq.App.from_dict(app.to_dict()).to_dict() == app.to_dict()
@@ -52,8 +52,6 @@ def test_declaration_roundtrip_and_reserved_parameters():
     with pytest.raises(ValueError, match="must name the input it replaces"):
         two.to_dict()
     assert replace(two, outputs={"out": aq.ReplacementOutput(of="raw")}).to_dict()["outputs"]["out"]["replaces"] == "raw"
-    with pytest.raises(ValueError, match="reserved"):
-        replace(app, inputs={"raw": selection("urn:raw", parameters={"__acquirium": {}})}).to_dict()
 
 
 @pytest.mark.parametrize("inputs", [["raw"], {"": "raw"}, {"raw": []}, {"raw": ["query"]}])
@@ -73,19 +71,6 @@ def test_several_selections_feed_one_input_and_roundtrip():
     loaded = aq.App.from_dict(data)
     assert isinstance(loaded.inputs["raw"], list) and isinstance(loaded.inputs["gain"], aq.Selection)
     assert loaded.to_dict() == data
-
-
-def test_saved_declarations_with_roles_and_replaces_load():
-    app = declaration("clean", "urn:raw", aq.Native.mean("out"))
-    data = app.to_dict()
-    legacy = dict(data, inputs=[{("role" if key == "input" else key): value
-                                 for key, value in item.items()} for item in data["inputs"]],
-                  outputs={"out": {"unit": NTU, "quantity_kind": TURBIDITY, "label": "Clean",
-                                   "on_group": True, "value_kind": "numeric", "replaces": "raw"}})
-    loaded = aq.App.from_dict(legacy)
-    assert loaded.inputs["raw"] == app.inputs["raw"]
-    assert loaded.outputs == {"out": aq.ReplacementOutput(of="raw", unit=NTU, label="Clean")}
-    assert [item["input"] for item in loaded.to_dict()["inputs"]] == ["raw"]
 
 
 def test_selection_views_roundtrip_and_default_by_selection_kind():
@@ -112,11 +97,10 @@ def test_selection_views_roundtrip_and_default_by_selection_kind():
 
 
 def test_plan_resolution_and_corrupt_cycles():
-    plan = {"operators": [
+    plan = {"instances": [
         {"outputs": {"out": "urn:clean", "diagnostic": "urn:diagnostic"},
-         "parameters": {"__acquirium": {"replaces": {"out": "urn:raw"}}}},
-        {"outputs": {"out": "urn:filled"},
-         "parameters": {"__acquirium": {"replaces": {"out": "urn:clean"}}}},
+         "annotations": {"replaces": {"out": "urn:raw"}}},
+        {"outputs": {"out": "urn:filled"}, "annotations": {"replaces": {"out": "urn:clean"}}},
     ]}
     refs = ["urn:raw", "urn:clean", "urn:filled", "urn:diagnostic"]
     assert list(replacements.resolve(plan, refs).values()) == ["urn:filled"] * 3 + ["urn:diagnostic"]
@@ -124,18 +108,17 @@ def test_plan_resolution_and_corrupt_cycles():
     assert replacements.resolve(plan, refs, view="stored") == dict(zip(refs, refs))
     with pytest.raises(ValueError, match="view"):
         replacements.resolve(plan, [], view="typo")
-    plan["operators"][0]["parameters"]["__acquirium"]["replaces"]["out"] = "urn:filled"
+    plan["instances"][0]["annotations"]["replaces"]["out"] = "urn:filled"
     with pytest.raises(ValueError, match="cycle"):
         replacements.resolve(plan, ["urn:filled"])
 
 
 @pytest.mark.parametrize("library", ["pandas", "polars"])
 @pytest.mark.parametrize("batch", [False, True])
-def test_adapter_selects_only_replacement_times_and_hides_private_parameters(library, batch):
+def test_adapter_selects_only_replacement_times(library, batch):
     import pandas as pd
 
-    parameters = {"group": ["urn:tank"], "__acquirium": {"replaces": {"clean": "urn:raw"}}}
-    assert _public_parameters(parameters) == {"group": ("urn:tank",)}
+    assert _public_parameters({"group": ["urn:tank"]}) == {"group": ("urn:tank",)}
     times = [0, 1_000, 2_000]
     values = pl.DataFrame({
         "time": pl.Series(times).cast(pl.Datetime("ns", "UTC")),
@@ -178,8 +161,6 @@ def runtime(tmp_path_factory):
 from acquirium.functions import emit
 
 def double(frame: pl.DataFrame, context):
-    assert "__acquirium" not in context["parameters"]
-    assert "__acquirium" not in context["operator"]["parameters"]
     if context["parameters"].get("fail"):
         raise ValueError("broken replacement")
     if "output_time" in frame.columns:

@@ -24,6 +24,7 @@ from rdflib import Graph, Literal, RDF, RDFS, URIRef
 from acquirium import replacements
 from acquirium.replacements import app_of
 from acquirium.internals.models import compute_ref_uri, looks_like_uri
+from acquirium.Storage.graph_registry import DERIVED_SOURCE_PREFIX
 from acquirium.Storage.values import normalize_value_kind
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_SOURCE_ID,
@@ -292,8 +293,6 @@ class App:
                     not isinstance(key, str) or not key for key in values
                 ):
                     raise ValueError("parameters map groups to named values")
-                if "__acquirium" in values:
-                    raise ValueError("parameter __acquirium is reserved")
                 try:
                     _json(dict(values))
                 except (TypeError, ValueError) as error:
@@ -332,7 +331,7 @@ class App:
             raise ValueError("only pointwise, fixed-bucket and rolling windows are supported")
         inputs = {}
         for item in data["inputs"]:
-            item = _upgrade_input(item)
+            item = dict(item)
             name = item.pop("input")
             inputs.setdefault(name, []).append(Selection(**item))
         app = cls(
@@ -350,20 +349,8 @@ class App:
         return _input_items(self.inputs)
 
 
-def _upgrade_input(item):
-    """A stored input selection, with the key earlier versions called ``role``."""
-    item = dict(item)
-    if "role" in item:
-        if "input" in item:
-            raise ValueError("an input selection names its input once")
-        item["input"] = item.pop("role")
-    return item
-
-
 def _output_from_dict(item):
     if "replaces" in item:
-        # Earlier versions also stored the replacement's quantity and value
-        # kinds; both now come from its input.
         return ReplacementOutput(of=item["replaces"], unit=item.get("unit"), label=item.get("label"))
     return Output(**item)
 
@@ -383,7 +370,7 @@ def _output_metadata(rdf, name, group, port, reference, spec, resolved=None):
         unit, quantity_kind = spec.unit, spec.quantity_kind
         value_kind, on_group = spec.value_kind, spec.on_group
     ref, point = URIRef(reference), URIRef(f"{reference}__point")
-    rdf.add((ref, ACQUIRIUM_SOURCE_ID, Literal(f"derived:{name}")))
+    rdf.add((ref, ACQUIRIUM_SOURCE_ID, Literal(_source_id(name))))
     rdf.add((ref, ACQUIRIUM_REF_NAME, Literal(_json([group, port]))))
     rdf.add((ref, ACQUIRIUM_VALUE_KIND, Literal(value_kind)))
     rdf.add((point, RDF.type, VIRTUAL_POINT))
@@ -419,7 +406,7 @@ def _warnings(report):
 
 
 def output_reference(app: str, group: str, port: str) -> str:
-    return str(compute_ref_uri(f"derived:{app}", _json([group, port])))
+    return str(compute_ref_uri(_source_id(app), _json([group, port])))
 
 
 # An app's operators are "<app>:<group digest>", one per selected group.
@@ -460,11 +447,11 @@ _RATE_PORT = "__acquirium_rate"
 
 
 def _ports(declaration):
-    ports = sorted(declaration["outputs"])
+    ports = set(declaration["outputs"])
     if declaration["function"]["kind"] == "integral":
         if _RATE_PORT in ports:
             raise ValueError(f"output port {_RATE_PORT!r} is reserved for integration")
-        ports.append(_RATE_PORT)
+        ports.add(_RATE_PORT)
     return sorted(ports)
 
 
@@ -472,8 +459,13 @@ def _plan_id(plan):
     return f"acquirium:{_digest(plan)}"
 
 
+# Activation saves each Python module here by content hash, and the engine's
+# workers import them from it.
+MODULE_DIRECTORY = "app-functions"
+
+
 def _source_id(name):
-    return f"derived:{name}"
+    return f"{DERIVED_SOURCE_PREFIX}{name}"
 
 
 class Apps:
@@ -492,7 +484,7 @@ class Apps:
     def _artifact(self, code, *, prefix=""):
         """Durably retain immutable module bytes under their content hash."""
         digest = sha256(code).hexdigest()
-        directory = self.directory / "app-functions"
+        directory = self.directory / MODULE_DIRECTORY
         directory.mkdir(exist_ok=True)
         path = directory / f"{prefix}{digest}.py"
         if not path.exists() or path.read_bytes() != code:
@@ -507,14 +499,13 @@ class Apps:
                 os.fsync(descriptor)
             finally:
                 os.close(descriptor)
-        return path.resolve(), digest
 
     def _source(self, function):
         """Read the declared source at its content hash."""
         digest = function["sha256"]
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise ValueError("Python functions require a SHA-256 content hash")
-        source = self.directory / "app-functions" / f"{digest}.py"
+        source = self.directory / MODULE_DIRECTORY / f"{digest}.py"
         if source.exists():
             code = source.read_bytes()
             if sha256(code).hexdigest() != digest:
@@ -569,7 +560,7 @@ class Apps:
                     excluded = {
                         str(subject)
                         for subject in graph.data_graph(
-                            f"derived:{selection.exclude_app}"
+                            _source_id(selection.exclude_app)
                         ).subjects(ACQUIRIUM_SOURCE_ID, None)
                     }
                 for values in result.get("rows", []):
@@ -621,11 +612,12 @@ class Apps:
                     port: output_reference(name, group, port)
                     for port in sorted(app.outputs)
                 }
-                function = _bind_parameters(declaration["function"], group_parameters, name, group)
+                # Refuse a group missing a parameter the function names.
+                _bind_parameters(declaration["function"], group_parameters, name, group)
                 operators.append({
                     "id": _operator_id(name, group),
                     "inputs": inputs, "outputs": outputs, "as_of": as_of,
-                    "function": function, "parameters": group_parameters,
+                    "parameters": group_parameters, "annotations": None,
                 })
                 ports.extend((name, group, port, reference, app.outputs[port])
                              for port, reference in outputs.items())
@@ -844,15 +836,13 @@ class Apps:
             })
         for operator in operators:
             name = replacements.app_of(operator["id"])
-            parameters = dict(operator["parameters"])
-            key = parameters["group"][0]
-            annotations = parameters.pop("__acquirium", None)
+            key = operator["parameters"]["group"][0]
             outputs = operator["outputs"]
-            if operator["function"]["kind"] == "integral":
+            if declarations[name]["function"]["kind"] == "integral":
                 outputs = {**outputs, _RATE_PORT: output_reference(name, key, _RATE_PORT)}
             plan["instances"].append({
-                "template": name, "key": key, "parameters": parameters,
-                "outputs": outputs, "annotations": annotations,
+                "template": name, "key": key, "parameters": operator["parameters"],
+                "outputs": outputs, "annotations": operator["annotations"],
             })
             for item in operator["inputs"]:
                 plan["bindings"].append({
@@ -879,7 +869,7 @@ class Apps:
             sources[_source_id(name)] = Graph().parse(data="\n".join(annotation["graph"]), format="nt")
             report[name] = annotation["report"]
         before, after = self.graph.project_app_sources(sources)
-        self.state = {"apps": declarations, "plan": plan, "graph_revision": after}
+        self.state = {"apps": declarations, "plan": plan}
         self.report = report
         self._revision = after if revision == before else -1
         self.error = None
@@ -984,15 +974,14 @@ class Apps:
         with self.lock:
             self._settle()
             definition = self.state["apps"][name]
-            snapshot = self.core.engine.snapshot()
-            plan = snapshot.plan()
+            # Apps alone activates plans, so the settled plan is the engine's.
+            snapshot, plan = self.core.engine.snapshot(), self.state["plan"]
             instances = [row for row in plan["instances"] if row["template"] == name]
             streams = [stream for row in instances for stream in row["outputs"].values()]
-            failures = {}
-            for stream in snapshot.describe(streams):
-                if stream["behind"] is not None:
-                    app, group = stream["instance"]
-                    failures[_operator_id(app, group)] = stream["behind"]
+            failures = {
+                _operator_id(*stream["instance"]): stream["behind"]
+                for stream in self.core.failures(snapshot, streams)
+            }
             report = self.report[name]
             template = next(row for row in plan["templates"] if row["id"] == name)
             spec = template["definition"]
@@ -1024,11 +1013,10 @@ class Apps:
             errors = [item["message"] for item in failures.values() if "message" in item]
             status = "failed" if errors else "blocked" if failures else "active"
             return {
-                "name": name, "definition": definition, "instances": instances,
-                "operators": operators, "status": status,
-                "active_plan": _plan_id(plan), "desired_plan": _plan_id(self.state["plan"]),
+                "name": name, "definition": definition, "operators": operators, "status": status,
+                "active_plan": _plan_id(plan),
                 "error": self.error or "\n".join(dict.fromkeys(errors)) or None,
-                "stale": bool(failures), "failures": failures, "graph_revision": self._revision,
+                "stale": bool(failures), "failures": failures,
                 "matches": report["matches"], "warnings": _warnings(report),
             }
     def list(self):

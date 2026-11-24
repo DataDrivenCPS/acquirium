@@ -3,9 +3,8 @@
 A Python function returns one frame per output port. ``emit`` and ``empty``
 build those frames for a function called once per window, and ``emit_windows``
 for a batch function. A sequential function reads its earlier results with
-``previous_value``, ``previous_outputs`` and ``previous_rows``, and
-``same_period`` says whether a period boundary lies between the previous window
-and this one. ``SCHEMA`` gives the Polars output schema.
+``previous_value`` and ``previous_outputs``, and ``same_period`` says whether
+a period boundary lies between the previous window and this one. ``SCHEMA`` gives the Polars output schema.
 
 Annotate the first parameter with ``pandas.DataFrame`` for Arrow-backed pandas
 or ``polars.DataFrame`` for Polars. Unannotated functions receive Polars.
@@ -154,16 +153,6 @@ def previous_value(context, port, default=None):
     return row["text"] if row["value"] is None else row["value"]
 
 
-def previous_rows(context):
-    """The previous window's input readings, with a UTC datetime ``time`` column."""
-    previous = context.get("previous")
-    rows = previous["rows"] if previous else []
-    if rows is None:
-        raise ValueError("sequential calculations read previous outputs; store any needed input state on a port")
-    schema = {"input": pl.String, "stream": pl.String, **SCHEMA}
-    return _as_library(pl.DataFrame(rows, schema=schema))
-
-
 def same_period(context, width: timedelta, origin: datetime = _EPOCH) -> bool:
     """Whether this and the previous output fall in the same fixed period.
 
@@ -203,118 +192,82 @@ def _datetime(ns, *, boundary=False):
     return _EPOCH + timedelta(microseconds=us)
 
 
-def _input_name(record):
-    # The engine calls each input's name its role.
-    if "role" in record:
-        record["input"] = record.pop("role")
-    return record
-
-
 def _public_parameters(parameters):
-    result = {key: value for key, value in parameters.items() if key != "__acquirium"}
+    """An instance's parameters, with its group key as a tuple."""
+    result = dict(parameters)
     if "group" in result:
         result["group"] = tuple(result["group"])
     return result
 
 
-def _public_context(context):
-    result = dict(context)
-    for old, new in (("window_ns", "output_time"),
-                     ("window_start_ns", "window_start"),
-                     ("window_end_ns", "window_end")):
-        if old in result:
-            result[new] = _datetime(result.pop(old), boundary=new != "output_time")
-    if "inputs" in result:
-        result["inputs"] = [_public_input(item) for item in result["inputs"]]
-    if "windows" in result:
-        result["windows"] = [_public_context(window) for window in result["windows"]]
-    if "parameters" in result:
-        result["parameters"] = _public_parameters(result["parameters"])
-    if "operator" in result:
-        operator = dict(result["operator"])
-        window = dict(operator["window"])
-        for name in list(window):
-            if name.endswith("_ns"):
-                value = window.pop(name)
-                if value % 1000:
-                    raise ValueError("soft sensor windows must have microsecond precision")
-                window[name[:-3]] = (_datetime(value) if name == "origin_ns"
-                                    else timedelta(microseconds=value // 1000))
-        operator["window"] = window
-        operator["inputs"] = [_public_input(item) for item in operator["inputs"]]
-        if "parameters" in operator:
-            operator["parameters"] = _public_parameters(operator["parameters"])
-        if "as_of" in operator:
-            if any(spec["max_age_ns"] % 1000 for spec in operator["as_of"].values()):
-                raise ValueError("soft sensor as-of ages must have microsecond precision")
-            operator["as_of"] = {
-                role: timedelta(microseconds=spec["max_age_ns"] // 1000)
-                for role, spec in operator["as_of"].items()
-            }
-        result["operator"] = operator
+def _public_window(window):
+    """A window spec, with datetimes and timedeltas for its nanosecond fields."""
+    result = {}
+    for name, value in window.items():
+        if not name.endswith("_ns"):
+            result[name] = value
+            continue
+        if value % 1000:
+            raise ValueError("soft sensor windows must have microsecond precision")
+        result[name[:-3]] = (_datetime(value) if name == "origin_ns"
+                             else timedelta(microseconds=value // 1000))
     return result
 
 
-def _public_input(item):
-    result = _input_name(dict(item))
-    for name in ("valid_from", "valid_to"):
-        if name in result:
-            ns = result[name]
-            result[name] = None if ns is None or ns == -(2**63) else _datetime(ns, boundary=True)
-    for old, new in (("span_start_ns", "span_start"), ("span_end_ns", "span_end")):
-        if old in result:
-            result[new] = _datetime(result.pop(old), boundary=True)
-    return result
+def _split_own_ports(frame, context):
+    """Split a window's rows into the instance's own earlier outputs, which
+    the worker binds to ports, and its input readings."""
+    own = {bound["stream"]: bound["port"] for bound in context["inputs"] if "port" in bound}
+    mine = pl.col("stream").is_in(list(own))
+    return own, frame.filter(mine), frame.filter(~mine)
 
 
 def _epoch_input(frame, context, window, ports):
     from acquirium.apps import _operator_id, output_reference
 
-    own_ports = {bound["stream"]: bound["port"] for bound in context["inputs"] if "port" in bound}
-    earlier = []
-    if own_ports:
-        state = frame.filter(pl.col("stream").is_in(list(own_ports)))
-        earlier = state.select("stream", "time", "value", "text").iter_rows(named=True)
-        frame = frame.filter(~pl.col("stream").is_in(list(own_ports)))
+    own_ports, state, frame = _split_own_ports(frame, context)
+    earlier = state.select("stream", "time", "value", "text").iter_rows(named=True)
     _check_time_column(frame["time"])
-    inputs, source_contexts = [], {}
+    inputs = []
     for bound in context["inputs"]:
         if "port" in bound:
             continue
-        source_contexts[(bound["role"], bound["stream"])] = bound["context"]
-        reading = {
-            "role": bound["role"], "stream": bound["stream"],
-            "context": json.loads(bound["context"]),
-        }
-        for name, limit in zip(("span_start_ns", "span_end_ns"), bound["reads_ns"]):
+        reading = {"input": bound["role"], "stream": bound["stream"], "context": bound["context"]}
+        for name, limit in zip(("span_start", "span_end"), bound["reads_ns"]):
             if limit is not None:
-                reading[name] = limit
+                reading[name] = _datetime(limit, boundary=True)
         inputs.append(reading)
-    row_contexts = [
-        source_contexts[(role, stream)] for role, stream in frame.select("role", "stream").iter_rows()
-    ]
-    public = frame.with_columns(
-        pl.col("time").cast(_TIME), pl.Series("context", row_contexts, dtype=pl.String)
+    # Each row carries the context of the binding that selected it; of two
+    # bindings of one stream to one input, the later.
+    contexts = pl.DataFrame(
+        [{"role": item["input"], "stream": item["stream"], "context": item["context"]} for item in inputs],
+        schema={"role": pl.String, "stream": pl.String, "context": pl.String},
+    ).unique(subset=["role", "stream"], keep="last", maintain_order=True)
+    public = frame.join(contexts, on=["role", "stream"], how="left", maintain_order="left").with_columns(
+        pl.col("time").cast(_TIME)
     ).rename({"role": "input"})
+    for item in inputs:
+        item["context"] = json.loads(item["context"])
     name, group = context["template"], context["instance"]
     start, end = context["body_ns"]
     if window["kind"] == "rolling":
         start = max(-(2**63), start - window["lookback_ns"])
         end = min(2**63 - 1, end + window.get("lookahead_ns", 0))
-    public_context = _public_context({
-        "window_ns": context["anchor_ns"],
-        "window_start_ns": start,
-        "window_end_ns": end,
+    parameters = _public_parameters(context["parameters"])
+    public_context = {
+        "output_time": _datetime(context["anchor_ns"]),
+        "window_start": _datetime(start, boundary=True),
+        "window_end": _datetime(end, boundary=True),
         "inputs": inputs,
-        "parameters": context["parameters"],
+        "parameters": parameters,
         "operator": {
             "id": _operator_id(name, group),
-            "window": window,
-            "inputs": inputs,
+            "window": _public_window(window),
+            "inputs": [dict(item) for item in inputs],
             "outputs": {port: output_reference(name, group, port) for port in ports},
-            "parameters": context["parameters"],
+            "parameters": dict(parameters),
         },
-    })
+    }
     by_time = {}
     for row in earlier:
         port = own_ports[row.pop("stream")]
@@ -326,7 +279,7 @@ def _epoch_input(frame, context, window, ports):
         by_time.setdefault(time, {})[port] = [row]
     if by_time:
         latest = max(by_time)
-        public_context["previous"] = {"output_time": latest, "outputs": by_time[latest], "rows": None}
+        public_context["previous"] = {"output_time": latest, "outputs": by_time[latest]}
     return public, public_context
 
 
@@ -380,18 +333,20 @@ def _epoch_batch_function(function, window, ports, replaced):
             key: pl.Int64 for key in ("anchor", "reads_start", "reads_end")
         })
         frame = frame.with_columns(pl.col("anchor").cast(pl.Int64))
+        # Split rows and bindings by window once, not once per window.
+        window_rows = frame.partition_by("instance", "anchor", as_dict=True, include_key=False)
+        window_inputs = inputs.partition_by("instance", "anchor", as_dict=True)
+        no_rows, no_inputs = frame.drop("instance", "anchor").clear(), inputs.clear()
         result = {port: [] for port in ports}
         token = _FRAME_LIBRARY.set(library)
         try:
             for (instance,), group in windows.group_by("instance", maintain_order=True):
-                rows = frame.filter(pl.col("instance") == instance).drop("instance")
-                bindings = inputs.filter(pl.col("instance") == instance)
                 chunks, public_windows = [], []
                 for spec in group.iter_rows(named=True):
                     anchor = spec["anchor"]
-                    bound = bindings.filter(pl.col("anchor") == anchor)
+                    bound = window_inputs.get((instance, anchor), no_inputs)
                     view, window_context = _epoch_input(
-                        rows.filter(pl.col("anchor") == anchor).drop("anchor"),
+                        window_rows.get((instance, anchor), no_rows),
                         {
                             "template": context["template"], "instance": instance,
                             "anchor_ns": anchor, "body_ns": (spec["body_start"], spec["body_end"]),
@@ -429,12 +384,10 @@ def _builtin_function(spec, ports):
     def calculate(frame, context):
         options = _bind_parameters(spec, context["parameters"], context["template"], context["instance"])
         kind, port, anchor = options["kind"], options["port"], context["anchor_ns"]
-        own = {item["stream"]: item["port"] for item in context["inputs"] if "port" in item}
+        own, state, rows = _split_own_ports(frame, context)
         saved = {own[row["stream"]]: row for row in
-                 frame.filter(pl.col("stream").is_in(list(own))).with_columns(
-                     pl.col("time").cast(pl.Int64)
-                 ).iter_rows(named=True)}
-        rows = frame.filter(~pl.col("stream").is_in(list(own))).drop_nulls("value")
+                 state.with_columns(pl.col("time").cast(pl.Int64)).iter_rows(named=True)}
+        rows = rows.drop_nulls("value")
         values = rows["value"]
         reading = {}
         reset = options.get("reset")
@@ -492,7 +445,6 @@ __all__ = [
     "emit_windows",
     "empty",
     "previous_outputs",
-    "previous_rows",
     "previous_value",
     "same_period",
 ]

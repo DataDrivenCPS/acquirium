@@ -80,8 +80,7 @@ grouping by stream gives `(stream_reference_uri,)`;
 because a selection currently groups by one column. JSON deployment responses
 represent the tuple as an array. The keys in the selection's `parameters`
 mapping remain group ID strings. The name `group` is reserved and cannot be
-configured to a different value. The internal name `__acquirium` is reserved
-and is omitted from function context.
+configured to a different value.
 
 ## Outputs
 
@@ -434,7 +433,7 @@ Their last successful values remain queryable. Other groups and apps continue
 updating. `inspect_app(name)["app"]` includes:
 
 - `status`: `active`, `failed` for an evaluation error, or `blocked` for a failed
-  upstream operator. `pending` means the desired plan has not activated.
+  upstream operator.
 - `stale`: whether any operator in the app is failed or blocked.
 - `failures` maps instance IDs to the epoch their output reflects and the
   reason they are behind. The entry includes the evaluation message or the

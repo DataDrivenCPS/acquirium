@@ -7,6 +7,7 @@ no stream registry, SQL connections, revision ledger, or computation scheduler.
 from __future__ import annotations
 
 from datetime import datetime
+from itertools import islice
 import logging
 from pathlib import Path
 from threading import Condition, Event, Thread
@@ -194,7 +195,16 @@ class Core:
                 "_row", "ref_uri", "ts", "operation", "value", "value_kind"
             )),
         ]).sort("_row").drop("_row")
-        return self._write(source, request_id, rows, replace)
+        # Keep the last surviving operation at each stream and time.
+        # A row with neither a number nor text deletes the key.
+        rows = (
+            rows.unique(subset=["ref_uri", "ts"], keep="last")
+            .sort(["ref_uri", "ts"])
+            .select(pl.col("ref_uri").alias("stream"), pl.col("ts").alias("time"), "number", "text")
+            .to_arrow()
+        )
+        deletes = [(stream, None, None) for stream in replace]
+        return self._submit(lambda: self.engine.write(source, request_id, rows, deletes=deletes))
 
     def _submit(self, submit):
         """Keep close from overtaking a running submission."""
@@ -214,26 +224,6 @@ class Core:
         return self._submit(lambda: self.engine.activate(request_id, plan))
 
 
-    def _write(self, source, request_id, frame, replace):
-        # Keep the last surviving operation at each stream and time.
-        # A row with neither a number nor text deletes the key.
-        rows = (
-            frame.unique(subset=["ref_uri", "ts"], keep="last")
-            .sort(["ref_uri", "ts"])
-            .select(
-                pl.col("ref_uri").alias("stream"),
-                pl.col("ts").alias("time"),
-                "number",
-                "text",
-            )
-            .to_arrow()
-        )
-        return self._submit(
-            lambda: self.engine.write(
-                source, request_id, rows, deletes=[(stream, None, None) for stream in replace]
-            )
-        )
-
     def clear(self, source: str, request_id: str, streams):
         """Delete every reading of ``streams`` in one request."""
         deletes = [(stream, None, None) for stream in sorted(set(streams))]
@@ -245,10 +235,22 @@ class Core:
         return self.engine.snapshot(after=receipt, timeout=timeout)
 
     def wait_for(self, sequence: int, timeout: float = 30):
+        """Wait until request ``sequence`` is published. Sequence 0 names the
+        empty store, which epoch 0 already holds."""
+        if sequence == 0:
+            return self.engine.snapshot()
         return self.wait(Receipt(sequence), timeout=timeout)
 
     def epochs_of(self, sequences):
-        return self.engine.epochs_of([Receipt(sequence) for sequence in sequences])
+        """The epoch that published each sequence; 0 for sequence 0."""
+        sequences = list(sequences)
+        requests = [sequence for sequence in sequences if sequence]
+        epochs = iter(self.engine.epochs_of([Receipt(sequence) for sequence in requests]))
+        return [next(epochs) if sequence else 0 for sequence in sequences]
+
+    def failures(self, snapshot, streams=None):
+        """The described streams whose maintenance is behind at ``snapshot``."""
+        return [item for item in snapshot.describe(streams) if item["behind"] is not None]
 
     def plan_at(self, epoch=None):
         return self.engine.snapshot(epoch).plan()
@@ -300,7 +302,7 @@ class Core:
                 yield rows
                 count += rows.num_rows
                 if rows.num_rows:
-                    last = rows["time"].cast(pa.int64())[-1].as_py()
+                    last = rows["time"][-1].value
             if limit is not None and count == limit and mode != "coalesce":
                 if newest:
                     yield from read(lo, last, None)
@@ -348,13 +350,6 @@ class Core:
             )
         return result
 
-    def versions(self, *, after=None, streams=None):
-        """Return the pinned feed frontier and a lazy Arrow reader."""
-        snapshot = self.engine.snapshot()
-        return snapshot.epoch, pa.RecordBatchReader.from_stream(
-            snapshot.versions(streams, after=after)
-        )
-
     def changes(self, *, epoch=0, ordinal=0, limit=1000):
         """Page signed changes derived from the engine's version rows."""
         if any(type(value) is not int or not 0 <= value < 2**64 for value in (epoch, ordinal)):
@@ -369,45 +364,47 @@ class Core:
             raise Refused(f"cursor epoch {epoch} is before retention epoch {retention}")
         if retention and epoch == retention and ordinal != 2**64 - 1:
             raise Refused(f"change ordinals at retention epoch {retention} are unavailable")
-        cursor = {"epoch": epoch, "ordinal": ordinal}
-        page = []
-        complete = frontier
-        first = max(1, retention + 1, epoch)
+        changes = self._changes_after(epoch, ordinal, max(1, retention + 1, epoch), frontier)
+        try:
+            page = list(islice(changes, limit + 1))
+        finally:
+            changes.close()
+        # One change past the page tells where the complete epochs end.
+        complete = frontier if len(page) <= limit else page.pop()["epoch"] - 1
+        last = page[-1] if page else {"epoch": epoch, "ordinal": ordinal}
+        return {
+            "changes": page, "cursor": {"epoch": last["epoch"], "ordinal": last["ordinal"]},
+            "published_epoch": frontier, "complete_through": complete, "has_more": complete != frontier,
+        }
+
+    def _changes_after(self, epoch, ordinal, first, frontier):
+        """Each epoch's signed changes from ``first`` through ``frontier``,
+        numbered within their epoch, after the cursor ``(epoch, ordinal)``."""
         for through in range(first, frontier + 1):
             snapshot = self.engine.snapshot(through)
-            with pa.RecordBatchReader.from_stream(snapshot.versions(after=through - 1)) as reader:
-                position = -1
+            streams = sorted(snapshot.changed_since(through - 1))
+            if not streams:
+                continue
+            position = -1
+            with pa.RecordBatchReader.from_stream(snapshot.versions(streams, after=through - 1)) as reader:
                 for batch in reader:
-                    times = batch["time"].cast(pa.int64())
-                    for stream, time, number, text, since, until in zip(
-                        batch["stream"], times, batch["number"], batch["text"], batch["since"], batch["until"]
-                    ):
-                        added = since.as_py() == through
-                        if not added and until.as_py() != through:
+                    columns = [batch[name].to_pylist() for name in ("stream", "number", "text", "since", "until")]
+                    times = batch["time"].cast(pa.int64()).to_pylist()
+                    for (stream, number, text, since, until), time in zip(zip(*columns), times):
+                        added = since == through
+                        if not added and until != through:
                             continue
                         position += 1
                         if through == epoch and position <= ordinal:
                             continue
-                        if len(page) == limit:
-                            complete = through - 1
-                            break
-                        cursor = {"epoch": through, "ordinal": position}
-                        page.append({
-                            **cursor, "weight": 1 if added else -1,
+                        yield {
+                            "epoch": through, "ordinal": position, "weight": 1 if added else -1,
                             "row": {
-                                "key": {"stream": stream.as_py(), "time": time.as_py()},
-                                "data": {"value": number.as_py() if number.is_valid else text.as_py()},
-                                "revision": since.as_py(),
+                                "key": {"stream": stream, "time": time},
+                                "data": {"value": text if number is None else number},
+                                "revision": since,
                             },
-                        })
-                    if complete != frontier:
-                        break
-            if complete != frontier:
-                break
-        return {
-            "changes": page, "cursor": cursor, "published_epoch": frontier,
-            "complete_through": complete, "has_more": complete != frontier,
-        }
+                        }
 
     def close(self, *, drain=True, timeout: float | None = None) -> bool:
         """Stop processing requests, after any running submissions finish."""

@@ -14,6 +14,16 @@ change in any release.
 - Upgrades of experiment ledgers from earlier releases. The ledger schema is
   now a single baseline migration, and an older ledger is refused at startup
   with a message to use a fresh data directory.
+- **Breaking:** `acquirium.functions.previous_rows` and
+  `context["previous"]["rows"]`. Escapement does not keep a window's input
+  rows; a sequential calculation reads its earlier results with
+  `previous_outputs` or `previous_value`, and stores any input state it
+  needs on an output port.
+- **Breaking:** the `python_pool_size` server setting and
+  `ACQUIRIUM_PYTHON_POOL_SIZE`. `engine_workers` sets the Python worker count.
+- **Breaking:** the `instances`, `desired_plan` and `graph_revision` fields of
+  `inspect_app`. `operators` describes each instance, and `active_plan` is the
+  plan the app runs under.
 
 ### Fixed
 - `retry_engine()` after a failed calculation never reached a corrected
@@ -113,8 +123,7 @@ change in any release.
   `inputs={"raw": selection}`, or to a list of selections that feed one input.
   `Selection` no longer takes `role=`, and `Selection.from_query` takes
   `measurement=` (was `alias=`). The function's frame carries the name in an
-  `input` column (was `role`), as do `context["previous"]["rows"]` and
-  `previous_rows`. Saved app declarations load unchanged.
+  `input` column (was `role`).
 - `examples/transformation` is a sine-wave polling driver and a Python
   threshold app, deployed from Python or from `[[apps]]` in the config. The
   first-app tutorial builds it step by step.

@@ -28,8 +28,7 @@ For the config keys that select them, see the [server configuration reference](.
 One server process owns:
 
 - **The Escapement engine**, which stores raw and derived readings and runs app
-  calculations, up to `engine_workers` operators at once. Python functions run
-  in a pool of at most `python_pool_size` worker processes. See
+  calculations in a pool of `engine_workers` Python worker processes. See
   [the core architecture](escapement-core.md).
 - **The graph store**: Oxigraph holding source-owned RDF, the ontologies and a
   published inferred view. Queries can wait for a fresh view. See

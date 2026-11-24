@@ -26,6 +26,8 @@ SOURCE_GRAPH_PREFIX = "urn:acquirium:graph:data:source:"
 # ordinary source graph by shape, so it needs no registration; pruned by the
 # store when the nodes it describes disappear from the other graphs.
 METADATA_SOURCE_ID = "metadata"
+# Each app owns the source "derived:<app>", which holds its output metadata.
+DERIVED_SOURCE_PREFIX = "derived:"
 
 
 def source_graph_uri(source_id: str, *, plant_graph_uri: str = PLANT_GRAPH_URI) -> URIRef:

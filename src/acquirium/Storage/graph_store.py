@@ -29,7 +29,9 @@ from acquirium._ontologies import (
     rename_ontology_iri,
 )
 from acquirium.Server.config import OntologySource
-from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI, METADATA_SOURCE_ID, SOURCE_GRAPH_PREFIX
+from acquirium.Storage.graph_registry import (
+    ACQUIRIUM_GRAPH_URI, DERIVED_SOURCE_PREFIX, METADATA_SOURCE_ID, SOURCE_GRAPH_PREFIX,
+)
 from acquirium.Storage.graph_registry import source_graph_uri as _compute_source_graph_uri
 
 _logger = logging.getLogger("acquirium.graph_store")
@@ -122,6 +124,10 @@ def prune_orphan_metadata(dataset: Dataset, metadata_graph_uri: URIRef) -> None:
 # ``inferred + dependencies`` cache instead of leaving it in the query dataset.
 _DEPENDENCY_QUERY_GRAPH = URIRef(str(ACQUIRIUM_NS.ImportsUnionGraph))
 _INFERRED_DATA_GRAPH = URIRef(str(ACQUIRIUM_NS.InferredDataGraph))
+# A query's default graph: inferred deployment data, then the ontology closure.
+_QUERY_DEFAULT_GRAPHS = (
+    NamedNode(str(_INFERRED_DATA_GRAPH)), NamedNode(str(_DEPENDENCY_QUERY_GRAPH)),
+)
 
 
 def _replace_named_graph(dataset: Dataset, graph: Graph, graph_uri: URIRef) -> None:
@@ -163,6 +169,20 @@ def _query_result(result):
     raise ValueError(f"Unexpected query result: {result!r}")
 
 
+def _stored_triples(graph):
+    # Oxigraph normalizes simple literals to xsd:string.
+    return {
+        (s, p, Literal(str(o), datatype=XSD.string)
+         if isinstance(o, Literal) and not (o.datatype or o.language) else o)
+        for s, p, o in graph
+    }
+
+
+def _same_triples(a, b):
+    """Whether two graphs hold the same triples once stored in Oxigraph."""
+    return _stored_triples(a) == _stored_triples(b)
+
+
 class _SelectionSnapshot:
     """A private query view with replaceable app-owned source graphs."""
 
@@ -178,7 +198,7 @@ class _SelectionSnapshot:
         return self._sources.get(source_id, Graph())
 
     def stage(self, changes):
-        changed = any(set(graph) != set(self.data_graph(source)) for source, graph in changes.items())
+        changed = any(not _same_triples(graph, self.data_graph(source)) for source, graph in changes.items())
         self._sources.update(changes)
         if changed:
             self._inferred = False
@@ -198,7 +218,7 @@ class _SelectionSnapshot:
             self._inferred = True
         result = self._dataset.store._inner.query(
             query,
-            default_graph=[NamedNode(str(_INFERRED_DATA_GRAPH)), NamedNode(str(_DEPENDENCY_QUERY_GRAPH))],
+            default_graph=list(_QUERY_DEFAULT_GRAPHS),
         )
         return _query_result(result)
 
@@ -426,7 +446,7 @@ class OxigraphGraphStore:
 
     def app_sources(self):
         """Source IDs of the published app output graphs."""
-        prefix = str(self.source_graph_uri("derived:"))
+        prefix = str(self.source_graph_uri(DERIVED_SOURCE_PREFIX))
         with self._lock:
             return {
                 unquote(str(graph.identifier).removeprefix(SOURCE_GRAPH_PREFIX))
@@ -453,14 +473,7 @@ class OxigraphGraphStore:
             for source in sorted(self.app_sources() | sources.keys()):
                 old = self.data_graph(source)
                 new = sources.get(source, Graph())
-                # Oxigraph normalizes simple literals to xsd:string.
-                def triples(graph):
-                    return {
-                        (s, p, Literal(str(o), datatype=XSD.string)
-                         if isinstance(o, Literal) and not (o.datatype or o.language) else o)
-                        for s, p, o in graph
-                    }
-                if triples(old) != triples(new):
+                if not _same_triples(old, new):
                     _replace_named_graph(self.source_dataset, new, self.source_graph_uri(source))
                     changed = True
             if changed:
@@ -887,12 +900,7 @@ class OxigraphGraphStore:
     ) -> list[NamedNode]:
         """Select current named graphs for a query's default graph."""
         self._ensure_query_cache_current(wait_for_fresh=wait_for_fresh)
-        if include_dependencies:
-            return [
-                NamedNode(str(self.inferred_data_graph_uri)),
-                NamedNode(str(self.dependency_query_graph_uri)),
-            ]
-        return [NamedNode(str(self.inferred_data_graph_uri))]
+        return list(_QUERY_DEFAULT_GRAPHS if include_dependencies else _QUERY_DEFAULT_GRAPHS[:1])
 
     def sparql_query(
         self,

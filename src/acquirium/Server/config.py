@@ -88,7 +88,6 @@ _SERVER_ENV_MAP: dict[str, str] = {
     "engine_schema": "ACQUIRIUM_ENGINE_SCHEMA",
     "experiments_path": "ACQUIRIUM_EXPERIMENTS_PATH",
     "engine_workers": "ACQUIRIUM_ENGINE_WORKERS",
-    "python_pool_size": "ACQUIRIUM_PYTHON_POOL_SIZE",
     "epoch_requests": "ACQUIRIUM_EPOCH_REQUESTS",
     "max_pending_requests": "ACQUIRIUM_MAX_PENDING_REQUESTS",
     "history_epochs": "ACQUIRIUM_HISTORY_EPOCHS",

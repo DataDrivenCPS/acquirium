@@ -24,7 +24,6 @@ max_pending_requests = 100000
 | `engine_schema` | URL `search_path` when provided, otherwise `acquirium_epoch` | PostgreSQL schema for Escapement Next |
 | `experiments_path` | `engine_path` if it is a `postgres://` URL, else `data_dir/experiments.duckdb` | Experiment ledger: a DuckDB file or a `postgres://` URL. Holds Studies, runs, observations, and artifact bytes; their samples are Escapement streams |
 | `engine_workers` | 2 | Python workers available to synchronous app calculations |
-| `python_pool_size` | `engine_workers` | Optional override for the synchronous worker count |
 | `epoch_requests` | 128 | Maximum accepted requests processed per epoch |
 | `max_pending_requests` | 100000 | Maximum accepted requests awaiting publication. A full queue returns HTTP 503 for new requests |
 | `history_epochs` | unlimited | Optional number of recent epochs to retain. Older snapshots and feed cursors can expire, including epochs referenced by experiments |
@@ -41,7 +40,7 @@ and exact-only resolution by default. Its first caller owns the server lifetime.
 
 Environment overrides include `ACQUIRIUM_DATA_DIR`, `ACQUIRIUM_ENGINE_PATH`, `ACQUIRIUM_ENGINE_SCHEMA`,
 `ACQUIRIUM_EXPERIMENTS_PATH`,
-`ACQUIRIUM_ENGINE_WORKERS`, `ACQUIRIUM_PYTHON_POOL_SIZE`,
+`ACQUIRIUM_ENGINE_WORKERS`,
 `ACQUIRIUM_EPOCH_REQUESTS`,
 `ACQUIRIUM_MAX_PENDING_REQUESTS`, `ACQUIRIUM_HISTORY_EPOCHS`, `ACQUIRIUM_DRAIN_TIMEOUT`, `ACQUIRIUM_GRAPH_PATH`,
 `ACQUIRIUM_EXACT_ONLY`, `ACQUIRIUM_EMBEDDING_MODEL`, `ACQUIRIUM_RECREATE`, and

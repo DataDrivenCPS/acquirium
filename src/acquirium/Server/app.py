@@ -858,9 +858,7 @@ def engine_snapshot():
     # plan_current: the plan reflects the metadata graph as of this request.
     snapshot, current = app.state.manager.engine_snapshot()
     core = app.state.manager.core
-    failures = {
-        item["stream"]: item["behind"] for item in snapshot.describe() if item["behind"] is not None
-    }
+    failures = {item["stream"]: item["behind"] for item in core.failures(snapshot)}
     return {
         "epoch": snapshot.epoch, "applied": core.applied_at(snapshot.epoch),
         "plan": snapshot.plan(), "failures": failures, "plan_current": current,

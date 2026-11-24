@@ -17,7 +17,7 @@ from acquirium.Storage.graph_store import OxigraphGraphStore
 import sys
 
 from acquirium.core import Core
-from acquirium.apps import Apps
+from acquirium.apps import MODULE_DIRECTORY, Apps
 from acquirium.Storage.graph_store import select_values
 from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
 from acquirium.Storage.ledger import is_postgres, open_ledger
@@ -94,7 +94,6 @@ class Manager:
         engine_schema: str | None = None,
         experiments_path: str | Path | None = None,
         engine_workers: int = 2,
-        python_pool_size: int | None = None,
         epoch_requests: int = 128,
         max_pending_requests: int = 100_000,
         history_epochs: int | None = None,
@@ -146,7 +145,7 @@ class Manager:
         self._stream_refs = {}
         self._point_refs = {}
         try:
-            artifacts = base / "app-functions"
+            artifacts = base / MODULE_DIRECTORY
             artifacts.mkdir(exist_ok=True)
             target = engine_path or base / "escapement-epoch.duckdb"
             if is_postgres(target) and engine_schema is None:
@@ -156,7 +155,7 @@ class Manager:
             self.core = Core(
                 target,
                 schema=engine_schema,
-                workers=engine_workers if python_pool_size is None else python_pool_size,
+                workers=engine_workers,
                 epoch_requests=epoch_requests,
                 max_pending=max_pending_requests,
                 history_epochs=history_epochs,
@@ -264,10 +263,6 @@ class Manager:
             engine_schema=os.getenv("ACQUIRIUM_ENGINE_SCHEMA"),
             experiments_path=os.getenv("ACQUIRIUM_EXPERIMENTS_PATH"),
             engine_workers=int(os.getenv("ACQUIRIUM_ENGINE_WORKERS", "2")),
-            python_pool_size=(
-                int(os.environ["ACQUIRIUM_PYTHON_POOL_SIZE"])
-                if "ACQUIRIUM_PYTHON_POOL_SIZE" in os.environ else None
-            ),
             epoch_requests=int(os.getenv("ACQUIRIUM_EPOCH_REQUESTS", "128")),
             max_pending_requests=int(os.getenv("ACQUIRIUM_MAX_PENDING_REQUESTS", "100000")),
             history_epochs=(int(os.environ["ACQUIRIUM_HISTORY_EPOCHS"])

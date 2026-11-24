@@ -87,7 +87,9 @@ def test_epoch_arrow_transport_repairs_and_follows_versions(epoch_core, tmp_path
     latest = core.wait(receipt)
     assert core.ingest("gateway", "correction", correction[[2, 0]]) == receipt
     assert next(core.batches("urn:derived"))["value"].to_pylist() == [30]
-    frontier, reader = core.versions(after=old.epoch, streams=["urn:derived"])
+    pinned = core.engine.snapshot()
+    frontier = pinned.epoch
+    reader = pa.RecordBatchReader.from_stream(pinned.versions(["urn:derived"], after=old.epoch))
     core.wait(core.clear("gateway", "clear", ["urn:sensor"]))
     assert next(core.batches("urn:derived")).num_rows == 0
     assert frontier == latest.epoch
@@ -117,7 +119,7 @@ def test_epoch_store_reopens_with_receipts_and_enforces_retention(tmp_path):
         with pytest.raises(Refused, match="retention"):
             core.batches("urn:sensor", epoch=before)
         with pytest.raises(Refused, match="retention"):
-            core.versions(after=before)
+            core.engine.snapshot().versions(after=before)
     finally:
         core.close()
 

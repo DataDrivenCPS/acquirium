@@ -305,7 +305,7 @@ def test_native_warm_worker_failure_is_isolated_and_retryable(tmp_path, monkeypa
     )
     config = tmp_path / "acquirium.toml"
     config.write_text(
-        '[server]\ndata_dir = "data"\nengine_workers = 2\npython_pool_size = 1\n'
+        '[server]\ndata_dir = "data"\nengine_workers = 1\n'
     )
     client = aq.init(config, exact_only=True, timeout=180)
     try:

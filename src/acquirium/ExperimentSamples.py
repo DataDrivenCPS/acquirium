@@ -40,8 +40,7 @@ class EscapementSamples:
 
     def wait(self, sequence: int) -> None:
         """Wait until the request at ``sequence`` is published."""
-        if sequence:
-            self.core.wait_for(sequence, timeout=self.timeout)
+        self.core.wait_for(sequence, timeout=self.timeout)
 
     def epochs(self, sequences) -> dict[int, int]:
         """The epoch that published each sequence, waiting for any not yet."""
@@ -49,11 +48,7 @@ class EscapementSamples:
         if not sequences:
             return {}
         self.wait(sequences[-1])
-        requests = [sequence for sequence in sequences if sequence != 0]
-        result = dict(zip(requests, self.core.epochs_of(requests)))
-        if sequences[0] == 0:
-            result[0] = 0
-        return result
+        return dict(zip(sequences, self.core.epochs_of(sequences)))
 
     def count(self, refs, *, after=None) -> int:
         """Count samples once the named recording has published."""

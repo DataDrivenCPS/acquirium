@@ -33,27 +33,21 @@ def test_batch_outputs_keep_dates_and_values():
 
 
 def test_context_timestamps_and_durations_are_datetimes_and_timedeltas():
-    native = {
-        "window_ns": NS, "window_start_ns": NS - 1000, "window_end_ns": NS + 1,
-        "parameters": {"group": ["urn:tank"]},
-        "inputs": [{"span_start_ns": NS, "span_end_ns": NS + 1}],
-        "operator": {
-            "window": {"kind": "rolling", "lookback_ns": 1000, "step_ns": 1000,
-                       "lookahead_ns": 0, "origin_ns": 0},
-            "inputs": [{"valid_from": -(2**63), "valid_to": None}],
-            "as_of": {"gain": {"max_age_ns": 1000}},
-        },
-    }
-    context = f._public_context(native)
+    native = native_context(NS)
+    native["inputs"] = [dict(native["inputs"][0], reads_ns=(NS, NS + 1))]
+    window = {"kind": "rolling", "lookback_ns": 1000, "step_ns": 1000, "lookahead_ns": 0, "origin_ns": 0}
+    _, context = f._epoch_input(native_frame(), native, window, ["out"])
     assert context["output_time"] == AT
     assert context["window_start"] == AT - timedelta(microseconds=1)
     assert context["window_end"] == AT + timedelta(microseconds=1)
-    assert context["inputs"] == [{"span_start": AT, "span_end": AT + timedelta(microseconds=1)}]
+    assert context["inputs"] == [{
+        "input": "raw", "stream": "urn:raw", "context": {},
+        "span_start": AT, "span_end": AT + timedelta(microseconds=1),
+    }]
+    assert context["operator"]["inputs"] == context["inputs"]
     assert context["parameters"]["group"] == ("urn:tank",)
     assert context["operator"]["window"]["lookback"] == timedelta(microseconds=1)
-    assert context["operator"]["as_of"] == {"gain": timedelta(microseconds=1)}
-    assert context["operator"]["inputs"] == [{"valid_from": None, "valid_to": None}]
-    assert native["window_end_ns"] == NS + 1
+    assert context["operator"]["window"]["origin"] == datetime(1970, 1, 1, tzinfo=timezone.utc)
     assert native["parameters"]["group"] == ["urn:tank"]
 
 
@@ -62,18 +56,14 @@ def test_sequential_helpers_use_datetime_rows_and_periods():
         "output_time": AT + timedelta(microseconds=1),
         "previous": {
             "output_time": AT,
-            "rows": None,
             "outputs": {"mean": [{"time": AT, "value": 12., "text": None}]},
         },
     }
-    with pytest.raises(ValueError, match="previous outputs"):
-        f.previous_rows(context)
     assert f.previous_outputs(context, "mean")["time"].item() == AT
     assert f.previous_value(context, "mean") == 12
     assert f.same_period(context, timedelta(minutes=1))
     assert not f.same_period(context, timedelta(microseconds=1))
     assert not f.same_period({"output_time": AT}, timedelta(minutes=1))
-    assert f.previous_rows({}).schema["time"] == TIME
     assert f.previous_outputs({}, "mean").schema == f.SCHEMA
 
 
@@ -99,7 +89,7 @@ def test_submicrosecond_values_are_rejected_instead_of_collapsing():
     with pytest.raises(ValueError, match="microsecond precision"):
         run(lambda frame, context: {}, frame=native_frame([NS, NS + 1]))
     with pytest.raises(ValueError, match="microsecond precision"):
-        f._public_context({"window_ns": NS + 1})
+        f._epoch_input(native_frame(), native_context(NS + 1), {"kind": "pointwise"}, ["out"])
     with pytest.raises(ValueError, match="microsecond precision"):
         f.emit_windows(pl.DataFrame({"output_time": pl.Series([NS + 1]).cast(pl.Datetime("ns", "UTC"))}))
 
@@ -285,7 +275,6 @@ def test_pandas_sequential_helpers_keep_arrow_types_and_python_context_dates():
         assert outputs["time"].dtype.pyarrow_dtype == pa.timestamp("us", "UTC")
         assert context["previous"]["output_time"] == AT
         assert f.previous_value(context, "out") == 5.
-        assert isinstance(f.previous_rows({}), pd.DataFrame)
         return {"out": f.emit(context, f.previous_value(context, "out") + frame["value"].sum())}
 
     native = native_context(NS + 1000)

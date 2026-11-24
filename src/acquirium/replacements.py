@@ -16,16 +16,13 @@ def claimed_inputs(declaration):
             if spec.get("replaces") is not None}
 
 
-def annotation(operator, key):
-    """One entry of the replacement metadata on an operator or instance."""
-    if "annotations" in operator:
-        return (operator["annotations"] or {}).get(key, {})
-    return operator.get("parameters", {}).get("__acquirium", {}).get(key, {})
+def annotation(instance, key):
+    """One entry of the replacement metadata on a plan instance."""
+    return (instance.get("annotations") or {}).get(key, {})
 
 
 def _instances(plan):
-    plan = plan or {}
-    return plan.get("instances", plan.get("operators", ()))
+    return (plan or {}).get("instances", ())
 
 
 def input_views(declarations):
@@ -126,7 +123,7 @@ def compile(operators, declarations, *, streams, rebind, previous_plan=None, com
             # Reads report the unit of the stage they resolve to.
             units = {port: resolved[operator["outputs"][port]]["unit"] for port in claimed
                      if resolved[operator["outputs"][port]]["unit"] is not None}
-            operator["parameters"]["__acquirium"] = {"replaces": claimed, **({"units": units} if units else {})}
+            operator["annotations"] = {"replaces": claimed, **({"units": units} if units else {})}
     _follow(operators, views, removed, rebind, {**streams, **resolved})
     return resolved
 
@@ -148,7 +145,7 @@ def _follow(operators, views, removed, rebind, metadata):
     same stream and binds once. Rebound inputs keep their position; the
     caller restores canonical order.
     """
-    plan = {"operators": operators}
+    plan = {"instances": operators}
     refs = {item["stream"] for operator in operators for item in operator["inputs"]}
     targets = {view: resolve(plan, refs, view=view) for view in ("current", "raw")}
     for operator in operators:
