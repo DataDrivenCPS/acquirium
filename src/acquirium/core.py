@@ -7,7 +7,6 @@ no stream registry, SQL connections, revision ledger, or computation scheduler.
 from __future__ import annotations
 
 from datetime import datetime
-from itertools import islice
 import logging
 from pathlib import Path
 from threading import Condition, Event, Thread
@@ -255,16 +254,6 @@ class Core:
     def plan_at(self, epoch=None):
         return self.engine.snapshot(epoch).plan()
 
-    def applied_at(self, epoch):
-        """Last request published through an epoch, including refresh epochs."""
-        while epoch > 0:
-            after = max(0, epoch - 128)
-            for record in reversed(self.engine.epochs(after=after, limit=epoch - after)):
-                if record["epoch"] <= epoch and record["requests"] is not None:
-                    return record["requests"][1]
-            epoch = after
-        return 0
-
     def batches(
         self,
         stream: str,
@@ -334,12 +323,8 @@ class Core:
         """Read the count and time bounds at one epoch."""
         snapshot = self.engine.snapshot() if snapshot is None else snapshot
         streams = list(dict.fromkeys(streams))
-        try:
-            extents = snapshot.extent(streams)
-        except NotFound:
-            known = {item["stream"] for item in snapshot.describe()}
-            extents = snapshot.extent([stream for stream in streams if stream in known])
-        bounds = {row["stream"]: row for row in extents}
+        # A stream never written, or written but empty, has no extent row.
+        bounds = {row["stream"]: row for row in snapshot.extent(streams)}
         result = {}
         for stream in streams:
             row = bounds.get(stream, {})
@@ -364,11 +349,26 @@ class Core:
             raise Refused(f"cursor epoch {epoch} is before retention epoch {retention}")
         if retention and epoch == retention and ordinal != 2**64 - 1:
             raise Refused(f"change ordinals at retention epoch {retention} are unavailable")
-        changes = self._changes_after(epoch, ordinal, max(1, retention + 1, epoch), frontier)
-        try:
-            page = list(islice(changes, limit + 1))
-        finally:
-            changes.close()
+        first = max(1, retention + 1, epoch)
+        # Resuming inside the cursor's epoch skips the changes it has seen.
+        skip = min(ordinal + 1, 2**64 - 1) if first == epoch else 0
+        feed = self.engine.snapshot(frontier).changes(first - 1, skip=skip, limit=limit + 1)
+        with pa.RecordBatchReader.from_stream(feed) as reader:
+            table = reader.read_all()
+        columns = {name: table[name].to_pylist() for name in
+                   ("stream", "number", "text", "since", "epoch", "ordinal", "weight")}
+        columns["time"] = table["time"].cast(pa.int64()).to_pylist()
+        page = [
+            {
+                "epoch": row["epoch"], "ordinal": row["ordinal"], "weight": row["weight"],
+                "row": {
+                    "key": {"stream": row["stream"], "time": row["time"]},
+                    "data": {"value": row["text"] if row["number"] is None else row["number"]},
+                    "revision": row["since"],
+                },
+            }
+            for row in (dict(zip(columns, values)) for values in zip(*columns.values()))
+        ]
         # One change past the page tells where the complete epochs end.
         complete = frontier if len(page) <= limit else page.pop()["epoch"] - 1
         last = page[-1] if page else {"epoch": epoch, "ordinal": ordinal}
@@ -376,35 +376,6 @@ class Core:
             "changes": page, "cursor": {"epoch": last["epoch"], "ordinal": last["ordinal"]},
             "published_epoch": frontier, "complete_through": complete, "has_more": complete != frontier,
         }
-
-    def _changes_after(self, epoch, ordinal, first, frontier):
-        """Each epoch's signed changes from ``first`` through ``frontier``,
-        numbered within their epoch, after the cursor ``(epoch, ordinal)``."""
-        for through in range(first, frontier + 1):
-            snapshot = self.engine.snapshot(through)
-            streams = sorted(snapshot.changed_since(through - 1))
-            if not streams:
-                continue
-            position = -1
-            with pa.RecordBatchReader.from_stream(snapshot.versions(streams, after=through - 1)) as reader:
-                for batch in reader:
-                    columns = [batch[name].to_pylist() for name in ("stream", "number", "text", "since", "until")]
-                    times = batch["time"].cast(pa.int64()).to_pylist()
-                    for (stream, number, text, since, until), time in zip(zip(*columns), times):
-                        added = since == through
-                        if not added and until != through:
-                            continue
-                        position += 1
-                        if through == epoch and position <= ordinal:
-                            continue
-                        yield {
-                            "epoch": through, "ordinal": position, "weight": 1 if added else -1,
-                            "row": {
-                                "key": {"stream": stream, "time": time},
-                                "data": {"value": text if number is None else number},
-                                "revision": since,
-                            },
-                        }
 
     def close(self, *, drain=True, timeout: float | None = None) -> bool:
         """Stop processing requests, after any running submissions finish."""

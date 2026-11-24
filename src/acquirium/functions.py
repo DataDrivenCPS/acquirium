@@ -379,6 +379,8 @@ def _epoch_batch_function(function, window, ports, replaced):
 
 
 def _builtin_function(spec, ports):
+    """Compute cumulative_sum or integral for one window, carrying its
+    previous output."""
     from acquirium.apps import _RATE_PORT, _bind_parameters
 
     def calculate(frame, context):
@@ -403,16 +405,7 @@ def _builtin_function(spec, ports):
             return total["value"]
 
         if len(values):
-            if kind == "mean":
-                if options.get("per_stream"):
-                    values = rows.group_by("stream").agg(pl.col("value").mean())["value"]
-                reading[port] = values.mean()
-            elif kind == "threshold":
-                if len(values) != 1:
-                    raise ValueError("threshold expects at most one number per group")
-                if values[0] > options["above"]:
-                    reading[port] = values[0]
-            elif kind == "cumulative_sum":
+            if kind == "cumulative_sum":
                 reading[port] = carry(saved.get(port, {"time": anchor})["time"]) + values.sum()
             elif kind == "integral":
                 if len(values) != 1:
@@ -426,8 +419,6 @@ def _builtin_function(spec, ports):
                     if options.get("max_gap_ns") is None or elapsed <= options["max_gap_ns"]:
                         amount += (previous["value"] + values[0]) / 2 * elapsed / options["per_ns"]
                     reading[port] = amount
-            else:
-                reading[port] = len(values) if kind == "count" else getattr(values, kind)()
         return {
             output: pl.DataFrame({
                 "time": pl.Series([anchor] if output in reading else [], dtype=pl.Int64).cast(pl.Datetime("ns", "UTC")),
@@ -435,6 +426,48 @@ def _builtin_function(spec, ports):
             })
             for output in ports
         }
+
+    return calculate
+
+
+# Built-in calculations that read only their window run once per batch;
+# cumulative_sum and integral read their previous output, so run per window.
+WINDOW_BUILTINS = frozenset({"mean", "sum", "min", "max", "count", "threshold"})
+
+
+def _builtin_batch_function(spec, ports):
+    """Compute a built-in that reads only its window, for every window in a
+    batch at once. Each window's output is at its anchor; a window without
+    numbers has none."""
+    from acquirium.apps import _bind_parameters
+
+    kind, port = spec["kind"], spec["port"]
+    _ns = pl.Datetime("ns", "UTC")
+
+    def calculate(frame, context):
+        rows = frame.drop_nulls("value").with_columns(pl.col("anchor").cast(pl.Int64))
+        schema = {"time": _ns, "value": pl.Float64, "text": pl.String, "instance": frame.schema["instance"]}
+        results = []
+        for (instance,), group in rows.group_by("instance", maintain_order=True):
+            options = _bind_parameters(
+                spec, context["instances"][instance]["parameters"], context["template"], instance
+            )
+            if kind == "threshold":
+                if (group.group_by("anchor").len()["len"] > 1).any():
+                    raise ValueError("threshold expects at most one number per group")
+                result = group.filter(pl.col("value") > options["above"])
+            else:
+                if kind == "mean" and options.get("per_stream"):
+                    group = group.group_by("anchor", "stream").agg(pl.col("value").mean())
+                value = pl.len() if kind == "count" else getattr(pl.col("value"), kind)()
+                result = group.group_by("anchor").agg(value.alias("value"))
+            results.append(result.select(
+                pl.col("anchor").cast(_ns).alias("time"), pl.col("value").cast(pl.Float64),
+                pl.lit(None, pl.String).alias("text"), pl.lit(instance, schema["instance"]).alias("instance"),
+            ))
+        empty = pl.DataFrame(schema=schema)
+        out = pl.concat(results) if results else empty
+        return {output: out if output == port else empty for output in ports}
 
     return calculate
 

@@ -76,10 +76,7 @@ def pause_publication(core, directory, stream):
 
 def all_readings(core):
     """Every sample in the ledger's Escapement, as (stream, time, value)."""
-    accepted = core.engine.status()["accepted"]
-    if accepted:
-        core.wait_for(accepted)
-    snapshot = core.engine.snapshot()
+    snapshot = core.wait_for(core.engine.status()["accepted"])
     streams = [row["stream"] for row in snapshot.describe()]
     with pa.RecordBatchReader.from_stream(snapshot.read(streams)) as reader:
         return [

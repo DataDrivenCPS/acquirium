@@ -26,6 +26,12 @@ change in any release.
   plan the app runs under.
 
 ### Fixed
+- `inspect_app` and `list_apps` no longer wait up to 30 seconds while a
+  deployment is still publishing; they report the app as `pending`. A server
+  restarting with accepted requests still to publish starts without waiting
+  for them.
+- Deleting experiment runs no longer holds the experiment ledger lock while
+  waiting for their samples to publish.
 - `retry_engine()` after a failed calculation never reached a corrected
   deployment accepted more than `epoch_requests` writes behind the failure.
 - `AcquiriumClient` inserts without a `request_id` failed with

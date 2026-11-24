@@ -133,10 +133,13 @@ def test_experiment_stream_identity_survives_label_collisions_and_resume(tmp_pat
         resumed = reopened.resume(run.run_id)
         assert resumed.observations("flow[p1]").all()[0].dataframe()["value"].to_list() == [5.]
         end = start + timedelta(hours=1)
-        assert reopened.output["flow"].record({("p1",): [(end, 2)]})[("p1",)].ref_uri == keyed_stream.ref_uri
-        assert reopened.output["flow[p1]"].record([(end, 20)]).ref_uri == literal_stream.ref_uri
-        assert keyed_stream.dataframe()["value"].to_list() == [1., 2.]
-        assert literal_stream.dataframe()["value"].to_list() == [10., 20.]
+        # A stream reads once its own recording publishes, so read the later ones.
+        keyed_again = reopened.output["flow"].record({("p1",): [(end, 2)]})[("p1",)]
+        literal_again = reopened.output["flow[p1]"].record([(end, 20)])
+        assert keyed_again.ref_uri == keyed_stream.ref_uri
+        assert literal_again.ref_uri == literal_stream.ref_uri
+        assert keyed_again.dataframe()["value"].to_list() == [1., 2.]
+        assert literal_again.dataframe()["value"].to_list() == [10., 20.]
         # JSON key encoding distinguishes types and delimiter-containing strings.
         refs = []
         for key in (1, 1.0, True, "1", "p1,p2", "p1][p2", "", "日本語"):

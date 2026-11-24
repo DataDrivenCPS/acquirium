@@ -860,7 +860,7 @@ def engine_snapshot():
     core = app.state.manager.core
     failures = {item["stream"]: item["behind"] for item in core.failures(snapshot)}
     return {
-        "epoch": snapshot.epoch, "applied": core.applied_at(snapshot.epoch),
+        "epoch": snapshot.epoch, "applied": snapshot.applied,
         "plan": snapshot.plan(), "failures": failures, "plan_current": current,
     }
 

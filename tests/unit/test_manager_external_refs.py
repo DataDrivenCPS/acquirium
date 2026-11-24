@@ -35,6 +35,7 @@ def _bare_manager(rows):
     manager = Manager.__new__(Manager)
     manager.graph_store = _StubGraphStore(rows)
     manager.core = SimpleNamespace(engine=_StubEngine())
+    manager.apps = SimpleNamespace(plan_at=lambda epoch=None: {"instances": []})
     return manager
 
 

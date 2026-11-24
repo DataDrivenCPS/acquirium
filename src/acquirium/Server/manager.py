@@ -604,7 +604,7 @@ class Manager:
             if len(refs) != 1:
                 raise ValueError(f"point {uri!r} has multiple references; select an explicit ref_uri")
             result[uri] = next(iter(refs))
-        plan = self.core.plan_at(epoch)
+        plan = self.apps.plan_at(epoch)
         resolved = resolve(plan, result.values(), view=view)
         return {uri: resolved[ref] for uri, ref in result.items()}
 
@@ -634,7 +634,7 @@ class Manager:
         views resolve to, and the unit a replacement head reports, if any."""
         from acquirium.replacements import resolve, units
 
-        plan = self.core.plan_at()
+        plan = self.apps.plan_at()
         heads = resolve(plan, uris, view="current")
         bases = resolve(plan, uris, view="raw")
         stage_units = units(plan)

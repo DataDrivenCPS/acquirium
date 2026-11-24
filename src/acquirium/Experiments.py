@@ -856,23 +856,18 @@ class ExperimentStore:
         rows = self._execute(conn, f"SELECT ref_uri FROM experiment_streams WHERE run_id IN ({self._marks(run_ids)})", run_ids).fetchall()
         return [row[0] for row in rows]
 
-    def _last_sample_request(self, conn, run_ids) -> int | None:
-        return self._execute(conn, f"""
-            SELECT max(accepted) FROM experiment_observation_accepted
-            WHERE run_id IN ({self._marks(run_ids)})
-            """, run_ids).fetchone()[0]
-
-    def _delete_runs(self, conn, run_ids, *, sweep=False) -> dict[str, Any]:
+    def _delete_runs(self, conn, run_ids, *, sweep=False) -> tuple[dict[str, Any], list[str]]:
         """Remove runs, their observations, and unshared files in `conn`.
 
-        Returns the counts removed; graph node deletions are queued in the same
-        transaction. With `sweep`, every unreferenced artifact goes too. The
-        runs' stream rows stay: the caller runs `_cleanup_streams` after the
-        commit, which clears their samples in Escapement and then the rows.
+        Returns the counts removed and the streams the runs recorded; graph
+        node deletions are queued in the same transaction. With `sweep`, every
+        unreferenced artifact goes too. The runs' stream rows stay: the caller
+        counts their samples and runs `_cleanup_streams` after the commit,
+        which clears them in Escapement and then the rows.
         """
         run_ids = list(dict.fromkeys(run_ids))
         removed = {"runs": len(run_ids), "observations": 0, "annotations": 0, "samples": 0, "files": 0}
-        keys, digests = [(EXPERIMENT.Run, run_id) for run_id in run_ids], []
+        keys, digests, refs = [(EXPERIMENT.Run, run_id) for run_id in run_ids], [], []
         if run_ids:
             marks = self._marks(run_ids)
             refs = self._owned_refs(conn, run_ids)
@@ -886,9 +881,6 @@ class ExperimentStore:
                 if users:
                     raise ValueError("other experiments reference streams these runs recorded: "
                                      + ", ".join(row[0] for row in users))
-                removed["samples"] = self.store.samples.count(
-                    refs, after=self._last_sample_request(conn, run_ids)
-                )
             for run_id, sequence, variable_id in self._execute(conn, f"""
                     SELECT run_id, sequence, variable_id FROM experiment_observations
                     WHERE run_id IN ({marks})""", run_ids).fetchall():
@@ -925,7 +917,7 @@ class ExperimentStore:
             enqueue(conn, {"clear": [str(graph.source_graph_uri(source))]})
         if sweep_sources:
             enqueue(conn, {"clear": [str(graph.source_graph_uri(source)) for source in sweep_sources]})
-        return removed
+        return removed, refs
 
     def _after_delete(self, removed) -> dict[str, Any]:
         """After the SQL commit, under the metadata lock: deliver the graph
@@ -935,19 +927,26 @@ class ExperimentStore:
 
     def delete_runs(self, run_ids: list[str]) -> dict[str, Any]:
         """Delete finished runs with everything they recorded."""
-        return self._cleared(self._delete_runs_committed(run_ids))
+        return self._cleared(*self._delete_runs_committed(run_ids))
 
     def delete_study(self, template_id: str) -> dict[str, Any]:
         """Delete a Study, its declarations, and every run."""
-        return self._cleared(self._delete_study_committed(template_id))
+        return self._cleared(*self._delete_study_committed(template_id))
 
     def clear(self) -> dict[str, Any]:
         """Delete every Study and its records; other Acquirium data is untouched."""
-        return self._cleared(self._clear_committed())
+        return self._cleared(*self._clear_committed())
 
-    def _cleared(self, removed):
-        """Clear deleted runs' samples. An error leaves the deletion complete;
-        the next deletion or start finishes it."""
+    def _cleared(self, removed, refs):
+        """Count and clear the samples of the deleted runs' streams ``refs``.
+
+        The runs were not running and are gone, so none can still record:
+        every sample they wrote was accepted before this settles. An error
+        clearing leaves the deletion complete; the next deletion or start
+        finishes it.
+        """
+        if refs:
+            removed["samples"] = self.store.samples.count(refs, self.store.samples.settled())
         self._cleanup_streams()
         return removed
 
@@ -962,7 +961,7 @@ class ExperimentStore:
     def _delete_runs_committed(self, run_ids: list[str]) -> dict[str, Any]:
         run_ids = list(dict.fromkeys(run_ids))
         if not run_ids:
-            return {"runs": 0, "observations": 0, "annotations": 0, "samples": 0, "files": 0}
+            return {"runs": 0, "observations": 0, "annotations": 0, "samples": 0, "files": 0}, []
         with self.store._lock, self.store._write_conn() as conn:
             marks = self._marks(run_ids)
             found = {row[0] for row in self._execute(conn, f"SELECT run_id FROM experiment_runs WHERE run_id IN ({marks})", run_ids).fetchall()}
@@ -970,8 +969,8 @@ class ExperimentStore:
             if missing:
                 raise KeyError(missing[0])
             self._refuse_running(conn, f"run_id IN ({marks})", run_ids)
-            result = self._delete_runs(conn, run_ids)
-        return self._after_delete(result)
+            result, refs = self._delete_runs(conn, run_ids)
+        return self._after_delete(result), refs
 
     @_publishes
     def _delete_study_committed(self, template_id: str) -> dict[str, Any]:
@@ -980,13 +979,13 @@ class ExperimentStore:
                 raise KeyError(template_id)
             self._refuse_running(conn, "template_id=?", [template_id])
             run_ids = [row[0] for row in self._execute(conn, "SELECT run_id FROM experiment_runs WHERE template_id=?", [template_id]).fetchall()]
-            result = self._delete_runs(conn, run_ids)
+            result, refs = self._delete_runs(conn, run_ids)
             variables = [row[0] for row in self._execute(conn, "SELECT variable_id FROM experiment_variables WHERE template_id=?", [template_id]).fetchall()]
             self._execute(conn, "DELETE FROM experiment_variables WHERE template_id=?", [template_id])
             self._execute(conn, "DELETE FROM experiment_templates WHERE template_id=?", [template_id])
             for uri in [study_uri(template_id), *map(variable_uri, variables)]:
                 enqueue(conn, {"operation": "delete", "subject": uri})
-        return {"studies": 1, "variables": len(variables), **self._after_delete(result)}
+        return {"studies": 1, "variables": len(variables), **self._after_delete(result)}, refs
 
     @_publishes
     def _clear_committed(self) -> dict[str, Any]:
@@ -995,7 +994,7 @@ class ExperimentStore:
             run_ids = [row[0] for row in self._execute(conn, "SELECT run_id FROM experiment_runs").fetchall()]
             studies = int(self._execute(conn, "SELECT count(*) FROM experiment_templates").fetchone()[0])
             variables = int(self._execute(conn, "SELECT count(*) FROM experiment_variables").fetchone()[0])
-            result = self._delete_runs(conn, run_ids, sweep=True)
+            result, refs = self._delete_runs(conn, run_ids, sweep=True)
             identifiers = self._execute(conn, "SELECT variable_id FROM experiment_variables").fetchall()
             study_ids = self._execute(conn, "SELECT template_id FROM experiment_templates").fetchall()
             for uri in [*(variable_uri(row[0]) for row in identifiers), *(study_uri(row[0]) for row in study_ids)]:
@@ -1003,7 +1002,7 @@ class ExperimentStore:
             for table in ("experiment_variables", "experiment_templates"):
                 self._execute(conn, f"DELETE FROM {table}")
         self._resolutions = {}
-        return {"studies": studies, "variables": variables, **self._after_delete(result)}
+        return {"studies": studies, "variables": variables, **self._after_delete(result)}, refs
 
     def usage(self, *, template_id: str | None = None, run_ids: list[str] | None = None) -> dict[str, Any]:
         """Count what the selected experiments store and estimate its size.
@@ -1022,6 +1021,8 @@ class ExperimentStore:
                 clauses.append(f"run_id IN ({self._marks(run_ids)})"); parameters.extend(run_ids)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         whole_studies = run_ids is None
+        # Count every sample whose write has returned, before reading the ledger.
+        samples = self.store.samples.settled()
         with self.store._own_conn() as conn:
             if template_id is not None and self._execute(conn, "SELECT 1 FROM experiment_templates WHERE template_id=?", [template_id]).fetchone() is None:
                 raise KeyError(template_id)
@@ -1061,9 +1062,7 @@ class ExperimentStore:
                 usage["files"], usage["file_bytes"] = int(files[0]), int(files[1])
                 refs = self._owned_refs(conn, selected)
                 if refs:
-                    usage["samples"], usage["sample_bytes"] = self.store.samples.usage(
-                        refs, after=self._last_sample_request(conn, selected)
-                    )
+                    usage["samples"], usage["sample_bytes"] = self.store.samples.usage(refs, samples)
         usage["total_bytes"] = usage["sample_bytes"] + usage["file_bytes"] + usage["ledger_bytes"]
         return usage
 

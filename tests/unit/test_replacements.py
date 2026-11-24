@@ -222,9 +222,9 @@ def test_chain_views_history_pagination_and_middle_removal(system):
     assert values(client, clean, view="stored") == [2., 4.]
     assert values(client, head, view="raw") == [1., 2.]
     assert values(client, ref, epoch=initial) == [1., 2.]
-    assert values(client, ref, epoch=initial, after=manager.core.applied_at(initial)) == [1., 2.]
+    assert values(client, ref, epoch=initial, after=manager.core.engine.snapshot(initial).applied) == [1., 2.]
     with pytest.raises(ValueError, match="precedes"):
-        manager.timeseries_batch(ref, epoch=initial - 1, after=manager.core.applied_at(initial))
+        manager.timeseries_batch(ref, epoch=initial - 1, after=manager.core.engine.snapshot(initial).applied)
     assert values(client, ref, epoch=first_epoch) == [2., 4.]
     assert client.client.resolve_storage_keys([point, ref]) == {point: head, ref: head}
     assert client.client.resolve_storage_keys([head], view="raw") == {head: ref}

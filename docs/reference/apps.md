@@ -433,7 +433,8 @@ Their last successful values remain queryable. Other groups and apps continue
 updating. `inspect_app(name)["app"]` includes:
 
 - `status`: `active`, `failed` for an evaluation error, or `blocked` for a failed
-  upstream operator.
+  upstream operator. `pending` means a deployment or restart is still
+  publishing; the rest of the response describes the plan it replaces.
 - `stale`: whether any operator in the app is failed or blocked.
 - `failures` maps instance IDs to the epoch their output reflects and the
   reason they are behind. The entry includes the evaluation message or the

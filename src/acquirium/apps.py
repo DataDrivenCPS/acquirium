@@ -19,6 +19,8 @@ from threading import RLock
 from typing import Any, Mapping, Sequence
 
 from acquirium.app_spec import FixedBucket, Native, Pointwise, PythonFunction, Rolling
+from acquirium.functions import WINDOW_BUILTINS
+from escapement_next import Receipt
 from rdflib import Graph, Literal, RDF, RDFS, URIRef
 
 from acquirium import replacements
@@ -480,6 +482,9 @@ class Apps:
         self.report = {}
         self.state = {"apps": {}, "plan": None}
         self._pending = None
+        # The adopted plan, the epoch it is known published from, and whether
+        # an activation is under way. Replaced whole, so reads need no lock.
+        self._published = (None, 0, False)
 
     def _artifact(self, code, *, prefix=""):
         """Durably retain immutable module bytes under their content hash."""
@@ -764,7 +769,7 @@ class Apps:
                 f"{window!r}, {ports!r}, {replaced!r})\n"
             )
         else:
-            if kind not in {"mean", "sum", "min", "max", "count", "threshold", "integral", "cumulative_sum"}:
+            if kind not in WINDOW_BUILTINS | {"integral", "cumulative_sum"}:
                 raise ValueError(f"unknown calculation {kind!r}")
             if function.get("port") not in declaration["outputs"]:
                 raise ValueError("the built-in calculation must name a declared output port")
@@ -773,9 +778,11 @@ class Apps:
                 or function["per_ns"] <= 0
             ):
                 raise ValueError("integral requires a pointwise window and a positive per_ns")
+            batch = kind in WINDOW_BUILTINS
+            adapter = "_builtin_batch_function" if batch else "_builtin_function"
             code = (
-                "from acquirium.functions import _builtin_function\n"
-                f"__acquirium_calculate = _builtin_function({function!r}, {ports!r})\n"
+                f"from acquirium.functions import {adapter}\n"
+                f"__acquirium_calculate = {adapter}({function!r}, {ports!r})\n"
             )
         code = code.encode()
         digest = sha256(code).hexdigest()
@@ -797,14 +804,14 @@ class Apps:
             for item in declaration["inputs"]
             if item.get("exclude_app")
         }
-        view = self.graph.selection_snapshot(sources | exclusions)
-        view.stage({source: Graph() for source in sources - desired})
-        for _ in range(8):
-            operators, metadata, report = self._compile(declarations, graph=view)
-            if not view.stage({_source_id(name): graph for name, graph in metadata.items()}):
-                break
-        else:
-            raise ValueError("derived semantic selections did not stabilize")
+        with self.graph.selection_snapshot(sources | exclusions) as view:
+            view.stage({source: Graph() for source in sources - desired})
+            for _ in range(8):
+                operators, metadata, report = self._compile(declarations, graph=view)
+                if not view.stage({_source_id(name): graph for name, graph in metadata.items()}):
+                    break
+            else:
+                raise ValueError("derived semantic selections did not stabilize")
 
         old = {row["id"]: row for row in (self.state["plan"] or {}).get("templates", [])}
         modules = []
@@ -859,7 +866,7 @@ class Apps:
         )
         return plan, modules, view.revision
 
-    def _adopt(self, plan, revision=None):
+    def _adopt(self, plan, revision=None, *, epoch=None):
         declarations, sources, report = {}, {}, {}
         for template in plan["templates"]:
             name, annotation = template["id"], template["annotations"]
@@ -870,34 +877,67 @@ class Apps:
             report[name] = annotation["report"]
         before, after = self.graph.project_app_sources(sources)
         self.state = {"apps": declarations, "plan": plan}
+        if epoch is not None:
+            self._published = (plan, epoch, False)
         self.report = report
         self._revision = after if revision == before else -1
         self.error = None
 
-    def _settle(self):
-        if self._pending is not None:
-            receipt, revision = self._pending
+    def _settle(self, *, wait=True):
+        """Adopt the plan of the activation under way once it publishes;
+        without ``wait``, only if it already has. Changes to the app set
+        wait, since they compile against the adopted plan; reads do not."""
+        if self._pending is None:
+            return
+        receipt, revision = self._pending
+        if wait:
             self.core.wait(receipt)
-            self._adopt(self.core.engine.snapshot().plan(), revision)
-            self._pending = None
+        (epoch,) = self.core.engine.epochs_of([receipt])
+        if epoch is None:
+            return
+        self._adopt(self.core.engine.snapshot().plan(), revision, epoch=epoch)
+        self._pending = None
 
     def recover(self):
+        """Adopt the published plan at startup, without waiting for requests
+        accepted before the restart. While those are pending, the plan they
+        may publish is adopted, and the graph recompiled against it, by the
+        next change or snapshot read, which waits for them."""
         with self.lock:
             status = self.core.engine.status()
+            snapshot = self.core.engine.snapshot()
+            self._adopt(snapshot.plan(), epoch=snapshot.epoch)
             if status["pending"]:
-                self.core.wait_for(status["accepted"])
-            self._adopt(self.core.engine.snapshot().plan())
-            self.refresh()
+                self._pending = Receipt(status["accepted"]), None
+                self._published = (*self._published[:2], True)
+            else:
+                self.refresh()
 
     def _install(self, declarations):
         plan, modules, revision = self._candidate(declarations)
         if plan != self.state["plan"]:
             for prefix, code in modules:
                 self._artifact(code, prefix=prefix)
-            self._pending = self.core.activate(uuid4().hex, plan), revision
+            self._published = (*self._published[:2], True)
+            try:
+                self._pending = self.core.activate(uuid4().hex, plan), revision
+            except BaseException:
+                self._published = (*self._published[:2], False)
+                raise
             self._settle()
         else:
             self._adopt(plan, revision)
+
+    def plan_at(self, epoch=None):
+        """The plan published at ``epoch``, by default the latest. The adopted
+        plan covers each epoch from its publication while no activation is
+        under way; any other epoch loads its plan from the engine."""
+        plan, since, activating = self._published
+        if plan is not None and not activating and (
+            epoch is None or since <= epoch <= self.core.engine.status()["published"]
+        ):
+            return plan
+        return self.core.plan_at(epoch)
 
     def refresh(self):
         with self.lock:
@@ -972,9 +1012,9 @@ class Apps:
 
     def inspect(self, name):
         with self.lock:
-            self._settle()
+            self._settle(wait=False)
             definition = self.state["apps"][name]
-            # Apps alone activates plans, so the settled plan is the engine's.
+            # The adopted plan; while an activation is pending, the one it replaces.
             snapshot, plan = self.core.engine.snapshot(), self.state["plan"]
             instances = [row for row in plan["instances"] if row["template"] == name]
             streams = [stream for row in instances for stream in row["outputs"].values()]
@@ -1011,7 +1051,8 @@ class Apps:
                 operator["version"] = _digest([spec, instance["parameters"], outputs, instance["annotations"]])
                 operators.append(operator)
             errors = [item["message"] for item in failures.values() if "message" in item]
-            status = "failed" if errors else "blocked" if failures else "active"
+            status = ("failed" if errors else "pending" if self._pending is not None
+                      else "blocked" if failures else "active")
             return {
                 "name": name, "definition": definition, "operators": operators, "status": status,
                 "active_plan": _plan_id(plan),

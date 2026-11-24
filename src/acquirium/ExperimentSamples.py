@@ -50,11 +50,13 @@ class EscapementSamples:
         self.wait(sequences[-1])
         return dict(zip(sequences, self.core.epochs_of(sequences)))
 
-    def count(self, refs, *, after=None) -> int:
-        """Count samples once the named recording has published."""
-        if after is not None:
-            self.wait(after)
-        return sum(info["row_count"] for info in self.core.info(refs).values())
+    def settled(self):
+        """A snapshot holding every sample whose write has returned."""
+        return self.core.wait_for(self.core.engine.status()["accepted"], timeout=self.timeout)
+
+    def count(self, refs, snapshot) -> int:
+        """Count the samples of ``refs`` at ``snapshot``."""
+        return sum(info["row_count"] for info in self.core.info(refs, snapshot=snapshot).values())
 
     def clear(self, refs) -> None:
         """Delete every sample of ``refs`` and wait until that is published."""
@@ -64,7 +66,7 @@ class EscapementSamples:
         if refs:
             self.wait(receipt.sequence)
 
-    def usage(self, refs, *, after=None) -> tuple[int, int]:
+    def usage(self, refs, snapshot) -> tuple[int, int]:
         """Sample count and their bytes: 8 for each time and 8 for each number."""
-        count = self.count(refs, after=after)
+        count = self.count(refs, snapshot)
         return count, 16 * count

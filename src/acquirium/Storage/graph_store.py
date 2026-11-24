@@ -6,7 +6,7 @@ import re
 from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Condition, RLock, Thread
+from threading import Condition, Lock, RLock, Thread
 from urllib.parse import unquote
 
 from ontoenv import OntoEnv
@@ -128,6 +128,9 @@ _INFERRED_DATA_GRAPH = URIRef(str(ACQUIRIUM_NS.InferredDataGraph))
 _QUERY_DEFAULT_GRAPHS = (
     NamedNode(str(_INFERRED_DATA_GRAPH)), NamedNode(str(_DEPENDENCY_QUERY_GRAPH)),
 )
+# Deployment data inferred with an app compilation's staged output graphs.
+_SELECTION_GRAPH = URIRef(str(ACQUIRIUM_NS.SelectionDataGraph))
+_SELECTION_DEFAULT_GRAPHS = (NamedNode(str(_SELECTION_GRAPH)), NamedNode(str(_DEPENDENCY_QUERY_GRAPH)))
 
 
 def _replace_named_graph(dataset: Dataset, graph: Graph, graph_uri: URIRef) -> None:
@@ -184,15 +187,29 @@ def _same_triples(a, b):
 
 
 class _SelectionSnapshot:
-    """A private query view with replaceable app-owned source graphs."""
+    """The store's query view, with app-owned source graphs replaced.
 
-    def __init__(self, revision, data, sources, metadata, shapes, infer):
-        self.revision = revision
-        self._data, self._sources, self._metadata = data, sources, metadata
-        self._shapes, self._infer = shapes, infer
-        self._dataset = Dataset(store="Oxigraph", default_union=False)
-        _replace_named_graph(self._dataset, shapes, _DEPENDENCY_QUERY_GRAPH)
-        self._inferred = False
+    Until a staged graph differs from the one the store holds, queries read
+    the store's own view. Once one differs, the snapshot infers deployment
+    data from the store's other sources and the staged ones, and holds it in
+    a graph of the store's query dataset, queried beside the dependency
+    closure already published there; the closure is neither copied nor
+    loaded again. One snapshot exists at a time; leaving it drops that graph.
+    """
+
+    def __init__(self, store, revision, sources):
+        self._store, self.revision, self._sources = store, revision, sources
+        self._diverged = self._inferred = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        try:
+            if self._diverged:
+                self._store._drop_selection()
+        finally:
+            self._store._selection_lock.release()
 
     def data_graph(self, source_id):
         return self._sources.get(source_id, Graph())
@@ -201,26 +218,16 @@ class _SelectionSnapshot:
         changed = any(not _same_triples(graph, self.data_graph(source)) for source, graph in changes.items())
         self._sources.update(changes)
         if changed:
-            self._inferred = False
+            self._diverged, self._inferred = True, False
         return changed
 
     def sparql_query(self, query, *, wait_for_fresh=False):
-        from acquirium.Metadata import overlay_documents
-
+        if not self._diverged:
+            return self._store.sparql_query(query, wait_for_fresh=True)
         if not self._inferred:
-            data = Graph() + self._data
-            for graph in self._sources.values():
-                data += graph
-            overlay_documents(data, self._metadata)
-            _replace_named_graph(
-                self._dataset, self._infer(data, self._shapes), _INFERRED_DATA_GRAPH
-            )
+            self._store._publish_selection(self._sources)
             self._inferred = True
-        result = self._dataset.store._inner.query(
-            query,
-            default_graph=list(_QUERY_DEFAULT_GRAPHS),
-        )
-        return _query_result(result)
+        return self._store._query_selection(query)
 
 
 def select_values(
@@ -344,6 +351,8 @@ class OxigraphGraphStore:
         # fresh readers wait for its complete publication.
         self._lock = RLock()
         self._rebuild_condition = Condition(self._lock)
+        # Held by the one selection snapshot that may exist at a time.
+        self._selection_lock = Lock()
         self._query_rebuild_in_progress = False
         self._query_rebuild_error: Exception | None = None
         self.store_path = Path(store_path)
@@ -455,15 +464,50 @@ class OxigraphGraphStore:
             }
 
     def selection_snapshot(self, sources):
-        """Capture the source graphs, overrides and dependency closure together."""
+        """A query view in which the app-owned ``sources`` can be replaced,
+        to use as a context manager; ``sources`` start as stored."""
+        self._selection_lock.acquire()
+        try:
+            with self._lock:
+                revision = self._source_version
+                staged = {source: self.data_graph(source) for source in sources}
+        except BaseException:
+            self._selection_lock.release()
+            raise
+        return _SelectionSnapshot(self, revision, staged)
+
+    def _publish_selection(self, sources):
+        """Infer deployment data with ``sources`` in place of the stored ones
+        and hold it in the query dataset's selection graph."""
+        from acquirium.Metadata import overlay_documents
+
         with self._lock:
-            revision = self._source_version
-            staged = {source: self.data_graph(source) for source in sources}
-            excluded = {self.source_graph_uri(source) for source in staged}
-            data = self._merge_source_data(excluded)
+            closure_current = self._dependency_query_graph_closure_version == self._closure_version
+        if not closure_current:
+            # The selection is queried beside the published dependency graph.
+            self._ensure_query_cache_current(wait_for_fresh=True)
+        with self._lock:
+            data = self._merge_source_data({self.source_graph_uri(source) for source in sources})
             metadata = self.data_graph(METADATA_SOURCE_ID)
-            shapes = Graph() + self._ensure_dependency_cache_current()
-        return _SelectionSnapshot(revision, data, staged, metadata, shapes, self._build_query_views)
+            # The cache is replaced, never changed, so inference may read it unlocked.
+            shapes = self._ensure_dependency_cache_current()
+        for graph in sources.values():
+            data += graph
+        overlay_documents(data, metadata)
+        inferred = self._build_query_views(data, shapes)
+        with self._lock:
+            _replace_named_graph(self.query_dataset, inferred, _SELECTION_GRAPH)
+
+    def _query_selection(self, query):
+        with self._lock:
+            result = self.query_dataset.store._inner.query(
+                query, use_default_graph_as_union=False, default_graph=list(_SELECTION_DEFAULT_GRAPHS),
+            )
+        return _query_result(result)
+
+    def _drop_selection(self):
+        with self._lock:
+            _replace_named_graph(self.query_dataset, Graph(), _SELECTION_GRAPH)
 
     def project_app_sources(self, sources):
         """Install the active plan's output graphs and drop obsolete outputs."""

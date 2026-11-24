@@ -300,3 +300,39 @@ def test_returned_pandas_frames_use_the_same_validation_as_polars():
         checked(pd.DataFrame({"time": [AT.replace(tzinfo=None)], "value": [1.]}))
     with pytest.raises(ValueError, match="microsecond precision"):
         checked(pd.DataFrame({"time": [pd.Timestamp(AT) + pd.Timedelta(1, "ns")], "value": [1.]}))
+
+
+def test_window_builtins_compute_every_window_of_a_batch_at_once():
+    frame = pl.DataFrame({
+        "instance": ["urn:a", "urn:a", "urn:a", "urn:a", "urn:b", "urn:b"],
+        "anchor": [1000, 1000, 1000, 2000, 1000, 3000],
+        "role": ["raw"] * 6,
+        "stream": ["s1", "s1", "s2", "s1", "s1", "s1"],
+        "time": pl.Series([100, 200, 300, 1500, 400, 2500]).cast(pl.Datetime("ns", "UTC")),
+        "value": [1., 3., 8., None, -2., 5.],
+        "text": [None] * 6,
+    })
+    context = {"template": "t", "instances": {
+        "urn:a": {"parameters": {"group": ["urn:a"], "limit": 0.}},
+        "urn:b": {"parameters": {"group": ["urn:b"], "limit": 4.}},
+    }}
+
+    def outputs(**spec):
+        out = f._builtin_batch_function({"port": "out", **spec}, ["out", "other"])(frame, context)
+        assert out["other"].is_empty()
+        rows = out["out"].with_columns(pl.col("time").dt.epoch("ns"))
+        return sorted(rows.select("instance", "time", "value").iter_rows())
+
+    # A window whose only reading has no number has no output.
+    assert outputs(kind="sum") == [("urn:a", 1000, 12.), ("urn:b", 1000, -2.), ("urn:b", 3000, 5.)]
+    assert outputs(kind="count") == [("urn:a", 1000, 3.), ("urn:b", 1000, 1.), ("urn:b", 3000, 1.)]
+    assert outputs(kind="mean")[0] == ("urn:a", 1000, 4.)
+    assert outputs(kind="mean", per_stream=True)[0] == ("urn:a", 1000, 5.)
+    assert outputs(kind="max")[0] == ("urn:a", 1000, 8.)
+    single = frame.filter(pl.col("instance") == "urn:b")
+    threshold = f._builtin_batch_function(
+        {"kind": "threshold", "port": "out", "above": {"parameter": "limit"}}, ["out"]
+    )(single, context)["out"]
+    assert threshold["value"].to_list() == [5.]
+    with pytest.raises(ValueError, match="at most one number"):
+        outputs(kind="threshold", above=0.)
