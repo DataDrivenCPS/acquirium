@@ -1235,13 +1235,17 @@ class AcquiriumClient:
         hits = self.resolve({"v": (text, kind)}, min_score=RESOLVE_MIN_SCORE) or {}
         return hits.get("v")
 
-    def node_roles(self, uris: Iterable[str]) -> dict[str, str]:
+    def node_roles(self, uris: Iterable[str], *, wait_for_fresh: bool = False) -> dict[str, str]:
         """``{uri: "data" | "entity"}`` for the nodes the data graphs know.
 
         A node is a data node when it carries an external reference, the
         same rule the explore layer's measurement nodes follow. A URI the
         graphs do not mention (as subject or object) is left out, and so is
         one only user attributes mention.
+
+        The server brings its query view up to date in the background after
+        a write, so a node written a moment ago can be absent. Pass
+        ``wait_for_fresh=True`` to wait for the view to include every write.
         """
         uris = list(dict.fromkeys(str(u) for u in uris))
         roles: dict[str, str] = {}
@@ -1256,7 +1260,7 @@ class AcquiriumClient:
                 f'  UNION {{ ?x ?q ?s . FILTER(!STRSTARTS(STR(?q), "{ATTR_NS}")) }}\n'
                 f"  OPTIONAL {{ ?s <{HAS_EXTERNAL_REFERENCE}> ?ref . }}\n}}"
             )
-            res = self.sparql_query(sparql, include_dependencies=False)
+            res = self.sparql_query(sparql, include_dependencies=False, wait_for_fresh=wait_for_fresh)
             cols = res.get("columns", [])
             si = cols.index("s") if "s" in cols else 0
             ri = cols.index("ref") if "ref" in cols else 1
@@ -1289,6 +1293,10 @@ class AcquiriumClient:
             return {"ok": True, "nodes": 0}
         roles = self.node_roles(subjects)
         missing = sorted(set(subjects) - set(roles))
+        if missing:
+            # a node written a moment ago is not in the query view yet
+            roles.update(self.node_roles(missing, wait_for_fresh=True))
+            missing = sorted(set(subjects) - set(roles))
         if missing:
             raise ValueError(f"unknown node(s), not in any data graph: {missing}")
         self._check_study_variable_terms(subjects)
