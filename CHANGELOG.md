@@ -10,6 +10,13 @@ change in any release.
 
 ## [Unreleased]
 
+### Fixed
+
+- `insert_metadata()` refuses to change a Study variable's unit, quantity kind,
+  medium or substance, and says to declare a new variable. A medium change was
+  accepted but never reached the variable's run streams; the others failed with
+  "does not apply to a entity node".
+
 ## [0.4.0] - 2026-11-18
 
 ### Added
