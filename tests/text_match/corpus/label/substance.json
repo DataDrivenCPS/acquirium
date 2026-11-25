@@ -5,80 +5,81 @@
     {
       "text": "dissolved oxygen",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-DissolvedOxygen"
+        "https://watermetadata.org/ontology/watr#Constituent-DissolvedOxygen"
       ],
       "stage": "exact"
     },
     {
       "text": "suspended solids",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-SuspendedSolids"
+        "https://watermetadata.org/ontology/watr#Constituent-SuspendedSolids"
       ]
     },
     {
       "text": "cyanide",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Cyanide"
+        "https://watermetadata.org/ontology/watr#Constituent-Cyanide"
       ]
     },
     {
       "text": "bacteria",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Bacteria"
+        "https://watermetadata.org/ontology/watr#Constituent-Bacteria"
       ]
     },
     {
       "text": "metals",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Metals"
+        "https://watermetadata.org/ontology/watr#Constituent-Metals"
       ]
     },
     {
       "text": "organics",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Organics"
+        "https://watermetadata.org/ontology/watr#Constituent-Organics"
       ]
     },
     {
       "text": "solids",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Solids"
+        "https://watermetadata.org/ontology/watr#Constituent-Solids"
       ]
     },
     {
       "text": "particles",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Particles"
+        "https://watermetadata.org/ontology/watr#Constituent-Particles"
       ]
     },
     {
       "text": "seawater",
       "expected": [
-        "urn:nawi-water-ontology#Water-Seawater"
+        "https://watermetadata.org/ontology/watr#Water-Seawater"
       ]
     },
     {
       "text": "brine",
       "expected": [
-        "urn:nawi-water-ontology#Water-Brine"
+        "https://watermetadata.org/ontology/watr#Water-Brine"
       ]
     },
     {
       "text": "freshwater",
       "expected": [
-        "urn:nawi-water-ontology#Water-Freshwater"
+        "https://watermetadata.org/ontology/watr#Water-Freshwater"
       ]
     },
     {
       "text": "polyaluminum chloride",
       "expected": [
-        "urn:nawi-water-ontology#Coagulant-PolyaluminumChloride"
+        "https://watermetadata.org/ontology/watr#Coagulant-PolyaluminumChloride"
       ],
       "stage": "exact"
     },
     {
       "text": "volatile organic compounds",
       "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-VolatileOrganicCompounds",
         "http://data.ashrae.org/standard223#Constituent-VolatileOrganicCompounds"
       ],
       "stage": "exact"
@@ -142,7 +143,7 @@
     {
       "text": "ozone",
       "expected": [
-        "urn:nawi-water-ontology#Disinfectant-Ozone",
+        "https://watermetadata.org/ontology/watr#Disinfectant-Ozone",
         "http://data.ashrae.org/standard223#Constituent-O3"
       ],
       "stage": "exact"
@@ -150,21 +151,21 @@
     {
       "text": "alum",
       "expected": [
-        "urn:nawi-water-ontology#Coagulant-Alum"
+        "https://watermetadata.org/ontology/watr#Coagulant-Alum"
       ],
       "stage": "exact"
     },
     {
       "text": "ferric chloride",
       "expected": [
-        "urn:nawi-water-ontology#Coagulant-FerricChloride"
+        "https://watermetadata.org/ontology/watr#Coagulant-FerricChloride"
       ],
       "stage": "exact"
     },
     {
       "text": "ammonia",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Ammonia",
+        "https://watermetadata.org/ontology/watr#Constituent-Ammonia",
         "http://data.ashrae.org/standard223#Constituent-NH3"
       ],
       "stage": "exact"
@@ -172,63 +173,166 @@
     {
       "text": "nitrate",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Nitrate"
+        "https://watermetadata.org/ontology/watr#Constituent-Nitrate"
       ],
       "stage": "exact"
     },
     {
       "text": "nitrite",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Nitrite"
+        "https://watermetadata.org/ontology/watr#Constituent-Nitrite"
       ],
       "stage": "exact"
     },
     {
       "text": "organic carbon",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-OrganicCarbon"
+        "https://watermetadata.org/ontology/watr#Constituent-OrganicCarbon"
       ],
       "stage": "exact"
     },
     {
       "text": "sludge",
       "expected": [
-        "urn:nawi-water-ontology#Fluid-Sludge"
+        "https://watermetadata.org/ontology/watr#Fluid-Sludge"
       ],
       "stage": "exact"
     },
     {
       "text": "lime",
       "expected": [
-        "urn:nawi-water-ontology#pHAdjuster-Lime"
+        "https://watermetadata.org/ontology/watr#pHAdjuster-Lime"
       ],
       "stage": "exact"
     },
     {
       "text": "sulfuric acid",
       "expected": [
-        "urn:nawi-water-ontology#pHAdjuster-SulfuricAcid"
+        "https://watermetadata.org/ontology/watr#pHAdjuster-SulfuricAcid"
       ],
       "stage": "exact"
     },
     {
       "text": "hydrogen peroxide",
       "expected": [
-        "urn:nawi-water-ontology#OxidizingAgent-HydrogenPeroxide"
+        "https://watermetadata.org/ontology/watr#OxidizingAgent-HydrogenPeroxide"
       ],
       "stage": "exact"
     },
     {
       "text": "activated carbon",
       "expected": [
-        "urn:nawi-water-ontology#OdorControlAgent-ActivatedCarbon"
+        "https://watermetadata.org/ontology/watr#OdorControlAgent-ActivatedCarbon"
       ],
       "stage": "exact"
     },
     {
       "text": "disinfectant",
       "expected": [
-        "urn:nawi-water-ontology#Disinfectant"
+        "https://watermetadata.org/ontology/watr#Disinfectant"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "arsenic",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-Arsenic"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "dissolved solids",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-DissolvedSolids"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "hardness",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-Hardness"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "inorganic solids",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-InorganicSolids"
+      ]
+    },
+    {
+      "text": "lead",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-Lead"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "organic nitrogen",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-OrganicNitrogen"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "organic solids",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-OrganicSolids"
+      ]
+    },
+    {
+      "text": "pfas",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-PFAS"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "phosphate",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-Phosphate"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "phosphorus",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-Phosphorus"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "protozoa",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-Protozoa"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "silica",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-Silica"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "sulfate",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-Sulfate"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "viruses",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#Constituent-Viruses"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "reducing agent",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#ReducingAgent"
       ],
       "stage": "exact"
     }

@@ -4,7 +4,7 @@ import warnings
 from rdflib import Graph, URIRef, Literal
 from rdflib.namespace import RDF, RDFS
 from acquirium.internals.internals_namespaces import *
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import compute_stream_uri
 from acquirium.Storage.values import normalize_value_kind
 from acquirium.Client.explore.attributes import raw_predicate
 from acquirium.Client.metadata import is_uri
@@ -72,48 +72,49 @@ def _build_stream_triples(
     """Write one stream's reference/point/metadata triples into ``g``.
 
     ``resolved`` is the precomputed ``field -> URI-or-None`` map for this
-    stream's semantic fields (typically from ``resolve_point_metadata``);
+    stream's semantic fields (typically from ``resolve_property_metadata``);
     pass ``{}`` when there is nothing to resolve.
 
     ``existing`` is the metadata the point already carries in the server
-    graph (from ``AcquiriumClient._point_metadata``); pass ``{}`` for a
+    graph (from ``AcquiriumClient._property_metadata``); pass ``{}`` for a
     point that does not exist yet. A provided field the point lacks is
     added; a conflicting value raises ``ValueError``. Units are the one
     exception: a provided unit that differs from the point's is accepted
     when ``units_compatible`` says the two are convertible, and is written
     on the external reference as the unit the raw rows are stored in.
     """
-    point_uri_raw = stream.get("point_uri")
+    property_uri_raw = stream.get("property_uri")
     label = stream.get("label")
     source_id = stream.get("source_id")
-    ref_name = stream.get("ref_name")
-    ref_uri = None
-    if ref_name is not None and source_id is not None:
-        ref_uri = compute_ref_uri(source_id, ref_name)
-        g.add((ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
-        g.add((ref_uri, ACQUIRIUM_REF_NAME,  Literal(ref_name)))
+    stream_name = stream.get("stream_name")
+    stream_uri = None
+    if stream_name is not None and source_id is not None:
+        stream_uri = compute_stream_uri(source_id, stream_name)
+        g.add((stream_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)))
+        g.add((stream_uri, ACQUIRIUM_REF_NAME,  Literal(stream_name)))
         # Only assert a value kind the caller supplied; a default would
         # contradict a later data-derived kind on the same reference node.
         if stream.get("value_kind") is not None:
             g.add((
-                ref_uri,
+                stream_uri,
                 ACQUIRIUM_VALUE_KIND,
                 Literal(normalize_value_kind(stream["value_kind"])),
             ))
-        g.add((ref_uri, STORED_AT,           ACQUIRIUM_DB_URI))
+        g.add((stream_uri, STORED_AT,           ACQUIRIUM_DB_URI))
         g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
 
-    if point_uri_raw is not None:
-        subj = URIRef(str(point_uri_raw))
+    if property_uri_raw is not None:
+        subj = URIRef(str(property_uri_raw))
     else:
-        if ref_uri is None:
+        if stream_uri is None:
             raise ValueError(
-                "a stream registration needs a point_uri or a "
-                "(source_id, ref_name) pair to mint one"
+                "a stream registration needs a property_uri or a "
+                "(source_id, stream_name) pair to mint one"
             )
-        subj = URIRef(f"{ref_uri}__point")
+        subj = URIRef(f"{stream_uri}__point")
+        g.add((subj, IS_DISCONNECTED, Literal(True)))
         if label is None:
-            label = ref_name
+            label = stream_name
 
     g.add((subj, RDF.type, VIRTUAL_POINT))
     if label is not None:
@@ -131,8 +132,8 @@ def _build_stream_triples(
         if current is None:
             _add_triple(g, subj, pred, provided)
         elif str(current) == str(provided):
-            if field == "unit" and ref_uri is not None:
-                _add_triple(g, ref_uri, HAS_UNIT, provided)
+            if field == "unit" and stream_uri is not None:
+                _add_triple(g, stream_uri, HAS_UNIT, provided)
         elif field != "unit":
             raise ValueError(
                 f"{field} mismatch for point <{subj}>: the point has "
@@ -143,15 +144,15 @@ def _build_stream_triples(
                 f"unit mismatch for point <{subj}>: the point has <{current}>, "
                 f"the stream provided <{provided}> and they are not convertible"
             )
-        elif ref_uri is None:
+        elif stream_uri is None:
             raise ValueError(
                 f"stream for point <{subj}> stores data in <{provided}> but has "
-                "no (source_id, ref_name) reference to record the storage unit on"
+                "no (source_id, stream_name) reference to record the storage unit on"
             )
         else:
             # Convertible: the provided unit is what the raw rows are stored
             # in; data access defaults to the point's unit and converts.
-            _add_triple(g, ref_uri, HAS_UNIT, provided)
+            _add_triple(g, stream_uri, HAS_UNIT, provided)
 
     data_source = stream.get("data_source")
     if data_source is not None:
@@ -164,10 +165,10 @@ def _build_stream_triples(
                 f"{current!r}, the stream provided {data_source!r}"
             )
 
-    if ref_uri is not None:
-        g.add((subj, HAS_EXTERNAL_REFERENCE, ref_uri))
+    if stream_uri is not None:
+        g.add((subj, HAS_EXTERNAL_REFERENCE, stream_uri))
 
-    target = ref_uri if ref_uri is not None else subj
+    target = stream_uri if stream_uri is not None else subj
     for pred, value in (stream.get("properties") or {}).items():
         _add_triple(g, target, pred, value)
     return subj

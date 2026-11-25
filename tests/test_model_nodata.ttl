@@ -1,4 +1,4 @@
-@prefix nawi: <urn:nawi-water-ontology#> .
+@prefix nawi: <https://watermetadata.org/ontology/watr#> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 @prefix qudt: <http://qudt.org/schema/qudt/> .
 @prefix qudtqk: <http://qudt.org/vocab/quantitykind/> .

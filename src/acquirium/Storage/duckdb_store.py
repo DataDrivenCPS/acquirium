@@ -23,10 +23,10 @@ rather than ``TIMESTAMPTZ``, avoiding a DuckDB Python-API dependency on
 ``pytz``. The ``_to_utc`` helper normalises every input value before storage,
 and ``_add_utc`` re-attaches ``tzinfo=UTC`` to values read back.
 
-**Storage keys:** The API speaks ``ref_uri`` strings throughout, but the
-``timeseries`` table keys rows by an ``INTEGER ref_id`` — integer columns get
+**Storage keys:** The API speaks ``stream_uri`` strings throughout, but the
+``timeseries`` table keys rows by an ``INTEGER stream_id`` — integer columns get
 far more effective zonemap (min-max) pruning than VARCHAR, and the rows are
-narrower. The ``ref_ids`` table maps each ``ref_uri`` to its ``ref_id``; ids
+narrower. The ``stream_ids`` table maps each ``stream_uri`` to its ``stream_id``; ids
 are assigned from a sequence on first write and resolved inside this module,
 never exposed. The ``timeseries_streams`` view joins the string back in, so
     SQL against the view is unaffected. The schema expects the integer-keyed
@@ -49,12 +49,14 @@ from acquirium.internals.models import (
     Order,
     TimeIntervalModel,
     TimeseriesInfo,
-    compute_ref_uri,
+    compute_stream_uri,
 )
 from acquirium.Storage.migrations import DUCKDB_TIMESERIES_MIGRATIONS, migrate
 from acquirium.Storage.publication.revision import RevisionPublisher
 from acquirium.Storage.values import (
     normalize_value_kind,
+    stored_value_kind,
+    UNDECLARED_VALUE_KIND,
     normalize_value_mode,
     prepare_value_columns,
     typed_value_series,
@@ -66,7 +68,7 @@ logger = logging.getLogger(__name__)
 TIMESERIES_TABLE = "timeseries"
 STREAMS_TABLE = "streams"
 LOGS_TABLE = "logs"
-REF_IDS_TABLE = "ref_ids"
+STREAM_IDS_TABLE = "stream_ids"
 REF_IDS_SEQ = "ref_ids_seq"
 TIMESERIES_STREAMS_VIEW = "timeseries_streams"
 SYSTEM_STATE_TABLE = "system_state"
@@ -127,7 +129,7 @@ class DuckDBStore:
                     TIMESERIES_TABLE,
                     STREAMS_TABLE,
                     LOGS_TABLE,
-                    REF_IDS_TABLE,
+                    STREAM_IDS_TABLE,
                 ):
                     conn.execute(f"DROP TABLE IF EXISTS {tbl}")
                 conn.execute(f"DROP SEQUENCE IF EXISTS {REF_IDS_SEQ}")
@@ -188,14 +190,14 @@ class DuckDBStore:
         stmts = [
             f"CREATE SEQUENCE IF NOT EXISTS {REF_IDS_SEQ}",
             f"""
-            CREATE TABLE IF NOT EXISTS {REF_IDS_TABLE} (
-                ref_id  INTEGER PRIMARY KEY DEFAULT nextval('{REF_IDS_SEQ}'),
-                ref_uri VARCHAR NOT NULL UNIQUE
+            CREATE TABLE IF NOT EXISTS {STREAM_IDS_TABLE} (
+                stream_id  INTEGER PRIMARY KEY DEFAULT nextval('{REF_IDS_SEQ}'),
+                stream_uri VARCHAR NOT NULL UNIQUE
             )
             """,
             f"""
             CREATE TABLE IF NOT EXISTS {TIMESERIES_TABLE} (
-                ref_id  INTEGER NOT NULL,
+                stream_id  INTEGER NOT NULL,
                 ts      TIMESTAMP NOT NULL,
                 numeric_value DOUBLE,
                 text_value    VARCHAR,
@@ -213,54 +215,55 @@ class DuckDBStore:
                 -- materializer.  It is deliberately independent from the
                 -- per-stream publication protocol above.
                 last_revision BIGINT NOT NULL DEFAULT 0,
-                CHECK (numeric_value IS NULL OR text_value IS NULL),
-                UNIQUE (ref_id, ts)
+                -- No UNIQUE (stream_id, ts): _insert_frame keeps one row per key
+                -- by deleting colliding rows before it inserts.
+                CHECK (numeric_value IS NULL OR text_value IS NULL)
             )
             """,
         ]
         dependent_stmts = [
             f"""
             CREATE TABLE IF NOT EXISTS {STREAMS_TABLE} (
-                ref_uri   VARCHAR PRIMARY KEY,
-                point_uri VARCHAR,
+                stream_uri   VARCHAR PRIMARY KEY,
+                property_uri VARCHAR,
                 source_id VARCHAR NOT NULL,
-                ref_name  VARCHAR NOT NULL,
+                stream_name  VARCHAR NOT NULL,
                 value_kind VARCHAR NOT NULL DEFAULT 'text'
             )
             """,
-            f"CREATE UNIQUE INDEX IF NOT EXISTS idx_streams_source_ref_name ON {STREAMS_TABLE} (source_id, ref_name)",
-            f"CREATE INDEX IF NOT EXISTS idx_streams_point_uri ON {STREAMS_TABLE} (point_uri)",
+            f"CREATE UNIQUE INDEX IF NOT EXISTS idx_streams_source_ref_name ON {STREAMS_TABLE} (source_id, stream_name)",
+            f"CREATE INDEX IF NOT EXISTS idx_streams_point_uri ON {STREAMS_TABLE} (property_uri)",
             f"""
             CREATE OR REPLACE VIEW {TIMESERIES_STREAMS_VIEW} AS
             SELECT
-                r.ref_uri,
-                s.point_uri,
+                r.stream_uri,
+                s.property_uri,
                 s.source_id,
-                s.ref_name,
+                s.stream_name,
                 COALESCE(s.value_kind, 'text') AS value_kind,
                 t.ts,
                 t.numeric_value AS value_numeric,
                 t.text_value AS value_text
             FROM {TIMESERIES_TABLE} AS t
-            JOIN {REF_IDS_TABLE} AS r
-                ON t.ref_id = r.ref_id
+            JOIN {STREAM_IDS_TABLE} AS r
+                ON t.stream_id = r.stream_id
             LEFT JOIN {STREAMS_TABLE} AS s
-                ON r.ref_uri = s.ref_uri
+                ON r.stream_uri = s.stream_uri
             WHERE NOT t.deleted
             """,
             f"""
             CREATE TABLE IF NOT EXISTS {LOGS_TABLE} (
-                point_uri      VARCHAR NOT NULL,
+                property_uri      VARCHAR NOT NULL,
                 timestamp      TIMESTAMP NOT NULL,
                 observed_start TIMESTAMP,
                 observed_end   TIMESTAMP,
                 message        VARCHAR NOT NULL,
-                UNIQUE (point_uri, timestamp)
+                UNIQUE (property_uri, timestamp)
             )
             """,
-            f"CREATE INDEX IF NOT EXISTS idx_logs_point ON {LOGS_TABLE} (point_uri, timestamp)",
+            f"CREATE INDEX IF NOT EXISTS idx_logs_point ON {LOGS_TABLE} (property_uri, timestamp)",
             f"CREATE INDEX IF NOT EXISTS idx_logs_obs ON {LOGS_TABLE} (observed_start, observed_end)",
-            "CREATE TABLE IF NOT EXISTS stream_resets (ref_uri VARCHAR PRIMARY KEY, last_revision BIGINT NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS stream_resets (stream_uri VARCHAR PRIMARY KEY, last_revision BIGINT NOT NULL)",
             f"CREATE TABLE IF NOT EXISTS {SYSTEM_STATE_TABLE} (current_revision BIGINT NOT NULL)",
             f"INSERT INTO {SYSTEM_STATE_TABLE} SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM {SYSTEM_STATE_TABLE})",
             f"CREATE TABLE IF NOT EXISTS {BINDING_PROGRESS_TABLE} (progress_key VARCHAR PRIMARY KEY, consumed_revision BIGINT NOT NULL)",
@@ -280,23 +283,23 @@ class DuckDBStore:
 
     def upsert_rows(
         self,
-        ref_uri: str,
+        stream_uri: str,
         rows: Iterable[tuple[datetime, Any]],
         *,
         value_kind: str = "text",
     ) -> int:
         rows_list = list(rows)
-        logger.debug("upsert_rows ref_uri=%s rows=%d kind=%s", ref_uri, len(rows_list), value_kind)
+        logger.debug("upsert_rows stream_uri=%s rows=%d kind=%s", stream_uri, len(rows_list), value_kind)
         if not rows_list:
             return 0
-        return self.bulk_insert_polars(self._rows_frame(ref_uri, rows_list, value_kind))
+        return self.bulk_insert_polars(self._rows_frame(stream_uri, rows_list, value_kind))
 
     @staticmethod
-    def _rows_frame(ref_uri: str, rows_list: list[tuple[datetime, Any]], value_kind: str) -> pl.DataFrame:
+    def _rows_frame(stream_uri: str, rows_list: list[tuple[datetime, Any]], value_kind: str) -> pl.DataFrame:
         n = len(rows_list)
         return pl.DataFrame(
             {
-                "ref_uri": pl.Series("ref_uri", [ref_uri] * n, dtype=pl.Utf8),
+                "stream_uri": pl.Series("stream_uri", [stream_uri] * n, dtype=pl.Utf8),
                 "ts": pl.Series("ts", [ts for ts, _ in rows_list], dtype=pl.Datetime("us", "UTC")),
                 "value": typed_value_series([value for _, value in rows_list]),
                 "value_kind": pl.Series("value_kind", [value_kind] * n, dtype=pl.Utf8),
@@ -305,23 +308,22 @@ class DuckDBStore:
 
     def replace_rows(
         self,
-        ref_uri: str,
+        stream_uri: str,
         rows: Iterable[tuple[datetime, Any]],
         *,
         value_kind: str = "text",
     ) -> int:
         value_kind = normalize_value_kind(value_kind)
-        frame = self._prepare_frame(self._rows_frame(ref_uri, list(rows), value_kind))
+        frame = self._prepare_frame(self._rows_frame(stream_uri, list(rows), value_kind))
         if frame["ts"].null_count():
             raise ValueError("replacement timestamps must not be null")
-        return self._replace_frame(ref_uri, frame)
+        return self._replace_frame(stream_uri, frame)
 
-    def _replace_frame(self, ref_uri: str, frame: pl.DataFrame) -> int:
+    def _replace_frame(self, stream_uri: str, frame: pl.DataFrame) -> int:
         """Physically replace a stream and record its latest reset atomically."""
         with self._lock, self._write_conn() as conn:
-            revision = RevisionPublisher(self).reset(conn, [ref_uri])
-            self._insert_frame(conn, frame, revision)
-        return frame.height
+            revision = RevisionPublisher(self).reset(conn, [stream_uri])
+            return self._insert_frame(conn, frame, revision)
 
     def bulk_insert_polars(self, df: pl.DataFrame) -> int:
         """Bulk-insert a Polars DataFrame with canonical or split value columns.
@@ -332,20 +334,19 @@ class DuckDBStore:
             logger.debug("bulk_insert_polars: empty DataFrame, skipping")
             return 0
         in_rows = len(df)
-        with timed_debug(logger, "bulk_insert_polars prepare/dedupe rows=%d", in_rows):
+        with timed_debug(logger, "bulk_insert_polars prepare rows=%d", in_rows):
             df = self._prepare_frame(df)
-        logger.debug("bulk_insert_polars: %d rows after dedupe (was %d)", len(df), in_rows)
-        with self._lock, timed_debug(logger, "bulk_insert_polars DELETE+INSERT rows=%d", len(df)), self._write_conn() as conn:
-            self._insert_frame(conn, df, self._next_revision(conn))
-        return len(df)
+        with self._lock, timed_debug(logger, "bulk_insert_polars DELETE+INSERT rows=%d", in_rows), self._write_conn() as conn:
+            written = self._insert_frame(conn, df, self._next_revision(conn))
+        logger.debug("bulk_insert_polars: %d rows after dedupe (was %d)", written, in_rows)
+        return written
 
     @staticmethod
     def _prepare_frame(df: pl.DataFrame) -> pl.DataFrame:
-        """Split value columns, normalise ts to naive UTC, dedupe on (ref_uri, ts)."""
-        df = prepare_value_columns(df).with_columns(
+        """Split value columns and normalise ts to naive UTC."""
+        return prepare_value_columns(df).with_columns(
             pl.col("ts").dt.convert_time_zone("UTC").dt.replace_time_zone(None)
         )
-        return df.unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
 
     @staticmethod
     def _next_revision(conn) -> int:
@@ -356,57 +357,77 @@ class DuckDBStore:
             f"UPDATE {SYSTEM_STATE_TABLE} SET current_revision = current_revision + 1 RETURNING current_revision"
         ).fetchone()[0])
 
-    @staticmethod
-    def _insert_frame(conn, df: pl.DataFrame, revision: int) -> None:
-        """Upsert a prepared frame on *conn*: delete colliding (ref, ts) rows, insert.
+    STAGING_TABLE = "_acquirium_staging_timeseries"
 
-        The frame carries ref_uri strings; ids are assigned for unseen uris and
-        the rows keyed by ref_id, all inside the caller's transaction.
+    @classmethod
+    def _insert_frame(cls, conn, df: pl.DataFrame, revision: int) -> int:
+        """Upsert a prepared frame on *conn* through a temporary staging table.
+
+        The frame carries stream_uri strings. Ids are assigned for unseen uris and
+        the rows staged by stream_id. Colliding (stream_id, ts) rows are then deleted
+        from the timeseries table and the staged rows inserted in
+        (stream_id, ts) order, all inside the caller's transaction.
+
+        The table has no unique constraint, so this is the only place that
+        keeps one row per (stream_id, ts). A key repeated within the frame keeps
+        its last row. Returns the number of rows written.
         """
+        df = df.unique(subset=["stream_uri", "ts"], keep="last", maintain_order=True)
+        staging = cls.STAGING_TABLE
         conn.register("_acquirium_incoming_timeseries", df)
         try:
             conn.execute(
                 f"""
-                INSERT INTO {REF_IDS_TABLE} (ref_uri)
-                SELECT DISTINCT ref_uri FROM _acquirium_incoming_timeseries
-                ON CONFLICT (ref_uri) DO NOTHING
+                INSERT INTO {STREAM_IDS_TABLE} (stream_uri)
+                SELECT DISTINCT stream_uri FROM _acquirium_incoming_timeseries
+                ON CONFLICT (stream_uri) DO NOTHING
                 """
             )
+            # OR REPLACE: a caller-scoped transaction can write more than once
+            # on the same connection, and a failed write leaves its table behind.
             conn.execute(
                 f"""
-                DELETE FROM {TIMESERIES_TABLE}
-                USING (
-                    SELECT r.ref_id, i.ts
-                    FROM _acquirium_incoming_timeseries AS i
-                    JOIN {REF_IDS_TABLE} AS r USING (ref_uri)
-                ) AS incoming
-                WHERE {TIMESERIES_TABLE}.ref_id = incoming.ref_id
-                  AND {TIMESERIES_TABLE}.ts = incoming.ts
-                """
-            )
-            conn.execute(
-                f"""
-                INSERT INTO {TIMESERIES_TABLE} (ref_id, ts, numeric_value, text_value, last_revision)
-                SELECT r.ref_id, i.ts, i.numeric_value, i.text_value, ?
+                CREATE OR REPLACE TEMP TABLE {staging} AS
+                SELECT r.stream_id, i.ts, i.numeric_value, i.text_value
                 FROM _acquirium_incoming_timeseries AS i
-                JOIN {REF_IDS_TABLE} AS r USING (ref_uri)
-                """, [revision]
+                JOIN {STREAM_IDS_TABLE} AS r USING (stream_uri)
+                """
             )
         finally:
             conn.unregister("_acquirium_incoming_timeseries")
+        conn.execute(
+            f"""
+            DELETE FROM {TIMESERIES_TABLE}
+            USING {staging} AS incoming
+            WHERE {TIMESERIES_TABLE}.stream_id = incoming.stream_id
+              AND {TIMESERIES_TABLE}.ts = incoming.ts
+            """
+        )
+        # DuckDB appends in the order given, so each write lands as a run
+        # sorted by stream and time.
+        conn.execute(
+            f"""
+            INSERT INTO {TIMESERIES_TABLE} (stream_id, ts, numeric_value, text_value, last_revision)
+            SELECT stream_id, ts, numeric_value, text_value, ?
+            FROM {staging}
+            ORDER BY stream_id, ts
+            """, [revision]
+        )
+        conn.execute(f"DROP TABLE {staging}")
+        return df.height
 
     # ---- stream reference registry ----
 
     def ensure_stream_ref(
         self,
-        point_uri: str | None,
+        property_uri: str | None,
         source_id: str,
-        ref_name: str,
-        ref_uri: str | None = None,
+        stream_name: str,
+        stream_uri: str | None = None,
         value_kind: str = "text",
     ) -> str:
-        """Register a stream reference and return its canonical ref URI."""
-        return self.ensure_stream_refs([(point_uri, source_id, ref_name, ref_uri, value_kind)])[0]
+        """Register a stream reference and return its canonical stream URI."""
+        return self.ensure_stream_refs([(property_uri, source_id, stream_name, stream_uri, value_kind)])[0]
 
     def ensure_stream_refs(self, refs) -> list[str]:
         """Register a batch using its own transaction."""
@@ -416,63 +437,64 @@ class DuckDBStore:
     def _ensure_stream_refs(self, conn, refs) -> list[str]:
         """Register references in the caller's transaction; never commit it."""
         prepared: dict[str, list[Any]] = {}
-        for point_uri, source_id, ref_name, ref_uri, value_kind in refs:
-            key = str(ref_uri if ref_uri is not None else compute_ref_uri(source_id, ref_name))
+        for property_uri, source_id, stream_name, stream_uri, value_kind in refs:
+            key = str(stream_uri if stream_uri is not None else compute_stream_uri(source_id, stream_name))
             # Last occurrence wins, matching a sequence of individual upserts.
             # DuckDB's ON CONFLICT DO UPDATE rejects a source naming the same row
             # twice, and the caller's SPARQL can legitimately yield repeats.
-            prepared[key] = [key, point_uri, source_id, ref_name, normalize_value_kind(value_kind)]
+            prepared[key] = [key, property_uri, source_id, stream_name, stored_value_kind(value_kind)]
         if not prepared:
             return []
         df = pl.DataFrame(
             list(prepared.values()),
-            schema=["ref_uri", "point_uri", "source_id", "ref_name", "value_kind"],
+            schema=["stream_uri", "property_uri", "source_id", "stream_name", "value_kind"],
             orient="row",
         )
         conn.register("_acquirium_incoming_refs", df)
         try:
             conn.execute(
                 f"""
-                INSERT INTO {STREAMS_TABLE} (ref_uri, point_uri, source_id, ref_name, value_kind)
-                SELECT ref_uri, point_uri, source_id, ref_name, value_kind
+                INSERT INTO {STREAMS_TABLE} (stream_uri, property_uri, source_id, stream_name, value_kind)
+                SELECT stream_uri, property_uri, source_id, stream_name, value_kind
                 FROM _acquirium_incoming_refs
-                ON CONFLICT (ref_uri) DO UPDATE SET
+                ON CONFLICT (stream_uri) DO UPDATE SET
                     source_id  = excluded.source_id,
-                    ref_name   = excluded.ref_name,
-                    point_uri  = COALESCE(excluded.point_uri, {STREAMS_TABLE}.point_uri),
-                    value_kind = excluded.value_kind
+                    stream_name   = excluded.stream_name,
+                    property_uri  = COALESCE(excluded.property_uri, {STREAMS_TABLE}.property_uri),
+                    value_kind = CASE WHEN excluded.value_kind = '{UNDECLARED_VALUE_KIND}'
+                        THEN {STREAMS_TABLE}.value_kind ELSE excluded.value_kind END
                 """
             )
         finally:
             conn.unregister("_acquirium_incoming_refs")
         return list(prepared.keys())
 
-    def resolve_storage_key(self, point_uri: str) -> str:
-        """Return the storage ref URI for point_uri, or point_uri itself if unregistered."""
+    def resolve_storage_key(self, property_uri: str) -> str:
+        """Return the storage stream URI for property_uri, or property_uri itself if unregistered."""
         with self._own_conn() as conn:
             row = conn.execute(
-                f"SELECT ref_uri FROM {STREAMS_TABLE} WHERE point_uri = ?", [point_uri]
+                f"SELECT stream_uri FROM {STREAMS_TABLE} WHERE property_uri = ?", [property_uri]
             ).fetchone()
-        return point_uri if row is None else row[0]
+        return property_uri if row is None else row[0]
 
-    def resolve_storage_keys(self, point_uris: list[str]) -> dict[str, str]:
-        """Batch-resolve point_uris to storage keys."""
-        if not point_uris:
+    def resolve_storage_keys(self, property_uris: list[str]) -> dict[str, str]:
+        """Batch-resolve property_uris to storage keys."""
+        if not property_uris:
             return {}
-        placeholders = ", ".join("?" * len(point_uris))
-        with self._own_conn() as conn, timed_debug(logger, "resolve_storage_keys n=%d", len(point_uris)):
-            d = conn.execute(
-                f"SELECT point_uri, ref_uri FROM {STREAMS_TABLE} WHERE point_uri IN ({placeholders})",
-                point_uris,
+        placeholders = ", ".join("?" * len(property_uris))
+        with self._own_conn() as conn, timed_debug(logger, "resolve_storage_keys n=%d", len(property_uris)):
+            d = conn.sql(
+                f"SELECT property_uri, stream_uri FROM {STREAMS_TABLE} WHERE property_uri IN ({placeholders})",
+                params=property_uris,
             ).to_arrow_table().to_pydict()
-        registered = dict(zip(d["point_uri"], d["ref_uri"]))
-        return {uri: registered.get(uri, uri) for uri in point_uris}
+        registered = dict(zip(d["property_uri"], d["stream_uri"]))
+        return {uri: registered.get(uri, uri) for uri in property_uris}
 
     # ---- timeseries reads ----
 
     def timeseries(
         self,
-        ref_uri: str,
+        stream_uri: str,
         *,
         start: datetime | None = None,
         end: datetime | None = None,
@@ -498,21 +520,23 @@ class DuckDBStore:
         rows = 0
         try:
             with timed_debug(
-                logger, "timeseries ref_uri=%s start=%s end=%s limit=%s order=%s mode=%s",
-                ref_uri, start, end, limit, order, mode,
+                logger, "timeseries stream_uri=%s start=%s end=%s limit=%s order=%s mode=%s",
+                stream_uri, start, end, limit, order, mode,
             ):
-                ref_id_row = conn.execute(
-                    f"SELECT ref_id FROM {REF_IDS_TABLE} WHERE ref_uri = ?", [ref_uri]
-                ).fetchone()
-                if ref_id_row is None:
+                # fetchall(), not fetchone(): a partly read execute() result
+                # stays open, and DuckDB then refuses the relation below.
+                stream_id_rows = conn.execute(
+                    f"SELECT stream_id FROM {STREAM_IDS_TABLE} WHERE stream_uri = ? LIMIT 1", [stream_uri]
+                ).fetchall()
+                if not stream_id_rows:
                     # Never written to: no id, no rows.
                     return
 
                 # Normal reads hide tombstones: a deleted row is kept
                 # physically (its last_stream_version stays resolvable by a
                 # batch reader) but is invisible to this API.
-                clauses = ["ref_id = ?", "NOT deleted"]
-                params: list[Any] = [ref_id_row[0]]
+                clauses = ["stream_id = ?", "NOT deleted"]
+                params: list[Any] = [stream_id_rows[0][0]]
                 if start:
                     clauses.append("ts >= ?")
                     params.append(self._to_utc_naive(start))
@@ -538,7 +562,7 @@ class DuckDBStore:
                     ORDER BY ts {order_sql}{limit_sql}
                 """
 
-                value_kind = self._stream_value_kind(conn, ref_uri)
+                value_kind = self._stream_value_kind(conn, stream_uri)
                 # Resolve the value column once for the whole read so every
                 # yielded batch has the same schema. An explicit mode wins over
                 # the stream's registered kind: a numeric read of a text-kind
@@ -557,14 +581,14 @@ class DuckDBStore:
                         has_numeric, has_text = conn.execute(
                             f"SELECT COUNT(numeric_value) > 0, COUNT(text_value) > 0 FROM {TIMESERIES_TABLE} WHERE {where}",
                             params,
-                        ).fetchone()
+                        ).fetchall()[0]
                         if has_numeric and has_text:
                             resolved = "coalesce"
                         else:
                             resolved = "numeric" if has_numeric else "text"
                 # Streamed, not materialized: batches are pulled as the caller
                 # consumes them, so an unbounded range need not fit in memory.
-                reader = conn.execute(query, params).to_arrow_reader(batch_size)
+                reader = conn.sql(query, params=params).to_arrow_reader(batch_size)
             for batch in reader:
                 rows += batch.num_rows
                 numeric_col = batch.column("numeric_value")
@@ -582,24 +606,24 @@ class DuckDBStore:
                 else:
                     val_col = text_col.cast(pa.string())
                 ts_col = pc.assume_timezone(batch.column("ts"), timezone="UTC")
-                uri_col = pa.array([ref_uri] * len(batch), type=pa.string())
+                uri_col = pa.array([stream_uri] * len(batch), type=pa.string())
                 yield pa.record_batch([ts_col, val_col, uri_col], names=["ts", "value", "uri"])
         finally:
             # Runs on early caller exit (GeneratorExit) as well as on exhaustion.
             conn.close()
-            logger.debug("timeseries: ref_uri=%s rows=%d (batch_size=%d)", ref_uri, rows, batch_size)
+            logger.debug("timeseries: stream_uri=%s rows=%d (batch_size=%d)", stream_uri, rows, batch_size)
 
 
-    def timeseries_info(self, ref_uri: str) -> TimeseriesInfo:
-        with self._own_conn() as conn, timed_debug(logger, "timeseries_info ref_uri=%s", ref_uri):
+    def timeseries_info(self, stream_uri: str) -> TimeseriesInfo:
+        with self._own_conn() as conn, timed_debug(logger, "timeseries_info stream_uri=%s", stream_uri):
             row = conn.execute(
                 f"""
                 SELECT COUNT(*), MIN(ts), MAX(ts)
                 FROM {TIMESERIES_TABLE} AS t
-                JOIN {REF_IDS_TABLE} AS r USING (ref_id)
-                WHERE r.ref_uri = ? AND NOT t.deleted
+                JOIN {STREAM_IDS_TABLE} AS r USING (stream_id)
+                WHERE r.stream_uri = ? AND NOT t.deleted
                 """,
-                [ref_uri],
+                [stream_uri],
             ).fetchone()
         cnt, earliest_raw, latest_raw = (row[0] or 0, row[1], row[2]) if row else (0, None, None)
         return TimeseriesInfo(
@@ -609,27 +633,27 @@ class DuckDBStore:
             latest=self._add_utc(latest_raw),
         )
 
-    def timeseries_info_batch(self, ref_uris: list[str]) -> dict[str, TimeseriesInfo]:
-        if not ref_uris:
+    def timeseries_info_batch(self, stream_uris: list[str]) -> dict[str, TimeseriesInfo]:
+        if not stream_uris:
             return {}
-        placeholders = ", ".join("?" * len(ref_uris))
-        with self._own_conn() as conn, timed_debug(logger, "timeseries_info_batch n=%d", len(ref_uris)):
-            d = conn.execute(
+        placeholders = ", ".join("?" * len(stream_uris))
+        with self._own_conn() as conn, timed_debug(logger, "timeseries_info_batch n=%d", len(stream_uris)):
+            d = conn.sql(
                 f"""
-                SELECT r.ref_uri,
+                SELECT r.stream_uri,
                        COUNT(*)   AS row_count,
                        MIN(ts)    AS earliest,
                        MAX(ts)    AS latest
                 FROM {TIMESERIES_TABLE} AS t
-                JOIN {REF_IDS_TABLE} AS r USING (ref_id)
-                WHERE r.ref_uri IN ({placeholders}) AND NOT t.deleted
-                GROUP BY r.ref_uri
+                JOIN {STREAM_IDS_TABLE} AS r USING (stream_id)
+                WHERE r.stream_uri IN ({placeholders}) AND NOT t.deleted
+                GROUP BY r.stream_uri
                 """,
-                ref_uris,
+                params=stream_uris,
             ).to_arrow_table().to_pydict()
         result: dict[str, TimeseriesInfo] = {}
         for uri, cnt, earliest_raw, latest_raw in zip(
-            d["ref_uri"], d["row_count"], d["earliest"], d["latest"]
+            d["stream_uri"], d["row_count"], d["earliest"], d["latest"]
         ):
             result[uri] = TimeseriesInfo(
                 table=TIMESERIES_TABLE,
@@ -637,33 +661,56 @@ class DuckDBStore:
                 earliest=self._add_utc(earliest_raw),
                 latest=self._add_utc(latest_raw),
             )
-        for uri in ref_uris:
+        for uri in stream_uris:
             if uri not in result:
                 result[uri] = TimeseriesInfo(table=TIMESERIES_TABLE, row_count=0)
         return result
+
+    def timeseries_exists_batch(self, stream_uris: list[str]) -> set[str]:
+        """The stream URIs among ``stream_uris`` that have at least one live row.
+
+        The join of ``timeseries_info_batch`` without its aggregates. DuckDB
+        cannot stop a correlated EXISTS at a stream's first row (it hashes the
+        whole table for the semi join), and one ``LIMIT 1`` probe per stream
+        costs more to plan than it saves once there are many streams.
+        """
+        if not stream_uris:
+            return set()
+        placeholders = ", ".join("?" * len(stream_uris))
+        with self._own_conn() as conn, timed_debug(logger, "timeseries_exists_batch n=%d", len(stream_uris)):
+            rows = conn.execute(
+                f"""
+                SELECT DISTINCT r.stream_uri
+                FROM {TIMESERIES_TABLE} AS t
+                JOIN {STREAM_IDS_TABLE} AS r USING (stream_id)
+                WHERE r.stream_uri IN ({placeholders}) AND NOT t.deleted
+                """,
+                stream_uris,
+            ).fetchall()
+        return {uri for (uri,) in rows}
 
     # ---- logs ----
 
     def insert_log(self, log: LogEntry) -> None:
         obs_start = self._to_utc_naive(log.period.start) if log.period and log.period.start else None
         obs_end = self._to_utc_naive(log.period.end) if log.period and log.period.end else None
-        logger.debug("insert_log point_uri=%s ts=%s", log.point_uri, log.timestamp)
+        logger.debug("insert_log property_uri=%s ts=%s", log.property_uri, log.timestamp)
         with self._lock, self._write_conn() as conn:
             conn.execute(
                 f"""
-                INSERT INTO {LOGS_TABLE} (point_uri, timestamp, observed_start, observed_end, message)
+                INSERT INTO {LOGS_TABLE} (property_uri, timestamp, observed_start, observed_end, message)
                 VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT (point_uri, timestamp) DO UPDATE SET
+                ON CONFLICT (property_uri, timestamp) DO UPDATE SET
                     message        = excluded.message,
                     observed_start = excluded.observed_start,
                     observed_end   = excluded.observed_end
                 """,
-                [log.point_uri, self._to_utc_naive(log.timestamp), obs_start, obs_end, log.message],
+                [log.property_uri, self._to_utc_naive(log.timestamp), obs_start, obs_end, log.message],
             )
 
     def query_logs(
         self,
-        point_uri: str,
+        property_uri: str,
         log_time_interval: TimeIntervalModel | None = None,
         obs_time_interval: TimeIntervalModel | None = None,
     ) -> list[LogEntry]:
@@ -672,8 +719,8 @@ class DuckDBStore:
         obs_start = obs_time_interval.start if obs_time_interval else None
         obs_end = obs_time_interval.end if obs_time_interval else None
 
-        clauses = ["point_uri = ?"]
-        params: list[Any] = [point_uri]
+        clauses = ["property_uri = ?"]
+        params: list[Any] = [property_uri]
 
         if start is not None:
             clauses.append("timestamp >= ?")
@@ -699,14 +746,14 @@ class DuckDBStore:
 
         where = " AND ".join(clauses)
         query = f"""
-            SELECT point_uri, timestamp, observed_start, observed_end, message
+            SELECT property_uri, timestamp, observed_start, observed_end, message
             FROM {LOGS_TABLE}
             WHERE {where}
             ORDER BY timestamp ASC
         """
         try:
-            with self._own_conn() as conn, timed_debug(logger, "query_logs point_uri=%s clauses=%d", point_uri, len(clauses)):
-                tbl = conn.execute(query, params).to_arrow_table()
+            with self._own_conn() as conn, timed_debug(logger, "query_logs property_uri=%s clauses=%d", property_uri, len(clauses)):
+                tbl = conn.sql(query, params=params).to_arrow_table()
         except Exception as exc:
             logger.error("query_logs failed: %s", exc)
             return []
@@ -714,17 +761,17 @@ class DuckDBStore:
         d = tbl.to_pydict()
         result: list[LogEntry] = []
         for uri_val, ts_raw, o_start_raw, o_end_raw, msg in zip(
-            d["point_uri"], d["timestamp"], d["observed_start"], d["observed_end"], d["message"]
+            d["property_uri"], d["timestamp"], d["observed_start"], d["observed_end"], d["message"]
         ):
             period = TimeIntervalModel(start=self._add_utc(o_start_raw), end=self._add_utc(o_end_raw))
-            result.append(LogEntry(point_uri=uri_val, timestamp=self._add_utc(ts_raw), period=period, message=msg))
+            result.append(LogEntry(property_uri=uri_val, timestamp=self._add_utc(ts_raw), period=period, message=msg))
         return result
 
-    def delete_logs(self, point_uri: str) -> bool:
-        logger.debug("delete_logs point_uri=%s", point_uri)
+    def delete_logs(self, property_uri: str) -> bool:
+        logger.debug("delete_logs property_uri=%s", property_uri)
         with self._lock, self._write_conn() as conn:
             conn.execute(
-                f"DELETE FROM {LOGS_TABLE} WHERE point_uri = ?", [point_uri]
+                f"DELETE FROM {LOGS_TABLE} WHERE property_uri = ?", [property_uri]
             )
         return True
 
@@ -768,7 +815,7 @@ class DuckDBStore:
     def sql_query(self, query: str) -> dict[str, Any]:
         logger.debug("sql_query: %s", query.replace("\n", " ")[:200])
         with self._own_conn() as conn, timed_debug(logger, "sql_query"):
-            tbl = conn.execute(query).to_arrow_table()
+            tbl = conn.sql(query).to_arrow_table()
         d = tbl.to_pydict()
         cols = tbl.schema.names
         return {
@@ -808,33 +855,46 @@ class DuckDBStore:
     def _to_str(val: Any) -> str | None:
         return None if val is None else str(val)
 
-    def stream_value_kind(self, ref_uri: str) -> str | None:
+    def stream_value_kind(self, stream_uri: str) -> str | None:
         with self._own_conn() as conn:
-            return self._stream_value_kind(conn, ref_uri)
+            return self._stream_value_kind(conn, stream_uri)
 
-    def stream_value_kinds(self, ref_uris: Iterable[str]) -> dict[str, str]:
-        """Value kinds of the registered streams among *ref_uris*, in one query.
+    def stream_value_kinds(self, stream_uris: Iterable[str]) -> dict[str, str]:
+        """Value kinds of the registered streams among *stream_uris*, in one query.
 
         One connection and one statement for the whole batch: a lookup per
         stream costs a connection attach plus a parameterised execute each,
         which dominated ingest when a batch carried a hundred streams.
         """
-        uris = list(dict.fromkeys(ref_uris))
+        uris = list(dict.fromkeys(stream_uris))
         if not uris:
             return {}
         with self._own_conn() as conn:
             rows = conn.execute(
-                f"SELECT ref_uri, value_kind FROM {STREAMS_TABLE} "
-                "WHERE ref_uri IN (SELECT unnest(?::VARCHAR[]))",
+                f"SELECT stream_uri, value_kind FROM {STREAMS_TABLE} "
+                "WHERE stream_uri IN (SELECT unnest(?::VARCHAR[]))",
                 [uris],
             ).fetchall()
         return {uri: kind for uri, kind in rows}
 
-    def _stream_value_kind(self, conn, ref_uri: str) -> str | None:
+    def mark_streams_numeric(self, stream_uris: Iterable[str]) -> None:
+        """Make numeric the streams among *stream_uris* that declared no kind."""
+        uris = list(dict.fromkeys(stream_uris))
+        if not uris:
+            return
+        with self._lock, self._write_conn() as conn:
+            conn.execute(
+                f"UPDATE {STREAMS_TABLE} SET value_kind = 'numeric' "
+                f"WHERE value_kind = '{UNDECLARED_VALUE_KIND}' "
+                "AND stream_uri IN (SELECT unnest(?::VARCHAR[]))",
+                [uris],
+            )
+
+    def _stream_value_kind(self, conn, stream_uri: str) -> str | None:
         """Look up a stream's value kind on *conn* — the caller's connection, so
         a streaming read can resolve it without opening a second connection."""
-        row = conn.execute(
-            f"SELECT value_kind FROM {STREAMS_TABLE} WHERE ref_uri = ?",
-            [ref_uri],
-        ).fetchone()
-        return row[0] if row else None
+        rows = conn.execute(
+            f"SELECT value_kind FROM {STREAMS_TABLE} WHERE stream_uri = ? LIMIT 1",
+            [stream_uri],
+        ).fetchall()
+        return rows[0][0] if rows else None

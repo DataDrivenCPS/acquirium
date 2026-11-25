@@ -9,6 +9,9 @@ class DataNodeInfo:
     # FILTER(EXISTS {...}) on the node; entity nodes keep theirs under
     # constraints["exprs"].
     exprs: tuple = ()
+    # Stream reference URIs the node is restricted to (``measurement(stream=)``),
+    # compiled to VALUES on ?ext<N>. None: any reference; (): none at all.
+    refs: Optional[tuple] = None
 
 
 
@@ -19,7 +22,7 @@ class QueryNode:
     - id: internal identifier (stable within this QueryGraph)
     - alias: user-facing name to refer to this node (e.g., 'valve'), if not provided, same as id
     - constraints: node constraints; well-known keys are "rdf_class"
-      (ontology class URI, e.g. 'urn:nawi-water-ontology#Valve'),
+      (ontology class URI, e.g. 'https://watermetadata.org/ontology/watr#Valve'),
       "instance_uri", "is_data_node", "path_from", and "process"
     """
     id: int

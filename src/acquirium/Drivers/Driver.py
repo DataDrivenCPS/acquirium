@@ -15,9 +15,9 @@ from typing import TYPE_CHECKING, Any
 from rdflib import URIRef
 
 from acquirium.DriverState import DriverState
-from acquirium.internals.models import compute_ref_uri
-from acquirium.Storage.values import assign_stream_value_kind
+from acquirium.internals.models import compute_stream_uri
 from acquirium.internals._log import timed_debug
+from acquirium.internals._names import accepts_old_names, warn_deprecated
 
 logger = logging.getLogger("acquirium.driver")
 
@@ -58,6 +58,7 @@ def _cast_value_to_utf8(col: "pl.Series") -> "pl.Expr":
     return pl.col(name).cast(pl.Utf8)
 
 
+@accepts_old_names
 class Driver(ABC):
     """Base class for data-collection / processing drivers.
 
@@ -115,9 +116,9 @@ class Driver(ABC):
     def source_id(self, value: str) -> None:
         self._source_id = value
 
-    def reference_uri(self, ref_name: str) -> URIRef:
-        """Return the canonical reference URI for ``self.source_id``/``ref_name``."""
-        return compute_ref_uri(self.source_id, ref_name)
+    def reference_uri(self, stream_name: str) -> URIRef:
+        """Return the canonical reference URI for ``self.source_id``/``stream_name``."""
+        return compute_stream_uri(self.source_id, stream_name)
 
     def insert_graph(self, rdf_graph: str, *, format: str = "turtle", replace: bool = False) -> None:
         """Write RDF to this driver's source-owned graph.
@@ -263,6 +264,7 @@ def _sanitize_filename(name: str) -> str:
     return result
 
 
+@accepts_old_names
 class IngestDriver(Driver):
     """Driver base for sources that emit canonical timeseries observations.
 
@@ -270,7 +272,7 @@ class IngestDriver(Driver):
     buffered rows are inserted by :meth:`flush`, which the tick lifecycle calls
     for you. Drivers that already hold their data in bulk can instead pass a
     Polars DataFrame to :meth:`insert_observations` directly, with required
-    columns ``ts``, ``ref_name``, and ``value``.
+    columns ``ts``, ``stream_name``, and ``value``.
 
     Either way each stream must have a ``source_id``: pass one per observation
     (or include a ``source_id`` column) for multi-source drivers, or set
@@ -300,16 +302,14 @@ class IngestDriver(Driver):
         self._declaration_lock = threading.Lock()
         self._declarations: dict[tuple[str, str], dict[str, Any]] = {}
         self._registered: set[tuple[str, str]] = set()
-        self._kinded: set[tuple[str, str]] = set()
-        self._registered_sources: set[str] = set()
 
     def declare(
         self,
-        ref_name: str,
+        stream_name: str,
         *,
         source_id: str | None = None,
         value_kind: str | None = None,
-        point_uri: str | None = None,
+        property_uri: str | None = None,
         label: str | None = None,
         unit: str | URIRef | None = None,
         quantity_kind: str | URIRef | None = None,
@@ -325,24 +325,25 @@ class IngestDriver(Driver):
         to the graph just before the next insert, so streams always exist before
         their observations do.
 
-        ``value_kind`` is inferred from the first observed values when omitted.
+        When ``value_kind`` is omitted, the server infers it from the stream's
+        values: the stream is numeric once it receives a numeric value.
         Repeating an identical declaration is a no-op; changing any metadata
         for an existing identity raises an error, even after registration.
 
         ``source_id`` defaults to the driver's own. Pass it only for drivers
         spanning several datasources, and then pass it consistently: streams are
-        identified by the ``(source_id, ref_name)`` pair, matching how their
+        identified by the ``(source_id, stream_name)`` pair, matching how their
         observations are identified.
         """
         source = source_id if source_id is not None else self.source_id
-        name = str(ref_name)
+        name = str(stream_name)
         if not source or not name:
-            raise ValueError("stream declarations require non-empty source_id and ref_name")
+            raise ValueError("stream declarations require non-empty source_id and stream_name")
         metadata = {
             key: value
             for key, value in {
                 "value_kind": value_kind,
-                "point_uri": point_uri,
+                "property_uri": property_uri,
                 "label": label,
                 "unit": unit,
                 "quantity_kind": quantity_kind,
@@ -365,31 +366,27 @@ class IngestDriver(Driver):
                     f"was {previous!r}, now {metadata!r}"
                 )
 
-    def is_declared(self, ref_name: str, *, source_id: str | None = None) -> bool:
+    def is_declared(self, stream_name: str, *, source_id: str | None = None) -> bool:
         """Return whether this driver has declared the effective stream identity."""
         source = source_id if source_id is not None else self.source_id
         with self._declaration_lock:
-            return (source, str(ref_name)) in self._declarations
+            return (source, str(stream_name)) in self._declarations
 
     def register_declared(self, observations: "pl.DataFrame | None" = None) -> None:
-        """Write pending declarations, inferring value kinds from *observations*.
+        """Write pending declarations and check *observations* against them.
 
-        Every observed stream must already have been declared. When a
-        declaration omitted ``value_kind``, its first values determine it.
+        Every observed stream must already have been declared.
         """
-        import polars as pl
-
-        observed: dict[tuple[str, str], list[Any]] = {}
+        observed: set[tuple[str, str]] = set()
         if observations is not None and not observations.is_empty():
             multi = "source_id" in observations.columns
-            group = ["source_id", "ref_name"] if multi else ["ref_name"]
-            by_stream = observations.group_by(group).agg(pl.col("value"))
-            for row in by_stream.iter_rows(named=True):
+            group = ["source_id", "stream_name"] if multi else ["stream_name"]
+            for row in observations.select(group).unique().iter_rows(named=True):
                 source = str(row["source_id"]) if multi else self.source_id
-                observed[(source, str(row["ref_name"]))] = row["value"]
+                observed.add((source, str(row["stream_name"])))
 
         with self._declaration_lock:
-            missing = sorted(set(observed) - set(self._declarations))
+            missing = sorted(observed - set(self._declarations))
             if missing:
                 raise UndeclaredStreamError(
                     "observations contain undeclared streams: "
@@ -400,37 +397,18 @@ class IngestDriver(Driver):
                 for key, meta in self._declarations.items()
                 if key not in self._registered
             }
-            inferred: set[tuple[str, str]] = set()
-            for key, values in observed.items():
-                meta = self._declarations[key]
-                if key in self._kinded or "value_kind" in meta:
-                    continue
-                meaningful = [
-                    value for value in values
-                    if value is not None and not (isinstance(value, str) and not value.strip())
-                ]
-                if not meaningful:
-                    continue
-                specs.setdefault(key, dict(meta))["value_kind"] = assign_stream_value_kind(meaningful)
-                inferred.add(key)
-            sources = sorted({source for source, _ in specs} - self._registered_sources)
 
-        for source in sources:
-            self.aq.register_datasource(source)
         if specs:
             self.aq.register_streams([
-                {"source_id": source, "ref_name": name, **meta}
+                {"source_id": source, "stream_name": name, **meta}
                 for (source, name), meta in specs.items()
             ])
         with self._declaration_lock:
-            self._registered_sources.update(sources)
             self._registered.update(specs)
-            self._kinded.update(inferred)
-            self._kinded.update(key for key, meta in specs.items() if "value_kind" in meta)
 
     def add(
         self,
-        ref_name: str,
+        stream_name: str,
         value: Any,
         ts: datetime | None = None,
         *,
@@ -445,7 +423,7 @@ class IngestDriver(Driver):
         Buffered rows are inserted by :meth:`flush` at the end of each tick.
         """
         source = source_id if source_id is not None else self.source_id
-        key = (source, str(ref_name))
+        key = (source, str(stream_name))
         with self._declaration_lock:
             if key not in self._declarations:
                 raise UndeclaredStreamError(f"observation stream {key!r} was not declared")
@@ -461,7 +439,7 @@ class IngestDriver(Driver):
                     f"{type(self).__name__} buffer is full "
                     f"(max_buffered_rows={self.max_buffered_rows})"
                 )
-            self._pending.append((source, ts, str(ref_name), value))
+            self._pending.append((source, ts, str(stream_name), value))
 
     def flush(self) -> dict[str, Any]:
         """Insert everything buffered by :meth:`add` and clear the buffer.
@@ -504,7 +482,7 @@ class IngestDriver(Driver):
         return pl.DataFrame({
             "source_id": pl.Series("source_id", [row[0] for row in rows], dtype=pl.Utf8),
             "ts": pl.Series("ts", [row[1] for row in rows]),
-            "ref_name": pl.Series("ref_name", [row[2] for row in rows], dtype=pl.Utf8),
+            "stream_name": pl.Series("stream_name", [row[2] for row in rows], dtype=pl.Utf8),
             "value": pl.Series("value", [row[3] for row in rows], dtype=pl.Object),
         })
 
@@ -569,7 +547,7 @@ class IngestDriver(Driver):
 
         schema = {
             "ts": pl.Datetime("us", "UTC"),
-            "ref_name": pl.Utf8,
+            "stream_name": pl.Utf8,
             "value": pl.Utf8,
         }
         if observations is None:
@@ -579,26 +557,66 @@ class IngestDriver(Driver):
                 schema = {"source_id": pl.Utf8, **schema}
             return pl.DataFrame(schema=schema)
 
-        missing = {"ts", "ref_name", "value"} - set(observations.columns)
+        if "ref_name" in observations.columns and "stream_name" not in observations.columns:
+            warn_deprecated("ref_name", "stream_name")
+            observations = observations.rename({"ref_name": "stream_name"})
+        missing = {"ts", "stream_name", "value"} - set(observations.columns)
         if missing:
             raise ValueError(
-                "Observation frames must include columns ts, ref_name, value; "
+                "Observation frames must include columns ts, stream_name, value; "
                 f"missing {sorted(missing)}"
             )
 
-        columns = ["ts", "ref_name", "value"]
+        columns = ["ts", "stream_name", "value"]
         if "source_id" in observations.columns:
             columns.insert(0, "source_id")
-        df = observations.select(columns).drop_nulls(subset=["ts", "ref_name"])
+        df = observations.select(columns).drop_nulls(subset=["ts", "stream_name"])
 
+        df = self._booleans_as_text(df)
         exprs = [
             self.to_timestamp(df["ts"]).alias("ts"),
-            pl.col("ref_name").cast(pl.Utf8),
+            pl.col("stream_name").cast(pl.Utf8),
             _cast_value_to_utf8(df["value"]),
         ]
         if "source_id" in df.columns:
             exprs.insert(0, pl.col("source_id").cast(pl.Utf8))
         return df.with_columns(exprs).drop_nulls(subset=["ts"])
+
+    def _booleans_as_text(self, df: "pl.DataFrame") -> "pl.DataFrame":
+        """Spell the booleans of ``value`` the way the server stores them.
+
+        Values travel as text. A boolean is the number 1 or 0, so it is sent
+        as "1.0"/"0.0", which a numeric or undeclared stream stores as a
+        number. A stream declared with ``value_kind="text"`` keeps
+        "True"/"False".
+        """
+        import polars as pl
+
+        from acquirium.Storage.values import normalize_value_kind
+
+        dtype = df["value"].dtype
+        if dtype == pl.Object:
+            if not any(isinstance(v, bool) for v in df["value"].to_list()):
+                return df
+        elif dtype != pl.Boolean:
+            return df
+
+        with self._declaration_lock:
+            text_streams = {
+                key for key, meta in self._declarations.items()
+                if normalize_value_kind(meta.get("value_kind") or "numeric") == "text"
+            }
+        sources = (
+            df["source_id"].to_list() if "source_id" in df.columns
+            else [self.source_id] * len(df)
+        )
+        values = [
+            value if not isinstance(value, bool)
+            else str(value) if (str(source), str(name)) in text_streams
+            else str(float(value))
+            for source, name, value in zip(sources, df["stream_name"].to_list(), df["value"].to_list())
+        ]
+        return df.with_columns(pl.Series("value", values, dtype=pl.Object))
 
     def to_timestamp(
         self,
@@ -706,7 +724,7 @@ class FileIngestDriver(IngestDriver):
                 df = pl.read_csv(path, skip_rows_after_header=cursor or 0)
                 for column in df.columns:
                     self.declare(column)
-                observations = df.unpivot(index="ts", variable_name="ref_name",
+                observations = df.unpivot(index="ts", variable_name="stream_name",
                                           value_name="value")
                 return FileBatch(observations, (cursor or 0) + len(df))
 
@@ -752,7 +770,7 @@ class FileIngestDriver(IngestDriver):
         ``None`` on first sight. It must be JSON-serializable; a row offset,
         byte position, or ISO timestamp are all suitable.
 
-        Observations are a frame of ``ts``, ``ref_name``, ``value``. Return an
+        Observations are a frame of ``ts``, ``stream_name``, ``value``. Return an
         unchanged cursor to signal there was nothing new.
         """
         raise NotImplementedError

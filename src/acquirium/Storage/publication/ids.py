@@ -8,8 +8,8 @@ import pyarrow as pa
 
 def normalize_mutations(table: pa.Table) -> pa.Table:
     """Keep the last mutation for each canonical key in deterministic order."""
-    frame = pl.from_arrow(table).unique(subset=["ref_uri", "ts"], keep="last", maintain_order=True)
-    return frame.sort(["ref_uri", "ts"]).to_arrow().cast(table.schema)
+    frame = pl.from_arrow(table).unique(subset=["stream_uri", "ts"], keep="last", maintain_order=True)
+    return frame.sort(["stream_uri", "ts"]).to_arrow().cast(table.schema)
 
 
 def payload_hash(table: pa.Table) -> str:

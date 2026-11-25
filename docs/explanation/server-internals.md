@@ -2,75 +2,149 @@
 title: Server internals
 ---
 
-<!-- TODO: intro -->
+In this article we'll describe what the Acquirium server consists of, what it keeps on disk and what it does when it starts.
+The config keys are in the [server configuration reference](../reference/server/configuration.md).
 
-## Storage backends
+## One process
 
-Both backends store the same logical schema: a `timeseries` table (one row
-per stream and timestamp, with a `numeric_value` and a `text_value` column),
-the `streams` reference table, and the logbook.
-Both key the rows by an integer `ref_id` and map it back through a `ref_ids`
-table.
-Reads expose `ref_uri`.
+The server is one process that answers HTTP requests.
+Every client, driver and command talks to it over HTTP, and nothing else opens the stored data.
 
-`duckdb` is the default: one file under the data directory, with no extra
-services to install or run.
-Reads run on their own connections, so a long scan does not block a driver's
-inserts.
-There is no compression or retention; the file grows with the data.
+The server holds three things:
 
-`timescale` stores the same tables in Postgres with the TimescaleDB
-extension, addressed by `pg_dsn`.
-The `timeseries` table is a hypertable, and chunks older than 7 days are
-compressed automatically.
+- the graph store, with the plant model, the streams and the metadata,
+- the timeseries store, with the rows of the streams,
+- the indexes of the text matcher.
 
-The graph store is embedded either way.
-Switching the timeseries backend does not lift the single-process constraint.
+It also runs the drivers and the apps.
+Each driver runs in its own process and talks to the server like a client (see [How drivers work](drivers.md)).
+The apps run inside the server, at most `materialization_workers` at the same time (see [Apps](apps.md)).
+
+Be aware that only one server can use a data folder.
+A second server on the same folder does not start, because the graph store can be opened by one process only.
+For the same reason `workers` has to stay 1.
+
+## Two ways to start it
+
+`aq.init()` starts a local server for the current folder:
+
+```python
+import acquirium as aq
+
+acq = aq.init()
+```
+```text
+Acquirium: starting a local server for .../.acquirium
+Acquirium: ready at http://127.0.0.1:61590
+```
+
+- It listens on this computer only, on a free port.
+- It keeps its data in `./.acquirium`.
+- The script that started it stops it with `aq.shutdown()`, or when the script ends. The data stays.
+- A second script started in the same folder connects to the running server instead of starting a new one.
+
+`acquirium server` starts a server that keeps running until you stop it, on the address given in `acquirium.toml`.
+This is the one to use for drivers and for a plant that is always on.
+Scripts connect to it with `aq.init(address=...)`.
+
+Both are the same server and store the data the same way.
+
+## The data folder
+
+Everything the server stores is in one folder, `.acquirium` by default:
+
+```text
+.acquirium/
+  .oxigraph/           the graph store
+  .ontoenv/            the catalog of the loaded ontologies
+  timeseries.duckdb    the timeseries store
+  drivers/             the state files of the drivers
+  embedding_cache/     the embeddings of the text matcher
+  .runtime/            the log and lock files of a server started by aq.init()
+```
+
+`drivers`, `embedding_cache` and `.runtime` only exist when they are used.
+
+`acquirium clear` erases the data of the folder and keeps the embeddings, because they take long to build and do not depend on your data.
+It refuses to run while a server is using the folder.
+
+## The timeseries store
+
+The rows of all streams are in one table, with one row per stream and timestamp.
+A row has a numeric value or a text value (see [Values](values.md)).
+Next to it are the `streams` table described in [The stream lifecycle](stream-lifecycle.md#registration-and-the-streams-table) and the logs.
+
+There are two backends, selected with `timeseries_backend`:
+
+- `duckdb` is the default. It is one file in the data folder and needs nothing else installed. Reads use their own connections, so a long read does not block the inserts of a driver.
+- `timescale` stores the same tables in Postgres with the TimescaleDB extension, at the address given in `pg_dsn`. Rows older than 7 days are compressed automatically.
+
+Note that the graph store is a local folder with both backends.
 
 ## The graph store
 
-The semantic model lives in an embedded Oxigraph store under `graph_path`.
-Two datasets are kept: the source of record (one graph per data owner plus one
-per ontology) and a query dataset holding the inferred deployment data and the
-resolved ontology and shape triples.
-Queries run against both by default; the derived data is rebuilt in the
-background when something changes, and a reader gets the last complete version
-until it is ready.
-Pass `wait_for_fresh=True` when a query must see the current generation.
-The [graph backend guide](graph-backend.md) covers this in
-full.
+The graph is stored with Oxigraph, in the `.oxigraph` folder.
+It holds what you inserted, and a second copy that is prepared for queries.
+[The graph store](graph-backend.md) explains the two and when the copy is rebuilt.
 
-The store keeps a source-data generation, exposed as `GET /graph_version`
-along with the state of the derived query cache (`source_version`,
-`published_version`, `is_current`, `rebuild_in_progress`).
-`source_version` advances on every mutation.
-Clients poll it to invalidate caches; drivers and apps use it for their
-graph-change hooks.
+The prefixes that an inserted model declares are saved next to the graph, in `.oxigraph/acquirium_prefixes.json`:
 
-The store is guarded by a single lock, so a heavy SPARQL query delays other
-graph operations until it finishes.
-The [querying guide](../how-to/debug-an-empty-query.md#when-a-query-returns-nothing-or-moreless-than-you-expect) covers how to
-keep queries bounded.
+```text
+{
+  "wbs": "urn:swro/"
+}
+```
 
-## The embedding indexes
+They are loaded again when the server starts.
+This is why `wbs:P1` is still printed as `wbs:P1` after a restart.
 
-Free-text resolution is served by two vector indexes built at startup: one
-over the water and s223 ontologies (classes, predicates, substances,
-processes) and one over QUDT (units, quantity kinds).
-They are built from the ontologies only.
-Inserted plant data is never indexed.
-This is why free text resolves classes and units but not instance labels.
+## The text matcher
 
-The first build is the expensive part of a first start: 5-10 minutes for the
-two indexes together, most of it the QUDT one.
-The result is cached under `data_dir/embedding_cache`, keyed by ontology
-content, so later starts reuse it and a changed ontology triggers a rebuild
-automatically.
-`GET /embedding_status` reports the state of both indexes.
+The text matcher turns text such as `"pump"` or `"degC"` into a URI.
+It uses two indexes that the server builds when it starts:
 
-Each index answers a query in two stages: an exact lookup over the indexed
-surfaces, then embedding similarity for whatever slots remain.
-Only the second stage needs the model, which is what
-[`exact_only`](../reference/server-config.md#exact-only-resolution) turns
-off — the same indexes over the same concepts, built in seconds, minus the
-fuzzy matching.
+- one over the water and s223 ontologies, for classes, relations and substances,
+- one over QUDT, for units and quantity kinds.
+
+The indexes are built from the ontologies only.
+The plant model and the labels you insert are not part of them.
+
+With `exact_only = true` the text has to match a name, a label or a symbol exactly.
+This is the default of `aq.init()`.
+Without it the indexes also hold embeddings, so that text that is close to a name is matched as well.
+Building the embeddings can take several minutes the first time.
+They are saved in `embedding_cache`, and later starts reuse them.
+
+The state of the two indexes can be read with the lower-level client:
+
+```python
+acq.client.embedding_status()
+```
+```text
+{'semantic': False,
+ 'graph': {'state': 'ready', 'concepts': 1480, 'surfaces': 2502, 'error': None, 'last_built': '2026-11-17T23:33:34.668763', 'duration_s': 0.73},
+ 'qudt': {'state': 'ready', 'concepts': 4143, 'surfaces': 5341, 'error': None, 'last_built': '2026-11-17T23:33:37.415838', 'duration_s': 2.75}}
+```
+
+`semantic` is `False` when the server runs with `exact_only`.
+See [the text matcher](text-resolution.md) for how a match is made.
+
+## What happens at startup
+
+The server does these in order:
+
+- It opens the two stores. When the data folder is new, the ontologies that ship with Acquirium are loaded into the graph store.
+- It builds the indexes of the text matcher.
+- It fills the `streams` table from the graph, and prepares the deployed apps.
+- It starts answering requests.
+- It starts the drivers of `acquirium.toml`, and then deploys the apps of `acquirium.toml`.
+
+In our runs a server with `exact_only = true` answered requests about 45 seconds after the command on a new data folder, and about 15 seconds on later starts.
+
+Note that a stream node in the graph with a wrong `stream_uri` makes the third step fail, and the server does not start (see [The stream lifecycle](stream-lifecycle.md#registration-and-the-streams-table)).
+
+## Next
+
+- [Server configuration](../reference/server/configuration.md) lists every key of `acquirium.toml`.
+- [Command line](../reference/server/cli.md) describes `acquirium server` and `acquirium clear`.
+- [HTTP API](../reference/server/http-api.md) lists the endpoints.

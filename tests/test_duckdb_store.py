@@ -59,6 +59,49 @@ def test_upsert_rows_conflict_updates(store):
     assert rows == ["2.0"]
 
 
+def _key_counts(store, ref):
+    """Physical rows and distinct timestamps stored for one stream."""
+    with store._own_conn() as conn:
+        return conn.execute(
+            "SELECT count(*), count(DISTINCT t.ts) FROM timeseries t JOIN stream_ids r USING (stream_id) WHERE r.stream_uri = ?",
+            [ref],
+        ).fetchone()
+
+
+@pytest.mark.unit
+def test_insert_frame_dedupes_duplicates_within_the_frame(store):
+    ref = "urn:test/internal_duplicates"
+    # The table has no unique constraint: _insert_frame alone keeps one row
+    # per (ref, ts), so it is called directly, bypassing the public methods.
+    frame = store._prepare_frame(store._rows_frame(
+        ref, [(_utc(2024, 1, 1), 1.0), (_utc(2024, 1, 2), 2.0), (_utc(2024, 1, 1), 3.0)], "numeric"))
+    assert frame.height == 3
+    with store._lock, store._write_conn() as conn:
+        written = store._insert_frame(conn, frame, store._next_revision(conn))
+    assert written == 2
+    assert _key_counts(store, ref) == (2, 2)
+    rows = pa.Table.from_batches(list(store.timeseries(ref)))
+    # The last occurrence of the repeated timestamp wins.
+    assert rows.column("value").to_pylist() == [3.0, 2.0]
+    assert store.bulk_insert_polars(frame.with_columns(pl.lit("urn:test/internal_duplicates_bulk").alias("stream_uri"))) == 2
+    assert _key_counts(store, "urn:test/internal_duplicates_bulk") == (2, 2)
+
+
+@pytest.mark.unit
+def test_insert_frame_replaces_rows_already_in_the_table(store):
+    ref = "urn:test/stored_duplicates"
+    first = store._prepare_frame(store._rows_frame(
+        ref, [(_utc(2024, 1, 1), 1.0), (_utc(2024, 1, 2), 2.0)], "numeric"))
+    second = store._prepare_frame(store._rows_frame(
+        ref, [(_utc(2024, 1, 2), 20.0), (_utc(2024, 1, 3), 30.0)], "numeric"))
+    for frame in (first, second, second):
+        with store._lock, store._write_conn() as conn:
+            assert store._insert_frame(conn, frame, store._next_revision(conn)) == 2
+    assert _key_counts(store, ref) == (3, 3)
+    rows = pa.Table.from_batches(list(store.timeseries(ref)))
+    assert rows.column("value").to_pylist() == [1.0, 20.0, 30.0]
+
+
 @pytest.mark.unit
 def test_upsert_rows_empty(store):
     n = store.upsert_rows("urn:test:duck:empty", [])
@@ -82,7 +125,7 @@ def test_replace_rows(store):
 def test_bulk_insert_polars(store):
     uri = "urn:test:duck:bulk"
     df = pl.DataFrame({
-        "ref_uri": [uri, uri, uri],
+        "stream_uri": [uri, uri, uri],
         "ts": [_utc(2024, 2, 1), _utc(2024, 2, 2), _utc(2024, 2, 3)],
         "value": ["a", "b", "c"],
         "value_kind": ["text", "text", "text"],
@@ -99,13 +142,13 @@ def test_bulk_insert_polars_splits_numeric_and_text_values(store):
     text_uri = "urn:test:duck:bulk_text"
     df = pl.DataFrame(
         {
-            "ref_uri": [numeric_uri, numeric_uri, text_uri, text_uri],
+            "stream_uri": [numeric_uri, numeric_uri, text_uri, text_uri],
             "ts": [_utc(2024, 2, 4), _utc(2024, 2, 5), _utc(2024, 2, 4), _utc(2024, 2, 5)],
             "value": [1.5, 2.5, "1.5", "ok"],
             "value_kind": ["numeric", "numeric", "text", "text"],
         },
         schema={
-            "ref_uri": pl.Utf8,
+            "stream_uri": pl.Utf8,
             "ts": pl.Datetime("us", "UTC"),
             "value": pl.Object,
             "value_kind": pl.Utf8,
@@ -115,10 +158,10 @@ def test_bulk_insert_polars_splits_numeric_and_text_values(store):
     assert store.bulk_insert_polars(df) == 4
     stored = store.sql_query(
         f"""
-        SELECT ref_uri, value_numeric, value_text
+        SELECT stream_uri, value_numeric, value_text
         FROM timeseries_streams
-        WHERE ref_uri IN ('{numeric_uri}', '{text_uri}')
-        ORDER BY ref_uri, ts
+        WHERE stream_uri IN ('{numeric_uri}', '{text_uri}')
+        ORDER BY stream_uri, ts
         """
     )["rows"]
     assert stored == [
@@ -152,7 +195,7 @@ def test_timeseries_basic(store):
 @pytest.mark.unit
 def test_timeseries_uses_registered_numeric_kind_for_all_null_values(store):
     uri = "urn:test:duck:ts_null_numeric"
-    store.ensure_stream_ref(None, "src-null", "numeric-null", ref_uri=uri, value_kind="numeric")
+    store.ensure_stream_ref(None, "src-null", "numeric-null", stream_uri=uri, value_kind="numeric")
     store.upsert_rows(uri, [(_utc(2024, 3, 4), None)], value_kind="numeric")
 
     batch = list(store.timeseries(uri))[0]
@@ -164,7 +207,7 @@ def test_timeseries_uses_registered_numeric_kind_for_all_null_values(store):
 @pytest.mark.unit
 def test_timeseries_uses_registered_text_kind_for_parseable_text(store):
     uri = "urn:test:duck:ts_parseable_text"
-    store.ensure_stream_ref(None, "src-text", "text-number", ref_uri=uri, value_kind="text")
+    store.ensure_stream_ref(None, "src-text", "text-number", stream_uri=uri, value_kind="text")
     store.upsert_rows(uri, [(_utc(2024, 3, 5), "1.5")], value_kind="text")
 
     batch = list(store.timeseries(uri))[0]
@@ -176,7 +219,7 @@ def test_timeseries_uses_registered_text_kind_for_parseable_text(store):
 @pytest.mark.unit
 def test_timeseries_numeric_mode_overrides_text_kind(store):
     uri = "urn:test:duck:ts_numeric_mode_text_kind"
-    store.ensure_stream_ref(None, "src-mixed", "mostly-text", ref_uri=uri, value_kind="text")
+    store.ensure_stream_ref(None, "src-mixed", "mostly-text", stream_uri=uri, value_kind="text")
     store.upsert_rows(uri, [(_utc(2024, 3, 6), 3.14)], value_kind="numeric")
 
     batch = list(store.timeseries(uri, value_mode="numeric"))[0]
@@ -188,7 +231,7 @@ def test_timeseries_numeric_mode_overrides_text_kind(store):
 @pytest.mark.unit
 def test_timeseries_text_mode_overrides_numeric_kind(store):
     uri = "urn:test:duck:ts_text_mode_numeric_kind"
-    store.ensure_stream_ref(None, "src-mixed", "mostly-numeric", ref_uri=uri, value_kind="numeric")
+    store.ensure_stream_ref(None, "src-mixed", "mostly-numeric", stream_uri=uri, value_kind="numeric")
     store.upsert_rows(uri, [(_utc(2024, 3, 7), "offline")], value_kind="text")
 
     batch = list(store.timeseries(uri, value_mode="text"))[0]
@@ -256,6 +299,37 @@ def test_timeseries_limit(store):
 
 
 @pytest.mark.unit
+def test_timeseries_windowed_and_limited_reads_agree(store):
+    """Every combination of window, limit and order must return what filtering
+    and sorting the stored rows in Python returns.
+    """
+    uri = "urn:test:duck:ts_shapes"
+    days = [9, 3, 17, 1, 12, 6, 20, 14, 4, 11]
+    # Written in three batches out of time order, with one value rewritten.
+    for chunk in (days[:4], days[4:7], days[7:]):
+        store.upsert_rows(uri, [(_utc(2024, 3, d), float(d)) for d in chunk], value_kind="numeric")
+    store.upsert_rows(uri, [(_utc(2024, 3, 12), 120.0)], value_kind="numeric")
+    stored = sorted((_utc(2024, 3, d), 120.0 if d == 12 else float(d)) for d in days)
+    bounds = [None, _utc(2024, 3, 4), _utc(2024, 3, 13), _utc(2024, 3, 25)]
+    for start in bounds:
+        for end in bounds:
+            for limit in (None, 1, 3, 100):
+                for order in ("asc", "desc"):
+                    expected = [(ts, v) for ts, v in stored
+                                if (start is None or ts >= start) and (end is None or ts <= end)]
+                    if order == "desc":
+                        expected.reverse()
+                    if limit:
+                        expected = expected[:limit]
+                    got = [
+                        (ts, v)
+                        for batch in store.timeseries(uri, start=start, end=end, limit=limit, order=order)
+                        for ts, v in zip(batch.column("ts").to_pylist(), batch.column("value").to_pylist())
+                    ]
+                    assert got == expected, (start, end, limit, order)
+
+
+@pytest.mark.unit
 def test_timeseries_iterator_survives_other_queries(store):
     uri = "urn:test:duck:ts_lifecycle"
     store.upsert_rows(uri, [(_utc(2024, 6, 1), "1"), (_utc(2024, 6, 2), "2")])
@@ -301,32 +375,32 @@ def test_timeseries_info_batch(store):
 # ---- stream refs ----
 
 @pytest.mark.unit
-def test_ensure_stream_ref_returns_ref_uri(store):
-    ref_uri = store.ensure_stream_ref("urn:test:duck:sh1", "src1", "ref1")
-    assert isinstance(ref_uri, str) and len(ref_uri) > 0
+def test_ensure_stream_ref_returns_stream_uri(store):
+    stream_uri = store.ensure_stream_ref("urn:test:duck:sh1", "src1", "ref1")
+    assert isinstance(stream_uri, str) and len(stream_uri) > 0
 
 
 @pytest.mark.unit
 def test_ensure_stream_ref_defaults_value_kind_to_text(store):
-    ref_uri = store.ensure_stream_ref("urn:test:duck:sh_text_default", "src-text-default", "ref")
+    stream_uri = store.ensure_stream_ref("urn:test:duck:sh_text_default", "src-text-default", "ref")
     rows = store.sql_query(
-        f"SELECT value_kind FROM streams WHERE ref_uri = '{ref_uri}'"
+        f"SELECT value_kind FROM streams WHERE stream_uri = '{stream_uri}'"
     )["rows"]
     assert rows == [["text"]]
 
 
 @pytest.mark.unit
 def test_ensure_stream_ref_deterministic(store):
-    ref_uri1 = store.ensure_stream_ref("urn:test:duck:sh2", "src2", "ref2")
-    ref_uri2 = store.ensure_stream_ref("urn:test:duck:sh2", "src2", "ref2")
-    assert ref_uri1 == ref_uri2
+    stream_uri1 = store.ensure_stream_ref("urn:test:duck:sh2", "src2", "ref2")
+    stream_uri2 = store.ensure_stream_ref("urn:test:duck:sh2", "src2", "ref2")
+    assert stream_uri1 == stream_uri2
 
 
 @pytest.mark.unit
 def test_resolve_storage_key(store):
     uri = "urn:test:duck:rsk"
-    ref_uri = store.ensure_stream_ref(uri, "s", "r")
-    assert store.resolve_storage_key(uri) == ref_uri
+    stream_uri = store.ensure_stream_ref(uri, "s", "r")
+    assert store.resolve_storage_key(uri) == stream_uri
 
 
 @pytest.mark.unit
@@ -338,11 +412,11 @@ def test_resolve_storage_key_unregistered(store):
 @pytest.mark.unit
 def test_resolve_storage_keys_batch(store):
     uris = ["urn:test:duck:rsk_batch_a", "urn:test:duck:rsk_batch_b"]
-    ref_uri_a = store.ensure_stream_ref(uris[0], "sa", "ra")
-    ref_uri_b = store.ensure_stream_ref(uris[1], "sb", "rb")
+    stream_uri_a = store.ensure_stream_ref(uris[0], "sa", "ra")
+    stream_uri_b = store.ensure_stream_ref(uris[1], "sb", "rb")
     result = store.resolve_storage_keys(uris)
-    assert result[uris[0]] == ref_uri_a
-    assert result[uris[1]] == ref_uri_b
+    assert result[uris[0]] == stream_uri_a
+    assert result[uris[1]] == stream_uri_b
 
 
 # ---- logs ----
@@ -351,7 +425,7 @@ def test_resolve_storage_keys_batch(store):
 def test_insert_and_query_log(store):
     uri = "urn:test:duck:log1"
     entry = LogEntry(
-        point_uri=uri,
+        property_uri=uri,
         timestamp=_utc(2024, 9, 1),
         period=TimeIntervalModel(start=_utc(2024, 9, 1), end=_utc(2024, 9, 30)),
         message="test log",
@@ -369,7 +443,7 @@ def test_log_time_filter(store):
     uri = "urn:test:duck:log_time"
     for day in [1, 5, 10]:
         store.insert_log(LogEntry(
-            point_uri=uri,
+            property_uri=uri,
             timestamp=_utc(2024, 10, day),
             period=TimeIntervalModel(),
             message=f"day{day}",
@@ -386,13 +460,13 @@ def test_log_time_filter(store):
 def test_log_observation_overlap(store):
     uri = "urn:test:duck:log_obs"
     store.insert_log(LogEntry(
-        point_uri=uri,
+        property_uri=uri,
         timestamp=_utc(2024, 11, 1),
         period=TimeIntervalModel(start=_utc(2024, 11, 1), end=_utc(2024, 11, 10)),
         message="overlapping",
     ))
     store.insert_log(LogEntry(
-        point_uri=uri,
+        property_uri=uri,
         timestamp=_utc(2024, 11, 2),
         period=TimeIntervalModel(start=_utc(2024, 11, 20), end=_utc(2024, 11, 30)),
         message="non-overlapping",
@@ -409,7 +483,7 @@ def test_log_observation_overlap(store):
 def test_delete_logs(store):
     uri = "urn:test:duck:log_delete"
     store.insert_log(LogEntry(
-        point_uri=uri,
+        property_uri=uri,
         timestamp=_utc(2024, 12, 1),
         period=TimeIntervalModel(),
         message="to delete",
@@ -454,24 +528,24 @@ def test_sql_query(store):
     assert result["rows"] == [[1]]
 
 
-# ---- integer ref_id storage keys ----
+# ---- integer stream_id storage keys ----
 
 @pytest.mark.unit
-def test_timeseries_table_keyed_by_integer_ref_id(store):
-    uri = "urn:test:duck:ref_id_key"
+def test_timeseries_table_keyed_by_integer_stream_id(store):
+    uri = "urn:test:duck:stream_id_key"
     store.upsert_rows(uri, [(_utc(2024, 1, 1), 1.0)], value_kind="numeric")
 
     mapping = store.sql_query(
-        f"SELECT ref_id FROM ref_ids WHERE ref_uri = '{uri}'"
+        f"SELECT stream_id FROM stream_ids WHERE stream_uri = '{uri}'"
     )["rows"]
     assert len(mapping) == 1
-    ref_id = mapping[0][0]
-    assert isinstance(ref_id, int)
+    stream_id = mapping[0][0]
+    assert isinstance(stream_id, int)
 
     stored = store.sql_query(
-        f"SELECT ref_id FROM timeseries WHERE ref_id = {ref_id}"
+        f"SELECT stream_id FROM timeseries WHERE stream_id = {stream_id}"
     )["rows"]
-    assert stored == [[ref_id]]
+    assert stored == [[stream_id]]
 
 
 # ---- recreate ----

@@ -224,7 +224,7 @@ class TestSparql:
 
 class TestResolve:
     def test_single_text_returns_best_uri(self, client):
-        assert client.resolve("pump", "class") == "http://data.ashrae.org/standard223#Pump"
+        assert client.resolve("pump", "class") == "https://watermetadata.org/ontology/watr#Pump"
 
     def test_single_text_no_match_is_none(self, client):
         assert client.resolve("zzzznonexistent") is None
@@ -232,7 +232,7 @@ class TestResolve:
     def test_top_k_returns_candidates(self, client):
         matches = client.resolve("pump", "class", top_k=3)
         assert 1 < len(matches) <= 3
-        assert matches[0]["uri"] == "http://data.ashrae.org/standard223#Pump"
+        assert matches[0]["uri"] == "https://watermetadata.org/ontology/watr#Pump"
 
     def test_record_form_joint_resolution(self, client):
         assert client.resolve({"eu": ("gal/min", "unit"), "qty": ("zzzznonexistent", "quantity_kind"),
@@ -240,7 +240,7 @@ class TestResolve:
             "eu": "http://qudt.org/vocab/unit/GAL_US-PER-MIN", "qty": None, "pinned": "urn:x", "empty": None}
 
     def test_bound_curies_expand(self, client):
-        assert client.resolve("watr:UltrafiltrationUnit", "class") == "urn:nawi-water-ontology#UltrafiltrationUnit"
+        assert client.resolve("watr:UltrafiltrationUnit", "class") == "https://watermetadata.org/ontology/watr#UltrafiltrationUnit"
         assert client.resolve("quantitykind:Pressure", "quantity_kind", top_k=2) == [{
             "uri": "http://qudt.org/vocab/quantitykind/Pressure",
             "kind": "quantity_kind", "score": 1.0, "match_stage": "passthrough",
@@ -272,9 +272,9 @@ class TestInsertLog:
     def test_insert_log_full_and_minimal(self, client, ns):
         point = f"{ns}p1"
         start, end = datetime(2025, 1, 1, tzinfo=timezone.utc), datetime(2025, 1, 2, tzinfo=timezone.utc)
-        assert client.insert_log(point_uri=point, log_time=start, observation_start=start,
+        assert client.insert_log(property_uri=point, log_time=start, observation_start=start,
                                  observation_end=end, log_message="test log")["ok"]
-        assert client.insert_log(point_uri=point, log_message="minimal log")["ok"]
-        logs = {entry.message: entry for entry in client.query_logs(point_uri=point)}
+        assert client.insert_log(property_uri=point, log_message="minimal log")["ok"]
+        logs = {entry.message: entry for entry in client.query_logs(property_uri=point)}
         assert logs.keys() == {"test log", "minimal log"}
         assert (logs["test log"].period.start, logs["test log"].period.end) == (start, end)

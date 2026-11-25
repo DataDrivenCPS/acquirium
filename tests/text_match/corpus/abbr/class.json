@@ -5,74 +5,74 @@
     {
       "text": "RO",
       "expected": [
-        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+        "https://watermetadata.org/ontology/watr#ReverseOsmosisMembrane"
       ]
     },
     {
       "text": "UF",
       "expected": [
-        "urn:nawi-water-ontology#UltrafiltrationUnit"
+        "https://watermetadata.org/ontology/watr#UltrafiltrationUnit"
       ]
     },
     {
       "text": "MF",
       "expected": [
-        "urn:nawi-water-ontology#MicrofiltrationUnit"
+        "https://watermetadata.org/ontology/watr#MicrofiltrationUnit"
       ]
     },
     {
       "text": "NF",
       "expected": [
-        "urn:nawi-water-ontology#NanofiltrationUnit"
+        "https://watermetadata.org/ontology/watr#NanofiltrationUnit"
       ]
     },
     {
       "text": "MBR",
       "expected": [
-        "urn:nawi-water-ontology#MembraneBioreactor"
+        "https://watermetadata.org/ontology/watr#MembraneBioreactor"
       ]
     },
     {
       "text": "VFD",
       "expected": [
-        "urn:nawi-water-ontology#VariableFrequencyDrive",
+        "https://watermetadata.org/ontology/watr#VariableFrequencyDrive",
         "http://data.ashrae.org/standard223#VariableFrequencyDrive"
       ]
     },
     {
       "text": "GAC",
       "expected": [
-        "urn:nawi-water-ontology#GranularActivatedCarbonAdsorber"
+        "https://watermetadata.org/ontology/watr#GranularActivatedCarbonAdsorber"
       ]
     },
     {
       "text": "RBC",
       "expected": [
-        "urn:nawi-water-ontology#RotatingBiologicalContactor"
+        "https://watermetadata.org/ontology/watr#RotatingBiologicalContactor"
       ]
     },
     {
       "text": "SBR",
       "expected": [
-        "urn:nawi-water-ontology#SequencingBatchReactor"
+        "https://watermetadata.org/ontology/watr#SequencingBatchReactor"
       ]
     },
     {
       "text": "CSTR",
       "expected": [
-        "urn:nawi-water-ontology#ContinuouslyStirredTankReactor"
+        "https://watermetadata.org/ontology/watr#ContinuouslyStirredTankReactor"
       ]
     },
     {
       "text": "PFR",
       "expected": [
-        "urn:nawi-water-ontology#PlugFlowReactor"
+        "https://watermetadata.org/ontology/watr#PlugFlowReactor"
       ]
     },
     {
       "text": "BAF",
       "expected": [
-        "urn:nawi-water-ontology#BiologicalAeratedFilter"
+        "https://watermetadata.org/ontology/watr#BiologicalAeratedFilter"
       ]
     },
     {
@@ -84,104 +84,104 @@
     {
       "text": "MABR",
       "expected": [
-        "urn:nawi-water-ontology#MembraneAeratedBiofilmReaactor"
+        "https://watermetadata.org/ontology/watr#MembraneAeratedBiofilmReaactor"
       ]
     },
     {
       "text": "EDC",
       "expected": [
-        "urn:nawi-water-ontology#ElectroDialyticCrystallizer"
+        "https://watermetadata.org/ontology/watr#ElectroDialyticCrystallizer"
       ]
     },
     {
       "text": "RO membrane",
       "expected": [
-        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+        "https://watermetadata.org/ontology/watr#ReverseOsmosisMembrane"
       ]
     },
     {
       "text": "RO unit",
       "expected": [
-        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+        "https://watermetadata.org/ontology/watr#ReverseOsmosisMembrane"
       ]
     },
     {
       "text": "RO skid",
       "expected": [
-        "urn:nawi-water-ontology#ReverseOsmosisMembrane"
+        "https://watermetadata.org/ontology/watr#ReverseOsmosisMembrane"
       ]
     },
     {
       "text": "UF unit",
       "expected": [
-        "urn:nawi-water-ontology#UltrafiltrationUnit"
+        "https://watermetadata.org/ontology/watr#UltrafiltrationUnit"
       ]
     },
     {
       "text": "UF membrane",
       "expected": [
-        "urn:nawi-water-ontology#UltrafiltrationUnit"
+        "https://watermetadata.org/ontology/watr#UltrafiltrationUnit"
       ]
     },
     {
       "text": "NF membrane",
       "expected": [
-        "urn:nawi-water-ontology#NanofiltrationUnit"
+        "https://watermetadata.org/ontology/watr#NanofiltrationUnit"
       ]
     },
     {
       "text": "MF unit",
       "expected": [
-        "urn:nawi-water-ontology#MicrofiltrationUnit"
+        "https://watermetadata.org/ontology/watr#MicrofiltrationUnit"
       ]
     },
     {
       "text": "UV unit",
       "expected": [
-        "urn:nawi-water-ontology#UltravioletLightUnit"
+        "https://watermetadata.org/ontology/watr#UltravioletLightUnit"
       ]
     },
     {
       "text": "UV reactor",
       "expected": [
-        "urn:nawi-water-ontology#UltravioletLightUnit",
-        "urn:nawi-water-ontology#UVH2O2Reactor"
+        "https://watermetadata.org/ontology/watr#UltravioletLightUnit",
+        "https://watermetadata.org/ontology/watr#UVH2O2Reactor"
       ]
     },
     {
       "text": "TOC analyzer",
       "expected": [
-        "urn:nawi-water-ontology#TotalOrganicCompoundConcentrationSensor"
+        "https://watermetadata.org/ontology/watr#TotalOrganicCompoundConcentrationSensor"
       ]
     },
     {
       "text": "DO sensor",
       "expected": [
-        "urn:nawi-water-ontology#OxygenMeter"
+        "https://watermetadata.org/ontology/watr#OxygenMeter"
       ]
     },
     {
       "text": "DO meter",
       "expected": [
-        "urn:nawi-water-ontology#OxygenMeter"
+        "https://watermetadata.org/ontology/watr#OxygenMeter"
       ]
     },
     {
       "text": "DAF thickener",
       "expected": [
-        "urn:nawi-water-ontology#DissolvedAirFlotationThickener"
+        "https://watermetadata.org/ontology/watr#DissolvedAirFlotationThickener"
       ]
     },
     {
       "text": "GAC filter",
       "expected": [
-        "urn:nawi-water-ontology#GranularActivatedCarbonAdsorber"
+        "https://watermetadata.org/ontology/watr#GranularActivatedCarbonAdsorber"
       ]
     },
     {
       "text": "ED unit",
       "expected": [
-        "urn:nawi-water-ontology#ElectrodialysisUnit"
+        "https://watermetadata.org/ontology/watr#ElectrodialysisUnit"
       ]
     },
     {
@@ -193,8 +193,21 @@
     {
       "text": "VFD drive",
       "expected": [
-        "urn:nawi-water-ontology#VariableFrequencyDrive",
+        "https://watermetadata.org/ontology/watr#VariableFrequencyDrive",
         "http://data.ashrae.org/standard223#VariableFrequencyDrive"
+      ]
+    },
+    {
+      "text": "BFP",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#BeltFilterPress"
+      ],
+      "stage": "exact"
+    },
+    {
+      "text": "MBBR",
+      "expected": [
+        "https://watermetadata.org/ontology/watr#MovingBedBioreactor"
       ]
     }
   ]

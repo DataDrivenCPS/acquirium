@@ -8,7 +8,7 @@ import pytest
 from acquirium.Drivers.Driver import Driver
 from acquirium.cli import _import_driver_class
 from acquirium.Drivers.BuiltInDrivers.csv_ingest import CSVIngestDriver
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import compute_stream_uri
 
 
 class DummyDriver(Driver):
@@ -23,7 +23,7 @@ def test_reference_uri_uses_driver_source_id():
     driver = DummyDriver(aq=object(), config={})
     driver.setup()
     assert driver.source_id == "demo-source"
-    assert driver.reference_uri("cpu_percent") == compute_ref_uri("demo-source", "cpu_percent")
+    assert driver.reference_uri("cpu_percent") == compute_stream_uri("demo-source", "cpu_percent")
 
 
 def test_source_id_attribute_exists_only_when_driver_sets_default():

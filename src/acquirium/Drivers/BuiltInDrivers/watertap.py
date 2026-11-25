@@ -18,8 +18,8 @@ logger = logging.getLogger("acquirium.watertap")
 
 @dataclass(frozen=True)
 class WaterTAPPointSpec:
-    point_uri: str
-    ref_name: str
+    property_uri: str
+    stream_name: str
     pyomo_var: str
 
 
@@ -82,7 +82,7 @@ class WaterTAPDriver(PollingIngestDriver):
             _load_callable(str(self._change_inputs_spec)) if self._change_inputs_spec else None
         )
         # Points come from the model's watertap-mapping.json: each property maps
-        # an ontology point URI to the Pyomo path the driver reads each tick.
+        # an ontology property URI to the Pyomo path the driver reads each tick.
         self._point_specs = _load_point_specs_from_mapping(self._mapping_path, self.source_id)
 
         # Optionally insert the model's s223 ontology graph so the point nodes
@@ -98,8 +98,8 @@ class WaterTAPDriver(PollingIngestDriver):
         # using Acquirium's insert-graph interface under the hood.
         for spec in self._point_specs:
             self.declare(
-                spec.ref_name,
-                point_uri=spec.point_uri,
+                spec.stream_name,
+                property_uri=spec.property_uri,
                 value_kind="numeric",
                 properties={HAS_PYOMO_VAR: spec.pyomo_var},
             )
@@ -122,7 +122,7 @@ class WaterTAPDriver(PollingIngestDriver):
             if not found:
                 missing += 1
                 continue
-            rows.append((ts, spec.ref_name, value))
+            rows.append((ts, spec.stream_name, value))
 
         logger.debug("watertap collect: %d rows from %d specs (%d missing)", len(rows), len(self._point_specs), missing)
         if missing:
@@ -131,7 +131,7 @@ class WaterTAPDriver(PollingIngestDriver):
             rows,
             schema={
                 "ts": pl.Datetime("us", "UTC"),
-                "ref_name": pl.Utf8,
+                "stream_name": pl.Utf8,
                 "value": pl.Object,
             },
             orient="row",
@@ -204,10 +204,10 @@ def _load_point_specs_from_mapping(
 ) -> list[WaterTAPPointSpec]:
     """Build point specs from a model's ``watertap-mapping.json``.
 
-    The mapping's ``properties`` table maps each ontology point URI to the Pyomo
-    variable path to read. The source-local ref name is the point URI with the
+    The mapping's ``properties`` table maps each ontology property URI to the Pyomo
+    variable path to read. The source-local stream name is the property URI with the
     mapping ``namespace`` prefix stripped, and the canonical reference URI is
-    minted deterministically from ``(source_id, ref_name)`` — the same value the
+    minted deterministically from ``(source_id, stream_name)`` — the same value the
     server computes when streams are registered and rows inserted.
     """
     mapping = json.loads(mapping_path.read_text())
@@ -220,16 +220,16 @@ def _load_point_specs_from_mapping(
         )
 
     point_specs: list[WaterTAPPointSpec] = []
-    for point_uri, pyomo_var in properties.items():
-        ref_name = (
-            point_uri[len(namespace):]
-            if namespace and point_uri.startswith(namespace)
-            else point_uri
+    for property_uri, pyomo_var in properties.items():
+        stream_name = (
+            property_uri[len(namespace):]
+            if namespace and property_uri.startswith(namespace)
+            else property_uri
         )
         point_specs.append(
             WaterTAPPointSpec(
-                point_uri=str(point_uri),
-                ref_name=str(ref_name),
+                property_uri=str(property_uri),
+                stream_name=str(stream_name),
                 pyomo_var=str(pyomo_var),
             )
         )

@@ -1,174 +1,360 @@
 ---
-title: Debugging queries for an unexpected result
+title: Debug an empty or unexpected query result
 ---
 
-<!-- TODO: intro -->
-
-## When a query returns nothing or more/less than you expect
-
-An empty or unexpected result is usually one of five things.
-
-### 1. The text resolved to the wrong concept
-
-In this case, the query runs without errors, but the result might look unexpected.
-The text matcher finds the closest match it can, for classes, predicates and attribute values alike.
-
-**DEBUG:** Check with `acq.client.resolve(text, kind, top_k=3)`.
+In this article we'll describe what to check when a query selects nothing, or fewer streams than expected.
+The examples use the seawater desalination plant of [5 - A Full Example](../tutorials/a-full-example.md).
 
 ```python
-acq.client.resolve("ro membrane", "class", top_k=3, min_score=0.3)
+import acquirium as aq
+
+acq = aq.init()
+```
+
+## Finding the step that loses the matches
+
+Build the query one step at a time and print it after each step.
+`print()` shows how the query was understood and how many matches it has:
+
+```python
+q = acq.query().entity("pump")
+print(q)
 ```
 ```text
-[{'uri': 'urn:nawi-water-ontology#ReverseOsmosisMembrane',        'score': 0.839, ...},
- {'uri': 'urn:nawi-water-ontology#ElectricallyConductingMembrane', 'score': 0.788, ...},
- {'uri': 'urn:nawi-water-ontology#MolybdenumSulfideBasedMembrane', 'score': 0.786, ...}]
+Query
+  pump: entity, Pump
+3 matches:
+┌────────────┐
+│ pump       │
+│ ---        │
+│ str        │
+╞════════════╡
+│ wbs:intake │
+│ wbs:P2     │
+│ wbs:P1     │
+└────────────┘
 ```
-
-Here the top match is the right one, but the runners-up are close.
-A slightly different phrasing can land on another membrane class, and the query would still run.
-If the top candidate is not what you meant, rephrase the text or pass the URI directly.
-
-### 2. The focus is on the wrong node
-
-`related()` and `measurement()` without `frm=`, and `where()` without `target=`, all act on the node the pointer is on.
-After a `related()` the pointer is the new entity, so
 
 ```python
-acq.query().entity("pump").related("tank").related("valve")
+q = q.measurement(alias="m", quantity_kind="power")
+print(q)
 ```
-
-finds the shape `Pump -> Tank -> Valve`.
-If you are looking for
-
 ```text
-Pump -> Tank
-    \-> Valve
+Query
+  pump: entity, Pump
+  m: measurement, of pump, quantity_kind=Power
+2 matches:
+┌────────┬─────────────────────────┬─────────────────────┐
+│ pump   ┆ m                       ┆ m.label             │
+│ ---    ┆ ---                     ┆ ---                 │
+│ str    ┆ str                     ┆ str                 │
+╞════════╪═════════════════════════╪═════════════════════╡
+│ wbs:P2 ┆ wbs:P2-mechanical-power ┆ P2 mechanical power │
+│ wbs:P1 ┆ wbs:P1-mechanical-power ┆ P1 mechanical power │
+└────────┴─────────────────────────┴─────────────────────┘
 ```
-
-you should refocus:
 
 ```python
-acq.query().entity("pump").related("tank").refocus("pump").related("valve")
+q = q.where(unit="kW")
+print(q)
+```
+```text
+Query
+  pump: entity, Pump
+  m: measurement, of pump, quantity_kind=Power, unit=KiloW
+0 matches
 ```
 
-Further, after a `measurement()` the pointer moves to the measurement, not the equipment.
-You might encounter this when running `where()` after a `measurement()`.
-Attributes that do not apply to the node raise rather than return nothing:
+The matches are lost at the last step.
+The sections below list the common causes, each with a way to check it.
 
+## The text was matched to another term
+
+A filter value such as `"kW"` is text, and the text matcher turns it into a term of the ontology.
+The printed query shows the term that was used.
+In the example above it is `unit=KiloW`, but the power streams of the pumps are stored in watts.
+A filter compares terms and does not convert between units.
+
+`options()` on the step before the filter lists the values that exist:
+
+```python
+acq.query().entity("pump").measurement(alias="m", quantity_kind="power").options("unit")
+```
+```text
+shape: (1, 2)
+┌────────┬───────┐
+│ unit   ┆ count │
+│ ---    ┆ ---   │
+│ str    ┆ i64   │
+╞════════╪═══════╡
+│ unit:W ┆ 2     │
+└────────┴───────┘
+```
+
+To read these streams in kilowatts, filter on the quantity kind and convert the values with `data().convert_to("kW")`.
+
+The same can happen with a class.
+`"valve"` is matched to the class `Valve`, which this plant model does not use:
+
+```python
+print(acq.query().entity("valve"))
+```
+```text
+Query
+  valve: entity, Valve
+0 matches
+```
+
+To see the classes the model uses, count them with `options("type")`:
+
+```python
+acq.query().entity("equipment").options("type")
+```
+```text
+shape: (18, 2)
+┌─────────────────────────────┬───────┐
+│ type                        ┆ count │
+│ ---                         ┆ ---   │
+│ str                         ┆ i64   │
+╞═════════════════════════════╪═══════╡
+│ watr:FlowSensor             ┆ 12    │
+│ watr:PressureSensor         ┆ 6     │
+│ watr:Pump                   ┆ 4     │
+│ watr:Reactor                ┆ 4     │
+│ watr:Tank                   ┆ 4     │
+│ …                           ┆ …     │
+│ watr:MediaFiltrationUnit    ┆ 1     │
+│ watr:PressureExchanger      ┆ 1     │
+│ watr:ReverseOsmosisMembrane ┆ 1     │
+│ watr:StaticMixer            ┆ 1     │
+│ watr:UltravioletLightUnit   ┆ 1     │
+└─────────────────────────────┴───────┘
+```
+
+A text that matches no term raises an error:
+
+```python
+acq.query().entity("cartridge filter")
+```
+```text
+ValueError: Could not resolve 'cartridge filter' as class
+```
+
+**Note:** These outputs are from the default setup, which matches exact names only.
+With `aq.init(exact_only=False)` close matches are used as well, so a text can be matched to a term you did not mean.
+The printed query shows the matched term in both cases.
+
+## The filter is on another node
+
+`where()` filters the current node, which is the node added last.
+After `measurement()` the current node is the measurement, so a pump label finds nothing here:
+
+```python
+q = acq.query().entity("pump").measurement(alias="m", quantity_kind="pressure")
+q.where(label="High-pressure Pump P1").metadata()
+```
+```text
+shape: (0, 2)
+┌──────┬─────┐
+│ pump ┆ m   │
+│ ---  ┆ --- │
+│ str  ┆ str │
+╞══════╪═════╡
+└──────┴─────┘
+```
+
+Give the alias of the node to filter as the first argument:
+
+```python
+q.where("pump", label="High-pressure Pump P1").metadata()
+```
+```text
+shape: (1, 3)
+┌────────┬────────────────────────┬────────────────────┐
+│ pump   ┆ m                      ┆ m.label            │
+│ ---    ┆ ---                    ┆ ---                │
+│ str    ┆ str                    ┆ str                │
+╞════════╪════════════════════════╪════════════════════╡
+│ wbs:P1 ┆ wbs:P1-out-pressure-pa ┆ P1 out pressure pa │
+└────────┴────────────────────────┴────────────────────┘
+```
+
+`related()` and `measurement()` also start from the current node.
+The query below looks for a reactor connected to the filter, not to the pump:
+
+```python
+acq.query().entity("pump").related("filter").related("reactor").metadata()
+```
+```text
+shape: (3, 3)
+┌────────┬──────────────────────────┬───────────────────────────┐
+│ pump   ┆ filter                   ┆ reactor                   │
+│ ---    ┆ ---                      ┆ ---                       │
+│ str    ┆ str                      ┆ str                       │
+╞════════╪══════════════════════════╪═══════════════════════════╡
+│ wbs:P1 ┆ wbs:RO                   ┆ wbs:uv-aop                │
+│ wbs:P2 ┆ wbs:RO                   ┆ wbs:uv-aop                │
+│ wbs:P1 ┆ wbs:cartridge-filtration ┆ wbs:anti-scalant-addition │
+└────────┴──────────────────────────┴───────────────────────────┘
+```
+
+`frm=` names the node to start from:
+
+```python
+acq.query().entity("pump").related("filter").related("reactor", frm="pump").metadata()
+```
+```text
+shape: (2, 3)
+┌────────┬──────────────────────────┬───────────────────────────┐
+│ pump   ┆ filter                   ┆ reactor                   │
+│ ---    ┆ ---                      ┆ ---                       │
+│ str    ┆ str                      ┆ str                       │
+╞════════╪══════════════════════════╪═══════════════════════════╡
+│ wbs:P1 ┆ wbs:cartridge-filtration ┆ wbs:anti-scalant-addition │
+│ wbs:P1 ┆ wbs:RO                   ┆ wbs:anti-scalant-addition │
+└────────┴──────────────────────────┴───────────────────────────┘
+```
+
+Be aware that an attribute that does not apply to a measurement raises an error instead of returning nothing:
+
+```python
+acq.query().entity("pump").measurement().where(process="filtration")
+```
 ```text
 ValueError: attribute 'process' does not apply to data node 'pump_data'
-ValueError: include: attribute 'unit' does not apply to entity node 'pump'
 ```
 
-### 3. Nothing was within reach
+## The equipment is too far away
 
-`related()` stops at `max_depth` (3 by default, 1 for predicate lists).
-Raise the `max_depth` value, or pass `max_depth=0` for an unbounded walk.
+`related()` looks at most three steps away by default.
+The reverse osmosis membrane is further than that from the intake:
 
 ```python
-q = acq.query().entity(uri="wbs:intake", alias="intake")
-
-q.related("reverse osmosis membrane").metadata()                # empty: the RO is more than 3 hops from the intake
-q.related("reverse osmosis membrane", max_depth=0).metadata()   # unbounded: finds wbs:RO
+intake = acq.query().entity(uri="wbs:intake", alias="intake")
+intake.related("reverse osmosis membrane", direction="downstream").metadata()
 ```
 ```text
-shape: (0, 2)                                    # default max_depth=3
+shape: (0, 2)
 ┌────────┬──────────────────────────┐
 │ intake ┆ reverse osmosis membrane │
+│ ---    ┆ ---                      │
+│ str    ┆ str                      │
 ╞════════╪══════════════════════════╡
 └────────┴──────────────────────────┘
+```
 
-shape: (1, 2)                                    # max_depth=0
+`max_depth=0` removes the limit:
+
+```python
+intake.related("reverse osmosis membrane", direction="downstream", max_depth=0).metadata()
+```
+```text
+shape: (1, 2)
 ┌────────────┬──────────────────────────┐
 │ intake     ┆ reverse osmosis membrane │
+│ ---        ┆ ---                      │
+│ str        ┆ str                      │
 ╞════════════╪══════════════════════════╡
 │ wbs:intake ┆ wbs:RO                   │
 └────────────┴──────────────────────────┘
 ```
 
-### 4. `required=True` removed the rows
+`measurement(direction=...)` has the same `max_depth` parameter.
 
-An attribute that is missing from the data drops every row that lacks it.
-Take `required=` off and look for nulls in the column.
-The RO pressures below carry no unit, so `required=True` silently drops them:
+## `required=True` removed the rows
+
+`include()` keeps the rows that have no value for the column and shows `null`.
+With `required=True` these rows are removed.
+Only two of the eight pump streams have a substance:
 
 ```python
-q = acq.query().entity(uri="wbs:RO", alias="ro").measurement(alias="m")
-
-q.include("unit", required=True).metadata()    # no pressure rows
-q.include("unit").metadata()                   # the pressures are back, with null units
+m = acq.query().entity("pump").measurement(alias="m")
+m.include("substance", required=True).metadata()
 ```
 ```text
-shape: (7, 3)                                    # include("unit", required=True)
-┌────────┬─────────────────────────────────┬─────────────────────┐
-│ ro     ┆ m                               ┆ m.unit              │
-╞════════╪═════════════════════════════════╪═════════════════════╡
-│ wbs:RO ┆ wbs:RO-in-flow-mass-water       ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-out-flow-mass-tds        ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-membrane-area            ┆ unit:M2             │
-│ wbs:RO ┆ wbs:RO-out-flow-mass-water      ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-out-retentate-flow-mass… ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-out-retentate-flow-mass… ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-in-flow-mass-tds         ┆ unit:KiloGM-PER-SEC │
-└────────┴─────────────────────────────────┴─────────────────────┘
-
-shape: (11, 3)                                   # include("unit")
-┌────────┬─────────────────────────────────┬─────────────────────┐
-│ ro     ┆ m                               ┆ m.unit              │
-╞════════╪═════════════════════════════════╪═════════════════════╡
-│ wbs:RO ┆ wbs:RO-in-pressure              ┆ null                │
-│ wbs:RO ┆ wbs:RO-out-pressure             ┆ null                │
-│ wbs:RO ┆ wbs:RO-in-flow-mass-water       ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-out-flow-mass-tds        ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-membrane-area            ┆ unit:M2             │
-│ wbs:RO ┆ wbs:RO-out-retentate-pressure   ┆ null                │
-│ wbs:RO ┆ wbs:RO-out-retentate-flow-mass… ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-in-temperature           ┆ null                │
-│ wbs:RO ┆ wbs:RO-out-flow-mass-water      ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-in-flow-mass-tds         ┆ unit:KiloGM-PER-SEC │
-│ wbs:RO ┆ wbs:RO-out-retentate-flow-mass… ┆ unit:KiloGM-PER-SEC │
-└────────┴─────────────────────────────────┴─────────────────────┘
+shape: (2, 4)
+┌────────────┬───────────────────────────────┬─────────────────────┬───────────────────────────────┐
+│ pump       ┆ m                             ┆ m.label             ┆ m.substance                   │
+│ ---        ┆ ---                           ┆ ---                 ┆ ---                           │
+│ str        ┆ str                           ┆ str                 ┆ str                           │
+╞════════════╪═══════════════════════════════╪═════════════════════╪═══════════════════════════════╡
+│ wbs:intake ┆ wbs:intake-in-tss-concentrati ┆ intake in tss       ┆ watr:Constituent-SuspendedSol │
+│            ┆ o…                            ┆ concentration kg…   ┆ i…                            │
+│ wbs:intake ┆ wbs:intake-in-tds-concentrati ┆ intake in tds       ┆ watr:Constituent-DissolvedSol │
+│            ┆ o…                            ┆ concentration       ┆ i…                            │
+└────────────┴───────────────────────────────┴─────────────────────┴───────────────────────────────┘
 ```
 
-Four rows came back: the three pressures and the temperature, the RO points
-that carry no unit.
+Without `required=True` all eight streams are listed.
 
-### 5. The points are on connection points you excluded
+## The streams are on the connection points
 
-`include_connection_points=False` keeps only directly-owned points, which for
-most equipment is very few.
-For `wbs:RO` it excludes every pressure reading, because they all live on the
-inlet and outlet:
+Most streams of a piece of equipment are on its inlets and outlets.
+`measurement()` includes them by default.
+With `include_connection_points=False` only the streams on the equipment itself are left:
 
 ```python
-acq.query().entity(uri="wbs:RO").measurement(include_connection_points=False).metadata()
+ro = acq.query().entity(uri="wbs:RO", alias="ro")
+ro.measurement(alias="m", include_connection_points=False).metadata()
 ```
 ```text
-shape: (1, 2)
-┌────────┬──────────────────────┐
-│ 0      ┆ 0_data               │
-╞════════╪══════════════════════╡
-│ wbs:RO ┆ wbs:RO-membrane-area │
-└────────┴──────────────────────┘
+shape: (1, 3)
+┌────────┬──────────────────────┬──────────────────┐
+│ ro     ┆ m                    ┆ m.label          │
+│ ---    ┆ ---                  ┆ ---              │
+│ str    ┆ str                  ┆ str              │
+╞════════╪══════════════════════╪══════════════════╡
+│ wbs:RO ┆ wbs:RO-membrane-area ┆ RO membrane area │
+└────────┴──────────────────────┴──────────────────┘
 ```
 
-Only the membrane area is owned by the RO itself; every pressure, flow and
-temperature sits on a connection point.
+The default returns 11 streams for `wbs:RO`.
 
-### 6. `context()` followed the wrong relation
+## The URI is not in the model
 
-`context()` defaults to `via="entity"`, the entity a point hangs off.
-For a point on a pipe that entity is the connection, so
-`context("pump")` from a pipe pressure returns nothing.
-Ask for the flow neighbour instead:
+A URI that is not in the model matches nothing.
+Here the URI ends with a zero instead of the letter O:
 
 ```python
-acq.query().measurement(quantity_kind="pressure").context("pump", via="upstream").metadata()
+print(acq.query().entity(uri="wbs:R0", alias="ro"))
+```
+```text
+Query
+  ro: entity, uri=R0
+0 matches
 ```
 
-`include("type")` on the context node, or `context()` with no class and
-`options("type")`, shows what the points actually hang off.
+To find the right URI, select the equipment by its class or its label first, as in the sections above.
 
-When in doubt, run `metadata()` after each step and see where the rows
-disappear.
-`facets()` on the last surviving node shows what values actually exist there.
+## The property has no stream
+
+`measurement()` selects only the properties that have a stream.
+`property(has_stream=False)` lists the properties of the model that are not connected to a stream yet.
+[5 - A Full Example](../tutorials/a-full-example.md) shows how to connect them.
+
+## The query selects streams but the table is empty
+
+When `metadata()` lists the streams and `dataframe()` is empty, the time range has no readings.
+`time_range` gives the first and the last timestamp of the selected streams:
+
+```python
+q = acq.query().entity("pump").measurement(quantity_kind="power")
+start, end = q.data().time_range
+print(start, end)
+```
+```text
+2025-01-01 00:00:00+00:00 2025-12-31 23:00:00+00:00
+```
+
+```python
+q.dataframe(start="2026-01-01").is_empty()
+```
+```text
+True
+```
+
+## Moving on
+
+- [Explore a plant model](explore-a-model.md): list the values a model uses before writing a filter.
+- [Filtering](../reference/query/filtering.md): `where()` and the attributes a filter can use.
+- [Building a query](../reference/query/building.md): all parameters of `entity()`, `related()` and `measurement()`.

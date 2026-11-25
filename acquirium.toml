@@ -47,7 +47,7 @@ materialization_workers = 2
 #
 # The acquirium package ships these ontologies bundled, registered at
 # these canonical IRIs (the QUDT files are version-collapsed at load):
-#   - NAWI Water           urn:nawi-water-ontology
+#   - NAWI Water           https://watermetadata.org/ontology/watr
 #   - ASHRAE 223P          http://data.ashrae.org/standard223/1.0/model/all
 #   - QUDT units           https://qudt.org/vocab/unit
 #   - QUDT quantitykind    https://qudt.org/vocab/quantitykind
@@ -134,7 +134,7 @@ interval = 30.0
 # interval                    = 30.0
 # source_id                   = "watertap"
 # watertap_mapping_path       = "deployments/WATERTAP/models/seawater-ro/watertap-mapping.json"
-# watertap_graph_path         = "deployments/WATERTAP/models/seawater-ro/model.ttl"
+# watertap_graph_path         = "src/acquirium/examples/seawater_ro/model.ttl"
 # watertap_build_spec         = "deployments/WATERTAP/models/seawater-ro/build-and-solve.py:build"
 # watertap_change_inputs_spec = "deployments/WATERTAP/models/seawater-ro/build-and-solve.py:change_inputs"
 # watertap_solve_spec         = "deployments/WATERTAP/models/seawater-ro/build-and-solve.py:solve"

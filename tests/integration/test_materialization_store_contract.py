@@ -171,8 +171,8 @@ def _physical_state(store):
     with store._own_conn() as conn:
         return (
             conn.execute('SELECT current_revision FROM system_state').fetchone(),
-            conn.execute('SELECT ref_id, ts, numeric_value, text_value, deleted, last_revision FROM timeseries ORDER BY ref_id, ts').fetchall(),
-            conn.execute('SELECT * FROM stream_resets ORDER BY ref_uri').fetchall(),
+            conn.execute('SELECT stream_id, ts, numeric_value, text_value, deleted, last_revision FROM timeseries ORDER BY stream_id, ts').fetchall(),
+            conn.execute('SELECT * FROM stream_resets ORDER BY stream_uri').fetchall(),
             conn.execute('SELECT * FROM binding_progress ORDER BY progress_key').fetchall(),
             conn.execute('SELECT * FROM materialization_work ORDER BY progress_key').fetchall(),
         )

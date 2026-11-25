@@ -1,4 +1,4 @@
-"""No-Docker tests for AcquiriumClient.resolve_point_metadata.
+"""No-Docker tests for AcquiriumClient.resolve_property_metadata.
 
 Stubs the underlying resolve call; asserts the fixed semantic-field ->
 kind mapping and the passthrough/None contract without a server.
@@ -26,7 +26,7 @@ def test_field_name_is_the_kind():
         return {k: f"urn:{k}" for k in fields}
 
     aq = _aq(fake)
-    out = aq.resolve_point_metadata({
+    out = aq.resolve_property_metadata({
         "unit": "kg",
         "quantity_kind": "mass",
         "medium": "water",
@@ -46,12 +46,12 @@ def test_field_name_is_the_kind():
 
 def test_passthrough_and_none_delegated():
     # client.resolve owns URI/URIRef/None passthrough; just verify
-    # resolve_point_metadata returns whatever it produced, keyed by field.
+    # resolve_property_metadata returns whatever it produced, keyed by field.
     aq = _aq(lambda fields, min_score=0.5: {
         "unit": "http://qudt.org/vocab/unit/W",   # passthrough
         "quantity_kind": None,                    # unresolved
     })
-    out = aq.resolve_point_metadata(
+    out = aq.resolve_property_metadata(
         {"unit": "http://qudt.org/vocab/unit/W", "quantity_kind": "??"}
     )
     assert out == {"unit": "http://qudt.org/vocab/unit/W",
@@ -63,5 +63,5 @@ def test_client_failure_degrades_to_none():
         raise RuntimeError("server down")
 
     aq = _aq(boom)
-    out = aq.resolve_point_metadata({"unit": "kg", "medium": "water"})
+    out = aq.resolve_property_metadata({"unit": "kg", "medium": "water"})
     assert out == {"unit": None, "medium": None}

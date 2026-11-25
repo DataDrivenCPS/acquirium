@@ -66,11 +66,11 @@ class RevisionStore:
 
     @property
     def _timeseries_source(self) -> str:
-        return "timeseries t JOIN ref_ids r ON r.ref_id=t.ref_id"
+        return "timeseries t JOIN stream_ids r ON r.stream_id=t.stream_id"
 
     @property
     def _ref(self) -> str:
-        return "r.ref_uri"
+        return "r.stream_uri"
 
     def _execute(self, conn: Any, query: str, params: Iterable[Any] = ()) -> Any:
         return conn.execute(self._sql(query), list(params))
@@ -122,7 +122,7 @@ class RevisionStore:
                 conn, f"SELECT {self._ref}, max(t.last_revision) FROM {self._timeseries_source} "
                       f"WHERE t.last_revision>? GROUP BY {self._ref}", [floor]).fetchall()}
             resets = {row[0]: int(row[1]) for row in self._execute(
-                conn, "SELECT ref_uri, last_revision FROM stream_resets WHERE last_revision>?", [floor]).fetchall()}
+                conn, "SELECT stream_uri, last_revision FROM stream_resets WHERE last_revision>?", [floor]).fetchall()}
             conn.commit()
             return current, changed, resets
         except BaseException:
@@ -151,8 +151,8 @@ class RevisionStore:
     def retained_window(self, binding: Binding) -> TimeWindow | None:
         # Include outputs: after input membership shrinks, obsolete results may
         # extend beyond the remaining inputs and still need to be removed.
-        refs = sorted({d.ref_uri for values in binding.inputs.values() for d in values}
-                      | {p.ref_uri for p in binding.outputs.values()})
+        refs = sorted({d.stream_uri for values in binding.inputs.values() for d in values}
+                      | {p.stream_uri for p in binding.outputs.values()})
         with self.store._own_conn() as conn:
             marks = ','.join('?' for _ in refs)
             extent = self._execute(conn, f"SELECT min(t.ts), max(t.ts) FROM {self._timeseries_source} WHERE {self._ref} IN ({marks})", refs).fetchone()
@@ -228,11 +228,11 @@ class RevisionStore:
         finally: conn.close()
 
     def _has_reset(self, conn: Any, binding: Binding, previous: int, target: int) -> bool:
-        refs = sorted({d.ref_uri for values in binding.inputs.values() for d in values})
+        refs = sorted({d.stream_uri for values in binding.inputs.values() for d in values})
         if not refs or previous >= target:
             return False
         marks = ','.join('?' for _ in refs)
-        return self._execute(conn, f"SELECT 1 FROM stream_resets WHERE ref_uri IN ({marks}) AND last_revision>? AND last_revision<=? LIMIT 1",
+        return self._execute(conn, f"SELECT 1 FROM stream_resets WHERE stream_uri IN ({marks}) AND last_revision>? AND last_revision<=? LIMIT 1",
                              [*refs, previous, target]).fetchone() is not None
 
     def _reset_batch(self, conn: Any, binding: Binding, previous: int, target: int, work) -> Batch:
@@ -243,8 +243,8 @@ class RevisionStore:
         backfill cursor can only be discarded after the rebuild succeeds.
         """
         from dataclasses import replace
-        refs = sorted({d.ref_uri for values in binding.inputs.values() for d in values}
-                      | {p.ref_uri for p in binding.outputs.values()})
+        refs = sorted({d.stream_uri for values in binding.inputs.values() for d in values}
+                      | {p.stream_uri for p in binding.outputs.values()})
         marks = ','.join('?' for _ in refs)
         extent = self._execute(conn, f"SELECT min(t.ts), max(t.ts) FROM {self._timeseries_source} WHERE {self._ref} IN ({marks})", refs).fetchone()
         epoch = datetime(1970, 1, 1, tzinfo=UTC)
@@ -281,7 +281,7 @@ class RevisionStore:
 
     def _build_batch(self, conn: Any, binding: Binding, previous: int, target: int, *, partition: bool = False) -> Batch | None:
         """Read one coherent batch for the revisions in ``(previous, target]``."""
-        refs = [d.ref_uri for values in binding.inputs.values() for d in values]
+        refs = [d.stream_uri for values in binding.inputs.values() for d in values]
         if not refs or target == previous: return None
         marks = ",".join("?" for _ in refs)
         # Include tombstones in the changed extent. Filtering deleted rows here
@@ -311,8 +311,8 @@ class RevisionStore:
         # _output_window finds the affected outputs; this method adds their
         # input context. Publication must clip back to the output interval.
         if binding.lookback is None:
-            refs = sorted({d.ref_uri for values in binding.inputs.values() for d in values}
-                          | {p.ref_uri for p in binding.outputs.values()})
+            refs = sorted({d.stream_uri for values in binding.inputs.values() for d in values}
+                          | {p.stream_uri for p in binding.outputs.values()})
             marks = ",".join("?" for _ in refs)
             extent = self._execute(conn, f"SELECT min(t.ts), max(t.ts) FROM {self._timeseries_source} WHERE {self._ref} IN ({marks})", refs).fetchone()
             window = TimeWindow(extent[0], extent[1]) if extent[0] is not None else changed_window
@@ -346,7 +346,7 @@ class RevisionStore:
         return window
 
     def _stream_set(self, conn: Any, alias: str, descriptors: tuple[StreamDescriptor,...], window: TimeWindow, previous: int, target: int) -> StreamSet:
-        refs = [x.ref_uri for x in descriptors]
+        refs = [x.stream_uri for x in descriptors]
         if not refs: return StreamSet(alias, window, descriptors, converter=self.unit_converter)
         marks = ",".join("?" for _ in refs)
         # Read current context, not only rows written in (previous, target].
@@ -375,7 +375,7 @@ class RevisionStore:
                 conn, f"SELECT 1 FROM {self._timeseries_source} WHERE {self._ref} IN ({marks}) AND t.text_value IS NOT NULL LIMIT 1", refs
             ).fetchone() is None
         values = raw["numeric"] if numeric else pc.coalesce(raw["text"], pc.cast(raw["numeric"], pa.string()))
-        table = pa.table({"ref_uri": raw["ref"],
+        table = pa.table({"stream_uri": raw["ref"],
                           "time": pc.cast(raw["time"], pa.timestamp("us", tz="UTC")),
                           "value": values})
         changed = table.filter(pc.and_(pc.greater(raw["revision"], previous), pc.less_equal(raw["revision"], target)))
@@ -432,28 +432,28 @@ class RevisionStore:
                     mask = pc.and_(pc.greater_equal(table["time"], pa.scalar(window.start)),
                                    pc.less_equal(table["time"], pa.scalar(window.end)))
                     table = table.filter(mask)
-                    ref_filter = "ref_id IN (SELECT ref_id FROM ref_ids WHERE ref_uri=?)"
+                    ref_filter = "stream_id IN (SELECT stream_id FROM stream_ids WHERE stream_uri=?)"
                     existing = self._execute(conn, f"SELECT 1 FROM timeseries WHERE {ref_filter} AND ts>=? AND ts<=? AND NOT deleted LIMIT 1",
-                                             [port.ref_uri, self._time(window.start), self._time(window.end)]).fetchone()
+                                             [port.stream_uri, self._time(window.start), self._time(window.end)]).fetchone()
                     if not batch.context.full_reset and not table.num_rows and existing is None:
                         continue
                     if revision is None:
                         revision = self.store._next_revision(conn)
                     if batch.context.full_reset:
-                        RevisionPublisher(self.store).reset(conn, [port.ref_uri], revision=revision)
+                        RevisionPublisher(self.store).reset(conn, [port.stream_uri], revision=revision)
                     else:
                         self._execute(conn, f"UPDATE timeseries SET deleted=TRUE, last_revision=? WHERE {ref_filter} AND ts>=? AND ts<=? AND NOT deleted",
-                                      [revision, port.ref_uri, self._time(window.start), self._time(window.end)])
-                    self._execute(conn, """INSERT INTO streams (ref_uri, point_uri, source_id, ref_name, value_kind)
-                        VALUES (?, ?, ?, ?, ?) ON CONFLICT (ref_uri) DO NOTHING""",
-                        [port.ref_uri, port.point_uri, f"derived:{binding.application_name}", port.ref_name, port.spec.value_kind])
+                                      [revision, port.stream_uri, self._time(window.start), self._time(window.end)])
+                    self._execute(conn, """INSERT INTO streams (stream_uri, property_uri, source_id, stream_name, value_kind)
+                        VALUES (?, ?, ?, ?, ?) ON CONFLICT (stream_uri) DO NOTHING""",
+                        [port.stream_uri, port.property_uri, f"derived:{binding.application_name}", port.stream_name, port.spec.value_kind])
                     if table.num_rows:
                         frame = pl.from_arrow(table).rename({"time": "ts"})
                         if not self._postgres:
                             frame = frame.with_columns(pl.col("ts").dt.replace_time_zone(None))
                         numeric = port.spec.value_kind == "numeric"
                         frame = frame.select(
-                            pl.lit(port.ref_uri).alias("ref_uri"), "ts",
+                            pl.lit(port.stream_uri).alias("stream_uri"), "ts",
                             (pl.col("value") if numeric else pl.lit(None, dtype=pl.Float64)).alias("numeric_value"),
                             (pl.lit(None, dtype=pl.String) if numeric else pl.col("value")).alias("text_value"))
                         self.store._insert_frame(conn, frame, revision)

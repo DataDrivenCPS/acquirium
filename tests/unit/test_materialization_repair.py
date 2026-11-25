@@ -42,7 +42,7 @@ def test_removing_one_match_leaves_sibling_per_match_bindings_alone(tmp_path):
         while runtime.run_once():
             pass
         before = _lineage(store)
-        by_input = {b.inputs["input"][0].ref_uri: b for b in runtime._dag.bindings if b.application_name == "copy-each"}
+        by_input = {b.inputs["input"][0].stream_uri: b for b in runtime._dag.bindings if b.application_name == "copy-each"}
         fleet = next(b for b in runtime._dag.bindings if b.application_name == "sum-fleet")
         assert not _work(store)
 
@@ -85,7 +85,7 @@ def test_a_bindings_own_row_change_still_repairs_it(tmp_path):
         while runtime.run_once():
             pass
         before = _lineage(store)
-        keys = {b.inputs["input"][0].ref_uri: b.progress_key for b in runtime._dag.bindings}
+        keys = {b.inputs["input"][0].stream_uri: b.progress_key for b in runtime._dag.bindings}
         graph.labels["urn:b"] = "renamed"
         runtime._graph_revision = -1
         runtime.refresh()

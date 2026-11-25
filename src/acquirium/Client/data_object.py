@@ -6,6 +6,9 @@ from typing import Any, Iterator, Sequence, TYPE_CHECKING
 import polars as pl
 import warnings
 
+from acquirium.Client.streams import Stream
+from acquirium.internals._names import accepts_old_names
+
 if TYPE_CHECKING:
     from acquirium.Client.explore.core import Query
     from acquirium.Client.query_graph import QueryGraph
@@ -18,7 +21,7 @@ def _parse_sparql_bindings(
     *,
     include_dependencies: bool,
 ) -> tuple[
-    list[tuple[int, str, str]],          # (nid, point_uri, ref_uri) — unique data bindings
+    list[tuple[int, str, str]],          # (nid, property_uri, stream_uri) — unique data bindings
     dict[tuple[int, str, str], list[dict[str, str]]],  # data_key -> list of entity context dicts
     dict[tuple[int, str, str], str | None],  # data_key -> property unit URI
     dict[tuple[int, str, str], str | None],  # data_key -> ext ref unit URI
@@ -26,13 +29,13 @@ def _parse_sparql_bindings(
     """Parse SPARQL result columns to extract data-node bindings, entity context, and unit metadata.
 
     Returns:
-        point_ref_uris: deduplicated list of (node_id, point_uri, ref_uri)
+        property_stream_uris: deduplicated list of (node_id, property_uri, stream_uri)
         entity_context: mapping from each data key to a list of dicts
             like {"entity__basin": "urn:...", "entity__process": "urn:..."} —
             one dict per SPARQL row that matched this data key.
         property_units: mapping from data key to property unit URI (or None)
-        ref_units: mapping from data key to external reference unit URI (or None)
-        point_labels: mapping from data key to the point's rdfs:label (or None)
+        stream_units: mapping from data key to external reference unit URI (or None)
+        property_labels: mapping from data key to the point's rdfs:label (or None)
     """
     res = query.execute(include_dependencies=include_dependencies)
     cols: list[str] = res.get("columns", [])
@@ -109,12 +112,12 @@ def _parse_sparql_bindings(
             entity_col_indices.append((i, nid))
 
     # Collect unique data bindings, entity contexts, and unit/label info
-    point_ref_uris: list[tuple[int, str, str]] = []
+    property_stream_uris: list[tuple[int, str, str]] = []
     seen: set[tuple[int, str, str]] = set()
     entity_context: dict[tuple[int, str, str], list[dict[str, str]]] = {}
     property_units: dict[tuple[int, str, str], str | None] = {}
-    ref_units: dict[tuple[int, str, str], str | None] = {}
-    point_labels: dict[tuple[int, str, str], str | None] = {}
+    stream_units: dict[tuple[int, str, str], str | None] = {}
+    property_labels: dict[tuple[int, str, str], str | None] = {}
     stream_ids: dict[tuple[int, str, str], tuple[str | None, str | None]] = {}
 
     if not data_col_indices or not ref_col_indices:
@@ -139,14 +142,14 @@ def _parse_sparql_bindings(
             ref_col_idx = nid_to_ext_ref_col[nid]
             if ref_col_idx >= len(r):
                 continue
-            ref_uri = r[ref_col_idx]
-            if ref_uri is None:
+            stream_uri = r[ref_col_idx]
+            if stream_uri is None:
                 continue
-            ref_uri_s = str(ref_uri)
-            key = (nid, uri_s, ref_uri_s)
+            stream_uri_s = str(stream_uri)
+            key = (nid, uri_s, stream_uri_s)
             if key not in seen:
                 seen.add(key)
-                point_ref_uris.append(key)
+                property_stream_uris.append(key)
                 # Extract unit URIs (first non-None wins for each key)
                 unit_col = nid_to_unit_col.get(nid)
                 if unit_col is not None and unit_col < len(r) and r[unit_col] is not None:
@@ -155,18 +158,18 @@ def _parse_sparql_bindings(
                     property_units[key] = None
                 extunit_col = nid_to_extunit_col.get(nid)
                 if extunit_col is not None and extunit_col < len(r) and r[extunit_col] is not None:
-                    ref_units[key] = str(r[extunit_col])
+                    stream_units[key] = str(r[extunit_col])
                 else:
-                    ref_units[key] = None
+                    stream_units[key] = None
                 lbl_col = nid_to_lbl_col.get(nid)
                 if lbl_col is not None and lbl_col < len(r) and r[lbl_col] is not None:
-                    point_labels[key] = str(r[lbl_col])
+                    property_labels[key] = str(r[lbl_col])
                 else:
-                    point_labels[key] = None
+                    property_labels[key] = None
                 stream_ids[key] = (_cell(r, nid_to_extsrc_col.get(nid)), _cell(r, nid_to_extname_col.get(nid)))
             entity_context.setdefault(key, []).append(row_entities)
 
-    return point_ref_uris, entity_context, property_units, ref_units, point_labels, stream_ids
+    return property_stream_uris, entity_context, property_units, stream_units, property_labels, stream_ids
 
 
 def _deduplicate_contexts(contexts: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -279,7 +282,7 @@ def _apply_window(
     if limit is not None:
         tall = (
             tall.sort("time", descending=order == "desc")
-            .group_by(["data_alias", "point_uri", "ref_uri"], maintain_order=True)
+            .group_by(["data_alias", "property_uri", "stream_uri"], maintain_order=True)
             .head(limit)
         )
     return tall
@@ -336,20 +339,25 @@ def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
 
 @dataclass(frozen=True)
 class BindingInfo:
-    """Lightweight metadata for a single (nid, point_uri, ref_uri) data binding."""
+    """Lightweight metadata for a single (nid, property_uri, stream_uri) data binding.
+
+    ``row_count`` / ``earliest`` / ``latest`` are stream statistics. A
+    ``DataObject`` fills them on the first read of a statistic, not when it
+    is built, so read them through ``DataObject.bindings``.
+    """
     nid: int
-    point_uri: str
-    ref_uri: str
+    property_uri: str
+    stream_uri: str
     alias: str
     entity_contexts: list[dict[str, str]]
     row_count: int = 0
     earliest: datetime | None = None
     latest: datetime | None = None
     property_unit: str | None = None    # unit URI from qudt:hasUnit on the property
-    ref_unit: str | None = None         # unit URI from qudt:hasUnit on the ext reference
-    point_label: str | None = None      # rdfs:label on the property (display name)
+    stream_unit: str | None = None         # unit URI from qudt:hasUnit on the ext reference
+    property_label: str | None = None      # rdfs:label on the property (display name)
     source_id: str | None = None        # acq:sourceId on the ext reference (the datasource)
-    ref_name: str | None = None         # acq:refName on the ext reference (the driver's stream name)
+    stream_name: str | None = None         # acq:refName on the ext reference (the driver's stream name)
 
 
 def _graph_data_aliases(qg: QueryGraph | None) -> list[str]:
@@ -369,17 +377,63 @@ def _graph_entity_columns(qg: QueryGraph | None) -> list[str]:
 
 
 @dataclass
+class _StreamStats:
+    """Statistics for every stream of one ``data()`` call, fetched once.
+
+    The root ``DataObject`` owns one and hands the same instance to the
+    sub-objects ``by()`` and ``convert_to()`` derive, so whichever of them
+    reads a statistic first fetches the whole family's in one batch request
+    and the rest read from that snapshot. ``exists`` is the cheaper answer
+    ``is_empty()`` needs, which streams have any row, cached the same way.
+    ``refresh()`` forgets both.
+    """
+    client: AcquiriumClient | None
+    stream_uris: list[str]
+    info: dict[str, Any] | None = None
+    exists: set[str] | None = None
+
+    def get(self) -> dict[str, Any]:
+        if self.info is None:
+            self.info = (
+                self.client.timeseries_info_batch(list(self.stream_uris))
+                if self.stream_uris and self.client is not None else {}
+            )
+        return self.info
+
+    def with_rows(self) -> set[str]:
+        """The stream URIs that have any row: from the statistics when they are
+        loaded, else one existence request covering every stream."""
+        if self.info is not None:
+            return {uri for uri, info in self.info.items() if info.row_count > 0}
+        if self.exists is None:
+            self.exists = (
+                self.client.timeseries_exists_batch(list(self.stream_uris))
+                if self.stream_uris and self.client is not None else set()
+            )
+        return self.exists
+
+    def refresh(self) -> None:
+        self.info = None
+        self.exists = None
+
+
+@accepts_old_names
+@dataclass
 class DataObject:
     """Lazy, alias-driven structured access to sensor data.
 
-    On construction only SPARQL metadata and per-series stats (row count,
-    time range) are fetched.  The actual time-series data is materialized
-    on demand when ``__getitem__``, ``dataframe()``, or ``latest()`` are
-    called.
+    On construction only SPARQL metadata is fetched. The per-stream
+    statistics (row count, time range) are fetched in one batch request the
+    first time ``total_rows``, ``time_range``, or ``bindings`` needs them;
+    ``is_empty()`` (before materialization) asks only which streams have a
+    row, a cheaper request. Each request covers every stream of the
+    ``data()`` call, and the sub-objects ``by()`` and ``convert_to()``
+    return share its result; ``refresh_stats()`` forgets both. The actual
+    time-series data is materialized on demand when ``__getitem__``,
+    ``dataframe()``, or ``latest()`` are called.
 
     Lightweight operations such as ``aliases``, ``metadata()``,
-    ``is_empty()``, ``total_rows``, ``time_range``, and ``by()`` all work
-    without triggering materialization.
+    ``stream_info()``, and ``by()`` work without fetching either.
     """
 
     _bindings: list[BindingInfo]
@@ -395,8 +449,13 @@ class DataObject:
     _materialized: bool = field(default=False, repr=False)
     _metadata_df: pl.DataFrame | None = field(default=None, repr=False)
 
+    # Stream statistics, shared by reference with the sub-objects by() and
+    # convert_to() derive; _stats_bindings() fills them in on first use. An
+    # object built without one makes its own from its bindings.
+    _stats: _StreamStats | None = field(default=None, repr=False)
+
     # Conversions recorded by convert_to() on a lazy object, applied when the
-    # values are fetched: ((alias, point_uri, ref_uri), from_uri, to_uri),
+    # values are fetched: ((alias, property_uri, stream_uri), from_uri, to_uri),
     # one per binding.
     _pending_conversions: list[tuple[tuple[str, str, str], str, str]] = field(
         default_factory=list, repr=False
@@ -440,12 +499,12 @@ class DataObject:
         if not getattr(qg, "data_nodes", None):
             return cls._empty(qg, cast_value=cast_value, client=query.client)
 
-        point_ref_uris, entity_context, prop_units, ext_ref_units, point_labels, stream_ids = _parse_sparql_bindings(
+        property_stream_uris, entity_context, prop_units, ext_stream_units, property_labels, stream_ids = _parse_sparql_bindings(
             query,
             include_dependencies=include_dependencies,
         )
 
-        if not point_ref_uris:
+        if not property_stream_uris:
             return cls._empty(qg, cast_value=cast_value, client=query.client)
 
         # Determine all entity column names across every context dict
@@ -455,32 +514,24 @@ class DataObject:
                 all_entity_cols.update(ctx.keys())
         entity_columns = sorted(all_entity_cols)
 
-        # Fetch stats for all ref_uris in one batch request
-        ref_uris = list({ref_uri for _, _, ref_uri in point_ref_uris})
-        stats = query.client.timeseries_info_batch(ref_uris)
-
         # Build BindingInfo for each binding
         bindings: list[BindingInfo] = []
-        for nid, point_uri, ref_uri in point_ref_uris:
+        for nid, property_uri, stream_uri in property_stream_uris:
             alias = qg.aliases_reverse.get(nid, str(nid))
-            key = (nid, point_uri, ref_uri)
+            key = (nid, property_uri, stream_uri)
             contexts = entity_context.get(key, [{}])
             unique_contexts = _deduplicate_contexts(contexts)
-            info = stats.get(ref_uri)
             bindings.append(BindingInfo(
                 nid=nid,
-                point_uri=point_uri,
-                ref_uri=ref_uri,
+                property_uri=property_uri,
+                stream_uri=stream_uri,
                 alias=alias,
                 entity_contexts=unique_contexts,
-                row_count=info.row_count if info else 0,
-                earliest=info.earliest if info else None,
-                latest=info.latest if info else None,
                 property_unit=prop_units.get(key),
-                ref_unit=ext_ref_units.get(key),
-                point_label=point_labels.get(key),
+                stream_unit=ext_stream_units.get(key),
+                property_label=property_labels.get(key),
                 source_id=stream_ids.get(key, (None, None))[0],
-                ref_name=stream_ids.get(key, (None, None))[1],
+                stream_name=stream_ids.get(key, (None, None))[1],
             ))
 
         return cls(
@@ -498,7 +549,51 @@ class DataObject:
             },
             _tall=None,
             _materialized=False,
+            _stats=_StreamStats(query.client, sorted({b.stream_uri for b in bindings})),
         )
+
+    def _stats_bindings(self) -> list[BindingInfo]:
+        """The bindings with row_count / earliest / latest filled in.
+
+        Reads the shared statistics cache, fetching it on first use: one
+        batch request covering every stream of the ``data()`` call, which
+        counts each stream's samples on the server. Only the statistic
+        readers call this.
+        """
+        if not self._bindings:
+            return []
+        stats = self._shared_stats().get()
+        filled: list[BindingInfo] = []
+        for b in self._bindings:
+            info = stats.get(b.stream_uri)
+            filled.append(replace(
+                b,
+                row_count=info.row_count if info else 0,
+                earliest=info.earliest if info else None,
+                latest=info.latest if info else None,
+            ))
+        return filled
+
+    def _shared_stats(self) -> _StreamStats:
+        """The statistics cache, made from this object's bindings if it has none."""
+        if self._stats is None:
+            self._stats = _StreamStats(self._client, sorted({b.stream_uri for b in self._bindings}))
+        return self._stats
+
+    @property
+    def _stats_loaded(self) -> bool:
+        """Whether the statistics are in the cache (no fetch)."""
+        return self._stats is not None and self._stats.info is not None
+
+    def refresh_stats(self) -> None:
+        """Forget the cached stream statistics.
+
+        The next read of ``total_rows``, ``time_range``, ``bindings`` or
+        ``is_empty()`` asks the server again. The cache is shared with the
+        sub-objects of the same ``data()`` call, so they see the refresh too.
+        """
+        if self._stats is not None:
+            self._stats.refresh()
 
     # ------------------------------------------------------------------
     # Materialization
@@ -516,14 +611,14 @@ class DataObject:
             ((pl.col(value_col) + src_off) * src_mult / tgt_mult - tgt_off).alias(value_col)
         )
 
-    def _point_labels(self) -> dict[str, str]:
-        """``{point_uri: rdfs:label}`` for display naming.
+    def _property_labels(self) -> dict[str, str]:
+        """``{property_uri: rdfs:label}`` for display naming.
 
         A label shared by several distinct points is dropped so pivot
         columns for different points can never collapse into one; those
         points fall back to their URI-based names.
         """
-        pairs = {(b.point_uri, b.point_label) for b in self._bindings if b.point_label}
+        pairs = {(b.property_uri, b.property_label) for b in self._bindings if b.property_label}
         counts: dict[str, int] = {}
         for _, lbl in pairs:
             counts[lbl] = counts.get(lbl, 0) + 1
@@ -531,15 +626,15 @@ class DataObject:
 
     @staticmethod
     def _key(b: BindingInfo) -> tuple[str, str, str]:
-        return (b.alias, b.point_uri, b.ref_uri)
+        return (b.alias, b.property_uri, b.stream_uri)
 
     @staticmethod
     def _binding_mask(key: tuple[str, str, str]) -> pl.Expr:
-        alias, point_uri, ref_uri = key
+        alias, property_uri, stream_uri = key
         return (
             (pl.col("data_alias") == alias)
-            & (pl.col("point_uri") == point_uri)
-            & (pl.col("ref_uri") == ref_uri)
+            & (pl.col("property_uri") == property_uri)
+            & (pl.col("stream_uri") == stream_uri)
         )
 
     def _effective_unit(self, b: BindingInfo) -> str | None:
@@ -549,7 +644,7 @@ class DataObject:
         3.2), else None; overlaid with any conversion recorded for this
         binding by ``convert_to()`` that has not been applied yet.
         """
-        unit = b.property_unit or b.ref_unit
+        unit = b.property_unit or b.stream_unit
         key = self._key(b)
         for k, _, to_unit in self._pending_conversions:
             if k == key:
@@ -560,8 +655,8 @@ class DataObject:
         """A zero-row tall frame in the same column order as a fetched one."""
         schema: dict[str, Any] = {
             "data_alias": pl.Utf8,
-            "point_uri": pl.Utf8,
-            "ref_uri": pl.Utf8,
+            "property_uri": pl.Utf8,
+            "stream_uri": pl.Utf8,
         }
         for ec in self._entity_columns:
             schema[ec] = pl.Utf8
@@ -607,9 +702,9 @@ class DataObject:
         # alias, point, unit and entity columns below.
         fetched: dict[str, pl.DataFrame] = {}
         for binding in bindings:
-            if binding.ref_uri not in fetched:
-                fetched[binding.ref_uri] = self._client.timeseries_df(
-                    binding.ref_uri,
+            if binding.stream_uri not in fetched:
+                fetched[binding.stream_uri] = self._client.timeseries_df(
+                    binding.stream_uri,
                     start=start,
                     end=end,
                     limit=limit,
@@ -619,45 +714,45 @@ class DataObject:
 
         frames: list[pl.DataFrame] = []
         for binding in bindings:
-            df = fetched[binding.ref_uri]
+            df = fetched[binding.stream_uri]
             if df.is_empty():
                 continue
 
-            df = df.rename({"ts": "time", "uri": "ref_uri"})
+            df = df.rename({"ts": "time", "uri": "stream_uri"})
             df = df.with_columns(
                 pl.lit(binding.alias).alias("data_alias"),
-                pl.lit(binding.point_uri).alias("point_uri"),
+                pl.lit(binding.property_uri).alias("property_uri"),
             )
-            # Drop the ref_uri from timeseries (use the one from SPARQL)
-            df = df.drop("ref_uri")
-            df = df.with_columns(pl.lit(binding.ref_uri).alias("ref_uri"))
+            # Drop the stream_uri from timeseries (use the one from SPARQL)
+            df = df.drop("stream_uri")
+            df = df.with_columns(pl.lit(binding.stream_uri).alias("stream_uri"))
 
             # --- Case 3 auto-conversion: raw rows are stored in the external
             # reference's unit; the point's annotation is the unit of record.
             # Conversions requested with convert_to() are applied afterwards.
             target_unit = binding.property_unit
-            if binding.ref_unit and target_unit and binding.ref_unit != target_unit:
+            if binding.stream_unit and target_unit and binding.stream_unit != target_unit:
                 # The user did not ask for this conversion, so a failure is a
                 # warning they can see; the raw values are returned as stored.
                 try:
-                    factors = _get_factors(binding.ref_unit, target_unit)
+                    factors = _get_factors(binding.stream_unit, target_unit)
                     if factors.get("compatible", False):
                         df = self._apply_conversion(
                             df.with_columns(pl.col("value").cast(pl.Float64)), factors
                         )
                     else:
                         warnings.warn(
-                            f"point <{binding.point_uri}> is annotated {target_unit} but its "
-                            f"stream is stored in {binding.ref_unit}, which does not convert; "
-                            f"the values are returned in {binding.ref_unit}",
+                            f"point <{binding.property_uri}> is annotated {target_unit} but its "
+                            f"stream is stored in {binding.stream_unit}, which does not convert; "
+                            f"the values are returned in {binding.stream_unit}",
                             UserWarning,
                             stacklevel=4,
                         )
                 except Exception as e:
                     warnings.warn(
-                        f"could not convert point <{binding.point_uri}> from its stored unit "
-                        f"{binding.ref_unit} to its annotation {target_unit} ({e}); the values "
-                        f"are returned in {binding.ref_unit}",
+                        f"could not convert point <{binding.property_uri}> from its stored unit "
+                        f"{binding.stream_unit} to its annotation {target_unit} ({e}); the values "
+                        f"are returned in {binding.stream_unit}",
                         UserWarning,
                         stacklevel=4,
                     )
@@ -684,25 +779,25 @@ class DataObject:
         # user asked for these, so a failure is an error, not a frame in
         # the wrong unit.
         for key, from_unit, to_unit in self._pending_conversions:
-            alias, point_uri, _ref = key
+            alias, property_uri, _ref = key
             try:
                 factors = _get_factors(from_unit, to_unit)
             except Exception as e:
                 raise ValueError(
                     f"convert_to: could not resolve {from_unit} -> {to_unit} for point "
-                    f"<{point_uri}> (alias '{alias}'): {e}"
+                    f"<{property_uri}> (alias '{alias}'): {e}"
                 ) from e
             if not factors.get("compatible", False):
                 raise ValueError(
                     f"convert_to: {from_unit} does not convert to {to_unit} for point "
-                    f"<{point_uri}> (alias '{alias}')"
+                    f"<{property_uri}> (alias '{alias}')"
                 )
             mask = self._binding_mask(key)
             converted = self._apply_conversion(tall.filter(mask), factors)
             tall = pl.concat([tall.filter(~mask), converted], how="vertical")
 
         # Reorder columns for consistency
-        base_cols = ["data_alias", "point_uri", "ref_uri"] + self._entity_columns + ["time", "value_numeric", "value_text"]
+        base_cols = ["data_alias", "property_uri", "stream_uri"] + self._entity_columns + ["time", "value_numeric", "value_text"]
         existing = [c for c in base_cols if c in tall.columns]
         return tall.select(existing)
 
@@ -778,12 +873,11 @@ class DataObject:
     def __getitem__(self, alias: str) -> pl.DataFrame:
         """Return time-series for a data alias.
 
-        Multiple ref_uris that share the same point_uri are combined
-        (first-wins). If the alias resolves to a single point_uri the result
-        is ``[time, value]``; if several point_uris share the alias the
-        result is ``[time, value, point_uri]`` so the caller can
-        disambiguate. An alias that exists but has no rows in the window
-        returns an empty ``[time, value]`` frame.
+        Multiple stream_uris that share the same property_uri are combined
+        (first-wins). The result is ``[time, value, property_uri]``, whether
+        the alias resolves to one point or to several. An alias that exists
+        but has no rows in the window returns an empty frame with the same
+        columns.
 
         Raises:
             KeyError: If ``alias`` is not one of :attr:`aliases`.
@@ -793,20 +887,18 @@ class DataObject:
         self._materialize()
         subset = self._tall.filter(pl.col("data_alias") == alias)
         if subset.is_empty():
-            return pl.DataFrame(schema={"time": pl.Datetime(time_zone="UTC"), "value": pl.Float64})
+            return pl.DataFrame(schema={"time": pl.Datetime(time_zone="UTC"), "value": pl.Float64,
+                                        "property_uri": pl.String})
 
-        # Combine ref_uris that share the same (point_uri, time). maintain_order
+        # Combine stream_uris that share the same (property_uri, time). maintain_order
         # is what makes keep="first" mean the first row of _tall; without it
         # polars picks an arbitrary duplicate and shuffles the surviving rows.
-        subset = subset.unique(subset=["point_uri", "time"], keep="first", maintain_order=True)
+        subset = subset.unique(subset=["property_uri", "time"], keep="first", maintain_order=True)
         subset = _restore_single_value_column(subset)
         subset = self._cast_output(subset, ["value"])
-        n_points = subset["point_uri"].n_unique()
-        if n_points <= 1:
-            return subset.select("time", "value").sort("time")
-        # (time, point_uri) is unique after the dedup above, so sorting on both
+        # (time, property_uri) is unique after the dedup above, so sorting on both
         # gives a total order — repeated access returns identical frames.
-        return subset.select("time", "value", "point_uri").sort(["time", "point_uri"])
+        return subset.select("time", "value", "property_uri").sort(["time", "property_uri"])
 
     # ------------------------------------------------------------------
     # Grouping
@@ -839,6 +931,7 @@ class DataObject:
                     _query_params=self._query_params,
                     _tall=sub_tall,
                     _materialized=True,
+                    _stats=self._stats,
                 )
             return
 
@@ -869,6 +962,7 @@ class DataObject:
                 _tall=None,
                 _materialized=False,
                 _pending_conversions=list(self._pending_conversions),
+                _stats=self._stats,
             )
 
     # ------------------------------------------------------------------
@@ -883,9 +977,9 @@ class DataObject:
         end: "datetime | str | None" = None,
         limit: int | None = None,
         order: str = "asc",
-        include_ref: bool = False,
+        include_stream: bool = False,
         compact: bool = True,
-        streams: "int | str | Sequence[int | str] | None" = None,
+        streams: "int | str | Stream | Sequence[int | str | Stream] | None" = None,
     ) -> pl.DataFrame:
         """Return a flat DataFrame.
 
@@ -897,27 +991,27 @@ class DataObject:
         parameters on :meth:`Query.data` bound the fetch itself.
 
         - ``shape="wide"`` (default): pivots to ``[time, <one column per
-          stream>]``. Multiple ref_uris that share the same point_uri are
-          combined (first-wins). When an alias resolves to a single point
-          the column is just the alias; when it resolves to several points
-          the columns are disambiguated per point.
+          stream>]``. Multiple stream_uris that share the same property_uri are
+          combined (first-wins). A column is named ``alias__point``,
+          whether the alias matched one point or several.
         - ``shape="narrow"``: one row per observation.
 
         ``compact=True`` (default) renders URIs as CURIEs and identifies
-        points with a ``point_id`` column rather than the raw
-        ``point_uri``/``ref_uri``; auto-aliased data nodes are named by the
+        points with a ``property_id`` column rather than the raw
+        ``property_uri``/``stream_uri``; auto-aliased data nodes are named by the
         point's ``rdfs:label`` when it has one, else by their compacted
         point-local name. In this mode the narrow layout is
-        ``["data_alias", "point_id", "time", "value_numeric", "value_text"]``
-        and ``include_ref=True`` adds the compacted ``ref`` column.
+        ``["data_alias", "property_id", "time", "value_numeric", "value_text"]``
+        and ``include_stream=True`` adds the compacted ``ref`` column.
 
         ``compact=False`` returns the raw layout: narrow is the internal
-        tall frame (every ``(data_alias, point_uri, ref_uri, time)`` row
+        tall frame (every ``(data_alias, property_uri, stream_uri, time)`` row
         preserved with entity columns), wide keeps alias/URI column names.
 
         ``streams`` keeps only the listed streams: numbers from the
-        ``stream`` column of :meth:`stream_info`, ref URIs, or a mix. A
-        point fed by several streams then shows just the chosen ones, so
+        ``stream`` column of :meth:`stream_info`, stream URIs,
+        :class:`~acquirium.Client.streams.Stream` handles from
+        ``ac.stream(source_id, stream_name)``, or a mix. A point fed by several streams then shows just the chosen ones, so
         ``streams=[1]`` reads one driver's values for a point that has two.
         An unknown number or URI raises ``KeyError``.
 
@@ -926,47 +1020,50 @@ class DataObject:
         ``UserWarning``.
         """
         frame = self._build_dataframe(shape, start=start, end=end, limit=limit, order=order,
-                                      include_ref=include_ref, compact=compact, streams=streams)
+                                      include_stream=include_stream, compact=compact, streams=streams)
         return self._cast_output(frame)
 
     def _resolve_streams(self, streams) -> set[str] | None:
-        """Turn ``streams`` (numbers from :meth:`stream_info`, ref URIs, or a
-        mix) into the set of ref URIs they name; ``None`` means all."""
+        """Turn ``streams`` (numbers from :meth:`stream_info`, stream URIs,
+        ``Stream`` handles, or a mix) into the set of stream URIs they name;
+        ``None`` means all."""
         if streams is None:
             return None
-        if isinstance(streams, (int, str)):
+        if isinstance(streams, (int, str, Stream)):
             streams = [streams]
         table = self.stream_info()
-        by_number = dict(zip(table["stream"].to_list(), table["ref_uri"].to_list()))
+        by_number = dict(zip(table["stream"].to_list(), table["stream_uri"].to_list()))
         known = set(by_number.values())
         refs: set[str] = set()
         for item in streams:
+            if isinstance(item, Stream):
+                item = item.stream_uri
             if isinstance(item, bool) or not isinstance(item, (int, str)):
-                raise TypeError(f"streams: expected a stream number or ref URI, got {item!r}")
+                raise TypeError(f"streams: expected a stream number, stream URI or Stream, got {item!r}")
             if isinstance(item, int):
                 if item not in by_number:
                     raise KeyError(f"stream {item} not in this object; stream_info() lists 0..{len(by_number) - 1}")
                 refs.add(by_number[item])
             else:
                 if item not in known:
-                    raise KeyError(f"ref URI {item!r} not in this object; see stream_info()")
+                    raise KeyError(f"stream URI {item!r} not in this object; see stream_info()")
                 refs.add(item)
         return refs
 
-    def _build_dataframe(self, shape, *, start, end, limit, order, include_ref, compact,
+    def _build_dataframe(self, shape, *, start, end, limit, order, include_stream, compact,
                          streams=None) -> pl.DataFrame:
         refs = self._resolve_streams(streams)
         self._materialize()
 
         descending = order == "desc"
-        tall = self._tall if refs is None else self._tall.filter(pl.col("ref_uri").is_in(list(refs)))
+        tall = self._tall if refs is None else self._tall.filter(pl.col("stream_uri").is_in(list(refs)))
         windowed = _apply_window(tall, start, end, limit, order)
 
         if windowed.is_empty():
             return windowed
 
         if compact:
-            return self._compact_dataframe(windowed, shape=shape, include_ref=include_ref,
+            return self._compact_dataframe(windowed, shape=shape, include_stream=include_stream,
                                            descending=descending)
 
         if shape == "narrow":
@@ -974,50 +1071,41 @@ class DataObject:
 
         tall = windowed.clone()
 
-        # Combine ref_uris sharing the same (data_alias, point_uri, time):
-        # we want one row per point_uri at each timestamp.
-        tall = tall.unique(subset=["data_alias", "point_uri", "time"], keep="first")
+        # Combine stream_uris sharing the same (data_alias, property_uri, time):
+        # we want one row per property_uri at each timestamp.
+        tall = tall.unique(subset=["data_alias", "property_uri", "time"], keep="first")
 
-        # Count distinct point_uris per alias from the bindings (i.e. the
-        # query's metadata view, not just whichever bindings produced rows).
-        # This keeps disambiguation stable even when some bindings had no
-        # data within the requested window.
-        points_per_alias: dict[str, set[str]] = {}
-        auto_aliases: set[str] = set()
-        for b in self._bindings:
-            points_per_alias.setdefault(b.alias, set()).add(b.point_uri)
-            if b.alias == str(b.nid):
-                auto_aliases.add(b.alias)
-        labels = self._point_labels()
+        # A column is named alias__point whether the alias matched one point
+        # or several, so the schema does not depend on how many matched.
+        auto_aliases = {b.alias for b in self._bindings if b.alias == str(b.nid)}
+        labels = self._property_labels()
 
-        def _pivot_key(alias: str, point_uri: str) -> str:
-            label = labels.get(point_uri)
+        def _pivot_key(alias: str, property_uri: str) -> str:
+            label = labels.get(property_uri)
             if alias in auto_aliases and label:
                 return label
-            pts = points_per_alias.get(alias, set())
-            if len(pts) <= 1:
-                return alias
             if label:
                 return f"{alias}__{label}"
             try:
-                return f"{alias}__{self._client.compact_uri(point_uri)}"
+                return f"{alias}__{self._client.compact_uri(property_uri)}"
             except Exception:
                 # we shouldn't come here
-                return f"{alias}__{point_uri}"
+                return f"{alias}__{property_uri}"
 
-        tall = _with_mapped_column(tall, ["data_alias", "point_uri"], _pivot_key, "_pivot_key")
+        tall = _with_mapped_column(tall, ["data_alias", "property_uri"], _pivot_key, "_pivot_key")
 
         wide = _pivot_split_values(tall, "_pivot_key")
         return wide.sort("time", descending=True) if descending else wide
 
-    def _compact_dataframe(self, tall: pl.DataFrame, *, shape: str, include_ref: bool,
+    def _compact_dataframe(self, tall: pl.DataFrame, *, shape: str, include_stream: bool,
                            descending: bool = False) -> pl.DataFrame:
-        """Query-compatible layout: CURIE-rendered URIs and a ``point_id`` column.
+        """Query-compatible layout: CURIE-rendered URIs and a ``property_id`` column.
 
         Auto-aliased data nodes (alias == ``str(nid)``) are named by the
         point's ``rdfs:label`` when it has one, else by its compacted
-        point-local name; user aliases that resolve to several points are
-        disambiguated as ``f"{alias}__{label_or_point_local}"``.
+        point-local name; under a user alias every point is named
+        ``f"{alias}__{label_or_point_local}"``, also when the alias matched
+        a single point, so the schema does not depend on how many matched.
         """
         def _compact(uri: str) -> str:
             try:
@@ -1026,36 +1114,28 @@ class DataObject:
                 return uri
 
         # One row per observation. A point fed by several refs keeps every
-        # ref's row; ``include_ref`` only decides whether the ref is shown.
+        # ref's row; ``include_stream`` only decides whether the ref is shown.
         tall = tall.clone().unique(
-            subset=["data_alias", "point_uri", "ref_uri", "time"], keep="first"
+            subset=["data_alias", "property_uri", "stream_uri", "time"], keep="first"
         )
 
-        points_per_alias: dict[str, set[str]] = {}
-        auto_aliases: set[str] = set()
-        for b in self._bindings:
-            points_per_alias.setdefault(b.alias, set()).add(b.point_uri)
-            if b.alias == str(b.nid):
-                auto_aliases.add(b.alias)
+        auto_aliases = {b.alias for b in self._bindings if b.alias == str(b.nid)}
+        labels = self._property_labels()
 
-        labels = self._point_labels()
-
-        def _label(alias: str, point_uri: str) -> str:
+        def _label(alias: str, property_uri: str) -> str:
             if alias in auto_aliases:
-                return labels.get(point_uri) or _compact(point_uri)
-            if len(points_per_alias.get(alias, set())) > 1:
-                return f"{alias}__{labels.get(point_uri) or _compact(point_uri)}"
-            return alias
+                return labels.get(property_uri) or _compact(property_uri)
+            return f"{alias}__{labels.get(property_uri) or _compact(property_uri)}"
 
-        tall = _with_mapped_column(tall, ["data_alias", "point_uri"], _label, "_label")
+        tall = _with_mapped_column(tall, ["data_alias", "property_uri"], _label, "_label")
 
         if shape == "narrow":
-            out = _with_mapped_column(tall, ["point_uri"], _compact, "point_id")
+            out = _with_mapped_column(tall, ["property_uri"], _compact, "property_id")
             out = out.with_columns(pl.col("_label").alias("data_alias"))
-            cols = ["data_alias", "point_id", "time", "value_numeric", "value_text"]
-            if include_ref:
-                out = _with_mapped_column(out, ["ref_uri"], _compact, "ref")
-                cols.insert(2, "ref")
+            cols = ["data_alias", "property_id", "time", "value_numeric", "value_text"]
+            if include_stream:
+                out = _with_mapped_column(out, ["stream_uri"], _compact, "stream")
+                cols.insert(2, "stream")
             return out.select(cols).sort("time", descending=descending)
 
         # wide
@@ -1066,35 +1146,35 @@ class DataObject:
     # Metadata & introspection (no materialization needed)
     # ------------------------------------------------------------------
 
-    def metadata(self, *, include_ref_uris: bool = False) -> pl.DataFrame:
-        """Return a DataFrame of unique ``(data_alias, point_label,
-        point_uri, unit, entity__*)`` tuples.
+    def metadata(self, *, include_stream_uris: bool = False) -> pl.DataFrame:
+        """Return a DataFrame of unique ``(data_alias, property_label,
+        property_uri, unit, entity__*)`` tuples.
 
         Built from the query's bindings, so the answer is the same before
         and after the values are fetched and lists every matched point,
         including those with no rows in the requested window.
-        ``point_label`` is the point's ``rdfs:label`` (null when it has
+        ``property_label`` is the point's ``rdfs:label`` (null when it has
         none); ``unit`` is the unit the point's values are expressed in
-        (null when unannotated). By default the UUID ``ref_uri`` column is hidden — multiple
-        ref_uris sharing the same point are folded into one row. Pass
-        ``include_ref_uris=True`` to keep the per-ref breakdown (useful for
+        (null when unannotated). By default the UUID ``stream_uri`` column is hidden — multiple
+        stream_uris sharing the same point are folded into one row. Pass
+        ``include_stream_uris=True`` to keep the per-ref breakdown (useful for
         per-ref filtering and debugging).
         """
-        ref_col = ["ref_uri", "source_id", "ref_name"] if include_ref_uris else []
-        cols = ["data_alias", "point_label", "point_uri", "unit"] + ref_col + self._entity_columns
+        ref_col = ["stream_uri", "source_id", "stream_name"] if include_stream_uris else []
+        cols = ["data_alias", "property_label", "property_uri", "unit"] + ref_col + self._entity_columns
         rows: list[dict[str, str | None]] = []
         for b in self._bindings:
             for ctx in (b.entity_contexts or [{}]):
                 row: dict[str, str | None] = {
                     "data_alias": b.alias,
-                    "point_label": b.point_label,
-                    "point_uri": b.point_uri,
+                    "property_label": b.property_label,
+                    "property_uri": b.property_uri,
                     "unit": self._effective_unit(b),
                 }
-                if include_ref_uris:
-                    row["ref_uri"] = b.ref_uri
+                if include_stream_uris:
+                    row["stream_uri"] = b.stream_uri
                     row["source_id"] = b.source_id
-                    row["ref_name"] = b.ref_name
+                    row["stream_name"] = b.stream_name
                 for ec in self._entity_columns:
                     row[ec] = ctx.get(ec)
                 rows.append(row)
@@ -1123,27 +1203,27 @@ class DataObject:
         """The streams behind the object, one row each.
 
         Columns: ``stream`` (a number to pass as ``streams=`` to
-        :meth:`dataframe` or :meth:`latest`, valid for this object), ``alias``, ``point_uri``, ``ref_uri``, ``source_id``
-        and ``ref_name``, the last two being the datasource and stream name
+        :meth:`dataframe` or :meth:`latest`, valid for this object), ``alias``, ``property_uri``, ``stream_uri``, ``source_id``
+        and ``stream_name``, the last two being the datasource and stream name
         the driver registered. With ``alias`` only that alias's streams are
         listed, numbered as in the full table.
         """
         if alias is not None and alias not in self.aliases:
             raise KeyError(f"Data alias '{alias}' not found. Available: {self.aliases}")
         rows = sorted(
-            {(b.alias, b.point_uri, b.ref_uri, b.source_id, b.ref_name) for b in self._bindings}
+            {(b.alias, b.property_uri, b.stream_uri, b.source_id, b.stream_name) for b in self._bindings}
         )
         table = pl.DataFrame(
             rows, orient="row",
-            schema={"alias": pl.Utf8, "point_uri": pl.Utf8, "ref_uri": pl.Utf8,
-                    "source_id": pl.Utf8, "ref_name": pl.Utf8},
+            schema={"alias": pl.Utf8, "property_uri": pl.Utf8, "stream_uri": pl.Utf8,
+                    "source_id": pl.Utf8, "stream_name": pl.Utf8},
         ).with_row_index("stream")
         if alias is not None:
             table = table.filter(pl.col("alias") == alias)
         return table
 
     def latest(self, alias: str | None = None, *,
-               streams: "int | str | Sequence[int | str] | None" = None) -> pl.DataFrame:
+               streams: "int | str | Stream | Sequence[int | str | Stream] | None" = None) -> pl.DataFrame:
         """Return the newest reading of each point.
 
         Answers from its own fetch (one row per stream, newest first), so
@@ -1152,10 +1232,9 @@ class DataObject:
         ``start``/``end`` bounds still apply: the newest reading inside them.
         A point fed by several refs reports its newest row across them.
 
-        With ``alias`` the frame is ``[time, value]`` for a single point or
-        ``[time, value, point_uri]`` when the alias covers several, as with
+        With ``alias`` the frame is ``[time, value, property_uri]``, as with
         ``__getitem__``. Without it every binding is reported as
-        ``[data_alias, point_uri, time, value]``. ``streams`` restricts the
+        ``[data_alias, property_uri, time, value]``. ``streams`` restricts the
         fetch to the listed streams, as in :meth:`dataframe`.
         """
         refs = self._resolve_streams(streams)
@@ -1166,7 +1245,7 @@ class DataObject:
         else:
             bindings = list(self._bindings)
         if refs is not None:
-            bindings = [b for b in bindings if b.ref_uri in refs]
+            bindings = [b for b in bindings if b.stream_uri in refs]
 
         if bindings and self._client is not None:
             tall = self._fetch_tall(
@@ -1181,47 +1260,52 @@ class DataObject:
 
         newest = (
             tall.sort("time", descending=True)
-            .unique(subset=["data_alias", "point_uri"], keep="first", maintain_order=True)
+            .unique(subset=["data_alias", "property_uri"], keep="first", maintain_order=True)
         )
         newest = self._cast_output(_restore_single_value_column(newest), ["value"])
 
         if alias is None:
-            return newest.select("data_alias", "point_uri", "time", "value").sort("data_alias", "point_uri")
-        if len({b.point_uri for b in bindings}) <= 1:
-            return newest.select("time", "value")
-        return newest.select("time", "value", "point_uri").sort("point_uri")
+            return newest.select("data_alias", "property_uri", "time", "value").sort("data_alias", "property_uri")
+        return newest.select("time", "value", "property_uri").sort("property_uri")
 
     def is_empty(self) -> bool:
         """Whether any rows exist.
 
-        Before the values are fetched this answers from stream statistics,
-        i.e. whether the matched streams hold any rows at all, regardless of
-        the requested window. After a fetch it reports the fetched window.
+        Before the values are fetched this answers whether the matched
+        streams hold any rows at all, regardless of the requested window. It
+        reads the stream statistics if they are loaded; otherwise it asks the
+        server only which streams have a row, one request shared with the
+        sub-objects of the same ``data()`` call, without counting them.
+        After a fetch it reports the fetched window.
         """
         if self._materialized:
             return self._tall.is_empty()
-        return all(b.row_count == 0 for b in self._bindings)
+        if not self._bindings:
+            return True
+        with_rows = self._shared_stats().with_rows()
+        return not any(b.stream_uri in with_rows for b in self._bindings)
 
     # ------------------------------------------------------------------
-    # Stats (no materialization needed)
+    # Stats (fetched on first use, no materialization needed)
     # ------------------------------------------------------------------
 
     @property
     def total_rows(self) -> int:
         """Total row count across all bindings (from stats, no materialization)."""
-        return sum(b.row_count for b in self._bindings)
+        return sum(b.row_count for b in self._stats_bindings())
 
     @property
     def time_range(self) -> tuple[datetime | None, datetime | None]:
-        """Overall (earliest, latest) across all bindings."""
-        earliests = [b.earliest for b in self._bindings if b.earliest is not None]
-        latests = [b.latest for b in self._bindings if b.latest is not None]
+        """Overall (earliest, latest) across all bindings (from stats)."""
+        bindings = self._stats_bindings()
+        earliests = [b.earliest for b in bindings if b.earliest is not None]
+        latests = [b.latest for b in bindings if b.latest is not None]
         return (min(earliests) if earliests else None, max(latests) if latests else None)
 
     @property
     def bindings(self) -> list[BindingInfo]:
-        """Read-only access to binding metadata."""
-        return list(self._bindings)
+        """Read-only access to binding metadata, stream statistics included."""
+        return self._stats_bindings()
 
     # ------------------------------------------------------------------
     # Unit conversion
@@ -1242,6 +1326,32 @@ class DataObject:
             if unit not in units:
                 units.append(unit)
         return out
+
+    def _check_values_in_annotated_unit(self, b: BindingInfo) -> None:
+        """Raise if ``b``'s values could not be brought to its annotated unit.
+
+        A stream stored in a unit that does not convert to the point's
+        annotation is read as stored, with a warning. Its values are then
+        not in the unit ``units()`` reports, so ``convert_to()`` must not
+        use that unit as the source. Registration rejects such a pair; this
+        guards a model edited afterwards.
+        """
+        stored, annotated = b.stream_unit, b.property_unit
+        if not stored or not annotated or stored == annotated:
+            return
+        try:
+            compatible = bool(
+                self._client.get_conversion_factors(stored, annotated).get("compatible", False)
+            )
+        except Exception:
+            compatible = False
+        if not compatible:
+            raise ValueError(
+                f"convert_to: point <{b.property_uri}> (alias '{b.alias}') is annotated "
+                f"{annotated} but its stream is stored in {stored}, which does not convert, "
+                f"so its values are still in {stored}. Correct the unit in the model, or "
+                f"pass from_unit to state the unit of the values."
+            )
 
     def convert_to(
         self,
@@ -1271,7 +1381,8 @@ class DataObject:
         Raises:
             KeyError: If ``alias`` is not one of :attr:`aliases`.
             ValueError: If ``from_unit`` is None and a point has no unit
-                annotation, or if the units are incompatible.
+                annotation, or its stream is stored in a unit that does not
+                convert to the annotation; or if the units are incompatible.
         """
         if self._query_params.get("cast_value") == "str":
             raise ValueError("convert_to() needs numeric values; this object was built with cast_value='str'")
@@ -1302,10 +1413,12 @@ class DataObject:
         # pending/materialize paths only ever see exact units.
         conversions: list[tuple[tuple[str, str, str], str, str]] = []
         for b in affected:
+            if from_unit is None:
+                self._check_values_in_annotated_unit(b)
             src = from_unit if from_unit is not None else self._effective_unit(b)
             if src is None:
                 raise ValueError(
-                    f"No unit annotation found for point <{b.point_uri}> "
+                    f"No unit annotation found for point <{b.property_uri}> "
                     f"(alias '{b.alias}'). Provide from_unit explicitly."
                 )
             f = _factors(src, to_unit)
@@ -1335,6 +1448,7 @@ class DataObject:
                 _query_params=self._query_params,
                 _tall=tall,
                 _materialized=True,
+                _stats=self._stats,
             )
 
         # Lazy path: record the conversions for _materialize(). The bindings
@@ -1350,6 +1464,7 @@ class DataObject:
             _tall=None,
             _materialized=False,
             _pending_conversions=pending,
+            _stats=self._stats,
         )
 
     # ------------------------------------------------------------------
@@ -1363,9 +1478,14 @@ class DataObject:
             # count readings, as the lazy estimate and dataframe() do.
             n_rows = 0
             if self._tall is not None and not self._tall.is_empty():
-                n_rows = self._tall.select(["data_alias", "point_uri", "ref_uri", "time"]).n_unique()
+                n_rows = self._tall.select(["data_alias", "property_uri", "stream_uri", "time"]).n_unique()
             return f"DataObject({n_rows} rows, aliases={aliases}, entities={self.entity_aliases})"
 
+        if not self._stats_loaded:
+            # The repr never fetches: say how many streams, not how many rows.
+            n_streams = len({b.stream_uri for b in self._bindings})
+            return (f"DataObject(lazy, {n_streams} streams, aliases={aliases}, "
+                    f"entities={self.entity_aliases})")
         total = self.total_rows
         earliest, latest = self.time_range
         time_str = ""

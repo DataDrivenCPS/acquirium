@@ -12,7 +12,7 @@ from rdflib import Graph, Literal, URIRef
 
 from acquirium.Drivers.BuiltInDrivers.csv_ingest import CSVIngestDriver
 from acquirium.Client.client import AcquiriumClient
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import compute_stream_uri
 from acquirium.internals.internals_namespaces import (
     ACQUIRIUM_REF_NAME,
     ACQUIRIUM_SOURCE_ID,
@@ -27,7 +27,8 @@ from acquirium.internals.internals_namespaces import (
 def make_driver(cfg_overrides: dict | None = None, tmp_path: Path | None = None) -> CSVIngestDriver:
     aq = MagicMock()
     aq.client = MagicMock()
-    aq.register_datasource.return_value = "csv_files"
+    aq.client._stream_properties.return_value = {}
+    aq.client._node_labels.return_value = {}
     aq.register_streams.side_effect = lambda streams: AcquiriumClient.register_streams(aq.client, streams)
     aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0}
     watch = str(tmp_path) if tmp_path else "/tmp/csv_test_watch"
@@ -41,13 +42,13 @@ def make_driver(cfg_overrides: dict | None = None, tmp_path: Path | None = None)
 
 
 def parse(driver: CSVIngestDriver, path: Path, cursor=None):
-    """Run the driver's own read(), regrouped as {ref_name: [(ts, value)]}."""
+    """Run the driver's own read(), regrouped as {stream_name: [(ts, value)]}."""
     result = driver.read(path, cursor)
     observations, next_cursor = result.observations, result.next_cursor
     batch: dict[str, list[tuple[datetime, str]]] = {}
     if observations is not None:
         for row in observations.iter_rows(named=True):
-            batch.setdefault(row["ref_name"], []).append((row["ts"], row["value"]))
+            batch.setdefault(row["stream_name"], []).append((row["ts"], row["value"]))
     return batch, next_cursor
 
 
@@ -135,8 +136,8 @@ def test_column_shape_change_after_sample_window_does_not_fail(tmp_path):
 
 def test_declare_stream_hook_attaches_metadata(tmp_path):
     class Meta(CSVIngestDriver):
-        def declare_stream(self, ref_name):
-            self.declare(ref_name, label=f"L:{ref_name}")
+        def declare_stream(self, stream_name):
+            self.declare(stream_name, label=f"L:{stream_name}")
 
     aq = MagicMock()
     driver = Meta(aq, {"driver": {
@@ -360,7 +361,7 @@ def test_loop_uses_explicit_source_id(tmp_path):
     driver.tick()
     source_id, table = driver.aq.insert_timeseries_arrow.call_args[0]
     assert source_id == "csv_files"
-    assert set(pl.from_arrow(table)["ref_name"].to_list()) == {"temp", "rh"}
+    assert set(pl.from_arrow(table)["stream_name"].to_list()) == {"temp", "rh"}
 
 
 def test_loop_source_id_is_stable_across_subdirectories(tmp_path):
@@ -372,7 +373,7 @@ def test_loop_source_id_is_stable_across_subdirectories(tmp_path):
     driver.tick()
     source_id, table = driver.aq.insert_timeseries_arrow.call_args[0]
     assert source_id == "csv_files"
-    assert "flow" in pl.from_arrow(table)["ref_name"].to_list()
+    assert "flow" in pl.from_arrow(table)["stream_name"].to_list()
 
 
 def test_loop_registers_streams_before_insert(tmp_path):
@@ -387,35 +388,18 @@ def test_loop_registers_streams_before_insert(tmp_path):
     driver.tick()
 
 
-def test_loop_marks_text_only_csv_streams_as_text(tmp_path):
+def test_loop_leaves_the_value_kind_of_csv_streams_to_the_server(tmp_path):
     p = tmp_path / "mixed.csv"
     p.write_text("time,temp,state\n2024-01-01T00:00:00Z,22.5,ON\n")
     driver = make_driver(tmp_path=tmp_path)
     driver.tick()
 
     g = Graph().parse(data=driver.aq.client.insert_graph.call_args[0][0], format="turtle")
-    source_id = "csv_files"
-    assert (compute_ref_uri(source_id, "temp"), ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
-    assert (compute_ref_uri(source_id, "state"), ACQUIRIUM_VALUE_KIND, Literal("text")) in g
+    assert list(g.triples((None, ACQUIRIUM_VALUE_KIND, None))) == []
 
 
-def test_loop_registers_mixed_csv_streams_as_numeric(tmp_path):
-    p = tmp_path / "mixed_numeric.csv"
-    p.write_text(
-        "time,mode\n"
-        "2024-01-01T00:00:00Z,1.0\n"
-        "2024-01-02T00:00:00Z,Manual Control\n"
-    )
-    driver = make_driver(tmp_path=tmp_path)
-    driver.tick()
-
-    g = Graph().parse(data=driver.aq.client.insert_graph.call_args[0][0], format="turtle")
-    ref = compute_ref_uri("csv_files", "mode")
-    assert (ref, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
-
-
-def test_loop_mints_valid_dummy_point_uri_for_messy_ref_name(tmp_path):
-    """A ref_name full of URI-hostile characters still yields a valid dummy point URI."""
+def test_loop_mints_valid_dummy_point_uri_for_messy_stream_name(tmp_path):
+    """A stream_name full of URI-hostile characters still yields a valid dummy property URI."""
     p = tmp_path / "bad_uri.csv"
     p.write_text("time,UV-Ultraviolet Intensity (mW/cm^2)\n2024-01-01T00:00:00Z,1.0\n")
     driver = make_driver(tmp_path=tmp_path)
@@ -423,13 +407,12 @@ def test_loop_mints_valid_dummy_point_uri_for_messy_ref_name(tmp_path):
 
     g = Graph().parse(data=driver.aq.client.insert_graph.call_args[0][0], format="turtle")
     source_id = "csv_files"
-    ref_name = "UV-Ultraviolet Intensity (mW/cm^2)"
-    ref_uri = compute_ref_uri(source_id, ref_name)
-    assert (ref_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)) in g
-    assert (ref_uri, ACQUIRIUM_REF_NAME, Literal(ref_name)) in g
-    assert (ref_uri, ACQUIRIUM_VALUE_KIND, Literal("numeric")) in g
-    points = list(g.subjects(HAS_EXTERNAL_REFERENCE, ref_uri))
-    assert points == [URIRef(f"{ref_uri}__point")]
+    stream_name = "UV-Ultraviolet Intensity (mW/cm^2)"
+    stream_uri = compute_stream_uri(source_id, stream_name)
+    assert (stream_uri, ACQUIRIUM_SOURCE_ID, Literal(source_id)) in g
+    assert (stream_uri, ACQUIRIUM_REF_NAME, Literal(stream_name)) in g
+    points = list(g.subjects(HAS_EXTERNAL_REFERENCE, stream_uri))
+    assert points == [URIRef(f"{stream_uri}__point")]
 
 
 # ------------------------------------------------------------------ cursor / paging

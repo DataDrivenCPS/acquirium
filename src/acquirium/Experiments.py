@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 import polars as pl
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import compute_stream_uri
 from acquirium.Storage.migrations import EXPERIMENT_MIGRATIONS, migrate
 from acquirium.Storage.metadata_outbox import enqueue, execute
 from acquirium.Storage.publication.revision import RevisionPublisher
@@ -40,6 +40,7 @@ from acquirium.ExperimentDeclarations import (
     FORMAT, Declaration, prepare_declaration, validate_declaration,
     stream_keys as _stream_keys, stream_key as _stream_key,
 )
+from acquirium.internals._names import accepts_old_names
 
 UTC = timezone.utc
 
@@ -87,7 +88,7 @@ class _PreparedObservation:
     occurred_at: datetime | None = None
     value: Any = None
     artifact_digest: str | None = None
-    ref_uri: str | None = None
+    stream_uri: str | None = None
     interval: tuple[datetime, datetime] | None = None
     attachment: tuple[dict, bytes] | None = None
     sample_ref: str | None = None
@@ -122,7 +123,7 @@ class ExperimentStore:
             self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_templates (template_id VARCHAR PRIMARY KEY, name VARCHAR UNIQUE NOT NULL, created_at TIMESTAMP NOT NULL)")
             self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_variables (variable_id VARCHAR PRIMARY KEY, template_id VARCHAR NOT NULL, label VARCHAR NOT NULL, role VARCHAR NOT NULL, kind VARCHAR NOT NULL, metadata_json VARCHAR NOT NULL, created_at TIMESTAMP NOT NULL, UNIQUE(template_id, label))")
             self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_runs (run_id VARCHAR PRIMARY KEY, template_id VARCHAR NOT NULL, status VARCHAR NOT NULL, metadata_json VARCHAR NOT NULL, started_at TIMESTAMP NOT NULL, finished_at TIMESTAMP, error_json VARCHAR)")
-            self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_observations (run_id VARCHAR NOT NULL, variable_id VARCHAR, sequence BIGINT NOT NULL, recorded_at TIMESTAMP NOT NULL, occurred_at TIMESTAMP, value_json VARCHAR, artifact_digest VARCHAR, ref_uri VARCHAR, range_start TIMESTAMP, range_end TIMESTAMP, PRIMARY KEY(run_id, sequence))")
+            self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_observations (run_id VARCHAR NOT NULL, variable_id VARCHAR, sequence BIGINT NOT NULL, recorded_at TIMESTAMP NOT NULL, occurred_at TIMESTAMP, value_json VARCHAR, artifact_digest VARCHAR, stream_uri VARCHAR, range_start TIMESTAMP, range_end TIMESTAMP, PRIMARY KEY(run_id, sequence))")
             self.metadata.preflight_legacy(conn)
             migrate(conn, backend="postgres" if conn.__class__.__module__.startswith("psycopg") else "duckdb", component="experiments",
                     migrations=EXPERIMENT_MIGRATIONS)
@@ -132,7 +133,7 @@ class ExperimentStore:
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_variables_template_idx ON experiment_variables(template_id)")
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_runs_template_idx ON experiment_runs(template_id, status, started_at)")
             self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_observations_variable_idx ON experiment_observations(variable_id, run_id, sequence)")
-            self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_observations_ref_idx ON experiment_observations(ref_uri, range_start, range_end)")
+            self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_observations_stream_idx ON experiment_observations(stream_uri, range_start, range_end)")
         self._resolutions = {}
 
     def _resolve(self, text, kind):
@@ -256,7 +257,7 @@ class ExperimentStore:
                     raise ValueError(f"variable {label!r} was already declared differently")
                 result.append({**previous, "created": False})
                 continue
-            variable_id = str(compute_ref_uri(f"study/{template_id}", label))
+            variable_id = str(compute_stream_uri(f"study/{template_id}", label))
             prepared = prepared.resolve(self._resolve)
             metadata = prepared.document()
             item = dict(variable_id=variable_id, label=label, role=role, kind=kind, metadata=metadata, created_at=_now(), created=True)
@@ -278,12 +279,12 @@ class ExperimentStore:
             self._execute(conn, "INSERT INTO experiment_runs (run_id,template_id,status,started_at) VALUES (?,?,?,?)", [run["run_id"], template_id, "running", _database_timestamp(run["started_at"])])
             self._queue_metadata(conn, update)
         return run
-    def observe(self, run_id: str, variable_id: str, *, value: Any = None, occurred_at: datetime | None = None, artifact_digest: str | None = None, ref_uri: str | None = None, interval: tuple[datetime,datetime] | None = None, key: tuple | list | None = None) -> dict[str, Any]:
-        return self.observe_batch(run_id, [dict(variable_id=variable_id, value=value, occurred_at=occurred_at, artifact_digest=artifact_digest, ref_uri=ref_uri, interval=interval, key=key)])[0]
+    def observe(self, run_id: str, variable_id: str, *, value: Any = None, occurred_at: datetime | None = None, artifact_digest: str | None = None, stream_uri: str | None = None, interval: tuple[datetime,datetime] | None = None, key: tuple | list | None = None) -> dict[str, Any]:
+        return self.observe_batch(run_id, [dict(variable_id=variable_id, value=value, occurred_at=occurred_at, artifact_digest=artifact_digest, stream_uri=stream_uri, interval=interval, key=key)])[0]
 
     def observe_batch(self, run_id: str, observations: list[dict]) -> list[dict]:
         """Compatibility adapter for the original observation transport."""
-        forms = {"artifact": "artifact", "artifact_digest": "artifact_reference", "ref_uri": "reference", "value": "value"}
+        forms = {"artifact": "artifact", "artifact_digest": "artifact_reference", "stream_uri": "reference", "value": "value"}
         entries = []
         for observation in observations:
             payloads = [(field, observation[field]) for field in forms if observation.get(field) is not None]
@@ -313,7 +314,7 @@ class ExperimentStore:
         source = f"experiment/{run_id}"
         stream_ids = set()
         forms = {"value": "value", "artifact": "artifact", "artifact_reference": "artifact_digest",
-                 "samples": "samples", "reference": "ref_uri"}
+                 "samples": "samples", "reference": "stream_uri"}
         for entry in entries:
             form = entry.get("form")
             if form not in forms:
@@ -350,7 +351,7 @@ class ExperimentStore:
                     raise ValueError(f"samples recording for {label!r} requires at least one sample")
                 key = tuple(key or ())
                 name = _stream_name(entry["variable_id"], key)
-                ref = str(compute_ref_uri(source, name))
+                ref = str(compute_stream_uri(source, name))
                 if ref in stream_ids:
                     raise ValueError(f"duplicate stream reference {ref!r}")
                 stream_ids.add(ref)
@@ -359,7 +360,7 @@ class ExperimentStore:
                 frames.append(self.store._prepare_frame(self.store._rows_frame(ref, rows, "numeric")))
                 batch.updates.append(stream_update(self.metadata_graph, source, name, template_id, run_id,
                     entry["variable_id"], label, metadata, keys, key))
-                item.ref_uri = item.sample_ref = ref
+                item.stream_uri = item.sample_ref = ref
                 item.interval = (min(t for t,_ in rows), max(t for t,_ in rows))
             elif form == "artifact":
                 artifact = entry["artifact"]
@@ -377,8 +378,8 @@ class ExperimentStore:
             elif form == "reference":
                 if kind != "timeseries":
                     raise ValueError(f"{label!r} is a {kind} variable and cannot reference a stream or file")
-                item.ref_uri = entry["ref_uri"]
-                if not isinstance(item.ref_uri, str) or not item.ref_uri.strip():
+                item.stream_uri = entry["stream_uri"]
+                if not isinstance(item.stream_uri, str) or not item.stream_uri.strip():
                     raise ValueError("a stream reference URI is required")
                 interval = entry.get("interval")
                 if interval is not None:
@@ -414,10 +415,10 @@ class ExperimentStore:
             for offset, item in enumerate(batch.observations):
                 if item.attachment is not None:
                     self._store_artifact(conn, item.artifact_digest, *item.attachment, recorded)
-                self._execute(conn, "INSERT INTO experiment_observations (run_id, variable_id, sequence, recorded_at, occurred_at, value_json, artifact_digest, ref_uri, range_start, range_end, key_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [run_id, item.variable_id, sequence + offset, _database_timestamp(recorded), _database_timestamp(item.occurred_at) if item.occurred_at else None, _json(item.value) if item.value is not None else None, item.artifact_digest, item.ref_uri, _database_timestamp(item.interval[0]) if item.interval else None, _database_timestamp(item.interval[1]) if item.interval else None, _json(item.key) if item.key is not None else None])
+                self._execute(conn, "INSERT INTO experiment_observations (run_id, variable_id, sequence, recorded_at, occurred_at, value_json, artifact_digest, stream_uri, range_start, range_end, key_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [run_id, item.variable_id, sequence + offset, _database_timestamp(recorded), _database_timestamp(item.occurred_at) if item.occurred_at else None, _json(item.value) if item.value is not None else None, item.artifact_digest, item.stream_uri, _database_timestamp(item.interval[0]) if item.interval else None, _database_timestamp(item.interval[1]) if item.interval else None, _json(item.key) if item.key is not None else None])
                 receipt = {"sequence": sequence + offset, "recorded_at": recorded}
                 if item.sample_ref is not None:
-                    receipt["ref_uri"] = item.sample_ref
+                    receipt["stream_uri"] = item.sample_ref
                 results.append(receipt)
             for update in batch.updates:
                 self.metadata.enqueue(conn, update)
@@ -461,9 +462,9 @@ class ExperimentStore:
         return {"filename": row[0], "media_type": row[1], "data": data}
 
     @_publishes
-    def annotate_stream(self, run_id: str, ref_uri: str, start: datetime | str, end: datetime | str | None = None, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    def annotate_stream(self, run_id: str, stream_uri: str, start: datetime | str, end: datetime | str | None = None, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
         """Associate a live stream interval with a run without copying samples."""
-        if not ref_uri or not ref_uri.strip():
+        if not stream_uri or not stream_uri.strip():
             raise ValueError("a stream reference URI is required")
         start_at = timestamp(start)
         end_at = timestamp(end) if end is not None else None
@@ -482,13 +483,13 @@ class ExperimentStore:
             sequence, recorded = self._next_observation(conn, run_id)
             self._execute(conn, """
                 INSERT INTO experiment_observations
-                (run_id, variable_id, sequence, recorded_at, value_json, ref_uri, range_start, range_end)
+                (run_id, variable_id, sequence, recorded_at, value_json, stream_uri, range_start, range_end)
                 VALUES (?, NULL, ?, ?, ?, ?, ?, ?)
-                """, [run_id, sequence, _database_timestamp(recorded), None, ref_uri,
+                """, [run_id, sequence, _database_timestamp(recorded), None, stream_uri,
                       _database_timestamp(start_at),
                       _database_timestamp(end_at) if end_at is not None else None])
             item = {"annotation_id": f"{run_id}:{sequence}", "run_id": run_id,
-                    "template_id": row[0], "ref_uri": ref_uri, "range_start": start_at,
+                    "template_id": row[0], "stream_uri": stream_uri, "range_start": start_at,
                     "range_end": end_at, "metadata": metadata, "created_at": recorded}
             self._queue_metadata(conn, self.metadata_graph.record_update(annotation_record(item), prepared=prepared))
         return item
@@ -504,7 +505,7 @@ class ExperimentStore:
         with self.store._lock, self.store._write_conn() as conn:
             row = self._execute(conn, """
                 SELECT range_start, range_end FROM experiment_observations
-                WHERE run_id=? AND sequence=? AND variable_id IS NULL AND ref_uri IS NOT NULL
+                WHERE run_id=? AND sequence=? AND variable_id IS NULL AND stream_uri IS NOT NULL
                 """, [run_id, int(sequence_text)]).fetchone()
             if row is None:
                 raise KeyError(annotation_id)
@@ -517,13 +518,13 @@ class ExperimentStore:
         return {"annotation_id": annotation_id, "range_end": end_at}
 
     def stream_annotations(self, *, run_id: str | None = None, template_id: str | None = None,
-                           ref_uri: str | None = None, start: datetime | str | None = None,
+                           stream_uri: str | None = None, start: datetime | str | None = None,
                            end: datetime | str | None = None) -> list[dict[str, Any]]:
         """Find annotations by experiment, Study, stream, or overlapping time."""
         if start is not None and end is not None and timestamp(end) < timestamp(start):
             raise ValueError("query end must be at or after start")
-        clauses, parameters = ["o.variable_id IS NULL", "o.ref_uri IS NOT NULL"], []
-        for clause, value in (("o.run_id=?", run_id), ("r.template_id=?", template_id), ("o.ref_uri=?", ref_uri)):
+        clauses, parameters = ["o.variable_id IS NULL", "o.stream_uri IS NOT NULL"], []
+        for clause, value in (("o.run_id=?", run_id), ("r.template_id=?", template_id), ("o.stream_uri=?", stream_uri)):
             if value is not None:
                 clauses.append(clause); parameters.append(value)
         if start is not None:
@@ -535,14 +536,14 @@ class ExperimentStore:
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         with self.store._own_conn() as conn:
             rows = self._execute(conn, f"""
-                SELECT o.run_id, o.sequence, r.template_id, o.ref_uri,
+                SELECT o.run_id, o.sequence, r.template_id, o.stream_uri,
                        o.range_start, o.range_end, o.value_json, o.recorded_at
                 FROM experiment_observations AS o
                 JOIN experiment_runs AS r ON r.run_id=o.run_id
                 {where}
                 ORDER BY o.range_start, o.run_id, o.sequence
                 """, parameters).fetchall()
-        items = [{"annotation_id": f"{row[0]}:{row[1]}", "run_id": row[0], "template_id": row[2], "ref_uri": row[3],
+        items = [{"annotation_id": f"{row[0]}:{row[1]}", "run_id": row[0], "template_id": row[2], "stream_uri": row[3],
                  "range_start": timestamp(row[4]), "range_end": timestamp(row[5]) if row[5] is not None else None,
                  "metadata": {}, "created_at": timestamp(row[7])} for row in rows]
         return self.read_metadata(items, EXPERIMENT.StreamAnnotation, "annotation_id")
@@ -711,7 +712,7 @@ class ExperimentStore:
                 f"""
                 SELECT r.run_id, r.status, r.started_at,
                        r.finished_at, o.sequence, o.recorded_at, o.occurred_at,
-                       o.value_json, o.artifact_digest, o.ref_uri,
+                       o.value_json, o.artifact_digest, o.stream_uri,
                        o.range_start, o.range_end, v.variable_id, v.label,
                        v.role, v.kind, a.filename,
                        a.media_type, a.byte_length, o.key_json
@@ -736,7 +737,7 @@ class ExperimentStore:
                 "occurred_at": timestamp(row[6]) if row[6] else None,
                 "value": json.loads(row[7]) if row[7] is not None else None,
                 "artifact_digest": row[8],
-                "ref_uri": row[9],
+                "stream_uri": row[9],
                 "range_start": timestamp(row[10]) if row[10] else None,
                 "range_end": timestamp(row[11]) if row[11] else None,
                 "variable_id": row[12],
@@ -768,7 +769,7 @@ class ExperimentStore:
         if not run_ids:
             return []
         sources = self._run_sources(run_ids)
-        rows = self._execute(conn, f"SELECT ref_uri FROM streams WHERE source_id IN ({self._marks(sources)})", sources).fetchall()
+        rows = self._execute(conn, f"SELECT stream_uri FROM streams WHERE source_id IN ({self._marks(sources)})", sources).fetchall()
         return [row[0] for row in rows]
 
     def _delete_runs(self, conn, run_ids, *, sweep=False) -> dict[str, Any]:
@@ -788,7 +789,7 @@ class ExperimentStore:
                 # Another run's record of a stream must not lose its samples.
                 users = self._execute(conn, f"""
                     SELECT DISTINCT run_id FROM experiment_observations
-                    WHERE ref_uri IN ({self._marks(refs)}) AND run_id NOT IN ({marks})
+                    WHERE stream_uri IN ({self._marks(refs)}) AND run_id NOT IN ({marks})
                     ORDER BY run_id
                     """, [*refs, *run_ids]).fetchall()
                 if users:
@@ -812,16 +813,16 @@ class ExperimentStore:
         sweep_sources = []
         if sweep:
             sweep_sources = [row[0] for row in self._execute(conn, "SELECT DISTINCT source_id FROM streams WHERE source_id LIKE ?", ["experiment/%"]).fetchall()]
-            refs = [row[0] for row in self._execute(conn, "SELECT ref_uri FROM streams WHERE source_id LIKE ?", ["experiment/%"]).fetchall()]
+            refs = [row[0] for row in self._execute(conn, "SELECT stream_uri FROM streams WHERE source_id LIKE ?", ["experiment/%"]).fetchall()]
             digests = [row[0] for row in self._execute(conn, "SELECT digest FROM experiment_artifacts").fetchall()]
         if refs:
             ref_marks = self._marks(refs)
             removed["samples"] = int(self._execute(conn, f"""
                 SELECT count(*) FROM timeseries
-                WHERE ref_id IN (SELECT ref_id FROM ref_ids WHERE ref_uri IN ({ref_marks})) AND NOT deleted
+                WHERE stream_id IN (SELECT stream_id FROM stream_ids WHERE stream_uri IN ({ref_marks})) AND NOT deleted
                 """, refs).fetchone()[0])
             RevisionPublisher(self.store).reset(conn, refs)
-            self._execute(conn, f"DELETE FROM streams WHERE ref_uri IN ({ref_marks})", refs)
+            self._execute(conn, f"DELETE FROM streams WHERE stream_uri IN ({ref_marks})", refs)
         if digests:
             # Identical bytes are stored once, so keep a file another run still uses.
             unused = [row[0] for row in self._execute(conn, f"""
@@ -949,7 +950,7 @@ class ExperimentStore:
                     SELECT count(variable_id), count(*) - count(variable_id),
                         coalesce(sum(length(run_id) + coalesce(length(variable_id), 0)
                             + coalesce(length(value_json), 0) + coalesce(length(artifact_digest), 0)
-                            + coalesce(length(ref_uri), 0) + coalesce(length(key_json), 0) + 40), 0)
+                            + coalesce(length(stream_uri), 0) + coalesce(length(key_json), 0) + 40), 0)
                     FROM experiment_observations WHERE run_id IN ({marks})""", selected).fetchone()
                 usage["observations"], usage["annotations"] = int(row[0]), int(row[1])
                 usage["ledger_bytes"] += int(row[2])
@@ -962,7 +963,7 @@ class ExperimentStore:
                 if refs:
                     samples = self._execute(conn, f"""
                         SELECT count(*), coalesce(sum(8 + coalesce(length(text_value), 8)), 0) FROM timeseries
-                        WHERE ref_id IN (SELECT ref_id FROM ref_ids WHERE ref_uri IN ({self._marks(refs)})) AND NOT deleted
+                        WHERE stream_id IN (SELECT stream_id FROM stream_ids WHERE stream_uri IN ({self._marks(refs)})) AND NOT deleted
                         """, refs).fetchone()
                     usage["samples"], usage["sample_bytes"] = int(samples[0]), int(samples[1])
         usage["total_bytes"] = usage["sample_bytes"] + usage["file_bytes"] + usage["ledger_bytes"]
@@ -973,13 +974,14 @@ class Point:
     """A deliberately small semantic handle; storage only needs its URI."""
     uri: str
 
+@accepts_old_names
 @dataclass
 class StreamAnnotation:
     """A run's claim on a time interval of an existing stream."""
     annotation_id: str
     run_id: str
     template_id: str
-    ref_uri: str
+    stream_uri: str
     range_start: datetime
     range_end: datetime | None
     metadata: dict[str, Any]
@@ -988,7 +990,7 @@ class StreamAnnotation:
 
     @classmethod
     def from_item(cls, item: dict[str, Any], client: Any) -> "StreamAnnotation":
-        return cls(item["annotation_id"], item["run_id"], item["template_id"], item["ref_uri"],
+        return cls(item["annotation_id"], item["run_id"], item["template_id"], item["stream_uri"],
                    timestamp(item["range_start"]),
                    timestamp(item["range_end"]) if item.get("range_end") else None,
                    dict(item["metadata"]), timestamp(item["created_at"]), client)
@@ -999,7 +1001,7 @@ class StreamAnnotation:
 
     @property
     def stream(self) -> Stream:
-        return Stream(self.ref_uri, self._client)
+        return Stream(self.stream_uri, self._client)
 
     def dataframe(self, **kwargs: Any):
         """Read the current stream values within the claimed interval."""
@@ -1009,6 +1011,7 @@ class StreamAnnotation:
             options.setdefault("end", self.range_end)
         return self.stream.dataframe(**options)
 
+@accepts_old_names
 @dataclass(frozen=True)
 class Observation:
     """One persisted value recorded for a variable in an Experiment."""
@@ -1022,7 +1025,7 @@ class Observation:
     experiment_metadata: dict[str, Any]
     started_at: datetime
     finished_at: datetime | None
-    ref_uri: str | None = None
+    stream_uri: str | None = None
     range_start: datetime | None = None
     range_end: datetime | None = None
     artifact_digest: str | None = None
@@ -1038,7 +1041,7 @@ class Observation:
             if kwargs:
                 raise TypeError("a table observation's dataframe() takes no options")
             return pl.read_parquet(io.BytesIO(self.read_bytes()))
-        if self.variable.kind != "timeseries" or self.ref_uri is None:
+        if self.variable.kind != "timeseries" or self.stream_uri is None:
             raise TypeError("dataframe() is only available for table and time-series observations")
         options = dict(kwargs)
         if self.range_start is not None:
@@ -1050,12 +1053,12 @@ class Observation:
     @property
     def stream(self) -> Stream | None:
         """The stream a time-series observation recorded or referenced."""
-        return Stream(self.ref_uri, self._client) if self.ref_uri is not None else None
+        return Stream(self.stream_uri, self._client) if self.stream_uri is not None else None
 
     @property
     def interval(self) -> StreamInterval | None:
         """The stream and time range this observation covers, to record in another run."""
-        if self.ref_uri is None or self.range_start is None or self.range_end is None:
+        if self.stream_uri is None or self.range_start is None or self.range_end is None:
             return None
         return self.stream.between(self.range_start, self.range_end)
 
@@ -1081,8 +1084,8 @@ class Observation:
         return decoder.loads(self.read_bytes())
 
     def __repr__(self) -> str:
-        if self.ref_uri is not None:
-            value = f"stream {self.ref_uri}"
+        if self.stream_uri is not None:
+            value = f"stream {self.stream_uri}"
             if self.range_start is not None:
                 end = self.range_end.isoformat() if self.range_end is not None else "open"
                 value += f" [{self.range_start.isoformat()}, {end}]"
@@ -1108,7 +1111,7 @@ class Observation:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "value": self.value,
-            "ref_uri": self.ref_uri,
+            "stream_uri": self.stream_uri,
             "range_start": self.range_start,
             "range_end": self.range_end,
             "artifact_digest": self.artifact_digest,
@@ -1288,7 +1291,7 @@ class ExperimentVariable:
         if isinstance(rows, StreamInterval):
             raise TypeError("add() records rows; use record() for a stream interval")
         entries = recording_entries(self, rows)
-        streams = {tuple(entry["key"] or ()): Stream(receipt["ref_uri"], self.study.client)
+        streams = {tuple(entry["key"] or ()): Stream(receipt["stream_uri"], self.study.client)
                    for entry, receipt in zip(entries, _record_snapshot(self.study, entries))}
         return streams if self.keys else streams.get(())
 
@@ -1302,7 +1305,7 @@ class ExperimentVariable:
 def _stream_name(variable_id: str, key: tuple) -> str:
     # Reuse canonical reference identities for the source-local storage name.
     # JSON preserves key types and boundaries; labels remain display metadata.
-    return str(compute_ref_uri(f"experiment-variable/{variable_id}", _json(list(key))))
+    return str(compute_stream_uri(f"experiment-variable/{variable_id}", _json(list(key))))
 
 
 def _record_snapshot(study: "Study", entries: list[dict]):
@@ -1413,6 +1416,7 @@ class ExperimentOutputs(Mapping):
         variable.record(value)
 
 
+@accepts_old_names
 class Experiment:
     """One current or historical execution of a Study."""
     def __init__(self, study: "Study", item: dict[str, Any] | str):
@@ -1452,20 +1456,20 @@ class Experiment:
     def observations(self, variable: ExperimentVariable | str | None = None) -> "ObservationCollection":
         return ObservationCollection(self.study, run_id=self.run_id, variable=variable)
 
-    def annotate_stream(self, ref_uri: str, *, start: datetime | str, end: datetime | str | None = None,
+    def annotate_stream(self, stream_uri: str, *, start: datetime | str, end: datetime | str | None = None,
                         metadata: dict[str, Any] | None = None) -> StreamAnnotation:
         """Tag historical or live samples from an existing stream as part of this run."""
         item = self.study.client.annotate_experiment_stream(
-            self.run_id, ref_uri, start=timestamp(start).isoformat(),
+            self.run_id, stream_uri, start=timestamp(start).isoformat(),
             end=timestamp(end).isoformat() if end is not None else None,
             metadata=to_json({} if metadata is None else metadata, path="metadata"),
         )
         return StreamAnnotation.from_item(item, self.study.client)
 
-    def stream_annotations(self, *, ref_uri: str | None = None,
+    def stream_annotations(self, *, stream_uri: str | None = None,
                            start: datetime | str | None = None,
                            end: datetime | str | None = None) -> list[StreamAnnotation]:
-        return self.study.stream_annotations(run_id=self.run_id, ref_uri=ref_uri, start=start, end=end)
+        return self.study.stream_annotations(run_id=self.run_id, stream_uri=stream_uri, start=start, end=end)
 
     def finish(self):
         result = self.study.client.finish_experiment(self.run_id)
@@ -1860,7 +1864,7 @@ class ObservationCollection:
                 experiment_metadata=dict(item.get("experiment_metadata") or {}),
                 started_at=timestamp(item["started_at"]),
                 finished_at=timestamp(item["finished_at"]) if item.get("finished_at") else None,
-                ref_uri=item.get("ref_uri"),
+                stream_uri=item.get("stream_uri"),
                 range_start=timestamp(item["range_start"]) if item.get("range_start") else None,
                 range_end=timestamp(item["range_end"]) if item.get("range_end") else None,
                 artifact_digest=item.get("artifact_digest"),
@@ -1888,6 +1892,7 @@ class ObservationCollection:
         return _selection_repr("ObservationCollection", self.study, details, attributes=attributes)
 
 
+@accepts_old_names
 class Study:
     """Reusable variable declarations plus a single active Experiment."""
     def __init__(self, ac: Any, item: dict, variables: list[dict[str, Any]] | None = None):
@@ -1999,16 +2004,17 @@ class Study:
         """Count and size what this Study stores."""
         return self.client.experiment_usage(template_id=self.study_id)
 
-    def stream_annotations(self, *, run_id: str | None = None, ref_uri: str | None = None,
+    def stream_annotations(self, *, run_id: str | None = None, stream_uri: str | None = None,
                            start: datetime | str | None = None,
                            end: datetime | str | None = None) -> list[StreamAnnotation]:
         items = self.client.list_experiment_stream_annotations(
-            template_id=self.study_id, run_id=run_id, ref_uri=ref_uri,
+            template_id=self.study_id, run_id=run_id, stream_uri=stream_uri,
             start=timestamp(start).isoformat() if start is not None else None,
             end=timestamp(end).isoformat() if end is not None else None,
         )
         return [StreamAnnotation.from_item(item, self.client) for item in items]
 
+@accepts_old_names
 class StudyService:
     """Top-level `ac.study` entry point; `define` is idempotent by study name."""
     def __init__(self, ac: Any): self.ac = ac
@@ -2030,11 +2036,11 @@ class StudyService:
         if not confirm:
             raise ValueError("clear() deletes every Study and run; pass confirm=True")
         return self.ac.client.clear_experiments(confirm=True)
-    def stream_annotations(self, *, ref_uri: str | None = None,
+    def stream_annotations(self, *, stream_uri: str | None = None,
                            start: datetime | str | None = None,
                            end: datetime | str | None = None) -> list[StreamAnnotation]:
         items = self.ac.client.list_experiment_stream_annotations(
-            ref_uri=ref_uri,
+            stream_uri=stream_uri,
             start=timestamp(start).isoformat() if start is not None else None,
             end=timestamp(end).isoformat() if end is not None else None,
         )

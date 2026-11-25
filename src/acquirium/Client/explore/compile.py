@@ -200,6 +200,12 @@ def _attr_clauses(var: str, attr: Attr, value: Any) -> List[str]:
             # Anchored at the constant class on the right, so no fence needed.
             step = f"<{_RDF_TYPE}>/<{_SUBCLASS}>*" if _RDF_TYPE in attr.predicates \
                 else f"({pred_path})/<{_RDF_TYPE}>/<{_SUBCLASS}>*"
+            if _RDF_TYPE in attr.predicates:
+                # NOT EXISTS binds nothing. When the type is the only
+                # constraint, the node has to be bound here, or the filter
+                # is evaluated once with ``var`` free and rejects every row
+                # as soon as the graph has one instance of the class.
+                clauses.append(f"{var} <{_RDF_TYPE}> {var}_{attr.name}_any .")
             for c in values:
                 clauses.append(f"FILTER NOT EXISTS {{ {var} {step} <{c}> . }}")
             return clauses
@@ -536,6 +542,12 @@ def _node_constraint_clauses(v: str, node, registry: Mapping = REGISTRY) -> List
     rdf_class = (node.constraints or {}).get("rdf_class")
     if instance_uri is not None:
         clauses.append(f"VALUES {v} {{ <{instance_uri}> }}")
+        # VALUES binds the URI whether or not the graph has it. Without this
+        # a mistyped URI is one match as long as nothing else constrains it.
+        clauses.append(
+            f"FILTER EXISTS {{ {{ {v} {v}_any_p {v}_any_o . }} "
+            f"UNION {{ {v}_any_s {v}_any_q {v} . }} }}"
+        )
     if rdf_class:
         # Anchor the subClassOf* traversal at the constant class inside
         # a sub-SELECT. This fences the property path so Oxigraph
@@ -554,6 +566,26 @@ def _node_constraint_clauses(v: str, node, registry: Mapping = REGISTRY) -> List
             f"{typ} <http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{rdf_class}> . "
             f"}} }}"
         )
+    if (node.constraints or {}).get("is_property_node"):
+        # A property: typed as one (subclass-closed, fenced like rdf_class
+        # above), the object of s223:hasProperty, or a node with a stream.
+        # The last two cover a model whose ontology is not loaded and the
+        # property Acquirium generates for a stream.
+        typ, owner, ext = f"{v}_ptyp", f"{v}_pown", f"{v}_pext"
+        clauses.append(
+            f"{{ {{ {v} <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> {typ} . "
+            f"{{ SELECT DISTINCT {typ} WHERE {{ "
+            f"{typ} <http://www.w3.org/2000/01/rdf-schema#subClassOf>* <{S223.Property}> . }} }} }} "
+            f"UNION {{ {owner} <{S223.hasProperty}> {v} . }} "
+            f"UNION {{ {v} <{HAS_EXTERNAL_REFERENCE}> {ext} . }} }}"
+        )
+        clauses.append(f"FILTER(isIRI({v}))")
+        has_stream = node.constraints.get("has_stream")
+        if has_stream is not None:
+            clauses.append(
+                f"FILTER {'EXISTS' if has_stream else 'NOT EXISTS'} "
+                f"{{ {v} <{HAS_EXTERNAL_REFERENCE}> {v}_pstream . }}"
+            )
     for name, aval in ((node.constraints or {}).get("attrs") or {}).items():
         clauses.extend(_attr_clauses(v, registry[name], aval))
     clauses.extend(_expr_clauses(v, (node.constraints or {}).get("exprs"), registry))
@@ -562,7 +594,12 @@ def _node_constraint_clauses(v: str, node, registry: Mapping = REGISTRY) -> List
 
 def _data_node_clauses(v: str, nid: int, info, registry: Mapping = REGISTRY) -> List[str]:
     """ext-ref triple, unit/label/stream-identity OPTIONALs, and filters for one data node."""
-    clauses: List[str] = [f"{v} <{HAS_EXTERNAL_REFERENCE}> ?ext{nid} ."]
+    clauses: List[str] = []
+    refs = getattr(info, "refs", None)
+    if refs is not None:
+        # measurement(stream=): pin the reference; an empty tuple matches nothing
+        clauses.append(f"VALUES ?ext{nid} {{ {' '.join(f'<{r}>' for r in refs)} }}")
+    clauses.append(f"{v} <{HAS_EXTERNAL_REFERENCE}> ?ext{nid} .")
     clauses.append(f"OPTIONAL {{ {v} <{HAS_UNIT}> ?unit{nid} . }}")
     clauses.append(f"OPTIONAL {{ ?ext{nid} <{HAS_UNIT}> ?extunit{nid} . }}")
     clauses.append(f"OPTIONAL {{ {v} <{RDFS.label}> ?lbl{nid} . }}")

@@ -270,6 +270,7 @@ def test_a_study_variable_unit_and_medium_are_fixed(ac):
             ac.insert_metadata(flow.uri, change)
     assert ac.study.get("fixed unit").output["flow"].unit == "L-PER-SEC"
 
+
 def test_invalid_metadata_fails_before_anything_is_saved(ac):
     study = ac.study.define("validation")
     with pytest.raises(HTTPError, match="[Cc]ould not resolve"):

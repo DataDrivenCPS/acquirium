@@ -40,6 +40,7 @@ from acquirium.Client.explore.typed import (
 )
 from acquirium.Client.query_graph import DataNodeInfo, QueryEdge, QueryGraph, QueryNode
 from acquirium.internals.internals_namespaces import S223
+from acquirium.internals._names import accepts_old_names, warn_deprecated
 
 if TYPE_CHECKING:
     from acquirium.Client.client import AcquiriumClient
@@ -61,6 +62,7 @@ def _iso(v: "datetime | str | None") -> "str | None":
     return v.isoformat() if isinstance(v, datetime) else v
 
 
+@accepts_old_names
 @dataclass(frozen=True)
 class Query:
     """Immutable explore query bound to an Acquirium client."""
@@ -536,7 +538,7 @@ class Query:
     def measurement(self, *, frm: "str | list | tuple | None" = None, alias: Optional[str] = None,
                     direction: Optional[str] = None, max_depth: int = 3,
                     nearest: Optional[bool] = None, include_connection_points: bool = True,
-                    uri: str | URIRef | None = None, **attrs: Any) -> "Query":
+                    uri: str | URIRef | None = None, stream: Any = None, **attrs: Any) -> "Query":
         """Attach a measurement point (data node) to the pattern and point at it.
 
         Matches nodes carrying an external reference one hop from the source.
@@ -577,6 +579,12 @@ class Query:
 
             aq.query().measurement(uri="wbs:RO-in-pressure")
 
+        ``ref`` keeps only the given streams: a reference URI, a
+        :class:`~acquirium.Client.streams.Stream`, or a list of either (an
+        empty list matches nothing)::
+
+            aq.query().measurement(stream=aq.stream("hist", "FT_feed")).dataframe()
+
         Extra keyword arguments are attribute filters applied to the new
         measurement node(s), same as ``where()``::
 
@@ -584,6 +592,13 @@ class Query:
         """
         g = self.query_graph
         instance_uri = self._normalize_instance_uri(uri)
+        if "ref" in attrs:
+            # the deprecated name of ``stream=``
+            if stream is not None:
+                raise TypeError("got both 'ref' and 'stream'; use 'stream' only")
+            warn_deprecated("ref", "stream")
+            stream = attrs.pop("ref")
+        refs = self._normalize_refs(stream)
 
         if isinstance(frm, (list, tuple)) and direction is not None:
             raise ValueError("measurement: frm list only combines with the non-directional form")
@@ -627,7 +642,7 @@ class Query:
                                       constraints={"is_data_node": True}))
             g = g.with_edge(QueryEdge(source_id=mid_id, target_id=data_id, hops=1),
                             new_pointer=data_id)
-            g = g.with_data_node(DataNodeInfo(node_id=data_id))
+            g = g.with_data_node(DataNodeInfo(node_id=data_id, refs=refs))
             g = self._pin_uri(g, [data_id], instance_uri)
             if attrs:
                 g = self._apply_attrs(g, [data_id], self._resolve_attr_values(attrs))
@@ -642,7 +657,7 @@ class Query:
                 self._require_free_alias(g, alias, verb="measurement")
             g = g.with_node(QueryNode(id=new_id, alias=alias if alias is not None else "data",
                                       constraints={"is_data_node": True}))
-            g = g.with_data_node(DataNodeInfo(node_id=new_id))
+            g = g.with_data_node(DataNodeInfo(node_id=new_id, refs=refs))
             g = self._pin_uri(g, [new_id], instance_uri)
             if attrs:
                 g = self._apply_attrs(g, [new_id], self._resolve_attr_values(attrs))
@@ -678,13 +693,29 @@ class Query:
             g = g.with_edge(QueryEdge(source_id=src_id, target_id=new_id, hops=1,
                                       cp_union=include_connection_points),
                             new_pointer=new_id)
-            g = g.with_data_node(DataNodeInfo(node_id=new_id))
+            g = g.with_data_node(DataNodeInfo(node_id=new_id, refs=refs))
             created.append(new_id)
 
         g = self._pin_uri(g, created, instance_uri)
         if attrs:
             g = self._apply_attrs(g, created, self._resolve_attr_values(attrs))
         return self._with_graph(g)
+
+    @staticmethod
+    def _normalize_refs(ref: Any) -> Optional[tuple]:
+        """``measurement(stream=)`` as a tuple of unique reference URIs (None: no filter)."""
+        if ref is None:
+            return None
+        items = list(ref) if isinstance(ref, (list, tuple, set, frozenset)) else [ref]
+        refs = tuple(dict.fromkeys(str(getattr(r, "stream_uri", r)) for r in items))
+        for r in refs:
+            # the URIs go into a VALUES block verbatim, so nothing that could
+            # close the IRI or the block gets through
+            if not _is_uri(r) or any(c in r for c in '<>"{}|\\^` \t\n\r'):
+                raise ValueError(
+                    f"measurement: stream must be stream URIs or Stream handles, got {r!r}"
+                )
+        return refs
 
     @staticmethod
     def _pin_uri(g: QueryGraph, node_ids: List[int], instance_uri: str | None) -> QueryGraph:
@@ -1401,6 +1432,7 @@ class Query:
                     "alias": g.aliases_reverse.get(nid, f"v{nid}"),
                     "filters": safe(dict(info.filters or {})),
                     "exprs": safe(list(info.exprs or ())),
+                    "refs": list(info.refs) if info.refs is not None else None,
                 }
                 for nid, info in g.data_nodes.items()
             ],
@@ -1446,7 +1478,7 @@ class Query:
         now = datetime.now(timezone.utc).isoformat()
         for uri in uris:
             self.client.insert_log(
-                point_uri=uri,
+                property_uri=uri,
                 log_message=message,
                 log_time=now,
                 observation_start=_iso(observation_start),
@@ -1466,11 +1498,11 @@ class Query:
         """Read the logbook notes of every entity the query matches.
 
         Same targeting as :meth:`insert_log`. Returns a frame with
-        ``point_uri``, ``message``, ``log_time``, ``observation_start`` and
+        ``property_uri``, ``message``, ``log_time``, ``observation_start`` and
         ``observation_end``, oldest first.
         """
         schema = {
-            "point_uri": pl.Utf8,
+            "property_uri": pl.Utf8,
             "message": pl.Utf8,
             "log_time": pl.Datetime(time_zone="UTC"),
             "observation_start": pl.Datetime(time_zone="UTC"),
@@ -1479,7 +1511,7 @@ class Query:
         rows: list[dict] = []
         for uri in self._log_targets(alias, verb="read_logs"):
             for entry in self.client.query_logs(
-                point_uri=uri,
+                property_uri=uri,
                 log_time_start=_iso(log_time_start),
                 log_time_end=_iso(log_time_end),
                 observation_start=_iso(observation_start),
@@ -1754,13 +1786,13 @@ class Query:
         include_dependencies: bool = True,
         cast_value: str | None = None,
         value_mode: str = "default",
-        include_ref: bool = False,
+        include_stream: bool = False,
         compact: bool = True,
     ) -> pl.DataFrame:
         """Fetch the matched streams' values as one polars frame.
 
         The shared parameters (``shape``, ``start``, ``end``, ``limit``,
-        ``order``, ``include_ref``, ``compact``) and their defaults mirror
+        ``order``, ``include_stream``, ``compact``) and their defaults mirror
         :meth:`DataObject.dataframe`, so ``q.dataframe(...)`` equals
         ``q.data(...).dataframe(...)``. Here the window bounds the fetch
         itself; on a DataObject they filter the already-fetched data. Only
@@ -1776,9 +1808,87 @@ class Query:
             include_dependencies=include_dependencies,
             cast_value=cast_value,
             value_mode=value_mode,
-        ).dataframe(shape=shape, include_ref=include_ref, compact=compact)
+        ).dataframe(shape=shape, include_stream=include_stream, compact=compact)
 
     # ---------- display helpers ----------
+
+    def summary(self) -> str:
+        """One line per node of the pattern. Does not contact the server."""
+        graph = self.query_graph
+        if not graph.nodes:
+            return "Query (empty)"
+        incoming = {edge.target_id: edge for edge in graph.edges}
+        lines = ["Query"]
+        for node in graph.nodes.values():
+            data = graph.data_nodes.get(node.id)
+            parts = ["measurement" if node.constraints.get("is_data_node")
+                     else "property" if node.constraints.get("is_property_node") else "entity"]
+            if node.constraints.get("has_stream") is not None:
+                parts.append("with a stream" if node.constraints["has_stream"] else "without a stream")
+            if node.constraints.get("rdf_class"):
+                parts.append(_local_name(node.constraints["rdf_class"]))
+            if node.constraints.get("instance_uri"):
+                parts.append(f"uri={_local_name(node.constraints['instance_uri'])}")
+            edge = incoming.get(node.id)
+            if edge is not None:
+                source = graph.aliases_reverse.get(edge.source_id, edge.source_id)
+                if edge.direction:
+                    parts.append(f"{edge.direction} of {source}")
+                elif node.constraints.get("is_data_node") or node.constraints.get("is_property_node"):
+                    parts.append(f"of {source}")
+                else:
+                    parts.append(f"related to {source}")
+            filters = {**node.constraints.get("attrs", {}), **(data.filters if data else {})}
+            parts.extend(f"{key}={_local_name(value)}" for key, value in filters.items())
+            conditions = len(node.constraints.get("exprs", ())) + (len(data.exprs) if data else 0)
+            if conditions:
+                parts.append(f"{conditions} where condition{'s' if conditions > 1 else ''}")
+            if data is not None and data.refs is not None:
+                parts.append(f"{len(data.refs)} stream{'s' if len(data.refs) != 1 else ''} given")
+            lines.append(f"  {node.alias if node.alias is not None else node.id}: {', '.join(parts)}")
+        return "\n".join(lines)
+
+    def _preview(self, rows: int = 5) -> "tuple[pl.DataFrame | None, str]":
+        """The first matches and a line describing them; ``(None, note)`` when
+        there is nothing to run or the server call fails."""
+        if not self.query_graph.nodes or self.client is None:
+            return None, ""
+        try:
+            matches = self.metadata()
+        except Exception as error:
+            return None, f"(preview unavailable: {type(error).__name__})"
+        total = len(matches)
+        if total > rows:
+            return matches.head(rows), f"{total} matches, first {rows}:"
+        if not total:
+            return matches, "0 matches"
+        return matches, f"{total} match{'' if total == 1 else 'es'}:"
+
+    def __repr__(self) -> str:
+        return self.summary()
+
+    def __str__(self) -> str:
+        """The summary and the first five matches. Runs the query (cached)."""
+        matches, note = self._preview()
+        text = self.summary()
+        if note:
+            text += f"\n{note}"
+        if matches is not None and len(matches):
+            with pl.Config(tbl_hide_dataframe_shape=True):
+                text += f"\n{matches}"
+        return text
+
+    def _repr_html_(self) -> str:
+        """Notebook display: the summary and the first five matches."""
+        import html
+
+        matches, note = self._preview()
+        text = self.summary() + (f"\n{note}" if note else "")
+        out = f"<pre>{html.escape(text)}</pre>"
+        if matches is not None and len(matches):
+            with pl.Config(tbl_hide_dataframe_shape=True):
+                out += matches._repr_html_()
+        return out
 
     def metadata_objects(self, *, include_dependencies: bool = True) -> List[Dict[str, Any]]:
         """The pattern matches as Python dicts, attributes in the shape they were saved.
@@ -1963,7 +2073,7 @@ class Query:
                 return col_name
             base_alias = self.query_graph.aliases_reverse.get(node_id, f"v{node_id}")
             return f"{base_alias}.label"
-        for prefix, suffix in (("extsrc", "_source"), ("extname", "_ref_name")):
+        for prefix, suffix in (("extsrc", "_source"), ("extname", "_stream_name")):
             if col_name.startswith(prefix):
                 try:
                     node_id = int(col_name[len(prefix):])
@@ -1991,6 +2101,78 @@ class Query:
             return self.client.compact_uri(uri)
         except Exception:
             return str(uri)
+
+
+def _property(self, *, frm: Optional[str] = None, alias: Optional[str] = None,
+              has_stream: Optional[bool] = None, include_connection_points: bool = True,
+              uri: "str | URIRef | None" = None, **attrs: Any) -> "Query":
+    """Add a property node to the pattern and point at it.
+
+    A property is one measured quantity of the plant, whether or not a
+    stream holds its data. On an **empty query** this is the root form,
+    every property the graph knows (default alias ``"property"``)::
+
+        aq.query().property()                    # every property
+        aq.query().property(has_stream=False)    # the ones without a stream
+
+    After an entity it selects the properties of that entity, on the
+    entity itself and on its connection points (pass
+    ``include_connection_points=False`` for the entity's own only)::
+
+        aq.query().entity("Pump").property(has_stream=False)
+
+    ``has_stream=True`` keeps the properties a stream is connected to,
+    ``False`` the ones without, ``None`` (default) both. ``uri`` pins one
+    property; extra keyword arguments are attribute filters, same as
+    ``where()``. A property node carries no data; use ``measurement()``
+    to read streams.
+    """
+    from acquirium.Client.explore.relations import reverse_chains
+
+    if has_stream is not None and not isinstance(has_stream, bool):
+        raise ValueError(f"property: has_stream must be True, False or None, got {has_stream!r}")
+    g = self.query_graph
+    instance_uri = self._normalize_instance_uri(uri)
+    constraints: Dict[str, Any] = {"is_property_node": True}
+    if has_stream is not None:
+        constraints["has_stream"] = has_stream
+    new_id = self._next_id()
+    if frm is None and not g.nodes:
+        if alias is not None:
+            self._require_free_alias(g, alias, verb="property")
+        g = g.with_node(QueryNode(id=new_id, alias=alias if alias is not None else "property",
+                                  constraints=constraints))
+    else:
+        src_id = self._source_id(frm, verb="property")
+        if src_id in g.data_nodes:
+            raise ValueError("property: the source node is a measurement; start from an entity")
+        a = (self._require_free_alias(g, alias, verb="property") if alias is not None
+             else self._unique_alias(g, f"{self._src_alias(src_id)}_property"))
+        chains = reverse_chains(RELATIONS["entity"])
+        if not include_connection_points:
+            chains = tuple(c for c in chains
+                           if not any(p.lstrip("^") == str(S223.hasConnectionPoint) for p, _ in c))
+        g = g.with_node(QueryNode(id=new_id, alias=a, constraints=constraints))
+        g = g.with_edge(QueryEdge(source_id=src_id, target_id=new_id, hops=1,
+                                  relation=chains, relation_name="property"),
+                        new_pointer=new_id)
+    g = self._pin_uri(g, [new_id], instance_uri)
+    if attrs:
+        g = self._apply_attrs(g, [new_id], self._resolve_attr_values(attrs))
+    return self._with_graph(g)
+
+
+# Assigned here, not defined in the class body, where the name would shadow
+# the ``property`` builtin for every decorator after it.
+Query.property = _property
+
+
+def _local_name(value: Any) -> str:
+    """The part of a URI after its last ``#`` or ``/``; other values as text."""
+    text = str(value)
+    if "://" in text or text.startswith("urn:"):
+        return text.rstrip("#/").replace("#", "/").rsplit("/", 1)[-1] or text
+    return text
 
 
 def _place(target: Dict[str, Any], segments: List[str], value: Any) -> None:

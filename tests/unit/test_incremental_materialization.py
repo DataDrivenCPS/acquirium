@@ -19,7 +19,7 @@ def _port(name="out", ref="urn:out", spec=None):
     return OutputPort(ref, name, f"urn:point:{name}", spec or output.stream(value_kind="numeric"))
 from acquirium.Materialization.runtime import Materializer
 from acquirium.Storage.duckdb_store import DuckDBStore
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import compute_stream_uri
 
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
@@ -53,7 +53,7 @@ class LineageCopy(App):
 class BorrowedPoint(App):
     name = "borrowed-point"
     grouping = "per_match"
-    outputs = {"out": output.stream(value_kind="numeric", point_uri="urn:plant/T-101")}
+    outputs = {"out": output.stream(value_kind="numeric", property_uri="urn:plant/T-101")}
     def build_query(self, plant): return plant.query().measurement(alias="input")
     def transform(self, inputs, output, context): pass
 
@@ -195,10 +195,10 @@ def test_revision_frontier_commits_coherent_output_and_converges(tmp_path):
     assert scheduler.run_once(binding, Mean())
     assert not scheduler.run_once(binding, Mean())
     assert RevisionStore(store).current_revision() == 3
-    output = list(store.timeseries(binding.outputs["mean"].ref_uri, value_mode="numeric"))[0]
+    output = list(store.timeseries(binding.outputs["mean"].stream_uri, value_mode="numeric"))[0]
     assert output.column("value").to_pylist() == [3.0]
     with store._own_conn() as conn:
-        assert conn.execute("SELECT source_id FROM streams WHERE ref_uri=?", [binding.outputs["mean"].ref_uri]).fetchone()[0] == "derived:mean"
+        assert conn.execute("SELECT source_id FROM streams WHERE stream_uri=?", [binding.outputs["mean"].stream_uri]).fetchone()[0] == "derived:mean"
 
 
 def test_graph_rejects_cycles_and_duplicate_output_ownership():
@@ -222,9 +222,9 @@ def test_derived_output_uri_uses_the_managed_reference_identity():
     # The name carries the app, the port and the bound inputs; the URI is the
     # ordinary reference identity of that (source, name) pair; and the point
     # is named after the stream, so neither moves when the app is edited.
-    assert port.ref_name.startswith("derived-app:out:")
-    assert port.ref_uri == str(compute_ref_uri("derived:derived-app", port.ref_name))
-    assert port.point_uri == f"urn:acquirium:derived-point:{port.ref_uri.split('#')[-1]}"
+    assert port.stream_name.startswith("derived-app:out:")
+    assert port.stream_uri == str(compute_stream_uri("derived:derived-app", port.stream_name))
+    assert port.property_uri == f"urn:acquirium:derived-point:{port.stream_uri.split('#')[-1]}"
 
 
 def test_named_output_keeps_its_exact_reference_name():
@@ -235,8 +235,8 @@ def test_named_output_keeps_its_exact_reference_name():
 
     # A named output is called exactly what its author called it — no app
     # prefix, since the source id already scopes it.
-    assert port.ref_name == "plant-total"
-    assert port.ref_uri == str(compute_ref_uri("derived:kpi-app", "plant-total"))
+    assert port.stream_name == "plant-total"
+    assert port.stream_uri == str(compute_stream_uri("derived:kpi-app", "plant-total"))
 
 
 def test_named_output_cannot_ride_along_with_fan_out():
@@ -252,8 +252,8 @@ def test_mixed_outputs_are_allowed_for_a_single_input_group():
     application_graph, _ = planner.compile((Deployment.from_class(MixedFanOut),), graph_revision=1)
 
     (binding,) = application_graph.bindings
-    assert binding.outputs["total"].ref_name == "kpi"
-    assert binding.outputs["each"].ref_name.startswith("mixed-fan-out:each:")
+    assert binding.outputs["total"].stream_name == "kpi"
+    assert binding.outputs["each"].stream_name.startswith("mixed-fan-out:each:")
 
 
 def test_deployment_persists_constructor_parameters_and_policy():
@@ -302,8 +302,8 @@ def test_named_outputs_aggregate_the_complete_query_result():
     application_graph, _ = planner.compile((Deployment.from_class(NamedTotal),), graph_revision=1)
 
     (binding,) = application_graph.bindings
-    assert binding.outputs["total"].ref_name == "plant-total"
-    assert {item.ref_uri for item in binding.inputs["input"]} == {
+    assert binding.outputs["total"].stream_name == "plant-total"
+    assert {item.stream_uri for item in binding.inputs["input"]} == {
         "urn:input-a", "urn:input-b",
     }
 
@@ -315,7 +315,7 @@ def test_per_match_outputs_bind_one_group_per_query_row():
     application_graph, _ = planner.compile((Deployment.from_class(LineageCopy),), graph_revision=1)
 
     assert len(application_graph.bindings) == 2
-    assert {binding.inputs["input"][0].ref_uri for binding in application_graph.bindings} == {
+    assert {binding.inputs["input"][0].stream_uri for binding in application_graph.bindings} == {
         "urn:input-a", "urn:input-b",
     }
 
@@ -342,7 +342,7 @@ def test_in_unit_converts_every_accessor_of_the_stream_set():
     start = datetime(2026, 1, 1, tzinfo=timezone.utc)
     window = TimeWindow(start, start + timedelta(minutes=1))
     table = pa.table({
-        "ref_uri": pa.array(["urn:temp", "urn:temp"], pa.string()),
+        "stream_uri": pa.array(["urn:temp", "urn:temp"], pa.string()),
         "time": pa.array([start, start + timedelta(seconds=30)], pa.timestamp("us", tz="UTC")),
         "value": pa.array([0.0, 100.0], pa.float64()),
     })
@@ -390,7 +390,7 @@ def test_every_per_match_call_sees_the_whole_query_result():
     for binding in application_graph.bindings:
         context = _context(binding.row, binding.result)
         # Its own row, but the whole fleet it belongs to.
-        assert context.row["input_ref"] == binding.inputs["input"][0].ref_uri
+        assert context.row["input_ref"] == binding.inputs["input"][0].stream_uri
         assert context.result.height == 2
 
 
@@ -413,10 +413,10 @@ def test_stream_names_the_single_bound_stream_and_refuses_to_guess():
                         (StreamDescriptor("urn:a"), StreamDescriptor("urn:b")))
 
     # A per_match call binds one stream, so this is how it asks which.
-    assert one.stream.ref_uri == "urn:a" and one.stream.label == "Basin 1"
+    assert one.stream.stream_uri == "urn:a" and one.stream.label == "Basin 1"
     with pytest.raises(ValueError, match="all_matches grouping sees every match"):
         several.stream
-    assert [d.ref_uri for d in several.streams] == ["urn:a", "urn:b"]
+    assert [d.stream_uri for d in several.streams] == ["urn:a", "urn:b"]
 
 
 def test_per_match_binds_one_stream_per_alias_even_for_paired_rows():
@@ -448,14 +448,14 @@ def test_context_carries_the_match_and_not_the_data(tmp_path):
     assert not hasattr(batch.context, "inputs")
     assert batch.context.row == {"hx": "urn:plant/hx-1"}
     assert batch.context.result["hx"].to_list() == ["urn:plant/hx-1"]
-    assert batch.inputs["source"].stream.ref_uri == "urn:left"
+    assert batch.inputs["source"].stream.stream_uri == "urn:left"
 
 
 def test_output_schema_violations_name_the_port():
     from acquirium.Materialization import OutputBuilder
     builder = OutputBuilder({"celsius": _port("celsius")})
     bad = pa.table({"time": pa.array([datetime(2026, 1, 1, tzinfo=timezone.utc)], pa.timestamp("us", tz="UTC")),
-                    "value": pa.array([1.0]), "ref_uri": pa.array(["urn:x"])})
+                    "value": pa.array([1.0]), "stream_uri": pa.array(["urn:x"])})
     with pytest.raises(TypeError, match="output 'celsius'"):
         builder["celsius"] = bad
     with pytest.raises(KeyError, match="not declared in this app's outputs"):
@@ -484,7 +484,7 @@ def test_align_resamples_every_stream_onto_one_clock():
     window = TimeWindow(start, start + timedelta(minutes=2))
     def table(ref, points):
         return pa.table({
-            "ref_uri": pa.array([ref] * len(points), pa.string()),
+            "stream_uri": pa.array([ref] * len(points), pa.string()),
             "time": pa.array([start + offset for offset, _ in points], pa.timestamp("us", tz="UTC")),
             "value": pa.array([value for _, value in points], pa.float64()),
         })
@@ -562,7 +562,7 @@ def test_context_carries_the_bound_rows_entities_and_labels():
 
     application_graph, _ = planner.compile((Deployment.from_class(PerMatchEntity),), graph_revision=1)
 
-    by_ref = {binding.inputs["input"][0].ref_uri: binding for binding in application_graph.bindings}
+    by_ref = {binding.inputs["input"][0].stream_uri: binding for binding in application_graph.bindings}
     first = by_ref["urn:input-1"].row
     assert first["ro"] == "urn:ro-1"
     assert first["input_ref"] == "urn:input-1" and first["input.label"] == "Feed pressure 1"
@@ -608,7 +608,7 @@ def test_check_returns_computed_rows_without_writing_anything(tmp_path):
 
     (binding,) = result["bindings"]
     assert binding["error"] is None
-    assert binding["inputs"]["input"][0]["ref_uri"] == "urn:input"
+    assert binding["inputs"]["input"][0]["stream_uri"] == "urn:input"
     assert binding["input_rows"] == {"input": 2}
     doubled = binding["outputs"]["doubled"]
     assert [row["value"] for row in doubled["values"]] == [4.0, 6.0]
@@ -727,13 +727,13 @@ def test_remove_forgets_the_apps_durable_progress(tmp_path):
 def test_a_derived_point_uri_survives_a_code_or_metadata_edit(tmp_path):
     """Change 3: the point is keyed by the stream, not by the binding signature."""
     spec = output.stream(value_kind="numeric")
-    sensor = StreamDescriptor("urn:ref:raw", point_uri="urn:plant/T-101", label="Basin 1 inlet")
+    sensor = StreamDescriptor("urn:ref:raw", property_uri="urn:plant/T-101", label="Basin 1 inlet")
     inputs = {"t": (sensor,)}
     ports = {"celsius": output_port("normalize", "celsius", inputs, spec)}
 
     edited_code = Binding("normalize", "digest-after-edit", inputs, ports)
     relabelled = Binding("normalize", "digest-before-edit",
-                         {"t": (StreamDescriptor("urn:ref:raw", point_uri="urn:plant/T-101",
+                         {"t": (StreamDescriptor("urn:ref:raw", property_uri="urn:plant/T-101",
                                                  label="Basin 1 inlet temperature"),)}, ports)
     original = Binding("normalize", "digest-before-edit", inputs, ports)
 
@@ -741,8 +741,8 @@ def test_a_derived_point_uri_survives_a_code_or_metadata_edit(tmp_path):
     # it is for — but nothing a query or a dashboard is pinned to moves with it.
     assert original.signature != edited_code.signature != relabelled.signature
     for binding in (original, edited_code, relabelled):
-        assert binding.outputs["celsius"].point_uri == ports["celsius"].point_uri
-        assert binding.outputs["celsius"].ref_uri == ports["celsius"].ref_uri
+        assert binding.outputs["celsius"].property_uri == ports["celsius"].property_uri
+        assert binding.outputs["celsius"].stream_uri == ports["celsius"].stream_uri
         assert binding.progress_key == original.progress_key
 
 

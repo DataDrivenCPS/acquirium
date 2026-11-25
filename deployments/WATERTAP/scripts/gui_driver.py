@@ -40,7 +40,7 @@ logger = logging.getLogger("acquirium.watertap.gui")
 
 _EMPTY_SCHEMA = {
     "ts": pl.Datetime("us", "UTC"),
-    "ref_name": pl.Utf8,
+    "stream_name": pl.Utf8,
     "value": pl.Object,
 }
 

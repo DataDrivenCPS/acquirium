@@ -60,8 +60,8 @@ def _data_object(bindings, rows):
     t = datetime(2026, 1, 1, tzinfo=timezone.utc)
     tall = pl.DataFrame({
         "data_alias": [r[0] for r in rows],
-        "point_uri": [r[1] for r in rows],
-        "ref_uri": [r[2] for r in rows],
+        "property_uri": [r[1] for r in rows],
+        "stream_uri": [r[2] for r in rows],
         "time": [t] * len(rows),
         "value_numeric": [1.0] * len(rows),
         "value_text": [None] * len(rows),
@@ -82,8 +82,8 @@ class TestPointLabelsFirst:
     def _binding(self, nid, point, ref, alias, label):
         from acquirium.Client.data_object import BindingInfo
         return BindingInfo(
-            nid=nid, point_uri=point, ref_uri=ref, alias=alias,
-            entity_contexts=[{}], point_label=label,
+            nid=nid, property_uri=point, stream_uri=ref, alias=alias,
+            entity_contexts=[{}], property_label=label,
         )
 
     def test_auto_alias_column_named_by_label(self):
@@ -118,7 +118,7 @@ class TestPointLabelsFirst:
 
         q = inspect.signature(Query.dataframe).parameters
         d = inspect.signature(DataObject.dataframe).parameters
-        for name in ("shape", "start", "end", "limit", "order", "include_ref", "compact"):
+        for name in ("shape", "start", "end", "limit", "order", "include_stream", "compact"):
             assert name in q and name in d, name
             assert q[name].default == d[name].default, name
         # shape is the one positional display parameter on both
@@ -133,8 +133,8 @@ class TestPointLabelsFirst:
         t = [datetime(2026, 1, d, tzinfo=timezone.utc) for d in (1, 2, 3)]
         tall = pl.DataFrame({
             "data_alias": ["flow"] * 3,
-            "point_uri": ["urn:t#p1"] * 3,
-            "ref_uri": ["urn:t#r1"] * 3,
+            "property_uri": ["urn:t#p1"] * 3,
+            "stream_uri": ["urn:t#r1"] * 3,
             "time": t,
             "value_numeric": [1.0, 2.0, 3.0],
             "value_text": [None] * 3,
@@ -142,15 +142,15 @@ class TestPointLabelsFirst:
         client = MagicMock()
         client.compact_uri.side_effect = lambda u: str(u).rsplit("#", 1)[-1]
         d = DataObject(
-            _bindings=[BindingInfo(nid=0, point_uri="urn:t#p1", ref_uri="urn:t#r1",
+            _bindings=[BindingInfo(nid=0, property_uri="urn:t#p1", stream_uri="urn:t#r1",
                                    alias="flow", entity_contexts=[{}])],
             _entity_columns=[], _query_graph=QueryGraph(),
             _client=client, _tall=tall, _materialized=True,
         )
 
-        assert d.dataframe("wide", start=t[1])["flow"].to_list() == [2.0, 3.0]
-        assert d.dataframe("wide", end=t[1])["flow"].to_list() == [1.0, 2.0]
-        assert d.dataframe("wide", limit=2, order="desc")["flow"].to_list() == [3.0, 2.0]
+        assert d.dataframe("wide", start=t[1])["flow__p1"].to_list() == [2.0, 3.0]
+        assert d.dataframe("wide", end=t[1])["flow__p1"].to_list() == [1.0, 2.0]
+        assert d.dataframe("wide", limit=2, order="desc")["flow__p1"].to_list() == [3.0, 2.0]
         assert d.dataframe("narrow", start="2026-01-02", order="desc")["value_numeric"].to_list() == [3.0, 2.0]
 
     def test_metadata_has_point_label_column(self):
@@ -162,8 +162,8 @@ class TestPointLabelsFirst:
             _bindings=[b], _entity_columns=[], _query_graph=QueryGraph(),
         )
         meta = d.metadata()
-        assert meta.columns[:3] == ["data_alias", "point_label", "point_uri"]
-        assert meta["point_label"].to_list() == ["intake"]
+        assert meta.columns[:3] == ["data_alias", "property_label", "property_uri"]
+        assert meta["property_label"].to_list() == ["intake"]
 
 
 class TestCastValue:
@@ -175,8 +175,8 @@ class TestCastValue:
         t = [datetime(2026, 1, d, tzinfo=timezone.utc) for d in range(1, len(values) + 1)]
         tall = pl.DataFrame({
             "data_alias": ["flow"] * len(values),
-            "point_uri": ["urn:t#p1"] * len(values),
-            "ref_uri": ["urn:t#r1"] * len(values),
+            "property_uri": ["urn:t#p1"] * len(values),
+            "stream_uri": ["urn:t#r1"] * len(values),
             "time": t,
             "value_numeric": pl.Series(values, dtype=pl.Float64),
             "value_text": [None] * len(values),
@@ -184,7 +184,7 @@ class TestCastValue:
         client = MagicMock()
         client.compact_uri.side_effect = lambda u: str(u).rsplit("#", 1)[-1]
         return DataObject(
-            _bindings=[BindingInfo(nid=0, point_uri="urn:t#p1", ref_uri="urn:t#r1",
+            _bindings=[BindingInfo(nid=0, property_uri="urn:t#p1", stream_uri="urn:t#r1",
                                    alias="flow", entity_contexts=[{}])],
             _entity_columns=[], _query_graph=QueryGraph(), _client=client,
             _tall=tall, _materialized=True, _query_params={"cast_value": cast_value},
@@ -220,7 +220,7 @@ class TestCastValue:
     def test_int_returns_int64_columns(self):
         d = self._object([1.0, 2.0], "int")
         assert d["flow"]["value"].dtype == pl.Int64
-        assert d.dataframe("wide")["flow"].to_list() == [1, 2]
+        assert d.dataframe("wide")["flow__p1"].to_list() == [1, 2]
         assert d.dataframe("narrow")["value_numeric"].dtype == pl.Int64
         assert d.dataframe("narrow", compact=False)["value_numeric"].dtype == pl.Int64
 
@@ -228,7 +228,7 @@ class TestCastValue:
         import pytest
         d = self._object([1.0, 1.5], "int")
         with pytest.warns(UserWarning, match="truncates 1 non-integer value.*such as 1.5"):
-            assert d.dataframe("wide")["flow"].to_list() == [1, 1]
+            assert d.dataframe("wide")["flow__p1"].to_list() == [1, 1]
         with pytest.warns(UserWarning, match="cast_value='int'"):
             assert d["flow"]["value"].to_list() == [1, 1]
 
@@ -243,21 +243,21 @@ class TestStreamInfo:
         from acquirium.Client.data_object import BindingInfo, DataObject
         from acquirium.Client.query_graph import QueryGraph
         bs = [
-            BindingInfo(nid=0, point_uri="urn:t#p1", ref_uri="urn:t#r1", alias="flow",
-                        entity_contexts=[{}], source_id="scada", ref_name="FT-101"),
-            BindingInfo(nid=0, point_uri="urn:t#p1", ref_uri="urn:t#r2", alias="flow",
-                        entity_contexts=[{}], source_id="lab", ref_name="flow_csv"),
-            BindingInfo(nid=1, point_uri="urn:t#p2", ref_uri="urn:t#r3", alias="temp",
+            BindingInfo(nid=0, property_uri="urn:t#p1", stream_uri="urn:t#r1", alias="flow",
+                        entity_contexts=[{}], source_id="scada", stream_name="FT-101"),
+            BindingInfo(nid=0, property_uri="urn:t#p1", stream_uri="urn:t#r2", alias="flow",
+                        entity_contexts=[{}], source_id="lab", stream_name="flow_csv"),
+            BindingInfo(nid=1, property_uri="urn:t#p2", stream_uri="urn:t#r3", alias="temp",
                         entity_contexts=[{}]),
         ]
         return DataObject(_bindings=bs, _entity_columns=[], _query_graph=QueryGraph())
 
     def test_one_row_per_stream_with_driver_names(self):
         info = self._object().stream_info()
-        assert info.columns == ["stream", "alias", "point_uri", "ref_uri", "source_id", "ref_name"]
+        assert info.columns == ["stream", "alias", "property_uri", "stream_uri", "source_id", "stream_name"]
         assert info["stream"].to_list() == [0, 1, 2]
         assert info["source_id"].to_list() == ["scada", "lab", None]
-        assert info["ref_name"].to_list() == ["FT-101", "flow_csv", None]
+        assert info["stream_name"].to_list() == ["FT-101", "flow_csv", None]
 
     def test_alias_keeps_the_numbering(self):
         d = self._object()
@@ -267,23 +267,33 @@ class TestStreamInfo:
             d.stream_info("nope")
 
     def test_metadata_with_refs_shows_identity(self):
-        meta = self._object().metadata(include_ref_uris=True)
-        assert meta.filter(meta["ref_uri"] == "urn:t#r1")["ref_name"].to_list() == ["FT-101"]
+        meta = self._object().metadata(include_stream_uris=True)
+        assert meta.filter(meta["stream_uri"] == "urn:t#r1")["stream_name"].to_list() == ["FT-101"]
 
-    def test_streams_resolve_by_number_or_ref_uri(self):
+    def test_streams_resolve_by_number_or_stream_uri(self):
         d = self._object()
         assert d._resolve_streams(None) is None
         assert d._resolve_streams(1) == {"urn:t#r2"}
         assert d._resolve_streams("urn:t#r3") == {"urn:t#r3"}
         assert d._resolve_streams([0, "urn:t#r2"]) == {"urn:t#r1", "urn:t#r2"}
 
+    def test_streams_resolve_stream_handles_like_measurement_ref(self):
+        from acquirium.Client.streams import Stream
+        d = self._object()
+        assert d._resolve_streams(Stream("urn:t#r2")) == {"urn:t#r2"}
+        assert d._resolve_streams([Stream("urn:t#r1"), "urn:t#r1", 2]) == {"urn:t#r1", "urn:t#r3"}
+        assert d._resolve_streams([]) == set()  # an empty list selects nothing
+
     def test_unknown_stream_raises(self):
         import pytest
+        from acquirium.Client.streams import Stream
         d = self._object()
         with pytest.raises(KeyError, match="0..2"):
             d._resolve_streams([3])
         with pytest.raises(KeyError, match="stream_info"):
             d._resolve_streams(["urn:t#nope"])
+        with pytest.raises(KeyError, match="stream_info"):
+            d._resolve_streams(Stream("urn:t#nope"))
         with pytest.raises(TypeError):
             d._resolve_streams([1.5])
 
@@ -294,14 +304,253 @@ class TestStreamInfo:
         t = datetime(2026, 1, 1, tzinfo=timezone.utc)
         d._tall = pl.DataFrame({
             "data_alias": ["flow", "flow", "temp"],
-            "point_uri": ["urn:t#p1", "urn:t#p1", "urn:t#p2"],
-            "ref_uri": ["urn:t#r1", "urn:t#r2", "urn:t#r3"],
+            "property_uri": ["urn:t#p1", "urn:t#p1", "urn:t#p2"],
+            "stream_uri": ["urn:t#r1", "urn:t#r2", "urn:t#r3"],
             "time": [t, t, t],
             "value_numeric": [1.0, 1.1, 20.0],
             "value_text": pl.Series([None, None, None], dtype=pl.Utf8),
         })
         d._materialized = True
-        assert d.dataframe(compact=False)["flow"].to_list() == [1.0]       # first stream wins
-        assert d.dataframe(compact=False, streams=[1])["flow"].to_list() == [1.1]
+        assert d.dataframe(compact=False)["flow__urn:t#p1"].to_list() == [1.0]       # first stream wins
+        assert d.dataframe(compact=False, streams=[1])["flow__urn:t#p1"].to_list() == [1.1]
         narrow = d.dataframe(shape="narrow", compact=False, streams=["urn:t#r2", 2])
-        assert sorted(narrow["ref_uri"].to_list()) == ["urn:t#r2", "urn:t#r3"]
+        assert sorted(narrow["stream_uri"].to_list()) == ["urn:t#r2", "urn:t#r3"]
+
+
+class TestLazyStats:
+    """Stream statistics are fetched on the first stat read, not by data()."""
+
+    R1 = "urn:t#ref1"
+    R2 = "urn:t#ref2"
+    T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    T1 = datetime(2026, 1, 2, tzinfo=timezone.utc)
+
+    def _data(self, *, entities=("urn:t#A", "urn:t#A")):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from acquirium.Client.explore.core import Query
+
+        client = MagicMock()
+        # two points with one stream each, hosted by ``entities`` (one by
+        # default, so by("a") yields a single sub-object)
+        client.sparql_query.return_value = {
+            "columns": ["v0", "v1", "ext1", "unit1"],
+            "rows": [[entities[0], "urn:t#p1", self.R1, "urn:unit#m"],
+                     [entities[1], "urn:t#p2", self.R2, "urn:unit#m"]],
+        }
+        client.timeseries_info_batch.return_value = {
+            self.R1: SimpleNamespace(row_count=3, earliest=self.T0, latest=self.T1),
+        }
+        client.timeseries_exists_batch.return_value = {self.R1}
+        client.timeseries_df.return_value = pl.DataFrame(
+            {"ts": [self.T0], "value": [1.0], "uri": [self.R1]}
+        )
+        data = Query(client=client).entity("urn:t#A", alias="a").measurement(alias="m").data()
+        return data, client
+
+    def test_data_does_not_fetch_stats(self):
+        data, client = self._data()
+        assert data.aliases == ["m"]
+        data.metadata()
+        data.stream_info()
+        client.timeseries_info_batch.assert_not_called()
+        client.timeseries_exists_batch.assert_not_called()
+
+    def test_reading_values_does_not_fetch_stats(self):
+        data, client = self._data()
+        data["m"]
+        data.latest()
+        assert not data.is_empty()  # materialized: answered from the rows
+        client.timeseries_info_batch.assert_not_called()
+        client.timeseries_exists_batch.assert_not_called()
+
+    def test_query_dataframe_does_not_fetch_stats(self):
+        data, client = self._data()
+        data.dataframe(shape="narrow", compact=False)
+        client.timeseries_info_batch.assert_not_called()
+
+    def test_first_stat_read_fetches_once_for_every_stream(self):
+        data, client = self._data()
+        assert data.total_rows == 3
+        assert data.time_range == (self.T0, self.T1)
+        assert not data.is_empty()  # read from the loaded statistics
+        client.timeseries_info_batch.assert_called_once()
+        client.timeseries_exists_batch.assert_not_called()
+        (uris,), _ = client.timeseries_info_batch.call_args
+        assert sorted(uris) == [self.R1, self.R2]
+
+    def test_bindings_carry_stats(self):
+        data, client = self._data()
+        counts = {b.stream_uri: b.row_count for b in data.bindings}
+        assert counts == {self.R1: 3, self.R2: 0}  # a stream without stats has no rows
+        client.timeseries_info_batch.assert_called_once()
+
+    def test_is_empty_asks_only_which_streams_have_rows(self):
+        data, client = self._data()
+        assert not data.is_empty()
+        client.timeseries_exists_batch.return_value = set()
+        assert not data.is_empty()  # cached
+        client.timeseries_exists_batch.assert_called_once()
+        client.timeseries_info_batch.assert_not_called()
+        (uris,), _ = client.timeseries_exists_batch.call_args
+        assert sorted(uris) == [self.R1, self.R2]
+
+    def test_is_empty_when_no_stream_has_rows(self):
+        data, client = self._data()
+        client.timeseries_exists_batch.return_value = set()
+        assert data.is_empty()
+
+    def test_lazy_repr_does_not_fetch(self):
+        data, client = self._data()
+        assert "2 streams" in repr(data)
+        client.timeseries_info_batch.assert_not_called()
+        data.total_rows
+        assert "~3 rows" in repr(data)
+
+    def test_sub_objects_reuse_loaded_stats(self):
+        data, client = self._data()
+        data.total_rows
+        (_, sub), = data.by("a")
+        assert sub.total_rows == 3
+        client.timeseries_info_batch.assert_called_once()
+
+    def test_by_loop_is_empty_asks_once_for_the_whole_family(self):
+        data, client = self._data(entities=("urn:t#A", "urn:t#B"))
+        assert {uri: sub.is_empty() for uri, sub in data.by("a")} == {
+            "urn:t#A": False, "urn:t#B": True,
+        }
+        assert not data.is_empty()
+        client.timeseries_exists_batch.assert_called_once()
+        client.timeseries_info_batch.assert_not_called()
+        (uris,), _ = client.timeseries_exists_batch.call_args
+        assert sorted(uris) == [self.R1, self.R2]
+
+    def test_by_loop_fetches_stats_once_for_the_whole_family(self):
+        # One request for every stream of the data() call, whichever
+        # sub-object reads first; the siblings and the parent reuse it.
+        data, client = self._data(entities=("urn:t#A", "urn:t#B"))
+        seen = {}
+        for uri, sub in data.by("a"):
+            seen[uri] = (sub.total_rows, sub.time_range, sub.is_empty())
+        assert seen == {
+            "urn:t#A": (3, (self.T0, self.T1), False),
+            "urn:t#B": (0, (None, None), True),
+        }
+        assert data.total_rows == 3
+        client.timeseries_info_batch.assert_called_once()
+        client.timeseries_exists_batch.assert_not_called()
+        (uris,), _ = client.timeseries_info_batch.call_args
+        assert sorted(uris) == [self.R1, self.R2]
+
+    def test_by_does_not_fetch_until_a_statistic_is_read(self):
+        data, client = self._data(entities=("urn:t#A", "urn:t#B"))
+        subs = dict(data.by("a"))
+        for sub in subs.values():
+            sub.metadata()
+            sub.stream_info()
+            repr(sub)
+        client.timeseries_info_batch.assert_not_called()
+        client.timeseries_exists_batch.assert_not_called()
+
+    def test_convert_to_shares_the_stats(self):
+        data, client = self._data()
+        client.resolve_conversion.return_value = {
+            "factors": {"from_uri": "urn:unit#m", "to_uri": "urn:unit#km", "factor": 0.001}
+        }
+        converted = data.convert_to("urn:unit#km")
+        client.timeseries_info_batch.assert_not_called()
+        assert converted.total_rows == 3
+        assert data.total_rows == 3
+        assert [b.row_count for b in data.bindings] == [3, 0]
+        client.timeseries_info_batch.assert_called_once()
+
+    def test_refresh_stats_refetches_for_the_whole_family(self):
+        from types import SimpleNamespace
+        data, client = self._data()
+        (_, sub), = data.by("a")
+        assert sub.total_rows == 3
+        client.timeseries_info_batch.return_value = {
+            self.R1: SimpleNamespace(row_count=5, earliest=self.T0, latest=self.T1),
+            self.R2: SimpleNamespace(row_count=1, earliest=self.T1, latest=self.T1),
+        }
+        assert data.total_rows == 3  # cached snapshot, no refetch
+        sub.refresh_stats()
+        assert data.total_rows == 6
+        assert sub.total_rows == 6
+        assert client.timeseries_info_batch.call_count == 2
+
+    def test_refresh_stats_forgets_which_streams_have_rows(self):
+        data, client = self._data()
+        (_, sub), = data.by("a")
+        assert not sub.is_empty()
+        client.timeseries_exists_batch.return_value = set()
+        assert not data.is_empty()  # cached
+        data.refresh_stats()
+        assert sub.is_empty()
+        assert client.timeseries_exists_batch.call_count == 2
+
+    def test_object_built_without_a_cache_fetches_its_own(self):
+        from acquirium.Client.data_object import DataObject
+        data, client = self._data()
+        own = DataObject(
+            _bindings=list(data._bindings[:1]),
+            _entity_columns=data._entity_columns,
+            _query_graph=data._query_graph,
+            _client=client,
+        )
+        assert own.total_rows == 3
+        client.timeseries_info_batch.assert_called_once()
+        (uris,), _ = client.timeseries_info_batch.call_args
+        assert uris == [self.R1]
+
+
+class TestConvertToStoredUnitMismatch:
+    """A stream whose stored unit does not convert to the point's annotation
+    is read as stored, so convert_to() must not treat the annotation as the
+    unit of its values."""
+
+    PSI, DEG_C, PA, K = "urn:unit#PSI", "urn:unit#DEG_C", "urn:unit#PA", "urn:unit#K"
+
+    def _data(self, *, stored, annotated, compatible):
+        from acquirium.Client.data_object import BindingInfo
+
+        data = _data_object(
+            [BindingInfo(nid=0, property_uri="urn:t#p1", stream_uri="urn:t#r1", alias="p",
+                         entity_contexts=[{}], property_unit=annotated, stream_unit=stored)],
+            [("p", "urn:t#p1", "urn:t#r1")],
+        )
+        client = data._client
+        client.get_conversion_factors.return_value = {"compatible": compatible}
+        client.resolve_conversion.side_effect = lambda src, tgt: {
+            "factors": {"from_uri": src, "to_uri": tgt, "from_multiplier": 2.0,
+                        "from_offset": 0.0, "to_multiplier": 1.0, "to_offset": 0.0}
+        }
+        return data, client
+
+    def test_raises_instead_of_converting_from_the_annotation(self):
+        import pytest
+
+        data, client = self._data(stored=self.PSI, annotated=self.DEG_C, compatible=False)
+        with pytest.raises(ValueError, match="stored in urn:unit#PSI, which does not convert"):
+            data.convert_to(self.K)
+        client.resolve_conversion.assert_not_called()
+
+    def test_raises_when_the_check_itself_fails(self):
+        import pytest
+
+        data, client = self._data(stored=self.PSI, annotated=self.DEG_C, compatible=False)
+        client.get_conversion_factors.side_effect = RuntimeError("unknown unit")
+        with pytest.raises(ValueError, match="pass from_unit"):
+            data.convert_to(self.K)
+
+    def test_from_unit_states_the_unit_of_the_values(self):
+        data, client = self._data(stored=self.PSI, annotated=self.DEG_C, compatible=False)
+        out = data.convert_to(self.PA, from_unit=self.PSI)
+        client.get_conversion_factors.assert_not_called()
+        assert out.units() == {"p": [self.PA]}
+
+    def test_convertible_stored_unit_converts_from_the_annotation(self):
+        data, client = self._data(stored=self.PSI, annotated=self.PA, compatible=True)
+        out = data.convert_to("urn:unit#BAR")
+        client.resolve_conversion.assert_called_once_with(self.PA, "urn:unit#BAR")
+        assert out.units() == {"p": ["urn:unit#BAR"]}

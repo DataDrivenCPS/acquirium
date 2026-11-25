@@ -80,6 +80,6 @@ class XLSXIngestDriver(FileIngestDriver):
             timezone=cfg.get("timezone", "UTC"),
             day_first=bool(cfg.get("day_first", False)),
         )
-        for name in observations["ref_name"].unique():
+        for name in observations["stream_name"].unique():
             self.declare(name)
         return FileBatch(observations, offset + len(df))

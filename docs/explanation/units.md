@@ -2,122 +2,182 @@
 title: Units
 ---
 
-<!-- TODO: intro -->
+In this article we'll describe how Acquirium handles units: where a unit is kept, what happens when a stream and its property have different units, and how values are converted.
+Units are the standard units of [QUDT](https://qudt.org/).
+Wherever a unit is accepted, it can be written as plain text such as "psi" or "mg/L" (see [Text matcher](text-resolution.md)).
 
-This is an explanation of how acquirium handles units: where a unit is
-recorded, what happens when the unit of a stream and the unit of its point
-disagree, and how values are converted, automatically and on request.
-Units are QUDT units throughout; free text is resolved to a QUDT URI wherever
-a unit is accepted.
+## Where a unit is kept
 
-## Where a unit lives
+A unit can be kept in two places:
 
-A unit can be recorded in two places, and they mean different things.
+- The **unit of the property** says in which unit the property is read. A query uses this one: `where(unit=...)` filters on it, `include("unit")` shows it and `units()` reports it.
+- The **unit of the stream** says in which unit the values of the stream are stored.
 
-The **point's unit** is the unit the plant model declares for a measurement,
-as `qudt:hasUnit` on the property node.
-<!-- This is the unit a query sees: `where(unit=...)` filters on it,
-`include("unit")` shows it, and `units()` reports it. -->
+Most of the time the two are the same, and only the first one matters.
+They differ when a plant model gives a property in one unit and the source of the data reports another one.
+For instance, the model has a pressure in pascals and the gauge reports psi.
 
-The **storage unit** is the unit the raw rows of one stream are written in,
-recorded as `qudt:hasUnit` on the stream's reference node.
-It exists because the same point can be fed by a stream whose source reports
-in a different unit, for instance a driver ingesting a stream in psi under a
-point annotated in pascals.
+## How a unit is recorded
 
-Reads work in the point's unit.
-When a point has no unit of its own, the storage unit is adopted as its
-effective unit, so `units()` still reports one.
-A stream with neither reports `None`, and `convert_to()` needs `from_unit=`
-for it.
+A unit is recorded when a stream is registered, with the `unit` key of `register_streams()` or with `unit=` of `self.declare()` in a driver.
+A plant model can also give the unit of a property, as `qudt:hasUnit`.
 
-`where(unit=...)` filter and `include("unit")` only works if the point node has an annotated unit.
+When the stream is registered on a property of the plant model, the unit you pass is compared with the unit of the property:
 
-## How a unit gets recorded
-
-A unit reaches the graph through stream registration: `self.declare(...,
-unit=...)` in a driver, or `register_streams()` directly.
-Free text is resolved against QUDT at that point, jointly with the
-`quantity_kind` when both are given, so a quantity kind can disambiguate a
-unit and vice versa (see [text resolution](text-resolution.md)).
-
-TODO: This has a risk of registering arbitrary units due to mismatch in text resolver. We need a mechanism to verify the resolved units from the users.
-
-When the `point_uri` already exists in the graph, the unit you pass is checked
-against the point's:
-
-| the point has | you pass | result |
+| the property has | you pass | result |
 |---|---|---|
-| no unit | a unit | the unit is written on the point |
-| the same unit | the same unit | recorded on the reference node as well |
-| a different, convertible unit | psi for a pascal point | recorded on the reference node as the storage unit; reads convert |
-| a different, non-convertible unit | celsius for a pascal point | `ValueError`, nothing is inserted |
+| no unit | a unit | the unit is written on the property |
+| a unit | the same unit | the unit is also recorded as the unit of the stream |
+| a unit | a different unit that can be converted to it | the unit is recorded as the unit of the stream, and the property keeps its own |
+| a unit | a unit that cannot be converted to it | `ValueError`, and nothing is written |
 
-Note that this is the one metadata field that tolerates a mismatch.
-Every other field (`quantity_kind`, `medium`, `substance`, `data_source`)
-raises on a conflict, because there is no equivalent of a conversion for them.
-See the [lifecycle guide](stream-lifecycle.md#what-registration-writes-to-the-graph).
+For instance, a temperature unit on a pressure property:
+
+```python
+acq.register_streams([{
+    "source_id": "scada",
+    "stream_name": "PT-101",
+    "property_uri": "wbs:P1-out-pressure-pa",
+    "unit": "degC",
+}])
+```
+```text
+ValueError: unit mismatch for point <urn:swro/P1-out-pressure-pa>: the point has <http://qudt.org/vocab/unit/PA>, the stream provided <http://qudt.org/vocab/unit/DEG_C> and they are not convertible
+```
+
+Note that the unit is the only key that accepts a different value.
+A different `quantity_kind`, `medium` or `substance` always raises a `ValueError`, because these cannot be converted.
+
+A stream registered without a `property_uri` gets a property of its own, and the unit is written there.
 
 ## What convertible means
 
-Two units are compatible when their QUDT dimension vectors are equal.
-This is the reliable check: it accepts pairs that share a physical dimension
-under different quantity-kind labels, such as `L` (LiquidVolume) and `MilliL`
-(Volume).
-When a unit has no dimension vector, the check falls back to an overlap of
-quantity kinds, then to a single quantity kind, and when nothing can be
-determined the pair is allowed and the conversion may fail at the arithmetic.
+Two units can be converted into each other when they measure the same physical dimension.
+QUDT gives every unit a dimension vector, and the server compares the two vectors.
+For instance, pascal and psi are both pressures, so they are convertible.
+Pascal and degree Celsius are not.
 
-`acq.client.get_conversion_factors(from_uri, to_uri)` returns the verdict
-(`compatible`) together with the factors.
+When a unit has no dimension vector, the server compares the quantity kinds of the two units instead.
 
 ## Automatic conversion
 
-A point can carry one unit in the graph while its stream stores another.
-When the two disagree, the values are converted for you as they are fetched,
-to the point's unit, which is the one `units()` reports.
-The conversion happens per stream, client side, when a `DataObject` fetches
-its rows; the factors are fetched from the server once per unit pair.
+When the unit of the stream differs from the unit of the property, the values are converted while they are read.
+You always get the values in the unit of the property.
 
-If the two are not convertible, the readings come through untouched, in the
-stream's unit, and a `UserWarning` names the point and both units.
-A mismatch should not break a query that did not ask for a conversion; the
-warning says that the model needs a fix.
-Since registration rejects a non-convertible unit, this only happens when the
-graph was edited after the stream was registered.
+The examples use the small model of [4 - Inserting a Plant Model](../tutorials/inserting-plant-model.md), where the property `wbs:P1-out-pressure-pa` is in pascals.
+The stream is registered in psi:
 
-A conversion you asked for with `convert_to()` is different: if it cannot be
-applied when the values are fetched, the fetch raises `ValueError` rather
-than returning values in the wrong unit.
+```python
+from datetime import datetime, timezone
 
-**TODO:** We need to test and demonstrate this feature
+def at(minute):
+    return datetime(2026, 8, 8, 10, minute, tzinfo=timezone.utc)
+
+acq.register_streams([{
+    "source_id": "scada",
+    "stream_name": "PT-101",
+    "property_uri": "wbs:P1-out-pressure-pa",
+    "unit": "psi",
+}])
+acq.insert_timeseries("scada", "PT-101", [(at(0), 14.5), (at(5), 15.0), (at(10), 100.0)])
+
+d = acq.query().measurement(quantity_kind="pressure").data()
+d.units()
+```
+```text
+{'data': ['http://qudt.org/vocab/unit/PA']}
+```
+
+```python
+d.dataframe()
+```
+```text
+shape: (3, 2)
+┌─────────────────────────┬──────────────────────────┐
+│ time                    ┆ data__P1 out pressure pa │
+│ ---                     ┆ ---                      │
+│ datetime[μs, UTC]       ┆ f64                      │
+╞═════════════════════════╪══════════════════════════╡
+│ 2026-08-08 10:00:00 UTC ┆ 99973.980751             │
+│ 2026-08-08 10:05:00 UTC ┆ 103421.359398            │
+│ 2026-08-08 10:10:00 UTC ┆ 689475.729317            │
+└─────────────────────────┴──────────────────────────┘
+```
+
+The stored values are not changed.
+`acq.stream("scada", "PT-101").dataframe()` reads the stream without its property, and returns 14.5, 15.0 and 100.0.
+
+### When the units do not convert
+
+Registration refuses a unit that cannot be converted, so this only happens when the unit of the property is changed in the plant model afterwards.
+In that case the values are returned as they are stored, with a warning:
+
+```text
+UserWarning: point <urn:swro/P1-out-pressure-pa> is annotated http://qudt.org/vocab/unit/DEG_C but its stream is stored in http://qudt.org/vocab/unit/PSI, which does not convert; the values are returned in http://qudt.org/vocab/unit/PSI
+```
+
+Be aware that `units()` still reports the unit of the property here, although the values are in the unit of the stream.
+`convert_to()` raises a `ValueError` for such a property until the model is corrected.
+Passing `from_unit=` states the unit of the values, for instance `convert_to("bar", from_unit="psi")`.
 
 ## Converting on request
 
-`convert_to(to_unit)` returns a new `DataObject` with the values converted and
-`units()` updated; the original is not modified.
-The source unit is the effective unit of each alias, so after an automatic
-conversion the source is the point's unit, not the storage unit.
-`alias=` converts one alias and leaves the others alone.
-`from_unit=` supplies the source for a point with no unit, and overrides it
-otherwise.
+`convert_to()` converts the values to a unit you choose.
+It returns a new object and leaves the original unchanged.
 
-The target may be a URI, label, symbol or UCUM code.
-It is resolved together with the source: among the top candidates for the
-text, the server picks the one that is actually convertible from the source
-unit, so a near-match that is not convertible never shadows one that is.
-When no candidate is convertible, `convert_to()` raises with both candidate
-lists in the message.
-The [data tutorial](../tutorials/data.md#units) shows the calls.
+```python
+bar = d.convert_to("bar")
+bar.units()
+```
+```text
+{'data': ['http://qudt.org/vocab/unit/BAR']}
+```
+
+```python
+bar.dataframe()
+```
+```text
+shape: (3, 2)
+┌─────────────────────────┬──────────────────────────┐
+│ time                    ┆ data__P1 out pressure pa │
+│ ---                     ┆ ---                      │
+│ datetime[μs, UTC]       ┆ f64                      │
+╞═════════════════════════╪══════════════════════════╡
+│ 2026-08-08 10:00:00 UTC ┆ 0.99974                  │
+│ 2026-08-08 10:05:00 UTC ┆ 1.034214                 │
+│ 2026-08-08 10:10:00 UTC ┆ 6.894757                 │
+└─────────────────────────┴──────────────────────────┘
+```
+
+Each property is converted from its own unit.
+So a query that matches properties in different units ends up in one unit.
+
+A property with no unit cannot be converted this way:
+
+```text
+ValueError: No unit annotation found for point <urn:swro/P1-speed> (alias 'data'). Provide from_unit explicitly.
+```
+
+Pass `from_unit=` to say which unit the values are in.
+
+The target unit is matched as text, like any other unit.
+When the text matches several units, the server picks one that can be converted from the unit of the values.
+When none can be converted, `convert_to()` raises a `ValueError`.
 
 ## The arithmetic
 
-QUDT expresses every unit as a multiplier and an offset against the base unit
-of its dimension.
-A value is converted by moving through that base unit:
+QUDT describes every unit with a multiplier and an offset, relative to the base unit of its dimension.
+A value is converted through that base unit:
 
 ```text
 converted = (value + from_offset) * from_multiplier / to_multiplier - to_offset
 ```
 
-Only `numeric_value` is converted; text readings pass through unchanged.
+For instance, psi has the multiplier 6894.757 and pascal has the multiplier 1, so 14.5 psi is 14.5 * 6894.757 = 99973.98 Pa.
+Only numbers are converted.
+
+## Further reading
+
+- [`register_streams`](../reference/client/streams.md#acquiriumregister_streams): the keys of a stream and the checks at registration.
+- [`DataObject.units`](../reference/query/data-object.md#dataobjectunits) and [`DataObject.convert_to`](../reference/query/data-object.md#dataobjectconvert_to): the full description of both methods.
+- [Text matcher](text-resolution.md): how the text of a unit is matched.

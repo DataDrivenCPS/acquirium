@@ -15,7 +15,7 @@ QUDT_QUANTITY_KIND = Namespace("http://qudt.org/vocab/quantitykind/")
 UNIT = Namespace("http://qudt.org/vocab/unit/")
 S223 = Namespace("http://data.ashrae.org/standard223#")
 G36 = Namespace("http://data.ashrae.org/standard223/1.0/extensions/g36#")
-WATR = Namespace("urn:nawi-water-ontology#")
+WATR = Namespace("https://watermetadata.org/ontology/watr#")
 BRICK = Namespace("https://brickschema.org/schema/Brick#")
 BRICK_REF = Namespace("https://brickschema.org/schema/Brick/ref#")
 OWL = Namespace("http://www.w3.org/2002/07/owl#")
@@ -78,8 +78,9 @@ ACQUIRIUM_SOURCE_ID  = ACQUIRIUM_NS.sourceId   # the registered datasource name
 ACQUIRIUM_REF_NAME   = ACQUIRIUM_NS.refName    # the source-local stream identifier
 ACQUIRIUM_VALUE_KIND = ACQUIRIUM_NS.valueKind  # "numeric" or "text"
 
-# Class for registered datasource nodes
-ACQUIRIUM_DATASOURCE = ACQUIRIUM_NS.DataSourceRegistry
+# Marks the property Acquirium generates for a stream registered without a
+# ``property_uri``: the stream is not connected to a plant property yet.
+IS_DISCONNECTED = ACQUIRIUM_NS.isDisconnected
 
 HAS_MEDIUM = S223.hasMedium
 OF_MEDIUM = S223.ofMedium

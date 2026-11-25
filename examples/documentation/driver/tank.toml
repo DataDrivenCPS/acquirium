@@ -1,0 +1,5 @@
+# Start on the running server with: acquirium driver start tank.toml
+
+[[drivers]]
+spec     = "tank_driver.py:TankDriver"
+interval = 5.0

@@ -527,6 +527,52 @@ def test_case_exact_reading_still_leads_over_naming(tmp_path: Path) -> None:
     assert [h.uri for h in m.query("kg", kind="unit")] == ["urn:u:KiloGM", "urn:u:KiloGAUSS"]
 
 
+# ── watr terms lead ties ──────────────────────────────────────────────
+
+_S223 = "http://data.ashrae.org/standard223#"
+_WATR = "https://watermetadata.org/ontology/watr#"
+
+
+def test_watr_class_leads_a_class_of_the_same_name(tmp_path: Path) -> None:
+    # s223:Pump is indexed first; both are named by the text.
+    m = _shared_surface_matcher(tmp_path, [
+        {"uri": _S223 + "Pump", "kind": "class", "label": "Pump", "surfaces": ["pump"]},
+        {"uri": _WATR + "Pump", "kind": "class", "label": "Pump", "surfaces": ["pump"]},
+    ])
+    assert [h.uri for h in m.query("pump", kind="class")] == [_WATR + "Pump", _S223 + "Pump"]
+
+
+def test_watr_does_not_outrank_a_better_exact_reading(tmp_path: Path) -> None:
+    # "clarifier" is the primary label of the s223 class and only an
+    # alternative label of the watr one, so this is not a tie.
+    m = _shared_surface_matcher(tmp_path, [
+        {"uri": _WATR + "Basin", "kind": "class", "label": "Basin", "surfaces": ["basin", "clarifier"]},
+        {"uri": _S223 + "SedimentationTank", "kind": "class", "label": "Clarifier", "surfaces": ["clarifier"]},
+    ])
+    assert m.query("clarifier", kind="class", top_k=1)[0].uri == _S223 + "SedimentationTank"
+
+
+def _semantic(uri: str, score: float) -> ResolveResult:
+    return ResolveResult(
+        uri=uri, label="x", kind="class", score=score, match_stage="semantic", matched_surface="x"
+    )
+
+
+def test_watr_leads_a_semantic_near_tie() -> None:
+    ranked = ConceptResolver._rank(
+        [_semantic(_S223 + "Pump", 0.905), _semantic(_WATR + "Pump", 0.900)], limit=2
+    )
+    assert [r.uri for r in ranked] == [_WATR + "Pump", _S223 + "Pump"]
+    assert [r.score for r in ranked] == [0.900, 0.905]
+
+
+def test_watr_does_not_lead_a_clear_semantic_gap() -> None:
+    ranked = ConceptResolver._rank(
+        [_semantic(_S223 + "Pump", 0.93), _semantic(_WATR + "Pump", 0.90)], limit=2
+    )
+    assert [r.uri for r in ranked] == [_S223 + "Pump", _WATR + "Pump"]
+
+
 # ── exact_surfaces: looked up, never embedded ─────────────────────────
 
 def _abbr_concepts() -> list[dict[str, Any]]:
@@ -599,7 +645,7 @@ def test_exact_only_matcher_indexes_exact_surfaces_too(tmp_path: Path) -> None:
 
 _ROLE_TTL = """
 @prefix s223: <http://data.ashrae.org/standard223#> .
-@prefix watr: <urn:nawi-water-ontology#> .
+@prefix watr: <https://watermetadata.org/ontology/watr#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix ex:   <urn:ex#> .
 
@@ -647,7 +693,7 @@ def test_role_is_found_by_its_bare_name() -> None:
 
 # ── initialisms of long labels ────────────────────────────────────────
 
-W, S = "urn:nawi-water-ontology#", "http://data.ashrae.org/standard223#"
+W, S = "https://watermetadata.org/ontology/watr#", "http://data.ashrae.org/standard223#"
 
 
 def _concept(uri: str, kind: str, *surfaces: str) -> dict[str, Any]:
@@ -925,10 +971,10 @@ class TestProcessKindRouting:
         source's kind set didn't include it, so resolve(kind='process')
         silently returned nothing."""
         r = _resolver(graph=[
-            _rr("urn:nawi-water-ontology#Process-ReverseOsmosis", "process", score=0.9),
+            _rr("https://watermetadata.org/ontology/watr#Process-ReverseOsmosis", "process", score=0.9),
         ])
         out = r.resolve("reverse osmosis", kind="process", min_score=0.4)
-        assert out and out[0].uri == "urn:nawi-water-ontology#Process-ReverseOsmosis"
+        assert out and out[0].uri == "https://watermetadata.org/ontology/watr#Process-ReverseOsmosis"
 
 
 # ══════════════════════════════════════════════════════════════════════

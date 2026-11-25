@@ -18,6 +18,7 @@ from acquirium.Client.explore.core import Query
 from acquirium.Client.explore.expr import AttrProxy
 from acquirium.Materialization.api import App
 from acquirium.Materialization.planner import Deployment
+from acquirium.internals._names import accepts_old_names, new_names
 
 
 def _dt_to_iso(v: "str | datetime | None") -> "str | None":
@@ -29,9 +30,10 @@ def _dt_to_iso(v: "str | datetime | None") -> "str | None":
 from acquirium.Client.client import AcquiriumClient, DEFAULT_HEALTH_REQUEST_TIMEOUT
 from acquirium.Client.streams import Stream
 from acquirium.Experiments import Point, StudyService
-from acquirium.internals.models import compute_ref_uri
+from acquirium.internals.models import compute_stream_uri
 
 
+@accepts_old_names
 @dataclass
 class Acquirium:
     """
@@ -115,8 +117,8 @@ class Acquirium:
         """
         Insert RDF graph into an explicitly owned deployment data graph.
 
-        The server refreshes the embedding index synchronously before
-        responding, so inserted concepts are resolvable once this returns.
+        The text matcher searches the bundled ontologies only, so an insert
+        does not change what text is matched to.
 
         Args:
             rdf_graph: RDF graph content as text.
@@ -148,8 +150,11 @@ class Acquirium:
             source_id=source_id,
         )
 
-    def insert_metadata(self, uri: str | URIRef, values: Mapping[str, Any]) -> dict[str, Any]:
+    def insert_metadata(self, uri: "str | URIRef | Stream", values: Mapping[str, Any]) -> dict[str, Any]:
         """Attach metadata to one node (entity or measurement) by URI or CURIE.
+
+        A stream handle from ``aq.stream()`` is accepted in place of the URI:
+        the metadata is written on the property the stream is linked to.
 
         ``values`` is a plain map. A key that names a built-in attribute
         (``unit``, ``medium``, ``label``, ``type``, ...) is written with that
@@ -169,6 +174,8 @@ class Acquirium:
         Writing a key replaces its previous value; ``None`` removes it. Keys
         not mentioned stay. Metadata lives as long as the node does.
         """
+        if isinstance(uri, Stream):
+            uri = self.client.stream_property(uri.stream_uri)
         return self.client.insert_metadata({str(uri): values})
 
     def sparql_update(self, update: str, *, source_id: str) -> dict[str, Any]:
@@ -212,35 +219,23 @@ class Acquirium:
     # TIMESERIES API
     # ------------------------------------------------------------------
 
-    def register_datasource(self, source_id: str) -> str:
-        """Register a named datasource in the knowledge graph.
-
-        The ``source_id`` is a user-provided string that scopes stream
-        ``ref_name`` values so two sources with the same ``ref_name`` never
-        produce colliding canonical reference URIs. Safe to call on every startup —
-        the graph write is idempotent.
-
-        Returns ``source_id``.
-        """
-        return self.client.register_datasource(source_id)
-
     def insert_timeseries(
         self,
         source_id: str,
-        ref_name: str,
+        stream_name: str,
         rows: list[tuple[datetime, Any]],
         *,
-        point_uri: Optional[str] = None,
+        property_uri: Optional[str] = None,
         replace: bool = False,
     ) -> dict[str, Any]:
         """Insert timeseries data for a single stream.
 
         Args:
             source_id: The registered datasource identifier.
-            ref_name: The source-local stream identifier. Combined with
+            stream_name: The source-local stream identifier. Combined with
                 ``source_id`` to derive the canonical reference URI.
             rows: List of (timestamp, value) tuples.
-            point_uri: Compatibility field. Register the point relationship
+            property_uri: Compatibility field. Register the point relationship
                 with ``register_streams`` before inserting rows.
             replace: Keep exactly the supplied rows, removing omitted timestamps.
                 An empty replacement clears the stream.
@@ -250,9 +245,9 @@ class Acquirium:
         """
         return self.client.insert_timeseries(
             source_id=source_id,
-            ref_name=ref_name,
+            stream_name=stream_name,
             rows=rows,
-            point_uri=point_uri,
+            property_uri=property_uri,
             replace=replace,
         )
 
@@ -269,7 +264,7 @@ class Acquirium:
 
         Args:
             source_id: The registered datasource identifier.
-            streams: Mapping of ref_name → list of (timestamp, value) tuples.
+            streams: Mapping of stream_name → list of (timestamp, value) tuples.
 
         Returns:
             dict with ``{"ok": True, "rows_inserted": N}``.
@@ -288,7 +283,7 @@ class Acquirium:
     def insert_timeseries_arrow(
         self, source_id: str, table: "pa.Table", *, publication_id: str | None = None
     ) -> dict[str, Any]:
-        """Insert a ``(ts, ref_name, value)`` Arrow table.
+        """Insert a ``(ts, stream_name, value)`` Arrow table.
 
         ``publication_id`` is forwarded for request correlation. The current
         revision backend does not use it to deduplicate retries; repeated rows
@@ -329,21 +324,25 @@ class Acquirium:
         if chunk:
             yield chunk
 
-    def resolve_point_metadata(
+    def resolve_point_metadata(self, *args, **kwargs):
+        """Alias of :meth:`resolve_property_metadata`."""
+        return self.resolve_property_metadata(*args, **kwargs)
+
+    def resolve_property_metadata(
         self, fields: dict[str, Any], min_score: float = 0.6
     ) -> dict[str, str | None]:
         """Resolve the semantic metadata of a single point/property.
 
         ``fields`` maps known semantic field names to a raw value::
 
-            aq.resolve_point_metadata({
+            aq.resolve_property_metadata({
                 "unit": "gal/min",
                 "quantity_kind": "flow rate",
                 "medium": "water",
             })
             # -> {"unit": "http://qudt.org/vocab/unit/GAL_US-PER-MIN",
             #     "quantity_kind": ".../quantitykind/VolumeFlowRate",
-            #     "medium": "urn:nawi-water-ontology#Water"}
+            #     "medium": "https://watermetadata.org/ontology/watr#Water"}
 
         The field name *is* the role — no ``kind`` to supply, no label, no
         tuple. Recognised fields (``unit``, ``quantity_kind``, ``medium``,
@@ -357,7 +356,7 @@ class Acquirium:
         registration. For arbitrary labels and explicit kinds use
         :meth:`AcquiriumClient.resolve` directly.
         """
-        return self.client.resolve_point_metadata(fields, min_score=min_score)
+        return self.client.resolve_property_metadata(fields, min_score=min_score)
 
 
     def graph_version(self) -> int:
@@ -372,19 +371,19 @@ class Acquirium:
         """Validate all registered deployment data against ontology shapes."""
         return self.client.validate_graph()
 
-    def reference_uri(self, source_id: str, ref_name: str) -> URIRef:
-        """Return the canonical Acquirium reference URI for ``(source_id, ref_name)``."""
-        return compute_ref_uri(source_id, ref_name)
+    def reference_uri(self, source_id: str, stream_name: str) -> URIRef:
+        """Return the canonical Acquirium reference URI for ``(source_id, stream_name)``."""
+        return compute_stream_uri(source_id, stream_name)
 
     def stream(self, source_id_or_uri: str | URIRef, name: str | None = None) -> Stream:
         """Return a handle for one stored stream.
 
         ``ac.stream(source_id, name)`` names a stream by the source and stream
-        name its driver writes with; ``ac.stream(ref_uri)`` wraps a reference
+        name its driver writes with; ``ac.stream(stream_uri)`` wraps a reference
         URI. Use ``stream.between(start, end)`` to select a time range.
         """
-        ref_uri = compute_ref_uri(str(source_id_or_uri), name) if name is not None else source_id_or_uri
-        return Stream(str(ref_uri), self.client)
+        stream_uri = compute_stream_uri(str(source_id_or_uri), name) if name is not None else source_id_or_uri
+        return Stream(str(stream_uri), self.client)
 
     def point(self, uri: str) -> Point:
         """Return a lightweight semantic point handle for experiment variables."""
@@ -411,25 +410,32 @@ class Acquirium:
 
         Each stream item is a dictionary with these commonly used keys:
 
-        - ``point_uri``: optional semantic URI. When provided, a point node is
-          created and linked to the external reference. When omitted, only the
-          external reference node is written.
-        - ``source_id`` and ``ref_name``: source-local stream identity. When
+        - ``property_uri``: optional semantic URI. When provided, the property is
+          linked to the stream. When omitted, Acquirium generates a property
+          for the stream and marks it ``is_disconnected``. Registering the
+          stream again with a ``property_uri`` connects it: the generated
+          property is replaced, and its metadata moves to ``property_uri``
+          (see :meth:`AcquiriumClient.register_streams` for the rules).
+        - ``source_id`` and ``stream_name``: source-local stream identity. When
           both are present, Acquirium mints the canonical reference URI and
           writes ``acq:sourceId``, ``acq:refName``, and ``ref:storedAt`` on it.
-        - ``label``: optional ``rdfs:label`` written on ``point_uri``.
+        - ``label``: optional ``rdfs:label`` written on ``property_uri``.
         - ``data_source``: optional datasource marker written on the point.
         - ``properties``: optional mapping of predicate URIRefs to values,
-          written on the reference node (or ``point_uri`` when no ref node exists).
+          written on the reference node (or ``property_uri`` when no ref node exists).
 
         Plain strings for ``unit``/``quantity_kind``/``medium``/``substance``
-        are resolved jointly per stream via :meth:`resolve_point_metadata`;
+        are resolved jointly per stream via :meth:`resolve_property_metadata`;
         URI / URIRef / None values pass through.
 
         Drivers should still insert rows with ``insert_timeseries_arrow`` using
-        the same ``source_id`` and source-local ``ref_name``. Acquirium resolves
-        those inserts to the same canonical reference URI internally.
+        the same ``source_id`` and source-local ``stream_name``. Acquirium resolves
+        those inserts to the same canonical stream URI internally.
+
+        The old keys ``point_uri`` and ``ref_name`` are still accepted;
+        ``ref_name`` is deprecated.
         """
+        streams = [new_names(stream) for stream in streams]
         self.client.register_streams(streams)
 
     def deploy_app(
@@ -452,8 +458,11 @@ class Acquirium:
     def remove_app(self, name: str) -> dict[str, Any]:
         return self.client.remove_app(name)
 
-    def reprocess_app(self, name: str, start: datetime, end: datetime) -> dict[str, Any]:
-        """Recompute a retained output interval without resetting ingestion progress."""
+    def reprocess_app(self, name: str, start: "datetime | str", end: "datetime | str") -> dict[str, Any]:
+        """Recompute a retained output interval without resetting ingestion progress.
+
+        ``start`` and ``end`` are datetimes or texts such as ``"2025-01-01"``;
+        a time without a timezone is read as UTC."""
         return self.client.reprocess_app(name, start, end)
 
     def check_app(
@@ -497,9 +506,9 @@ class Acquirium:
         for edge in payload["edges"]:
             source, target = edge["source"], edge["target"]
             if graph.has_edge(source, target):
-                graph.edges[source, target]["ref_uris"].append(edge["ref_uri"])
+                graph.edges[source, target]["stream_uris"].append(edge["stream_uri"])
             else:
-                graph.add_edge(source, target, ref_uris=[edge["ref_uri"]])
+                graph.add_edge(source, target, stream_uris=[edge["stream_uri"]])
         return graph
 
     # ------------------------------------------------------------------
@@ -513,7 +522,7 @@ class Acquirium:
         observation_start: str | datetime | None = None,
         observation_end: str | datetime | None = None,
     ) -> dict:
-        """Insert a plant-level log entry (no specific point URI needed).
+        """Insert a plant-level log entry (no specific property URI needed).
 
         Args:
             message: The log message.
@@ -549,10 +558,10 @@ class Acquirium:
             observation_end=_dt_to_iso(observation_end),
         )
         if not logs:
-            return pl.DataFrame({"point_uri": [], "message": [], "log_time": [], "observation_start": [], "observation_end": []})
+            return pl.DataFrame({"property_uri": [], "message": [], "log_time": [], "observation_start": [], "observation_end": []})
         frames = [log.to_dict() for log in logs]
         schema = {
-            "point_uri": pl.Utf8,
+            "property_uri": pl.Utf8,
             "message": pl.Utf8,
             "log_time": pl.Datetime(time_zone="UTC"),
             "observation_start": pl.Datetime(time_zone="UTC"),

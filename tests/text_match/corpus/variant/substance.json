@@ -5,49 +5,49 @@
     {
       "text": "dissolved-oxygen",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-DissolvedOxygen"
+        "https://watermetadata.org/ontology/watr#Constituent-DissolvedOxygen"
       ]
     },
     {
       "text": "DissolvedOxygen",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-DissolvedOxygen"
+        "https://watermetadata.org/ontology/watr#Constituent-DissolvedOxygen"
       ]
     },
     {
       "text": "Constituent-DissolvedOxygen",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-DissolvedOxygen"
+        "https://watermetadata.org/ontology/watr#Constituent-DissolvedOxygen"
       ]
     },
     {
       "text": "suspendedsolids",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-SuspendedSolids"
+        "https://watermetadata.org/ontology/watr#Constituent-SuspendedSolids"
       ]
     },
     {
       "text": "oxygen, dissolved",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-DissolvedOxygen"
+        "https://watermetadata.org/ontology/watr#Constituent-DissolvedOxygen"
       ]
     },
     {
       "text": "chlorine gas",
       "expected": [
-        "urn:nawi-water-ontology#Disinfectant-Chlorine"
+        "https://watermetadata.org/ontology/watr#Disinfectant-Chlorine"
       ]
     },
     {
       "text": "liquid chlorine",
       "expected": [
-        "urn:nawi-water-ontology#Disinfectant-Chlorine"
+        "https://watermetadata.org/ontology/watr#Disinfectant-Chlorine"
       ]
     },
     {
       "text": "ozone gas",
       "expected": [
-        "urn:nawi-water-ontology#Disinfectant-Ozone",
+        "https://watermetadata.org/ontology/watr#Disinfectant-Ozone",
         "http://data.ashrae.org/standard223#Constituent-O3"
       ]
     },
@@ -60,32 +60,32 @@
     {
       "text": "sea-water",
       "expected": [
-        "urn:nawi-water-ontology#Water-Seawater"
+        "https://watermetadata.org/ontology/watr#Water-Seawater"
       ]
     },
     {
       "text": "sulphuric acid",
       "expected": [
-        "urn:nawi-water-ontology#pHAdjuster-SulfuricAcid"
+        "https://watermetadata.org/ontology/watr#pHAdjuster-SulfuricAcid"
       ]
     },
     {
       "text": "amonia",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Ammonia",
+        "https://watermetadata.org/ontology/watr#Constituent-Ammonia",
         "http://data.ashrae.org/standard223#Constituent-NH3"
       ]
     },
     {
       "text": "nitrates",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Nitrate"
+        "https://watermetadata.org/ontology/watr#Constituent-Nitrate"
       ]
     },
     {
       "text": "sludges",
       "expected": [
-        "urn:nawi-water-ontology#Fluid-Sludge"
+        "https://watermetadata.org/ontology/watr#Fluid-Sludge"
       ]
     },
     {
@@ -302,613 +302,613 @@
     {
       "text": "chlorine.",
       "expected": [
-        "urn:nawi-water-ontology#Disinfectant-Chlorine"
+        "https://watermetadata.org/ontology/watr#Disinfectant-Chlorine"
       ]
     },
     {
       "text": "CHLORINE",
       "expected": [
-        "urn:nawi-water-ontology#Disinfectant-Chlorine"
+        "https://watermetadata.org/ontology/watr#Disinfectant-Chlorine"
       ]
     },
     {
       "text": "clorine",
       "expected": [
-        "urn:nawi-water-ontology#Disinfectant-Chlorine"
+        "https://watermetadata.org/ontology/watr#Disinfectant-Chlorine"
       ]
     },
     {
       "text": "chlorin",
       "expected": [
-        "urn:nawi-water-ontology#Disinfectant-Chlorine"
+        "https://watermetadata.org/ontology/watr#Disinfectant-Chlorine"
       ]
     },
     {
       "text": "Disinfectant-Chlorine",
       "expected": [
-        "urn:nawi-water-ontology#Disinfectant-Chlorine"
+        "https://watermetadata.org/ontology/watr#Disinfectant-Chlorine"
       ]
     },
     {
       "text": "OZONE",
       "expected": [
-        "urn:nawi-water-ontology#Disinfectant-Ozone",
+        "https://watermetadata.org/ontology/watr#Disinfectant-Ozone",
         "http://data.ashrae.org/standard223#Constituent-O3"
       ]
     },
     {
       "text": "ozon",
       "expected": [
-        "urn:nawi-water-ontology#Disinfectant-Ozone",
+        "https://watermetadata.org/ontology/watr#Disinfectant-Ozone",
         "http://data.ashrae.org/standard223#Constituent-O3"
       ]
     },
     {
       "text": "Ozone.",
       "expected": [
-        "urn:nawi-water-ontology#Disinfectant-Ozone",
+        "https://watermetadata.org/ontology/watr#Disinfectant-Ozone",
         "http://data.ashrae.org/standard223#Constituent-O3"
       ]
     },
     {
       "text": "alum.",
       "expected": [
-        "urn:nawi-water-ontology#Coagulant-Alum"
+        "https://watermetadata.org/ontology/watr#Coagulant-Alum"
       ]
     },
     {
       "text": "ALUM",
       "expected": [
-        "urn:nawi-water-ontology#Coagulant-Alum"
+        "https://watermetadata.org/ontology/watr#Coagulant-Alum"
       ]
     },
     {
       "text": "Coagulant-Alum",
       "expected": [
-        "urn:nawi-water-ontology#Coagulant-Alum"
+        "https://watermetadata.org/ontology/watr#Coagulant-Alum"
       ]
     },
     {
       "text": "allum",
       "expected": [
-        "urn:nawi-water-ontology#Coagulant-Alum"
+        "https://watermetadata.org/ontology/watr#Coagulant-Alum"
       ]
     },
     {
       "text": "ferric-chloride",
       "expected": [
-        "urn:nawi-water-ontology#Coagulant-FerricChloride"
+        "https://watermetadata.org/ontology/watr#Coagulant-FerricChloride"
       ]
     },
     {
       "text": "FerricChloride",
       "expected": [
-        "urn:nawi-water-ontology#Coagulant-FerricChloride"
+        "https://watermetadata.org/ontology/watr#Coagulant-FerricChloride"
       ]
     },
     {
       "text": "ferric cloride",
       "expected": [
-        "urn:nawi-water-ontology#Coagulant-FerricChloride"
+        "https://watermetadata.org/ontology/watr#Coagulant-FerricChloride"
       ]
     },
     {
       "text": "chloride, ferric",
       "expected": [
-        "urn:nawi-water-ontology#Coagulant-FerricChloride"
+        "https://watermetadata.org/ontology/watr#Coagulant-FerricChloride"
       ]
     },
     {
       "text": "FERRIC CHLORIDE",
       "expected": [
-        "urn:nawi-water-ontology#Coagulant-FerricChloride"
+        "https://watermetadata.org/ontology/watr#Coagulant-FerricChloride"
       ]
     },
     {
       "text": "AMMONIA",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Ammonia",
+        "https://watermetadata.org/ontology/watr#Constituent-Ammonia",
         "http://data.ashrae.org/standard223#Constituent-NH3"
       ]
     },
     {
       "text": "ammonia.",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Ammonia",
+        "https://watermetadata.org/ontology/watr#Constituent-Ammonia",
         "http://data.ashrae.org/standard223#Constituent-NH3"
       ]
     },
     {
       "text": "ammonnia",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Ammonia",
+        "https://watermetadata.org/ontology/watr#Constituent-Ammonia",
         "http://data.ashrae.org/standard223#Constituent-NH3"
       ]
     },
     {
       "text": "nitrate.",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Nitrate"
+        "https://watermetadata.org/ontology/watr#Constituent-Nitrate"
       ]
     },
     {
       "text": "NITRATE",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Nitrate"
+        "https://watermetadata.org/ontology/watr#Constituent-Nitrate"
       ]
     },
     {
       "text": "nitrat",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Nitrate"
+        "https://watermetadata.org/ontology/watr#Constituent-Nitrate"
       ]
     },
     {
       "text": "nitrites",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Nitrite"
+        "https://watermetadata.org/ontology/watr#Constituent-Nitrite"
       ]
     },
     {
       "text": "NITRITE",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Nitrite"
+        "https://watermetadata.org/ontology/watr#Constituent-Nitrite"
       ]
     },
     {
       "text": "nitrit",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Nitrite"
+        "https://watermetadata.org/ontology/watr#Constituent-Nitrite"
       ]
     },
     {
       "text": "DISSOLVED OXYGEN",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-DissolvedOxygen"
+        "https://watermetadata.org/ontology/watr#Constituent-DissolvedOxygen"
       ]
     },
     {
       "text": "dissolved_oxygen",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-DissolvedOxygen"
+        "https://watermetadata.org/ontology/watr#Constituent-DissolvedOxygen"
       ]
     },
     {
       "text": "disolved oxygen",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-DissolvedOxygen"
+        "https://watermetadata.org/ontology/watr#Constituent-DissolvedOxygen"
       ]
     },
     {
       "text": "dissolved oxygn",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-DissolvedOxygen"
+        "https://watermetadata.org/ontology/watr#Constituent-DissolvedOxygen"
       ]
     },
     {
       "text": "Dissolved Oxygen (DO)",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-DissolvedOxygen"
+        "https://watermetadata.org/ontology/watr#Constituent-DissolvedOxygen"
       ]
     },
     {
       "text": "organic-carbon",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-OrganicCarbon"
+        "https://watermetadata.org/ontology/watr#Constituent-OrganicCarbon"
       ]
     },
     {
       "text": "OrganicCarbon",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-OrganicCarbon"
+        "https://watermetadata.org/ontology/watr#Constituent-OrganicCarbon"
       ]
     },
     {
       "text": "carbon, organic",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-OrganicCarbon"
+        "https://watermetadata.org/ontology/watr#Constituent-OrganicCarbon"
       ]
     },
     {
       "text": "organic carbn",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-OrganicCarbon"
+        "https://watermetadata.org/ontology/watr#Constituent-OrganicCarbon"
       ]
     },
     {
       "text": "suspended-solids",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-SuspendedSolids"
+        "https://watermetadata.org/ontology/watr#Constituent-SuspendedSolids"
       ]
     },
     {
       "text": "SuspendedSolids",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-SuspendedSolids"
+        "https://watermetadata.org/ontology/watr#Constituent-SuspendedSolids"
       ]
     },
     {
       "text": "suspended solid",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-SuspendedSolids"
+        "https://watermetadata.org/ontology/watr#Constituent-SuspendedSolids"
       ]
     },
     {
       "text": "suspened solids",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-SuspendedSolids"
+        "https://watermetadata.org/ontology/watr#Constituent-SuspendedSolids"
       ]
     },
     {
       "text": "solids, suspended",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-SuspendedSolids"
+        "https://watermetadata.org/ontology/watr#Constituent-SuspendedSolids"
       ]
     },
     {
       "text": "SUSPENDED SOLIDS",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-SuspendedSolids"
+        "https://watermetadata.org/ontology/watr#Constituent-SuspendedSolids"
       ]
     },
     {
       "text": "SLUDGE",
       "expected": [
-        "urn:nawi-water-ontology#Fluid-Sludge"
+        "https://watermetadata.org/ontology/watr#Fluid-Sludge"
       ]
     },
     {
       "text": "sludge.",
       "expected": [
-        "urn:nawi-water-ontology#Fluid-Sludge"
+        "https://watermetadata.org/ontology/watr#Fluid-Sludge"
       ]
     },
     {
       "text": "slugde",
       "expected": [
-        "urn:nawi-water-ontology#Fluid-Sludge"
+        "https://watermetadata.org/ontology/watr#Fluid-Sludge"
       ]
     },
     {
       "text": "SEAWATER",
       "expected": [
-        "urn:nawi-water-ontology#Water-Seawater"
+        "https://watermetadata.org/ontology/watr#Water-Seawater"
       ]
     },
     {
       "text": "Sea Water",
       "expected": [
-        "urn:nawi-water-ontology#Water-Seawater"
+        "https://watermetadata.org/ontology/watr#Water-Seawater"
       ]
     },
     {
       "text": "seawatr",
       "expected": [
-        "urn:nawi-water-ontology#Water-Seawater"
+        "https://watermetadata.org/ontology/watr#Water-Seawater"
       ]
     },
     {
       "text": "SeaWater",
       "expected": [
-        "urn:nawi-water-ontology#Water-Seawater"
+        "https://watermetadata.org/ontology/watr#Water-Seawater"
       ]
     },
     {
       "text": "brines",
       "expected": [
-        "urn:nawi-water-ontology#Water-Brine"
+        "https://watermetadata.org/ontology/watr#Water-Brine"
       ]
     },
     {
       "text": "BRINE",
       "expected": [
-        "urn:nawi-water-ontology#Water-Brine"
+        "https://watermetadata.org/ontology/watr#Water-Brine"
       ]
     },
     {
       "text": "brin",
       "expected": [
-        "urn:nawi-water-ontology#Water-Brine"
+        "https://watermetadata.org/ontology/watr#Water-Brine"
       ]
     },
     {
       "text": "brakish water",
       "expected": [
-        "urn:nawi-water-ontology#Water-Brackish"
+        "https://watermetadata.org/ontology/watr#Water-Brackish"
       ]
     },
     {
       "text": "brackish-water",
       "expected": [
-        "urn:nawi-water-ontology#Water-Brackish"
+        "https://watermetadata.org/ontology/watr#Water-Brackish"
       ]
     },
     {
       "text": "BrackishWater",
       "expected": [
-        "urn:nawi-water-ontology#Water-Brackish"
+        "https://watermetadata.org/ontology/watr#Water-Brackish"
       ]
     },
     {
       "text": "BRACKISH WATER",
       "expected": [
-        "urn:nawi-water-ontology#Water-Brackish"
+        "https://watermetadata.org/ontology/watr#Water-Brackish"
       ]
     },
     {
       "text": "fresh-water",
       "expected": [
-        "urn:nawi-water-ontology#Water-Freshwater"
+        "https://watermetadata.org/ontology/watr#Water-Freshwater"
       ]
     },
     {
       "text": "FreshWater",
       "expected": [
-        "urn:nawi-water-ontology#Water-Freshwater"
+        "https://watermetadata.org/ontology/watr#Water-Freshwater"
       ]
     },
     {
       "text": "FRESH WATER",
       "expected": [
-        "urn:nawi-water-ontology#Water-Freshwater"
+        "https://watermetadata.org/ontology/watr#Water-Freshwater"
       ]
     },
     {
       "text": "freshwatr",
       "expected": [
-        "urn:nawi-water-ontology#Water-Freshwater"
+        "https://watermetadata.org/ontology/watr#Water-Freshwater"
       ]
     },
     {
       "text": "LIME",
       "expected": [
-        "urn:nawi-water-ontology#pHAdjuster-Lime"
+        "https://watermetadata.org/ontology/watr#pHAdjuster-Lime"
       ]
     },
     {
       "text": "pHAdjuster-Lime",
       "expected": [
-        "urn:nawi-water-ontology#pHAdjuster-Lime"
+        "https://watermetadata.org/ontology/watr#pHAdjuster-Lime"
       ]
     },
     {
       "text": "Lime.",
       "expected": [
-        "urn:nawi-water-ontology#pHAdjuster-Lime"
+        "https://watermetadata.org/ontology/watr#pHAdjuster-Lime"
       ]
     },
     {
       "text": "sulfuric-acid",
       "expected": [
-        "urn:nawi-water-ontology#pHAdjuster-SulfuricAcid"
+        "https://watermetadata.org/ontology/watr#pHAdjuster-SulfuricAcid"
       ]
     },
     {
       "text": "SulfuricAcid",
       "expected": [
-        "urn:nawi-water-ontology#pHAdjuster-SulfuricAcid"
+        "https://watermetadata.org/ontology/watr#pHAdjuster-SulfuricAcid"
       ]
     },
     {
       "text": "sulfuric acd",
       "expected": [
-        "urn:nawi-water-ontology#pHAdjuster-SulfuricAcid"
+        "https://watermetadata.org/ontology/watr#pHAdjuster-SulfuricAcid"
       ]
     },
     {
       "text": "acid, sulfuric",
       "expected": [
-        "urn:nawi-water-ontology#pHAdjuster-SulfuricAcid"
+        "https://watermetadata.org/ontology/watr#pHAdjuster-SulfuricAcid"
       ]
     },
     {
       "text": "SULFURIC ACID",
       "expected": [
-        "urn:nawi-water-ontology#pHAdjuster-SulfuricAcid"
+        "https://watermetadata.org/ontology/watr#pHAdjuster-SulfuricAcid"
       ]
     },
     {
       "text": "hydrogen-peroxide",
       "expected": [
-        "urn:nawi-water-ontology#OxidizingAgent-HydrogenPeroxide"
+        "https://watermetadata.org/ontology/watr#OxidizingAgent-HydrogenPeroxide"
       ]
     },
     {
       "text": "HydrogenPeroxide",
       "expected": [
-        "urn:nawi-water-ontology#OxidizingAgent-HydrogenPeroxide"
+        "https://watermetadata.org/ontology/watr#OxidizingAgent-HydrogenPeroxide"
       ]
     },
     {
       "text": "hydrogen peroxyde",
       "expected": [
-        "urn:nawi-water-ontology#OxidizingAgent-HydrogenPeroxide"
+        "https://watermetadata.org/ontology/watr#OxidizingAgent-HydrogenPeroxide"
       ]
     },
     {
       "text": "HYDROGEN PEROXIDE",
       "expected": [
-        "urn:nawi-water-ontology#OxidizingAgent-HydrogenPeroxide"
+        "https://watermetadata.org/ontology/watr#OxidizingAgent-HydrogenPeroxide"
       ]
     },
     {
       "text": "activated-carbon",
       "expected": [
-        "urn:nawi-water-ontology#OdorControlAgent-ActivatedCarbon"
+        "https://watermetadata.org/ontology/watr#OdorControlAgent-ActivatedCarbon"
       ]
     },
     {
       "text": "ActivatedCarbon",
       "expected": [
-        "urn:nawi-water-ontology#OdorControlAgent-ActivatedCarbon"
+        "https://watermetadata.org/ontology/watr#OdorControlAgent-ActivatedCarbon"
       ]
     },
     {
       "text": "activted carbon",
       "expected": [
-        "urn:nawi-water-ontology#OdorControlAgent-ActivatedCarbon"
+        "https://watermetadata.org/ontology/watr#OdorControlAgent-ActivatedCarbon"
       ]
     },
     {
       "text": "carbon, activated",
       "expected": [
-        "urn:nawi-water-ontology#OdorControlAgent-ActivatedCarbon"
+        "https://watermetadata.org/ontology/watr#OdorControlAgent-ActivatedCarbon"
       ]
     },
     {
       "text": "polymers",
       "expected": [
-        "urn:nawi-water-ontology#Flocculant-Polymer"
+        "https://watermetadata.org/ontology/watr#Flocculant-Polymer"
       ]
     },
     {
       "text": "POLYMER",
       "expected": [
-        "urn:nawi-water-ontology#Flocculant-Polymer"
+        "https://watermetadata.org/ontology/watr#Flocculant-Polymer"
       ]
     },
     {
       "text": "sodium-chloride",
       "expected": [
-        "urn:nawi-water-ontology#Salt-NaCl"
+        "https://watermetadata.org/ontology/watr#Salt-NaCl"
       ]
     },
     {
       "text": "sodium cloride",
       "expected": [
-        "urn:nawi-water-ontology#Salt-NaCl"
+        "https://watermetadata.org/ontology/watr#Salt-NaCl"
       ]
     },
     {
       "text": "SODIUM CHLORIDE",
       "expected": [
-        "urn:nawi-water-ontology#Salt-NaCl"
+        "https://watermetadata.org/ontology/watr#Salt-NaCl"
       ]
     },
     {
       "text": "nacl",
       "expected": [
-        "urn:nawi-water-ontology#Salt-NaCl"
+        "https://watermetadata.org/ontology/watr#Salt-NaCl"
       ]
     },
     {
       "text": "coagulants",
       "expected": [
-        "urn:nawi-water-ontology#Coagulant"
+        "https://watermetadata.org/ontology/watr#Coagulant"
       ]
     },
     {
       "text": "COAGULANT",
       "expected": [
-        "urn:nawi-water-ontology#Coagulant"
+        "https://watermetadata.org/ontology/watr#Coagulant"
       ]
     },
     {
       "text": "coagulent",
       "expected": [
-        "urn:nawi-water-ontology#Coagulant"
+        "https://watermetadata.org/ontology/watr#Coagulant"
       ]
     },
     {
       "text": "disinfectants",
       "expected": [
-        "urn:nawi-water-ontology#Disinfectant"
+        "https://watermetadata.org/ontology/watr#Disinfectant"
       ]
     },
     {
       "text": "disinfectent",
       "expected": [
-        "urn:nawi-water-ontology#Disinfectant"
+        "https://watermetadata.org/ontology/watr#Disinfectant"
       ]
     },
     {
       "text": "DISINFECTANT",
       "expected": [
-        "urn:nawi-water-ontology#Disinfectant"
+        "https://watermetadata.org/ontology/watr#Disinfectant"
       ]
     },
     {
       "text": "polyacrylamid",
       "expected": [
-        "urn:nawi-water-ontology#Flocculant-Polyacrylamide"
+        "https://watermetadata.org/ontology/watr#Flocculant-Polyacrylamide"
       ]
     },
     {
       "text": "poly-acrylamide",
       "expected": [
-        "urn:nawi-water-ontology#Flocculant-Polyacrylamide"
+        "https://watermetadata.org/ontology/watr#Flocculant-Polyacrylamide"
       ]
     },
     {
       "text": "POLYACRYLAMIDE",
       "expected": [
-        "urn:nawi-water-ontology#Flocculant-Polyacrylamide"
+        "https://watermetadata.org/ontology/watr#Flocculant-Polyacrylamide"
       ]
     },
     {
       "text": "poly-aluminum chloride",
       "expected": [
-        "urn:nawi-water-ontology#Coagulant-PolyaluminumChloride"
+        "https://watermetadata.org/ontology/watr#Coagulant-PolyaluminumChloride"
       ]
     },
     {
       "text": "polyaluminium chloride",
       "expected": [
-        "urn:nawi-water-ontology#Coagulant-PolyaluminumChloride"
+        "https://watermetadata.org/ontology/watr#Coagulant-PolyaluminumChloride"
       ]
     },
     {
       "text": "PolyaluminumChloride",
       "expected": [
-        "urn:nawi-water-ontology#Coagulant-PolyaluminumChloride"
+        "https://watermetadata.org/ontology/watr#Coagulant-PolyaluminumChloride"
       ]
     },
     {
       "text": "polyaluminum cloride",
       "expected": [
-        "urn:nawi-water-ontology#Coagulant-PolyaluminumChloride"
+        "https://watermetadata.org/ontology/watr#Coagulant-PolyaluminumChloride"
       ]
     },
     {
       "text": "Bacteria",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Bacteria"
+        "https://watermetadata.org/ontology/watr#Constituent-Bacteria"
       ]
     },
     {
       "text": "BACTERIA",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Bacteria"
+        "https://watermetadata.org/ontology/watr#Constituent-Bacteria"
       ]
     },
     {
       "text": "bacterias",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Bacteria"
+        "https://watermetadata.org/ontology/watr#Constituent-Bacteria"
       ]
     },
     {
       "text": "bactera",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Bacteria"
+        "https://watermetadata.org/ontology/watr#Constituent-Bacteria"
       ]
     },
     {
       "text": "CYANIDE",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Cyanide"
+        "https://watermetadata.org/ontology/watr#Constituent-Cyanide"
       ]
     },
     {
       "text": "cyanid",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Cyanide"
+        "https://watermetadata.org/ontology/watr#Constituent-Cyanide"
       ]
     },
     {
       "text": "cyanides",
       "expected": [
-        "urn:nawi-water-ontology#Constituent-Cyanide"
+        "https://watermetadata.org/ontology/watr#Constituent-Cyanide"
       ]
     }
   ]

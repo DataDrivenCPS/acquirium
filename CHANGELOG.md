@@ -10,6 +10,155 @@ change in any release.
 
 ## [Unreleased]
 
+### Fixed
+
+- `insert_metadata()` refuses to change a Study variable's unit, quantity kind,
+  medium or substance, and says to declare a new variable. A medium change was
+  accepted but never reached the variable's run streams; the others failed with
+  "does not apply to a entity node".
+
+## [0.4.0] - 2026-11-18
+
+### Added
+
+- Metadata can be written on a stream without looking up its property:
+  `acq.stream(source_id, stream_name).insert_metadata({...})`, or
+  `acq.insert_metadata(stream, {...})` with the stream handle in place of
+  the URI.
+
+- **`acquirium clear`** erases the stored data of a data folder without
+  starting a server, and keeps the embeddings of the text matcher.
+  `--all` removes the whole folder. It asks for confirmation (`--yes` skips
+  it) and refuses while a server is using the folder. With the `timescale`
+  backend the readings in Postgres are kept.
+- `Query` objects display themselves. `repr(q)` is a summary of the pattern,
+  one line per node, and does not contact the server. `print(q)` adds the
+  number of matches and the first five rows of `q.metadata()`; a notebook
+  cell ending in `q` shows the same. `q.summary()` returns the summary text.
+- A stream registered without a `property_uri` can be connected to a plant
+  property later: register it again with `property_uri`. The property
+  Acquirium generated for the stream is replaced by the given one, and its
+  metadata moves along. Its unit, quantity kind, medium, substance and data
+  source are added where the plant property has none; a unit that differs
+  but is convertible is kept on the stream as the unit its rows are stored
+  in, and reads convert. A unit that is not convertible, or a different
+  quantity kind or medium, raises `ValueError` and nothing is written, as
+  when a stream is registered with a `property_uri` from the start. The keys
+  of its own are written on the plant property. For any other key both have
+  with different values, the plant property keeps its own and a warning says
+  so; use `insert_metadata()` to change it. The label of the generated
+  property moves only when the plant property has none.
+- `Query.property()` selects properties whether or not a stream holds their
+  data. `acq.query().property(has_stream=False)` lists the properties of the
+  plant model no stream is connected to; after an entity it selects that
+  entity's properties, as in `entity("Pump").property()`.
+- `acquirium example init` creates a folder with the example plant: its
+  model (`model.ttl`) and the year 2025 of its data (`data.csv`, one row per
+  hour by default, `--step` to change it). It does not start a server.
+- `property_uri` in `register_streams()` accepts a CURIE with a prefix the
+  server binds, such as `"wbs:P1-out-pressure-pa"`, as `metadata()` prints
+  them. Before, a CURIE was taken as a URI of its own.
+- The property generated for a stream registered without a `property_uri`
+  carries `acq:isDisconnected true`, queryable as `is_disconnected`:
+  `acq.query().measurement().where(is_disconnected=True)` lists the streams
+  not connected to a plant property. Streams registered before this version
+  get the mark when they are registered again.
+
+### Changed
+- `reprocess_app()` takes its `start` and `end` as text such as
+  `"2025-01-01"` as well as `datetime`, like `dataframe(start=...)`. The
+  tutorial writes every timestamp as text.
+- Registering a connected stream again without a `property_uri` describes
+  the property it is connected to. Before, it generated a second property
+  for the stream.
+- `value_kind` is optional in `register_streams()` and `Driver.declare()`. A
+  stream registered without it becomes numeric when it receives its first
+  numeric value (a number, or a string that parses as one); until then its
+  values are stored and returned as text. Before, such a stream was a text
+  stream and stored numbers as text. A declared `value_kind` is never
+  changed. Streams already registered keep the kind they have.
+- `Driver` no longer infers `value_kind` from the first observed values; the
+  server does.
+
+- Acquirium requires DuckDB 2.0 (`duckdb>=2.0.0`). An existing database file
+  opens as is and keeps its storage format. A database created by DuckDB 2.0
+  uses the 2.0 storage format, which DuckDB 1.x cannot open.
+- The DuckDB `timeseries` table no longer has the `UNIQUE (ref_id, ts)`
+  constraint. Writes still keep one row per stream and timestamp by deleting
+  colliding rows before inserting. Opening an existing database rebuilds the
+  table once to drop the constraint; allow space for the replacement table
+  when upgrading a large database.
+- "Point" is now "property" and "ref" is now "stream", following the WaTr
+  ontology and the rest of the interface: `point_uri` → `property_uri`,
+  `point_id` → `property_id`, `ref_uri` → `stream_uri`, `ref_name` →
+  `stream_name`, `measurement(ref=)` → `measurement(stream=)`, `include_ref` →
+  `include_stream`, `include_ref_uris` → `include_stream_uris`,
+  `resolve_point_metadata` → `resolve_property_metadata`, `compute_ref_uri` →
+  `compute_stream_uri`.
+  - The client, driver and app interfaces still accept the old names as
+    arguments, as `register_streams` keys, as the `ref_name` column of a
+    driver's observations, and as attributes of stream handles. `point` names
+    are plain aliases. `ref` names emit a `FutureWarning` and will be removed.
+  - Returned dataframes use the new names only: `property_uri`, `property_id`,
+    `stream_uri`, `stream_name`, and `stream` in place of the `ref` column.
+  - The HTTP API uses the new names only.
+  - Opening an existing database renames the columns in place (timeseries
+    schema version 3 on DuckDB and 2 on Timescale, experiment schema version
+    4). No data is rewritten.
+  - Identifiers already stored in graphs keep their form: the placeholder
+    `<stream_uri>__point`, `urn:acquirium:derived-point:…` and the `ref_uri`
+    field of experiment stream annotations.
+
+### Removed
+- **Breaking:** `register_datasource()` on `Acquirium` and `AcquiriumClient`,
+  and the `POST /register_datasource` endpoint. The node it wrote was never
+  read, and registering streams never required it. Drop the call;
+  `register_streams()` is the only registration step.
+
+### Fixed
+
+- The bundled water ontology is registered under its own IRI,
+  `https://watermetadata.org/ontology/watr`, in place of
+  `urn:nawi-water-ontology`. A model that imports the public IRI, as the
+  example plant does, now gets the class hierarchy: `entity("Equipment")`
+  returns every piece of equipment, where it returned only two sensors.
+  **A model that imports `urn:nawi-water-ontology` has to import the new
+  IRI.**
+- `entity(type=Not(...))` returns the nodes of every other type. It returned
+  nothing when the negated type was the only filter.
+- `entity(uri=...)` and the other `uri=` filters match nothing when the URI
+  is not in the graph. A mistyped URI used to count as one match.
+- A boolean is stored as `1.0`/`0.0` in a numeric or undeclared stream and
+  as "True"/"False" in a text stream, on every insert path. Before, the
+  client stored `1.0` (and "1.0" in a text stream) while a driver stored the
+  text "True", which a numeric stream returned as null.
+- A wrong `value_mode` raises a `ValueError` in the client, and the server
+  answers 400. Before, the read returned an empty table and the next
+  request failed with a connection error.
+- A stream registered without a `property_uri` holds one `unit`,
+  `quantity_kind`, `medium` and `substance`. Registering it again with
+  another value replaces the old one, as it already did for the label.
+  Before, the new value was added next to the old one and the unit was not
+  checked.
+- `insert_metadata()` follows the same rule for these keys. On a generated
+  property the new value replaces the one `register_streams()` wrote. On a
+  property of the plant model a value that differs from the one the model
+  or a stream registration wrote raises `ValueError`. Before, both cases
+  left the property with two values.
+- The prefixes a plant model declares (`wbs:`) are kept across a restart.
+  They used to be lost, so results showed `ns1:P1` and
+  `entity(uri="wbs:P1")` failed with "Prefix "wbs" not bound to any
+  namespace" in the next session.
+- The `acquirium driver` and `acquirium app` commands find the server of a
+  config that only sets `[server] port`. They used to read the port from
+  `[driver] server_port` alone and fall back to 8000.
+- Registering a stream again with a `label` replaces its label. Before, the
+  new label was added next to the old one, and `metadata()` listed the stream
+  once per label. Registering again without a `label` keeps the label the
+  stream has.
+
+## [0.4.0a9] - 2026-11-09
+
 ### Removed
 - The legacy query builder (`acquirium.Q`, `acq.find_entity()` and the
   `find_related` / `find_data` / `filter_by_*` family). `acq.find_all_data()`
@@ -22,6 +171,9 @@ change in any release.
 
 ### Added
 - `Query.measurement(uri=...)` pins a measurement node to one point.
+- `Query.measurement(ref=...)` keeps only the given streams: a reference
+  URI, a `Stream` from `ac.stream(source_id, ref_name)`, or a list of
+  either (an empty list matches nothing).
 - `Query.insert_log()` and `Query.read_logs()` write and read logbook notes
   on the entities a query matches, as the legacy builder did.
 - `DataObject` supports `alias in data`, `iter(data)` and `len(data)`;
@@ -29,7 +181,8 @@ change in any release.
 - `DataObject.stream_info()` lists the streams behind an object with the
   `source_id` and `ref_name` their driver registered, and
   `dataframe(streams=...)` / `latest(streams=...)` read only the listed
-  streams, by number from that table or by ref URI. `ref_info()` is removed.
+  streams, by number from that table, by ref URI, or by the `Stream` handle
+  `ac.stream(source_id, ref_name)` returns. `ref_info()` is removed.
 - `object` experiment variables save any Python object through a codec class
   and rebuild it with `observation.load()`. A codec has a `media_type`,
   `dumps(value) -> bytes`, and `loads(data)`; the declaration stores its
@@ -116,10 +269,6 @@ change in any release.
 - Currency codes such as `USD` resolve as units (`unit:CCY_USD`).
 
 ### Fixed
-- `insert_metadata()` refuses to change a Study variable's unit, quantity kind,
-  medium or substance, and says to declare a new variable. A medium change was
-  accepted but never reached the variable's run streams; the others failed with
-  "does not apply to a entity node".
 - App outputs keep their timestamps on TimescaleDB when the PostgreSQL
   session's time zone isn't UTC. They were shifted by the session's offset.
 - Inserting a TriX graph stores its triples. They were parsed into a plain
@@ -130,6 +279,20 @@ change in any release.
   instead of failing on an empty shapes graph.
 
 ### Changed
+- `Query.data()` no longer fetches stream statistics. The `DataObject`
+  fetches them in one batch request the first time `total_rows`,
+  `time_range` or `bindings` needs them, so `dataframe()`, `latest()` and
+  `Query.dataframe()` skip the server-side count of every matched stream.
+  That one request covers every stream of the `data()` call and is shared
+  with the sub-objects `by()` and `convert_to()` return, so a `by()` loop
+  that checks each entity makes one request, not one per entity, and all of
+  them read the same snapshot. `refresh_stats()` fetches it again. The repr
+  of a lazy object shows its stream count until the statistics are loaded.
+- `DataObject.is_empty()`, before the values are fetched, asks the server
+  only which streams have a row (`POST /timeseries_exists`, shared the same
+  way) instead of counting them, unless the statistics are already loaded.
+  On TimescaleDB this stops at each stream's first row: for 100 streams
+  holding 30M rows it takes about 5 ms instead of 2 s.
 - `cast_value` is validated (`"float"`, `"int"`, `"str"` or `None`) and
   defaults to `None`; `"float"` parses numeric text into `value_numeric`
   without logging, `"int"` returns `Int64` columns and warns when it
@@ -726,7 +889,9 @@ change in any release.
 - Text matcher backed by FastEmbed with QUDT and graph indexes.
 - Grafana dashboard helpers.
 
-[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a8...HEAD
+[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a9...v0.4.0
+[0.4.0a9]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a8...v0.4.0a9
 [0.4.0a8]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a7...v0.4.0a8
 [0.4.0a7]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a6...v0.4.0a7
 [0.4.0a6]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a5...v0.4.0a6

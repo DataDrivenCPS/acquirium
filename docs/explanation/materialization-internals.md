@@ -2,191 +2,141 @@
 title: Materialization internals
 ---
 
-Acquirium stores both derived values and processing progress in the timeseries
-database. Each row records the revision that last wrote it, and each binding
-records how far it has processed its inputs. These records allow the runtime
-to resume after a restart without relying on worker memory.
+In this article we'll describe how the server runs apps internally: the tables it keeps, how one scheduling round works, and what differs between the storage backends.
+The code calls this part of the server materialization, and it is in `src/acquirium/Materialization/`.
+This page is for readers who work on the server.
+[How apps work](apps.md) has the same topic without the internals.
 
-This page describes how the storage backends support that behavior and which
-settings affect server operation. For an introduction to writing an app, see
-[Your first app](../tutorials/first-app.md). For the calculation model and
-processing guarantees, see [Apps](apps.md).
+## Terms
 
-## Scheduling and recovery
+- **Deployment**: the stored definition of one app: name, entrypoint (`module:Class`), digest of the module file, outputs, parameters and settings.
+- **Binding**: one deployment together with the input streams and output streams of one call. A `per_match` app has one binding per match, an `all_matches` app has one.
+- **Revision**: a counter in the timeseries store. Every write takes the next revision, and every row keeps the revision that last wrote it.
+- **Consumed revision**: the revision up to which a binding has processed its inputs.
 
-The timeseries database stores current values and assigns each write a
-monotonically increasing revision. Each binding records the last input revision
-it has processed, called its *consumed frontier*. To prepare the next invocation,
-the runtime opens a consistent database snapshot, finds input timestamps that
-changed after that frontier, and loads the required windows into Arrow tables.
-It closes the read transaction before running user code.
+A binding has two identifiers.
+The `signature` is a hash of the app name, the digest, the parameters, the inputs with their metadata, the outputs and the window settings.
+The `progress_key` is a hash of the app name and the URIs of the input and output streams only.
+The progress is stored under the `progress_key`, so a change of the code or of the parameters keeps the progress.
 
-Before publishing the result, the runtime checks that the binding generation
-and consumed frontier still match those used to prepare the work. If the
-binding has been replaced or its progress has changed, the result is discarded.
-Otherwise, output changes and progress commit together. Incremental output
-removals leave revisioned tombstones so downstream apps can observe the removal;
-reinserting a timestamp clears its tombstone.
+## Tables
 
-Whole-stream ingestion replacement (`replace=True`) instead physically deletes
-old rows, inserts the replacement, and records the latest reset revision for the
-stream in the same transaction. A binding whose input has reset since its
-consumed frontier rebuilds from all current inputs, including unchanged sibling
-streams. Its assigned outputs are physically replaced and receive reset markers,
-so descendants also rebuild. Only one reset marker per stream is retained;
-repeated replacements overwrite it rather than accumulate deleted keys.
+All state is in the timeseries store, next to the data.
 
-A reset rebuild runs as one unpartitioned invocation. Existing output timestamps
-help bound the rebuild, including when all inputs were cleared. Output writes,
-output reset markers, removal of superseded backfill work, and progress advance
-commit atomically. A transform or write failure leaves the prior work available
-for retry. A reset committed after a batch's snapshot invalidates that batch at
-publication, preventing old work from restoring removed values. Replacement is
-intended for infrequent reloads: full input loading and recomputation can consume
-substantially more memory and time than incremental work.
-
-One coordinator schedules independent bindings through a bounded thread pool.
-Each tick starts with one change index: a single snapshot read of the streams
-written or reset above the oldest consumed frontier in the layer, with their
-latest revisions. A binding whose inputs are absent from the index has
-nothing to read, so its frontier advances to the snapshot's revision in one
-batched update. Only bindings with a changed input, pending work, or a reset
-read a batch, and that read runs on the worker thread together with the
-transform. The index is rebuilt after a layer publishes, so the next
-dependency layer sees its predecessors' outputs. A failed binding keeps its
-previous frontier and blocks its descendants, while unrelated branches can
-continue processing.
-
-Long, finite work ranges are divided into output intervals of approximately one
-day, rounded to complete buckets where necessary. A durable cursor records which
-intervals have finished, and the input frontier advances when the entire range
-is complete. Corrections newer than the range's captured revision are processed
-afterward. Explicit reprocessing uses the same durable work mechanism while
-preserving the existing input frontier. Whole-history calculations still load
-their complete retained input and are not bounded by these daily intervals.
-
-## The storage contract
-
-For read-only operational inspection, use `acquirium app list` and
-`acquirium app inspect NAME` (both accept `--json`). The corresponding
-`GET /apps` and `GET /apps/{name}` endpoints join the durable deployment registry
-with the latest in-memory plan and stored progress. They do not trigger graph
-refresh or execution. Progress is fetched once per request, not once per binding.
-Declarations remain inspectable when code cannot be loaded or queries match
-nothing. See the [inspection guide](apps.md#inspect-deployed-apps) for status
-and plan-freshness semantics.
-
-The timeseries backend stores `system_state` (one global `current_revision`)
-and `binding_progress` (`progress_key` → `consumed_revision`), plus
-`stream_resets` (`ref_uri` → latest reset `last_revision`). Opening a store creates
-the reset table if it is absent; no existing timeseries columns change. The materializer
-owns `materialization_deployments`, `materialization_lineage`, and
-`materialization_work`. Lineage records output ownership, input references,
-and a query-context fingerprint. Work rows store bounded output cursors for
-long backfills and explicit reprocessing. Derived rows live beside raw rows in
-the ordinary `timeseries` table.
-
-The scheduling algorithm is shared between backends. Each backend supplies the
-following connection and write hooks:
-
-| hook | purpose |
+| Table | Content |
 |---|---|
-| `_connect()` | An independent connection for a coherent batch snapshot. |
-| `_own_conn()` | A short-lived read connection. |
-| `_write_conn()` | A write connection, taken under the store's lock. |
-| `_next_revision(conn)` | Allocate the next global revision inside the caller's transaction. |
-| `_insert_frame(conn, frame, revision)` | Upsert rows keyed by `(stream, ts)` at that revision. |
+| `timeseries` | The values of all streams, the outputs of apps included. Each row has `last_revision` and a `deleted` flag |
+| `system_state` | The current revision |
+| `binding_progress` | `progress_key` and consumed revision |
+| `stream_resets` | For a stream that was written with `replace=True`, the revision of the last replacement |
+| `materialization_deployments` | One row per deployed app, as JSON |
+| `materialization_lineage` | For each binding: the input streams, the output streams and a hash of the query match |
+| `materialization_work` | One row per binding that has a long time range in progress: a cursor, the end of the range and the revisions |
 
-`RevisionStore` coordinates snapshot reads and publication through these hooks,
-adapting SQL parameter syntax, UTC conversion, and the join used to resolve
-stream keys for each backend.
+The output streams are also written to the graph: the stream with the `source_id` `derived:<app name>`, its property with label, unit and the name of the app.
+These triples are replaced as a whole each time the set of bindings changes.
 
-## DuckDB and PostgreSQL/TimescaleDB
+The plan (the bindings, their order and the loaded app instances) is kept in memory.
+It is built again from the deployments table when the server starts and when the graph changes.
 
-| concern | DuckDB | PostgreSQL / TimescaleDB |
+## One scheduling round
+
+The server runs one coordinator loop.
+When a round did no work, the loop waits `materialization_poll_seconds` before the next one.
+
+A round does the following:
+
+1. It compares the version of the graph with the version of the plan. When they differ, each deployment is compiled again: the module is imported, the digest is checked and `build_query()` is run. A deployment that fails keeps its previous bindings and its error is shown by `list_apps()`.
+2. It orders the bindings in layers. A binding that reads the output of another binding is in a later layer.
+3. For each layer it reads once which streams were written or reset after the lowest consumed revision of the layer. A binding without a changed input and without a row in `materialization_work` only has its consumed revision moved forward.
+4. The other bindings are run on a thread pool of `materialization_workers` threads. `batch_delay` and `min_interval` of the app can hold a binding back in this step.
+5. The results of the layer are written in one transaction, and the next layer is read after that.
+
+A binding that failed keeps its consumed revision and is tried again in the next round.
+The bindings that read its outputs are skipped in the meantime.
+
+## Reading and writing one batch
+
+The worker thread opens its own connection and one read transaction.
+In this transaction it reads the consumed revision, the current revision, the time range of the input rows with a revision between the two, and the input values.
+The transaction is closed before `transform()` is called.
+
+The time range of the changed rows is the changed window.
+The output window and the read window are derived from it with `every`, `lookback` and `lookahead`, see [Time windows of a call](../reference/apps/app-class.md#time-windows-of-a-call).
+The inputs hold all current values of the read window, and not only the changed rows.
+
+The write transaction checks three things before it accepts a result:
+
+- The binding is still part of the active plan. A new deployment or a removal makes the results of running calls invalid.
+- The consumed revision is still the one the batch was read with.
+- No input stream was reset after the batch was read.
+
+For an accepted result the rows of each assigned output in the output window are marked as deleted, the new rows are written with a new revision, and the consumed revision is set to the revision the batch was read at.
+Rows of the result outside the output window are dropped.
+The deleted rows are kept as markers, so that an app that reads this output sees the removal as a change.
+
+## Long time ranges
+
+When the changed window is longer than one day, the binding gets a row in `materialization_work`.
+The range is then processed in pieces of about one day, widened to whole buckets when `every` is set.
+The cursor moves with each piece in the same transaction as the output.
+The consumed revision moves when the last piece is done.
+This is how a backfill continues after a restart.
+
+`reprocess_app()` uses the same table.
+Its row has the same start and end revision, so the consumed revision is not changed.
+A binding can have one row only, and a second request is rejected until the first is done.
+
+Apps with `lookback = "all"` are not split.
+Each call reads everything that is stored for the inputs.
+
+## Replaced streams
+
+`insert_timeseries(..., replace=True)` deletes the rows of the stream and writes its revision to `stream_resets`.
+A binding with such an input does one call over everything that is stored for its inputs.
+Its outputs are deleted and written again, and they get a reset entry too, so the apps that read them do the same.
+
+## Changes of the plant model
+
+After a new compilation the bindings are compared with `materialization_lineage`.
+A binding is calculated again over its whole stored time range in two cases:
+
+- An output stream that exists already now has other inputs. This happens to a named output when the query matches other streams.
+- The match of the binding changed while its streams stayed the same, for instance a label or a unit. For an `all_matches` binding any change of any match counts.
+
+## Storage backends
+
+The scheduling is the same for both backends.
+`RevisionStore` in `revision_store.py` uses a few methods of the store for the connections and the writes.
+
+| | DuckDB | PostgreSQL / TimescaleDB |
 |---|---|---|
-| Stream key in `timeseries` | integer `ref_id`, joined to `ref_ids` | integer `ref_id`, joined to `ref_ids` |
-| Timestamp storage | UTC-normalized `TIMESTAMP` (naive in SQL) | `TIMESTAMPTZ` |
-| Revisioned write | registered Polars frame, delete+insert keyed by `(ref_id, ts)` | Polars CSV into a temporary `COPY` staging table, then ordered `INSERT ... SELECT ... ON CONFLICT` keyed by `(ref_id, ts)` |
-| Read connection | a new connection to the shared embedded database | a new psycopg connection |
-| Snapshot boundary | `conn.begin()` | `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY` |
-| Write transaction | in-process store lock around the store's write connection | in-process store lock around a transaction on the store's persistent write connection |
-| Backend SQL | `?` parameters, `INSERT OR REPLACE` where needed | `%s` parameters, `ON CONFLICT` |
+| Timestamps | `TIMESTAMP` in UTC | `TIMESTAMPTZ` |
+| Read transaction | `conn.begin()` on a new connection | `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY` on a new connection |
+| Write of rows | delete the rows with the same stream and time, then insert | `COPY` into a temporary table, then insert with `ON CONFLICT` |
+| SQL parameters | `?` | `%s` |
 
-TimescaleDB's hypertable is the normal `timeseries` table. It omits
-TimescaleDB's default timestamp index and uses a unique `(ref_id, ts)` index
-for reads and idempotent upserts. Compression segments by `ref_id`, orders
-each segment by descending timestamp, and has a seven-day compression policy.
-Materialization needs no separate hypertable or continuous aggregate.
+With TimescaleDB the outputs are in the same hypertable as all other values.
+Its chunks are compressed by stream after seven days.
 
-## Operational notes
+## Server settings
 
-Run one server process for each embedded Oxigraph graph store. That process
-owns the graph files and schedules app execution; the timeseries backend stores
-the readings and durable processing state separately. On startup, the runtime
-creates the materialization tables if needed and restores deployments,
-frontiers, work cursors, and query-context fingerprints.
+These keys of the `[server]` table of `acquirium.toml` control the loop:
 
-The `[server]` settings control execution and diagnostics.
-`materialization_poll_seconds` (default `0.25`) sets how often an idle runtime
-checks for work. `materialization_workers` (default `2`) limits concurrent
-execution, and `materialization_error_log_seconds` (default `30`) limits how
-frequently repeated failures are logged. A failing deployment does not prevent
-ingestion or independent apps from progressing.
+| Key | Default | Meaning |
+|---|---|---|
+| `materialization_poll_seconds` | `0.25` | Wait between two rounds when there was no work |
+| `materialization_workers` | `2` | Largest number of `transform()` calls at the same time |
+| `materialization_error_log_seconds` | `30` | Shortest time between two log lines about failing apps |
 
-Apps must produce the same result for a given batch. The runtime can repeat
-uncommitted work, but it cannot undo external side effects performed by a
-transform. Each write to an existing `(stream, timestamp)` replaces the current
-value and advances its `last_revision`; previous values are not retained as a
-version history. Incremental output removals retain revisioned tombstones so
-downstream calculations can detect them. Whole-stream replacement and its
-resulting rebuilds physically remove old rows and use stream reset markers.
+## Modules
 
-A persistent thread pool bounds the number of concurrent invocations. Finite
-work ranges are divided into roughly one-day output intervals, expanded to
-complete buckets and supplied with the declared input context. This limits the
-size of individual work items, but is not a fixed memory bound: memory use also
-depends on data density and context size. Apps using `lookback="all"` load their
-complete retained history.
-
-## Tests
-
-`tests/integration/test_materialization_store_contract.py` runs the same
-revision-frontier scenario against DuckDB and TimescaleDB: initial
-materialization, a correction, output visibility, revision progression, and
-exactly-once frontier advancement. The Timescale target creates a private
-schema so it cannot disturb the API integration server's database. It needs
-`ACQUIRIUM_TEST_PG_DSN`; without it the Timescale half is skipped.
-
-`tests/unit/test_incremental_materialization.py` is the unit-level contract:
-output identities and grouping, window construction, progress-key continuity,
-unit conversion, alignment, and DAG validation.
-
-The processing contract is checked across ingestion order, corrections, and
-recovery:
-
-- Together and split ingestion produce equal fixed-bucket and rolling results.
-- Late corrections repair old results without corrupting boundary context.
-- Empty replacement removes rows and propagates through an application chain.
-- Restart preserves progress and pending reprocessing.
-- Failed deployment leaves the active definition intact.
-- Failed transforms leave healthy branches runnable.
-- Worker capacity bounds transformations and loaded batches.
-- PostgreSQL batch reads share a Repeatable Read snapshot.
-
-## Implementation boundaries
-
-| Module | Responsibility |
+| Module | Content |
 |---|---|
-| `Materialization/models.py` | App declarations, stream sets, windows, resolved bindings, DAG validation, and dataframe helpers |
-| `Materialization/planner.py` | Deployment serialization and query compilation into bindings |
-| `Materialization/revision_store.py` | Snapshot reads, durable work cursors, and atomic replacement/progress writes |
-| `Materialization/scheduler.py` | Bounded execution and per-binding failure tracking |
-| `Materialization/runtime.py` | Deployment activation, graph refresh, scheduling cadence, and status |
-| `Materialization/checks.py` | Shared dry-run result rendering and window clipping |
-| `Materialization/local.py` | Caller-process checks using data fetched from the server |
-| `Materialization/worker.py` | Importing and verifying application entrypoints |
-
-The top-level `acquirium` package exports the authoring API. Embedders can
-import runtime types from `acquirium.Materialization`; implementation modules
-import their dependencies directly.
+| `models.py` | `App`, `OutputSpec`, `StreamSet`, `InputBatch`, `Binding`, the ordering of bindings, `align` |
+| `planner.py` | `Deployment`, and the compilation of deployments into bindings |
+| `revision_store.py` | Reading of batches, the work table, the write transaction |
+| `scheduler.py` | The thread pool and the errors per binding |
+| `runtime.py` | `Materializer`: deploy, remove, reprocess, check, the scheduling round and the status |
+| `worker.py` | Import of the app module and the digest check |
+| `local.py`, `checks.py` | `acquirium app check --local` and the shape of a check result |

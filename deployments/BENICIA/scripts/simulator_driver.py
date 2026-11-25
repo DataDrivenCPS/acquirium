@@ -6,7 +6,7 @@ fresh value for every model property each tick and pushes them straight to
 Acquirium. No broker, no external process — ``acquirium server`` runs it as a
 Ray actor.
 
-Each generated stream is registered with its ontology point URI
+Each generated stream is registered with its ontology property URI
 (``<namespace><property-local-name>``, e.g. ``urn:benicia/effluent-pump-out-ph``), so
 the rows land on the model's points and meaning-first queries reach them. The
 model's s223/QUDT graph is inserted on setup so those points carry their unit
@@ -72,19 +72,19 @@ class BeniciaSimulatorDriver(PollingIngestDriver):
         self._states = {}
         self._enums = []
         for prop in self._properties:
-            ref_name = local_name(prop)
+            stream_name = local_name(prop)
             if is_enumeration(graph, prop):
-                self._enums.append(ref_name)
+                self._enums.append(stream_name)
             else:
-                self._states[ref_name] = build_state_for_property(
+                self._states[stream_name] = build_state_for_property(
                     self._rng, graph, prop, step_frac=step_frac
                 )
 
-        # Register every stream with its point URI so rows link to the model.
+        # Register every stream with its property URI so rows link to the model.
         for prop in self._properties:
             self.declare(
                 local_name(prop),
-                point_uri=str(prop),
+                property_uri=str(prop),
                 value_kind="numeric",
             )
 
@@ -96,18 +96,18 @@ class BeniciaSimulatorDriver(PollingIngestDriver):
 
     def collect(self) -> pl.DataFrame:
         ts = datetime.now(timezone.utc)
-        ref_names: list[str] = []
+        stream_names: list[str] = []
         values: list[float] = []
-        for ref_name, state in self._states.items():
-            ref_names.append(ref_name)
+        for stream_name, state in self._states.items():
+            stream_names.append(stream_name)
             values.append(state.next_value(self._rng, self._excursion_rate))
-        for ref_name in self._enums:
-            ref_names.append(ref_name)
+        for stream_name in self._enums:
+            stream_names.append(stream_name)
             values.append(float(self._rng.choice([0, 1])))
 
         logger.debug("benicia simulator: generated %d values at %s", len(values), ts.isoformat())
         return pl.DataFrame({
-            "ts": [ts] * len(ref_names),
-            "ref_name": ref_names,
+            "ts": [ts] * len(stream_names),
+            "stream_name": stream_names,
             "value": values,
         })
