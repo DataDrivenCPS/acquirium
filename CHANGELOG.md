@@ -10,8 +10,26 @@ change in any release.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-25
+
+### Added
+
+- `Acquirium` and `AcquiriumClient` take `token=`. The token is sent as
+  `Authorization: Bearer <token>` on every request, for a server that sits
+  behind a proxy checking access tokens. Acquirium itself does not check
+  tokens. A token sent over plain `http` to a host other than the local
+  machine raises a warning.
+- `server_url` accepts a full address such as `https://example.org/api`, for
+  a server reached under a path or through a proxy. `server_port` and
+  `use_ssl` are ignored for a full address. A host name with `server_port`
+  works as before.
+
 ### Fixed
 
+- `insert_metadata()` no longer fails with "unknown node(s), not in any data
+  graph" on a node written a moment ago, such as a run that was just started.
+  The server updates its query view in the background after a write, and the
+  check for the node read the view before the update finished.
 - `insert_metadata()` refuses to change a Study variable's unit, quantity kind,
   medium or substance, and says to declare a new variable. A medium change was
   accepted but never reached the variable's run streams; the others failed with
@@ -889,7 +907,8 @@ change in any release.
 - Text matcher backed by FastEmbed with QUDT and graph indexes.
 - Grafana dashboard helpers.
 
-[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a9...v0.4.0
 [0.4.0a9]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a8...v0.4.0a9
 [0.4.0a8]: https://github.com/DataDrivenCPS/acquirium/compare/v0.4.0a7...v0.4.0a8

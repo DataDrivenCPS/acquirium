@@ -5,7 +5,7 @@ import re
 import requests
 from requests import HTTPError
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 import warnings
 import polars as pl
 import pyarrow.ipc as ipc
@@ -113,6 +113,29 @@ def _split_stream_metadata(stream: dict) -> tuple[dict, dict]:
     return merged, rest
 
 
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def _base_url(server_url: str, server_port: int, use_ssl: bool) -> str:
+    """The address every request path is appended to, without a trailing slash."""
+    if "://" not in server_url:
+        return f"{'https' if use_ssl else 'http'}://{server_url}:{server_port}"
+    url = urlsplit(server_url)
+    if (
+        url.scheme not in {"http", "https"}
+        or not url.hostname
+        or url.username
+        or url.password
+        or url.query
+        or url.fragment
+    ):
+        raise ValueError(
+            "server_url must be a host name or an http(s) address without "
+            f"credentials, query or fragment, got {server_url!r}"
+        )
+    return server_url.rstrip("/")
+
+
 @accepts_old_names
 class AcquiriumClient:
     # 127.0.0.1 rather than "localhost": the server listens on IPv4 only, and
@@ -121,12 +144,28 @@ class AcquiriumClient:
     def __init__(self,
                  server_url: str = "127.0.0.1",
                  server_port: int = 8000,
-                 use_ssl: bool = False):
-        self.base_url = f"{'https' if use_ssl else 'http'}://{server_url}:{server_port}"
+                 use_ssl: bool = False,
+                 token: str | None = None):
+        """``server_url`` is a host name, or a full address such as
+        ``https://example.org/api`` for a server behind a reverse proxy. A full
+        address carries its own scheme, port and path, so ``server_port`` and
+        ``use_ssl`` are ignored. ``token`` is sent with every request as
+        ``Authorization: Bearer <token>``.
+        """
+        self.base_url = _base_url(server_url, server_port, use_ssl)
         # One Session per client so HTTP keep-alive reuses the TCP connection.
         # Bare requests.get/post open a new connection per call, which paid the
         # connect cost (and the ::1 miss above) on every request.
         self._http = requests.Session()
+        if token:
+            host = urlsplit(self.base_url).hostname or ""
+            if self.base_url.startswith("http://") and host not in _LOOPBACK_HOSTS:
+                warnings.warn(
+                    f"The token is sent unencrypted to {self.base_url}. "
+                    "Use an https address.",
+                    stacklevel=3,
+                )
+            self._http.headers["Authorization"] = f"Bearer {token}"
         self._namespaces_cache: dict[str, str] | None = None
 
     @property
@@ -1196,13 +1235,17 @@ class AcquiriumClient:
         hits = self.resolve({"v": (text, kind)}, min_score=RESOLVE_MIN_SCORE) or {}
         return hits.get("v")
 
-    def node_roles(self, uris: Iterable[str]) -> dict[str, str]:
+    def node_roles(self, uris: Iterable[str], *, wait_for_fresh: bool = False) -> dict[str, str]:
         """``{uri: "data" | "entity"}`` for the nodes the data graphs know.
 
         A node is a data node when it carries an external reference, the
         same rule the explore layer's measurement nodes follow. A URI the
         graphs do not mention (as subject or object) is left out, and so is
         one only user attributes mention.
+
+        The server brings its query view up to date in the background after
+        a write, so a node written a moment ago can be absent. Pass
+        ``wait_for_fresh=True`` to wait for the view to include every write.
         """
         uris = list(dict.fromkeys(str(u) for u in uris))
         roles: dict[str, str] = {}
@@ -1217,7 +1260,7 @@ class AcquiriumClient:
                 f'  UNION {{ ?x ?q ?s . FILTER(!STRSTARTS(STR(?q), "{ATTR_NS}")) }}\n'
                 f"  OPTIONAL {{ ?s <{HAS_EXTERNAL_REFERENCE}> ?ref . }}\n}}"
             )
-            res = self.sparql_query(sparql, include_dependencies=False)
+            res = self.sparql_query(sparql, include_dependencies=False, wait_for_fresh=wait_for_fresh)
             cols = res.get("columns", [])
             si = cols.index("s") if "s" in cols else 0
             ri = cols.index("ref") if "ref" in cols else 1
@@ -1250,6 +1293,10 @@ class AcquiriumClient:
             return {"ok": True, "nodes": 0}
         roles = self.node_roles(subjects)
         missing = sorted(set(subjects) - set(roles))
+        if missing:
+            # a node written a moment ago is not in the query view yet
+            roles.update(self.node_roles(missing, wait_for_fresh=True))
+            missing = sorted(set(subjects) - set(roles))
         if missing:
             raise ValueError(f"unknown node(s), not in any data graph: {missing}")
         self._check_study_variable_terms(subjects)

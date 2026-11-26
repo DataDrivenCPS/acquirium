@@ -58,6 +58,51 @@ class TestClientInit:
     def test_custom_port(self):
         assert AcquiriumClient(server_url="myhost", server_port=9999).base_url == "http://myhost:9999"
 
+    def test_full_address_keeps_its_path(self):
+        c = AcquiriumClient(server_url="https://example.com/api/", server_port=8000)
+        assert c.base_url == "https://example.com/api"
+
+    def test_full_address_keeps_its_port(self):
+        assert AcquiriumClient(server_url="http://127.0.0.1:9000").base_url == "http://127.0.0.1:9000"
+
+    @pytest.mark.parametrize("address", [
+        "ftp://example.com", "https://user:pw@example.com", "https://example.com/api?x=1",
+    ])
+    def test_full_address_rejects_what_it_cannot_use(self, address):
+        with pytest.raises(ValueError, match="server_url"):
+            AcquiriumClient(server_url=address)
+
+    def test_no_token_sends_no_authorization(self):
+        assert "Authorization" not in AcquiriumClient()._http.headers
+
+    def test_token_is_sent_as_bearer(self):
+        c = AcquiriumClient(server_url="https://example.com/api", token="s3cret")
+        assert c._http.headers["Authorization"] == "Bearer s3cret"
+
+    def test_token_reaches_the_request(self):
+        c = AcquiriumClient(server_url="https://example.com/api", token="s3cret")
+        with patch.object(requests.Session, "send") as send:
+            send.return_value.status_code = 200
+            c.health()
+        sent = send.call_args.args[0]
+        assert sent.url == "https://example.com/api/health"
+        assert sent.headers["Authorization"] == "Bearer s3cret"
+
+    def test_token_over_plain_http_warns(self):
+        with pytest.warns(UserWarning, match="unencrypted"):
+            AcquiriumClient(server_url="example.com", server_port=80, token="s3cret")
+
+    def test_token_over_plain_http_to_loopback_is_quiet(self):
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            AcquiriumClient(token="s3cret")
+
+    def test_acquirium_passes_the_token_on(self):
+        aq = Acquirium(server_url="https://example.com/api", token="s3cret", health_timeout=None)
+        assert aq.address == "https://example.com/api"
+        assert aq.client._http.headers["Authorization"] == "Bearer s3cret"
+
 
 def test_missing_graph_file_raises(offline):
     with pytest.raises(FileNotFoundError):
