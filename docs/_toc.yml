@@ -22,6 +22,7 @@ chapters:
   - file: how-to/explore-a-model.md
   - file: how-to/debug-an-empty-query.md
   - file: how-to/query-cookbook.md
+  - file: how-to/access-a-shared-server.md
   - file: how-to/calculate-derived-streams.md
   - file: how-to/check-deploy-apps.md
   - file: how-to/record-a-whole-model.md

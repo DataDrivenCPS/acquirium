@@ -33,7 +33,7 @@ Calling `init` again in the same process with the same options returns the same 
 
 - `config` (`str` or `Path`, optional): path of a configuration file. Paths inside the file are relative to the file's directory. See the [server configuration](../server/configuration.md).
 - `data_dir` (`str` or `Path`, optional): directory that holds the data. It is created when missing. When given, `acquirium.toml` in the current directory is not read and the defaults are used. It cannot be combined with `config`. Set `data_dir` in the configuration file instead.
-- `address` (`str`, optional): URL of a server that is managed separately, such as `"http://10.0.0.5:8000"`. `init` connects to it and does not start anything. It cannot be combined with `config`, `data_dir` or `exact_only`.
+- `address` (`str`, optional): URL of a server that is managed separately, such as `"http://10.0.0.5:8000"`. `init` connects to it and does not start anything. It cannot be combined with `config`, `data_dir` or `exact_only`. Note that `init` takes no access token and no path in the address. For a server that requires a token, use [`Acquirium`](#acquirium).
 - `exact_only` (`bool`, optional): when `True`, text such as `"gal/min"` is matched to a URI only by exact lookup, and no language model is loaded. When `False`, the server also matches by similarity. Defaults to the value in the configuration, which is `True` unless the file sets it.
 - `timeout` (`float`, default `600.0`): seconds to wait for the server to be ready. Note that a server started with `exact_only=False` builds its text matching indexes on first start. This can take several minutes, so the wait is raised to at least one hour in that case.
 
@@ -113,25 +113,33 @@ requests.exceptions.ConnectionError: HTTPConnectionPool(host='127.0.0.1', port=5
 
 ```python
 Acquirium(server_url='127.0.0.1', server_port=8000, use_ssl=False,
-          insert_batch_rows=50000, health_timeout=60.0)
+          insert_batch_rows=50000, health_timeout=60.0, token=None)
 ```
 
-Connects to a server that is already running. It does not start a server and `shutdown()` does not affect it. Use it when the server is started with `acquirium server`, or inside code that receives the host and port separately.
+Connects to a server that is already running. It does not start a server and `shutdown()` does not affect it. Use it when the server is started with `acquirium server`, inside code that receives the host and port separately, or for a server that someone else runs and that requires an access token. See [Access data on a shared server](../../how-to/access-a-shared-server.md).
 
 The constructor asks the server whether it is up and retries until `health_timeout` passes.
 
+Acquirium does not check tokens itself. `token` is for a server behind a reverse proxy that does. A token the proxy refuses fails the check above, so the constructor raises `ConnectionError` after `health_timeout`, with `401` in the message.
+
 **Parameters**
 
-- `server_url` (`str`, default `'127.0.0.1'`): host name or IP address of the server, without `http://` and without a port.
-- `server_port` (`int`, default `8000`): port of the server.
-- `use_ssl` (`bool`, default `False`): connect with `https` instead of `http`.
+- `server_url` (`str`, default `'127.0.0.1'`): host name or IP address of the server, without `http://` and without a port. It can also be a full address such as `"https://plant.example.org/api"`, which may contain a port and a path. Requests are sent under that path.
+- `server_port` (`int`, default `8000`): port of the server. Ignored when `server_url` is a full address.
+- `use_ssl` (`bool`, default `False`): connect with `https` instead of `http`. Ignored when `server_url` is a full address.
 - `insert_batch_rows` (`int`, default `50000`): largest number of rows [`insert_timeseries_batch`](timeseries.md#acquiriuminsert_timeseries_batch) sends in one request.
 - `health_timeout` (`float` or `None`, default `60.0`): seconds to wait for the server to answer. `None` or `0` skips the check.
+- `token` (`str`, optional): access token of the server. It is sent with every request as the header `Authorization: Bearer <token>`.
 
 **Raises**
 
 - `ValueError`: when `insert_batch_rows` is zero or negative.
-- `ConnectionError`: when the server does not answer within `health_timeout` seconds.
+- `ValueError`: when `server_url` is a full address that is not `http` or `https`, or it contains a user name, a password, a query or a fragment.
+- `ConnectionError`: when the server does not answer within `health_timeout` seconds, or it refuses the token.
+
+**Warns**
+
+- `UserWarning`: when `token` is given and the address is `http` to a host other than `127.0.0.1`, `localhost` or `::1`. The token is sent unencrypted in that case.
 
 **Example**
 
@@ -143,6 +151,15 @@ acq = Acquirium(server_port=1, health_timeout=1)
 
 ```text
 ConnectionError: Acquirium server at http://127.0.0.1:1 did not answer /health within 1s (last error: ...). Is the server running? Start it with: acquirium server --config <config.toml>
+```
+
+To connect to a server that requires a token:
+
+```python
+import os
+from acquirium import Acquirium
+
+acq = Acquirium("https://plant.example.org/api", token=os.environ["ACQUIRIUM_TOKEN"])
 ```
 
 ## `Acquirium.address`

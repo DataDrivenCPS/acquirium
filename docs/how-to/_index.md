@@ -11,6 +11,10 @@ The guides assume that you followed the [tutorial](../tutorials/_index.md), and 
 - [Debug an empty or unexpected query result](debug-an-empty-query.md): the common causes, each with a way to check it.
 - [Query cookbook](query-cookbook.md): queries for common questions about a plant.
 
+## Shared servers
+
+- [Access data on a shared server](access-a-shared-server.md): connect with an address and an access token, and read data from a server that someone else runs.
+
 ## Apps
 
 - [Calculate derived streams](calculate-derived-streams.md): apps with several inputs, parameters, and apps that read other apps.

@@ -11,6 +11,10 @@ Timestamps are ISO 8601 strings (e.g. `2026-01-01T00:00:00Z`). Errors return
 HTTP 400 with a JSON body `{"detail": "<message>"}`. Unknown drivers, apps,
 and experiment runs return 404.
 
+The server does not check who sends a request. To require an access token,
+place a reverse proxy in front of it. The Python client sends its `token` as
+the header `Authorization: Bearer <token>`.
+
 ---
 
 ## System
