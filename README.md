@@ -14,11 +14,6 @@ uv sync --locked --extra mqtt
 uv run acquirium server --config acquirium.toml
 ```
 
-Escapement is pinned to a Git revision and currently fetched over SSH. Installation
-requires GitHub access and a Rust/C++ toolchain to build the native extension.
-CI uses the `ESCAPEMENT_SSH_KEY` repository secret for that source access.
-The checkout-local `escapement` symlink is not needed by the installed package.
-
 A script can own a shared local server instead:
 
 ```python

@@ -37,7 +37,7 @@ dependencies = [
     # The experiment ledger runs on DuckDB or PostgreSQL.
     "duckdb>=2.0.0",
     "psycopg[binary]>=3.3.1",
-    "escapement-db @ git+ssh://git@github.com/gtfierro/escapement.git@25f80f12d5b2d21987e16183d2289789ac15f573#subdirectory=crates/python",
+    "escapement-db~=0.1.2",
     "typer>=0.12.0",
     "fastembed>=0.4.0",
     "filelock>=3.15",
@@ -90,9 +90,6 @@ build-backend = "hatchling.build"
 # The `_ontologies` package (and its .ttl data) ships automatically as
 # part of `packages`; do NOT also `force-include` it or every file ends
 # up twice in the wheel ("Duplicate filename in local headers" on upload).
-[tool.hatch.metadata]
-allow-direct-references = true
-
 [tool.hatch.build.targets.wheel]
 packages = ["src/acquirium"]
 

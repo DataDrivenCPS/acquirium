@@ -53,14 +53,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Set up Rust for Escapement
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Authenticate the pinned Escapement source
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.ESCAPEMENT_SSH_KEY }}
-
       - name: Install UV
         uses: astral-sh/setup-uv@v5
         with:
@@ -133,14 +125,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
-
-      - name: Set up Rust for Escapement
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Authenticate the pinned Escapement source
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.ESCAPEMENT_SSH_KEY }}
 
       - name: Install UV
         uses: astral-sh/setup-uv@v5

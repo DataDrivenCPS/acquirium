@@ -97,7 +97,7 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "duckdb", specifier = ">=2.0.0" },
-    { name = "escapement-db", git = "ssh://git@github.com/gtfierro/escapement.git?subdirectory=crates%2Fpython&rev=25f80f12d5b2d21987e16183d2289789ac15f573" },
+    { name = "escapement-db", specifier = "~=0.1.2" },
     { name = "fastapi", specifier = ">=0.125.0" },
     { name = "fastembed", specifier = ">=0.4.0" },
     { name = "fastexcel", specifier = ">=0.17.2" },
@@ -797,11 +797,22 @@ wheels = [
 
 [[package]]
 name = "escapement-db"
-version = "0.1.0"
-source = { git = "ssh://git@github.com/gtfierro/escapement.git?subdirectory=crates%2Fpython&rev=25f80f12d5b2d21987e16183d2289789ac15f573#25f80f12d5b2d21987e16183d2289789ac15f573" }
+version = "0.1.2"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "polars" },
     { name = "pyarrow" },
+    { name = "tzdata" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/68/02/a6181495c4e79cc3ebf86249a57e317e044a131bfa4bd13e1e3921361418/escapement_db-0.1.2.tar.gz", hash = "sha256:fd9917ee771810e61070f7d52fd92b7c07bf1f83a13be881815e19ddebacde71", size = 433337, upload-time = "2026-11-25T20:44:36.431Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/dc/86/916ad52cfb10deb8937a0d481ae53179211537eea3d44f21f9274de98af9/escapement_db-0.1.2-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:ffd0cffe807cb4dab0161a517cc4c244cd1265711c2e2abdce1fd6fb63c2074b", size = 17664996, upload-time = "2026-11-25T20:44:19.414Z" },
+    { url = "https://files.pythonhosted.org/packages/87/a0/54ecd3530e445e2340175924e20139e4bad12b23231622f0ef15838b4a5f/escapement_db-0.1.2-cp311-abi3-macosx_11_0_x86_64.whl", hash = "sha256:05f93b1669b0b914fb06de8c46a972dfdc663ab7d7bd050b14a5709fe6db2037", size = 19511950, upload-time = "2026-11-25T20:44:21.918Z" },
+    { url = "https://files.pythonhosted.org/packages/43/1d/f77952e7143b87ec26b2e17492b2f17274421f2700a5a91595b45a31ba9d/escapement_db-0.1.2-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:d56a423688dbd1288b652a5f8c6616da4e1e758c3ab1b89d228142168da9bd7d", size = 20221030, upload-time = "2026-11-25T20:44:24.34Z" },
+    { url = "https://files.pythonhosted.org/packages/f0/f4/7440994260c5e546670483d7a66a52a471021b3bb7219ecd98020c9f10f1/escapement_db-0.1.2-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:1f413c546000240e2fb1a707b6195bb7c2cc76c879f27093ce1ac5fd18b9c023", size = 22793336, upload-time = "2026-11-25T20:44:26.538Z" },
+    { url = "https://files.pythonhosted.org/packages/6a/80/9da637c74be9286ec1f99d77727a69c79484789175302047ea54a3c706e9/escapement_db-0.1.2-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:a0cb0042b8aed96dece8eaaa950eb3f8823a93bd8362c4e24dacdc4188d94f8a", size = 22658167, upload-time = "2026-11-25T20:44:29.651Z" },
+    { url = "https://files.pythonhosted.org/packages/65/dc/7efdfe807ce366aebd65f71489dd1377ce8c65682094c441aec90a8852b5/escapement_db-0.1.2-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:1dcafe5fc5dbf469cc5c9a5fda3027f7c9d69c77f6dd2f169e9edc582a766292", size = 24525063, upload-time = "2026-11-25T20:44:32Z" },
+    { url = "https://files.pythonhosted.org/packages/1b/e0/47538020c2f894a78c6259d4a1133bf638ace07e78e89813dd7e31baf48a/escapement_db-0.1.2-cp311-abi3-win_amd64.whl", hash = "sha256:b220ec28516f60be637f3acb7d5be3274fd7b99ab5615b2da1a7effd57c89a90", size = 16276783, upload-time = "2026-11-25T20:44:34.447Z" },
 ]
 
 [[package]]
