@@ -23,6 +23,7 @@ chapters:
   - file: how-to/explore-a-model.md
   - file: how-to/debug-an-empty-query.md
   - file: how-to/query-cookbook.md
+  - file: how-to/access-a-shared-server.md
   - file: how-to/write-soft-sensors.md
   - file: how-to/chain-cleaning-apps.md
   - file: how-to/clean-data-with-multiple-outputs.md

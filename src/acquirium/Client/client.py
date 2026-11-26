@@ -8,7 +8,7 @@ import warnings
 import requests
 from requests import HTTPError
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 import polars as pl
 import pyarrow.ipc as ipc
 from acquirium.internals.models import (
@@ -161,6 +161,29 @@ def _split_stream_metadata(stream: dict) -> tuple[dict, dict]:
     return merged, rest
 
 
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def _base_url(server_url: str, server_port: int, use_ssl: bool) -> str:
+    """The address every request path is appended to, without a trailing slash."""
+    if "://" not in server_url:
+        return f"{'https' if use_ssl else 'http'}://{server_url}:{server_port}"
+    url = urlsplit(server_url)
+    if (
+        url.scheme not in {"http", "https"}
+        or not url.hostname
+        or url.username
+        or url.password
+        or url.query
+        or url.fragment
+    ):
+        raise ValueError(
+            "server_url must be a host name or an http(s) address without "
+            f"credentials, query or fragment, got {server_url!r}"
+        )
+    return server_url.rstrip("/")
+
+
 @accepts_old_names
 class AcquiriumClient:
     # 127.0.0.1 rather than "localhost": the server listens on IPv4 only, and
@@ -169,12 +192,28 @@ class AcquiriumClient:
     def __init__(self,
                  server_url: str = "127.0.0.1",
                  server_port: int = 8000,
-                 use_ssl: bool = False):
-        self.base_url = f"{'https' if use_ssl else 'http'}://{server_url}:{server_port}"
+                 use_ssl: bool = False,
+                 token: str | None = None):
+        """``server_url`` is a host name, or a full address such as
+        ``https://example.org/api`` for a server behind a reverse proxy. A full
+        address carries its own scheme, port and path, so ``server_port`` and
+        ``use_ssl`` are ignored. ``token`` is sent with every request as
+        ``Authorization: Bearer <token>``.
+        """
+        self.base_url = _base_url(server_url, server_port, use_ssl)
         # One Session per client so HTTP keep-alive reuses the TCP connection.
         # Bare requests.get/post open a new connection per call, which paid the
         # connect cost (and the ::1 miss above) on every request.
         self._http = requests.Session()
+        if token:
+            host = urlsplit(self.base_url).hostname or ""
+            if self.base_url.startswith("http://") and host not in _LOOPBACK_HOSTS:
+                warnings.warn(
+                    f"The token is sent unencrypted to {self.base_url}. "
+                    "Use an https address.",
+                    stacklevel=3,
+                )
+            self._http.headers["Authorization"] = f"Bearer {token}"
         self._namespaces_cache: dict[str, str] | None = None
 
     @property
@@ -1261,13 +1300,17 @@ class AcquiriumClient:
         hits = self.resolve({"v": (text, kind)}, min_score=RESOLVE_MIN_SCORE) or {}
         return hits.get("v")
 
-    def node_roles(self, uris: Iterable[str]) -> dict[str, str]:
+    def node_roles(self, uris: Iterable[str], *, wait_for_fresh: bool = False) -> dict[str, str]:
         """``{uri: "data" | "entity"}`` for the nodes the data graphs know.
 
         A node is a data node when it carries an external reference, the
         same rule the explore layer's measurement nodes follow. A URI the
         graphs do not mention (as subject or object) is left out, and so is
         one only user attributes mention.
+
+        The server brings its query view up to date in the background after
+        a write, so a node written a moment ago can be absent. Pass
+        ``wait_for_fresh=True`` to wait for the view to include every write.
         """
         uris = list(dict.fromkeys(str(u) for u in uris))
         roles: dict[str, str] = {}
@@ -1282,7 +1325,7 @@ class AcquiriumClient:
                 f'  UNION {{ ?x ?q ?s . FILTER(!STRSTARTS(STR(?q), "{ATTR_NS}")) }}\n'
                 f"  OPTIONAL {{ ?s <{HAS_EXTERNAL_REFERENCE}> ?ref . }}\n}}"
             )
-            res = self.sparql_query(sparql, include_dependencies=False)
+            res = self.sparql_query(sparql, include_dependencies=False, wait_for_fresh=wait_for_fresh)
             cols = res.get("columns", [])
             si = cols.index("s") if "s" in cols else 0
             ri = cols.index("ref") if "ref" in cols else 1
@@ -1316,11 +1359,43 @@ class AcquiriumClient:
         roles = self.node_roles(subjects)
         missing = sorted(set(subjects) - set(roles))
         if missing:
+            # a node written a moment ago is not in the query view yet
+            roles.update(self.node_roles(missing, wait_for_fresh=True))
+            missing = sorted(set(subjects) - set(roles))
+        if missing:
             raise ValueError(f"unknown node(s), not in any data graph: {missing}")
+        self._check_study_variable_terms(subjects)
         writes = self._plan_metadata(subjects, roles)
         for owner, nodes in self._settle_builtins(subjects, roles, writes).items():
             self.sparql_update(_builtin_removal(nodes), source_id=owner)
         return {**self._write_metadata(writes), "nodes": len(writes)}
+
+    def _check_study_variable_terms(self, records: Mapping[str, Mapping[str, Any]]) -> None:
+        """Raise if a write sets a ``POINT_FIELD_KINDS`` field on a Study
+        variable. Run streams copy these fields at creation, so they are fixed.
+
+        The nodes setting one are looked up with::
+
+            SELECT ?s WHERE {
+              VALUES ?s { <node-1> <node-2> }
+              ?s a <urn:acquirium:experiment:Variable>
+            }
+        """
+        from acquirium.ExperimentMetadata import EXPERIMENT
+        nodes = [uri for uri, values in records.items()
+                 if any(term in values for term in POINT_FIELD_KINDS)]
+        if not nodes:
+            return
+        listed = " ".join(f"<{uri}>" for uri in nodes)
+        sparql = f"""SELECT ?s WHERE {{
+  VALUES ?s {{ {listed} }}
+  ?s a <{EXPERIMENT.Variable}>
+}}"""
+        rows = self.sparql_query(sparql, include_dependencies=False)["rows"]
+        if rows:
+            variables = sorted(str(row[0]) for row in rows)
+            raise ValueError(f"cannot change the unit, quantity kind, medium or substance of Study "
+                             f"variable(s) {variables}; declare a new variable instead")
 
     def asserted_values(self, subjects: Iterable[str]) -> dict[str, list[list[str]]]:
         """``{node: [[predicate, value, source_id], ...]}``: what the plant

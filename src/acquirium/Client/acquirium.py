@@ -47,8 +47,15 @@ class Acquirium:
             use_ssl: bool = False,
             insert_batch_rows: int = 50_000,
             health_timeout: float | None = 60.0,
+            token: str | None = None,
         ):
         """Connect to an Acquirium server.
+
+        ``server_url`` is a host name, or a full address such as
+        ``https://example.org/api`` for a server behind a reverse proxy. A full
+        address carries its own scheme, port and path, so ``server_port`` and
+        ``use_ssl`` are ignored. ``token`` is the access token of a server
+        that requires one.
 
         The constructor waits up to ``health_timeout`` seconds (default 60)
         for the server's ``/health`` to answer, retrying while it boots, and
@@ -62,6 +69,7 @@ class Acquirium:
             server_url=server_url,
             server_port=server_port,
             use_ssl=use_ssl,
+            token=token,
         )
         # Study owns user-facing declarations; the raw HTTP client remains
         # available below for ordinary Acquirium APIs.

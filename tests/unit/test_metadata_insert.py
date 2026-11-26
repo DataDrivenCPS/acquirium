@@ -229,7 +229,9 @@ def make_client(roles_rows, resolved=None):
     client = AcquiriumClient.__new__(AcquiriumClient)
     client.base_url = "http://test:8000"
     client._namespaces_cache = {"x": "urn:x#"}
-    client.sparql_query = MagicMock(return_value={"columns": ["s", "ref"], "rows": roles_rows})
+    # No test node is a Study variable.
+    client.sparql_query = MagicMock(side_effect=lambda sparql, **_: {
+        "columns": ["s", "ref"], "rows": [] if "experiment:Variable" in sparql else roles_rows})
     client.sparql_update = MagicMock(return_value={"ok": True, "message": "update applied"})
     client.resolve = MagicMock(side_effect=lambda record, min_score=0.4: {
         k: (resolved or {}).get(t) for k, (t, kind) in record.items()})
@@ -249,7 +251,7 @@ class TestClientInsert:
         assert client.node_roles([NODE, "urn:x#e", "urn:x#missing"]) == {NODE: "data", "urn:x#e": "entity"}
         sparql = client.sparql_query.call_args[0][0]
         assert f"<{HAS_EXTERNAL_REFERENCE}>" in sparql and f"<{NODE}>" in sparql
-        assert client.sparql_query.call_args[1] == {"include_dependencies": False}
+        assert client.sparql_query.call_args[1] == {"include_dependencies": False, "wait_for_fresh": False}
 
     def test_insert_builds_update_in_metadata_graph(self):
         client = make_client([[NODE, "urn:x#ref"]], resolved={"mg/L": UNIT})
@@ -304,6 +306,17 @@ class TestClientInsert:
         with pytest.raises(ValueError, match="unknown node"):
             client.insert_metadata({NODE: {"a": 1}})
         client.sparql_update.assert_not_called()
+
+    def test_node_missing_from_the_query_view_is_looked_up_again(self):
+        """A node written a moment ago shows up once the lookup waits for the view."""
+        client = make_client([])
+        client.sparql_query.side_effect = lambda sparql, **kwargs: {
+            "columns": ["s", "ref"], "rows": [[NODE, None]] if kwargs.get("wait_for_fresh") else []}
+        client.insert_metadata({NODE: {"a": 1}})
+        waited = [call.kwargs["wait_for_fresh"] for call in client.sparql_query.call_args_list
+                  if "VALUES ?s" in call.args[0]]
+        assert waited == [False, True]
+        client.sparql_update.assert_called_once()
 
     def test_empty_records_is_a_noop(self):
         client = make_client([])
