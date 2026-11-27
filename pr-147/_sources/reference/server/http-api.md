@@ -23,7 +23,9 @@ the header `Authorization: Bearer <token>`.
 
 Returns `{"ok": true}` when the server is running.
 
-Note that the drivers and apps of the config file are started after this endpoint answers, so they may still be starting. [`GET /drivers/list`](#get-driverslist) lists the drivers and [`GET /materialization/dag`](#get-materializationdag) shows the state of the apps.
+Configured drivers and apps may still be starting when this endpoint answers.
+[`GET /drivers/list`](#get-driverslist) lists drivers, and
+[`GET /apps`](#apps) reports app status.
 
 ### `GET /graph_version`
 
@@ -61,7 +63,7 @@ Returns the current state of the semantic embedding indexes.
 `state` is one of `"idle"`, `"building"`, `"ready"`, or `"error"`.
 
 `semantic` is `false` when the server runs with
-[`exact_only`](configuration.md#exact-only-matching): both indexes still
+[`exact_only`](configuration.md): both indexes still
 build and report `"ready"`, but they answer exact matches only.
 
 ---
@@ -561,7 +563,7 @@ completing scheduled declaration upgrades. `unpublished` is an always-empty
 compatibility field. Delivery and document-read failures propagate; the server
 does not rebuild acknowledged metadata from SQL. Restore missing authoritative
 graphs with their matching backup. The Python interface synchronizes
-automatically. See [storage migration and recovery](storage-migrations.md).
+automatically. See [storage upgrades and backups](storage-migrations.md).
 
 ## Apps
 

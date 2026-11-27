@@ -311,7 +311,7 @@
 <li class="toctree-l3"><a class="reference internal" href="../reference/server/cli.html">Command line</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../reference/server/configuration.html">Server configuration</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../reference/server/http-api.html">HTTP API</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../reference/server/storage-migrations.html">Storage upgrades and recovery</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/server/storage-migrations.html">Storage upgrades and backups</a></li>
 </ul>
 </details></li>
 <li class="toctree-l2"><a class="reference internal" href="../reference/glossary.html">Glossary</a></li>
@@ -656,7 +656,7 @@ It is never edited, and it is built again when something changes.</p>
 <ul class="simple">
 <li><p>Only one rebuild runs at a time. Writes that arrive during a rebuild are covered by one more rebuild after it.</p></li>
 <li><p>A query that arrives during a rebuild reads the last complete query graph. It never sees a half-built one.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">insert_graph()</span></code>, <code class="docutils literal notranslate"><span class="pre">register_streams()</span></code> and <code class="docutils literal notranslate"><span class="pre">sparql_update()</span></code> return after the rebuild, because the server reads the streams from the new query graph (see <a class="reference internal" href="stream-lifecycle.html#registration-and-the-streams-table"><span class="std std-ref">The stream lifecycle</span></a>). A query that follows one of these calls sees the change.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">insert_graph()</span></code>, <code class="docutils literal notranslate"><span class="pre">register_streams()</span></code> and <code class="docutils literal notranslate"><span class="pre">sparql_update()</span></code> return after the rebuild, because the server reads the streams from the new query graph (see <a class="reference internal" href="stream-lifecycle.html#registration-and-storage"><span class="std std-ref">Registration and storage</span></a>). A query that follows one of these calls sees the change.</p></li>
 </ul>
 <p><code class="docutils literal notranslate"><span class="pre">graph_status()</span></code> shows the two versions:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">acq</span><span class="o">.</span><span class="n">graph_status</span><span class="p">())</span>

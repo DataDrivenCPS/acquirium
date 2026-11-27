@@ -66,7 +66,7 @@
     <link rel="icon" href="../../_static/logo-notext.png"/>
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
-    <link rel="next" title="Storage upgrades and recovery" href="storage-migrations.html" />
+    <link rel="next" title="Storage upgrades and backups" href="storage-migrations.html" />
     <link rel="prev" title="Server configuration" href="configuration.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
@@ -312,7 +312,7 @@
 <li class="toctree-l3"><a class="reference internal" href="cli.html">Command line</a></li>
 <li class="toctree-l3"><a class="reference internal" href="configuration.html">Server configuration</a></li>
 <li class="toctree-l3 current active"><a class="current reference internal" href="#">HTTP API</a></li>
-<li class="toctree-l3"><a class="reference internal" href="storage-migrations.html">Storage upgrades and recovery</a></li>
+<li class="toctree-l3"><a class="reference internal" href="storage-migrations.html">Storage upgrades and backups</a></li>
 </ul>
 </details></li>
 <li class="toctree-l2"><a class="reference internal" href="../glossary.html">Glossary</a></li>
@@ -601,7 +601,9 @@ the header <code class="docutils literal notranslate"><span class="pre">Authoriz
 <section id="get-health">
 <h3><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/health</span></code><a class="headerlink" href="#get-health" title="Link to this heading">#</a></h3>
 <p>Returns <code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:</span> <span class="pre">true}</span></code> when the server is running.</p>
-<p>Note that the drivers and apps of the config file are started after this endpoint answers, so they may still be starting. <a class="reference internal" href="#get-drivers-list"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/drivers/list</span></code></a> lists the drivers and <a class="reference internal" href="#get-materializationdag"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/materialization/dag</span></code></span></a> shows the state of the apps.</p>
+<p>Configured drivers and apps may still be starting when this endpoint answers.
+<a class="reference internal" href="#get-drivers-list"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/drivers/list</span></code></a> lists drivers, and
+<a class="reference internal" href="#apps"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/apps</span></code></a> reports app status.</p>
 </section>
 <section id="get-graph-version">
 <h3><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/graph_version</span></code><a class="headerlink" href="#get-graph-version" title="Link to this heading">#</a></h3>
@@ -634,7 +636,7 @@ inferred data should pass <code class="docutils literal notranslate"><span class
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">state</span></code> is one of <code class="docutils literal notranslate"><span class="pre">&quot;idle&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;building&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;ready&quot;</span></code>, or <code class="docutils literal notranslate"><span class="pre">&quot;error&quot;</span></code>.</p>
 <p><code class="docutils literal notranslate"><span class="pre">semantic</span></code> is <code class="docutils literal notranslate"><span class="pre">false</span></code> when the server runs with
-<a class="reference internal" href="configuration.html#exact-only-matching"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">exact_only</span></code></span></a>: both indexes still
+<a class="reference internal" href="configuration.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">exact_only</span></code></span></a>: both indexes still
 build and report <code class="docutils literal notranslate"><span class="pre">&quot;ready&quot;</span></code>, but they answer exact matches only.</p>
 </section>
 </section>
@@ -1302,7 +1304,7 @@ completing scheduled declaration upgrades. <code class="docutils literal notrans
 compatibility field. Delivery and document-read failures propagate; the server
 does not rebuild acknowledged metadata from SQL. Restore missing authoritative
 graphs with their matching backup. The Python interface synchronizes
-automatically. See <a class="reference internal" href="storage-migrations.html"><span class="std std-doc">storage migration and recovery</span></a>.</p>
+automatically. See <a class="reference internal" href="storage-migrations.html"><span class="std std-doc">storage upgrades and backups</span></a>.</p>
 </section>
 <section id="apps">
 <h2>Apps<a class="headerlink" href="#apps" title="Link to this heading">#</a></h2>
@@ -1372,7 +1374,7 @@ experiment metadata writes first. Unknown subjects have empty documents.</p>
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Storage upgrades and recovery</p>
+        <p class="prev-next-title">Storage upgrades and backups</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>

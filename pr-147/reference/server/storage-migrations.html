@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Storage upgrades and recovery &#8212; Acquirium Documentation</title>
+    <title>Storage upgrades and backups &#8212; Acquirium Documentation</title>
   
   
   
@@ -312,7 +312,7 @@
 <li class="toctree-l3"><a class="reference internal" href="cli.html">Command line</a></li>
 <li class="toctree-l3"><a class="reference internal" href="configuration.html">Server configuration</a></li>
 <li class="toctree-l3"><a class="reference internal" href="http-api.html">HTTP API</a></li>
-<li class="toctree-l3 current active"><a class="current reference internal" href="#">Storage upgrades and recovery</a></li>
+<li class="toctree-l3 current active"><a class="current reference internal" href="#">Storage upgrades and backups</a></li>
 </ul>
 </details></li>
 <li class="toctree-l2"><a class="reference internal" href="../glossary.html">Glossary</a></li>
@@ -516,7 +516,7 @@
               
 
 <div id="jb-print-docs-body" class="onlyprint">
-    <h1>Storage upgrades and recovery</h1>
+    <h1>Storage upgrades and backups</h1>
     <!-- Table of contents -->
     <div id="print-main-content">
         <div id="jb-print-toc">
@@ -526,9 +526,9 @@
             </div>
             <nav aria-label="Page">
                 <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#schema-upgrades">Schema upgrades</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#move-to-escapement">Move to Escapement</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#backup-and-restore">Backup and restore</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#ledger-upgrade-implementation">Ledger upgrade implementation</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#schema-upgrades">Schema upgrades</a></li>
 </ul>
             </nav>
         </div>
@@ -540,48 +540,76 @@
 <div id="searchbox"></div>
                 <article class="bd-article">
                   
-  <section id="storage-upgrades-and-recovery">
-<h1>Storage upgrades and recovery<a class="headerlink" href="#storage-upgrades-and-recovery" title="Link to this heading">#</a></h1>
-<p>The experiment ledger stores Studies, run state, observations, and artifact
-bytes in DuckDB or PostgreSQL. Its location is <code class="docutils literal notranslate"><span class="pre">experiments_path</span></code> in the
-<a class="reference internal" href="configuration.html"><span class="std std-doc">server configuration</span></a>. Recorded samples live in Escapement;
-descriptive metadata lives in the graph.</p>
-<section id="schema-upgrades">
-<h2>Schema upgrades<a class="headerlink" href="#schema-upgrades" title="Link to this heading">#</a></h2>
-<p>With <code class="docutils literal notranslate"><span class="pre">recreate=False</span></code>, the ledger upgrades its schema automatically when it
-opens. Applied versions are recorded in <code class="docutils literal notranslate"><span class="pre">schema_migrations</span></code>. Each upgrade runs
-in a transaction with its ledger entry; a failure rolls both back. Unknown
-versions or changed migration names raise an error.</p>
-<p>Version 1 creates the current experiment ledger schema. The logbook has its own migration history in the same SQL store.</p>
-<p>Start the Escapement version with a fresh data directory and new database locations.
-Startup rejects legacy DuckDB files in the data directory and legacy storage
-settings so an upgrade cannot silently serve an empty store. Keep the original
-data directory and databases for export.</p>
-<p><code class="docutils literal notranslate"><span class="pre">recreate=True</span></code> erases the configured data directory and experiment ledger.
-Use it only when those records can be discarded.</p>
+  <section id="storage-upgrades-and-backups">
+<h1>Storage upgrades and backups<a class="headerlink" href="#storage-upgrades-and-backups" title="Link to this heading">#</a></h1>
+<p>Moving from the previous Acquirium storage engine to Escapement requires a
+<strong>new data directory and new database locations</strong>. The new server starts with
+empty stores. Keep the old installation and its data for export.</p>
+<section id="move-to-escapement">
+<h2>Move to Escapement<a class="headerlink" href="#move-to-escapement" title="Link to this heading">#</a></h2>
+<ol class="arabic simple">
+<li><p>Stop the old server. Back up its configuration, data directory, and any
+graph or databases stored elsewhere.</p></li>
+<li><p>In the new configuration, set <code class="docutils literal notranslate"><span class="pre">data_dir</span></code> to a new path and leave
+<code class="docutils literal notranslate"><span class="pre">recreate</span> <span class="pre">=</span> <span class="pre">false</span></code>. If you set <code class="docutils literal notranslate"><span class="pre">graph_path</span></code>, <code class="docutils literal notranslate"><span class="pre">engine_path</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">experiments_path</span></code> explicitly, give them new locations too. A fresh
+PostgreSQL deployment should use a new database.</p></li>
+<li><p>Remove the old <code class="docutils literal notranslate"><span class="pre">timeseries_backend</span></code>, <code class="docutils literal notranslate"><span class="pre">duckdb_path</span></code>, and <code class="docutils literal notranslate"><span class="pre">pg_dsn</span></code> settings
+if present. If you set them through the server’s environment, remove
+<code class="docutils literal notranslate"><span class="pre">ACQUIRIUM_TIMESERIES_BACKEND</span></code>, <code class="docutils literal notranslate"><span class="pre">ACQUIRIUM_DUCKDB_PATH</span></code>, or <code class="docutils literal notranslate"><span class="pre">PG_DSN</span></code> there.
+Then <a class="reference internal" href="cli.html#acquirium-server"><span class="std std-ref">start the server with the new configuration</span></a>.</p></li>
+</ol>
+<p>If you need the old readings or experiment records, use the old Acquirium
+version with its original stores or a backup to export them.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p><code class="docutils literal notranslate"><span class="pre">recreate</span> <span class="pre">=</span> <span class="pre">true</span></code> erases the configured data directory and clears the
+experiment database, including one configured outside that directory.
+Use a new path when moving to Escapement.</p>
+</div>
 </section>
 <section id="backup-and-restore">
 <h2>Backup and restore<a class="headerlink" href="#backup-and-restore" title="Link to this heading">#</a></h2>
-<p>Stop the server, then back up the graph, experiment ledger, and Escapement store
-together. Include any configured paths or databases outside <code class="docutils literal notranslate"><span class="pre">data_dir</span></code>.</p>
-<p>Restore the matching stores together. The ledger’s outbox can replay pending
-graph writes, but acknowledged metadata lives only in the graph. A ledger copy
-cannot reconstruct a missing graph. Recorded sample references also depend on
-the matching Escapement store.</p>
-<p>On startup, pending graph operations are delivered again, and sample cleanup
-resumes for streams belonging to deleted runs. The
-<a class="reference internal" href="../../explanation/experiments.html#storage"><span class="std std-ref">experiment storage explanation</span></a> describes
-the recording and deletion order.</p>
+<p>For an Escapement deployment, stop the server before taking a backup. Save
+the configuration and copy the whole <code class="docutils literal notranslate"><span class="pre">data_dir</span></code>. If any of these settings
+point outside the directory, back up those locations too.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Setting</p></th>
+<th class="head"><p>What it holds</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">graph_path</span></code></p></td>
+<td><p>The plant model, stream registrations, and other graph metadata</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">engine_path</span></code></p></td>
+<td><p>Raw readings, derived readings, and samples recorded by experiments</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">experiments_path</span></code></p></td>
+<td><p>Experiment definitions, runs, observations, files, and logs</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>For a PostgreSQL location, take a database backup. If multiple settings use
+the same database, back it up once. See <a class="reference internal" href="configuration.html"><span class="std std-doc">server configuration</span></a>
+for the default paths and environment overrides.</p>
+<p>To restore, stop the server and restore the directory and databases from the
+same backup. Point the configuration at the restored locations and start with
+<code class="docutils literal notranslate"><span class="pre">recreate</span> <span class="pre">=</span> <span class="pre">false</span></code>. An experiment record can refer to samples in the readings
+database and metadata in the graph, so the stores need to match.</p>
 </section>
-<section id="ledger-upgrade-implementation">
-<h2>Ledger upgrade implementation<a class="headerlink" href="#ledger-upgrade-implementation" title="Link to this heading">#</a></h2>
-<p>Append a <code class="docutils literal notranslate"><span class="pre">Migration</span></code> in <code class="docutils literal notranslate"><span class="pre">src/acquirium/Storage/migrations.py</span></code> with the next
-consecutive version and a descriptive name. Keep applied versions unchanged.
-Use the supplied connection for SQL or an upgrade function, and apply the
-upgrade before creating dependent views or indexes.</p>
-<p>The runner holds the store’s writer lock. PostgreSQL also uses a
-transaction-scoped advisory lock. Check populated-schema upgrades, repeated
-opening, rollback, and new writes on both backends.</p>
+<section id="schema-upgrades">
+<h2>Schema upgrades<a class="headerlink" href="#schema-upgrades" title="Link to this heading">#</a></h2>
+<p>For a compatible experiment database, Acquirium applies pending schema changes
+at startup and records them in <code class="docutils literal notranslate"><span class="pre">schema_migrations</span></code>. A failed change rolls back.
+An unfamiliar migration version or name stops startup. The move to Escapement
+uses the fresh-storage process above.</p>
+<p>To add a schema change, append a consecutively numbered <code class="docutils literal notranslate"><span class="pre">Migration</span></code> in
+<code class="docutils literal notranslate"><span class="pre">src/acquirium/Storage/migrations.py</span></code>. Keep existing entries unchanged. Use
+the supplied transaction and test the upgrade, rollback, and reopen on DuckDB
+and PostgreSQL.</p>
 </section>
 </section>
 
@@ -651,9 +679,9 @@ opening, rollback, and new writes on both backends.</p>
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#schema-upgrades">Schema upgrades</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#move-to-escapement">Move to Escapement</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#backup-and-restore">Backup and restore</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#ledger-upgrade-implementation">Ledger upgrade implementation</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#schema-upgrades">Schema upgrades</a></li>
 </ul>
   </nav></div>
 

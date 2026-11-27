@@ -312,7 +312,7 @@
 <li class="toctree-l3"><a class="reference internal" href="../reference/server/cli.html">Command line</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../reference/server/configuration.html">Server configuration</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../reference/server/http-api.html">HTTP API</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../reference/server/storage-migrations.html">Storage upgrades and recovery</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/server/storage-migrations.html">Storage upgrades and backups</a></li>
 </ul>
 </details></li>
 <li class="toctree-l2"><a class="reference internal" href="../reference/glossary.html">Glossary</a></li>
@@ -666,7 +666,7 @@ See <a class="reference internal" href="text-resolution.html"><span class="std s
 <li><p>It starts the drivers of <code class="docutils literal notranslate"><span class="pre">acquirium.toml</span></code>, and then deploys the apps of <code class="docutils literal notranslate"><span class="pre">acquirium.toml</span></code>.</p></li>
 </ul>
 <p>In our runs a server with <code class="docutils literal notranslate"><span class="pre">exact_only</span> <span class="pre">=</span> <span class="pre">true</span></code> answered requests about 45 seconds after the command on a new data folder, and about 15 seconds on later starts.</p>
-<p>Note that a stream node in the graph with a wrong <code class="docutils literal notranslate"><span class="pre">stream_uri</span></code> makes the third step fail, and the server does not start (see <a class="reference internal" href="stream-lifecycle.html#registration-and-the-streams-table"><span class="std std-ref">The stream lifecycle</span></a>).</p>
+<p>Note that a stream node in the graph with a wrong <code class="docutils literal notranslate"><span class="pre">stream_uri</span></code> makes the third step fail, and the server does not start (see <a class="reference internal" href="stream-lifecycle.html#registration-and-storage"><span class="std std-ref">Registration and storage</span></a>).</p>
 </section>
 <section id="next">
 <h2>Next<a class="headerlink" href="#next" title="Link to this heading">#</a></h2>

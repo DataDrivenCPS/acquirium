@@ -68,7 +68,7 @@ Between the source and publication, a reading is in one of these places:
 Drivers run as children of the server, so a server restart stops them too.
 Accepted writes wait in the inbox, but while the drivers are down a broker
 has to queue what arrives, and its own limits decide how much it keeps. See
-[broker settings](../reference/drivers/_index.md#broker-settings).
+[MQTT driver settings](../reference/drivers/built-in-drivers.md#mqttingestdriver).
 
 Start with [File ingestion driver](../tutorials/advanced/writing-a-driver.md) to write one.
 The [driver reference](../reference/drivers/_index.md) lists hooks and configuration.

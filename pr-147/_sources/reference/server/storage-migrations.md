@@ -1,51 +1,62 @@
 ---
-title: Storage upgrades and recovery
+title: Storage upgrades and backups
 ---
 
-The experiment ledger stores Studies, run state, observations, and artifact
-bytes in DuckDB or PostgreSQL. Its location is `experiments_path` in the
-[server configuration](configuration.md). Recorded samples live in Escapement;
-descriptive metadata lives in the graph.
+Moving from the previous Acquirium storage engine to Escapement requires a
+**new data directory and new database locations**. The new server starts with
+empty stores. Keep the old installation and its data for export.
 
-## Schema upgrades
+## Move to Escapement
 
-With `recreate=False`, the ledger upgrades its schema automatically when it
-opens. Applied versions are recorded in `schema_migrations`. Each upgrade runs
-in a transaction with its ledger entry; a failure rolls both back. Unknown
-versions or changed migration names raise an error.
+1. Stop the old server. Back up its configuration, data directory, and any
+   graph or databases stored elsewhere.
+2. In the new configuration, set `data_dir` to a new path and leave
+   `recreate = false`. If you set `graph_path`, `engine_path`, or
+   `experiments_path` explicitly, give them new locations too. A fresh
+   PostgreSQL deployment should use a new database.
+3. Remove the old `timeseries_backend`, `duckdb_path`, and `pg_dsn` settings
+   if present. If you set them through the server's environment, remove
+   `ACQUIRIUM_TIMESERIES_BACKEND`, `ACQUIRIUM_DUCKDB_PATH`, or `PG_DSN` there.
+   Then [start the server with the new configuration](cli.md#acquirium-server).
 
-Version 1 creates the current experiment ledger schema. The logbook has its own migration history in the same SQL store.
+If you need the old readings or experiment records, use the old Acquirium
+version with its original stores or a backup to export them.
 
-Start the Escapement version with a fresh data directory and new database locations.
-Startup rejects legacy DuckDB files in the data directory and legacy storage
-settings so an upgrade cannot silently serve an empty store. Keep the original
-data directory and databases for export.
-
-`recreate=True` erases the configured data directory and experiment ledger.
-Use it only when those records can be discarded.
+```{warning}
+`recreate = true` erases the configured data directory and clears the
+experiment database, including one configured outside that directory.
+Use a new path when moving to Escapement.
+```
 
 ## Backup and restore
 
-Stop the server, then back up the graph, experiment ledger, and Escapement store
-together. Include any configured paths or databases outside `data_dir`.
+For an Escapement deployment, stop the server before taking a backup. Save
+the configuration and copy the whole `data_dir`. If any of these settings
+point outside the directory, back up those locations too.
 
-Restore the matching stores together. The ledger's outbox can replay pending
-graph writes, but acknowledged metadata lives only in the graph. A ledger copy
-cannot reconstruct a missing graph. Recorded sample references also depend on
-the matching Escapement store.
+| Setting | What it holds |
+| --- | --- |
+| `graph_path` | The plant model, stream registrations, and other graph metadata |
+| `engine_path` | Raw readings, derived readings, and samples recorded by experiments |
+| `experiments_path` | Experiment definitions, runs, observations, files, and logs |
 
-On startup, pending graph operations are delivered again, and sample cleanup
-resumes for streams belonging to deleted runs. The
-[experiment storage explanation](../../explanation/experiments.md#storage) describes
-the recording and deletion order.
+For a PostgreSQL location, take a database backup. If multiple settings use
+the same database, back it up once. See [server configuration](configuration.md)
+for the default paths and environment overrides.
 
-## Ledger upgrade implementation
+To restore, stop the server and restore the directory and databases from the
+same backup. Point the configuration at the restored locations and start with
+`recreate = false`. An experiment record can refer to samples in the readings
+database and metadata in the graph, so the stores need to match.
 
-Append a `Migration` in `src/acquirium/Storage/migrations.py` with the next
-consecutive version and a descriptive name. Keep applied versions unchanged.
-Use the supplied connection for SQL or an upgrade function, and apply the
-upgrade before creating dependent views or indexes.
+## Schema upgrades
 
-The runner holds the store's writer lock. PostgreSQL also uses a
-transaction-scoped advisory lock. Check populated-schema upgrades, repeated
-opening, rollback, and new writes on both backends.
+For a compatible experiment database, Acquirium applies pending schema changes
+at startup and records them in `schema_migrations`. A failed change rolls back.
+An unfamiliar migration version or name stops startup. The move to Escapement
+uses the fresh-storage process above.
+
+To add a schema change, append a consecutively numbered `Migration` in
+`src/acquirium/Storage/migrations.py`. Keep existing entries unchanged. Use
+the supplied transaction and test the upgrade, rollback, and reopen on DuckDB
+and PostgreSQL.
