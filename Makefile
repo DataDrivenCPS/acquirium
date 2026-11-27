@@ -28,7 +28,7 @@ export ACQUIRIUM_HOST_PORT
 # `make test-timing PYTEST_DURATIONS=0` to list every test duration.
 PYTEST_DURATIONS ?= 20
 
-.PHONY: up rebuild down no-server-up no-server-down test test-timing watertap-up watertap-down logs ps
+.PHONY: up rebuild down no-server-up no-server-down test test-timing watertap-up watertap-down logs ps docs
 
 up:
 	ACQUIRIUM_RECREATE=$(ACQUIRIUM_RECREATE) $(COMPOSE) --profile server up -d --build
@@ -74,3 +74,6 @@ unit-test:
 
 unit-test-cov:
 	uv run pytest tests/unit/ -v --tb=short --cov=acquirium --cov-report=term-missing
+
+docs:
+	uv run --locked --only-group docs jupyter-book build docs

@@ -24,8 +24,6 @@ services:
     build:
       context: .
       dockerfile: ./src/acquirium/Dockerfile
-      ssh:
-      - default
     container_name: acquirium_server
     volumes:
     - acquirium_data:/app/.acquirium
