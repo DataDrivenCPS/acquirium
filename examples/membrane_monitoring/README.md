@@ -45,7 +45,7 @@ forgetting factor of 0.8 per hourly window implies. The drift alarm raises
 about half an hour after the rise. Skid 2 holds steady.
 
 The residual app reads the permeability estimate with
-`Selection.outputs_of(..., as_of=2 * HOUR)`. Each five-minute reading takes
+`Selection.outputs_of(..., as_of=pd.Timedelta("2h"))`. Each five-minute reading takes
 the latest estimate at or before it, and none once the estimate is more than
 two hours old, so a stalled fit is not applied indefinitely. The estimate
 does not create windows: a residual is written at each time with both flux

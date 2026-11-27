@@ -29,14 +29,13 @@ sample. See [timestamps in the examples](soft-sensor-examples.md#timestamp-conve
 Save this as `cleaning_function.py` in your working directory:
 
 ```python
-from datetime import timedelta
-
+import pandas as pd
 import polars as pl
 from acquirium.functions import emit
 
 
 def clean(frame, context):
-    output_time = context["output_time"]
+    output_time = pd.Timestamp(context["output_time"])
     ports = ("thresholded", "imputed", "downsampled", "moving_average")
     if frame.is_empty():
         return {port: emit(context, None) for port in ports}
@@ -53,7 +52,7 @@ def clean(frame, context):
     )
     # Build the five-minute grid, including one future minute for interpolation.
     grid = pl.DataFrame({"time": pl.datetime_range(
-        output_time - timedelta(minutes=3), output_time + timedelta(minutes=1),
+        output_time - pd.Timedelta("3m"), output_time + pd.Timedelta("1m"),
         interval="1m", time_unit="us", time_zone="UTC", eager=True,
     )})
     values = grid.join(samples, on="time", how="left").sort("time")["value"]
@@ -91,12 +90,12 @@ file. With the repository's development environment, start it with
 `uv run python`.
 
 ```python
-from datetime import timedelta
 from pathlib import Path
-import acquirium as aq
 
-MINUTE = 60 * 1_000_000_000
-start = aq.to_timestamp("2026-01-01T00:00:00 UTC")
+import acquirium as aq
+import pandas as pd
+
+start = pd.Timestamp("2026-01-01T00:00:00Z")
 client = aq.init(data_dir="./multi-output-cleaning-data")
 client.register_streams([{
     "source_id": "multi-output-cleaning",
@@ -106,7 +105,7 @@ client.register_streams([{
 }])
 # Insert actual sample times, spaced exactly one minute apart.
 client.insert_timeseries("multi-output-cleaning", "signal", [
-    (start + timedelta(minutes=minute), value)
+    (start + pd.Timedelta(minutes=minute), value)
     for minute, value in enumerate([0.2, 9.0, 0.8, 0.4, 0.6])
 ])
 raw = client.query().measurement(
@@ -133,9 +132,9 @@ cleaner = aq.App(
     },
     function=aq.PythonFunction.from_file(Path("cleaning_function.py"), "clean"),
     window=aq.Rolling(
-        lookback_ns=3 * MINUTE,
-        step_ns=MINUTE,
-        lookahead_ns=MINUTE,
+        lookback=pd.Timedelta("3m"),
+        step=pd.Timedelta("1m"),
+        lookahead=pd.Timedelta("1m"),
     ),
 )
 client.deploy_app(cleaner)

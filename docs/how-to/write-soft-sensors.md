@@ -14,8 +14,7 @@ Start it if it is not running, and connect:
 ```python
 from pathlib import Path
 import acquirium as aq
-
-SECOND = 1_000_000_000
+import pandas as pd
 
 client = aq.Acquirium(server_url="127.0.0.1", server_port=8000)
 wave = client.query().measurement(alias="wave", uri="urn:example:sine-wave")
@@ -33,7 +32,7 @@ mean = aq.App(
     inputs={"wave": aq.Selection.from_query(wave, measurement="wave")},
     outputs={"mean": aq.Output()},
     function=aq.Native.mean("mean"),
-    window=aq.FixedBucket(4 * SECOND),
+    window=aq.FixedBucket(pd.Timedelta("4s")),
 )
 client.deploy_app(mean)
 client.query().measurement(alias="mean", app="wave-mean").dataframe().head(6)
@@ -96,7 +95,7 @@ changes, because a late reading arrived in its bucket, the threshold follows.
 
 `aq.Native.cumulative_sum` and `aq.Native.integral` keep running totals, such
 as the volume pumped from a flow rate. The
-[app reference](../reference/apps/_index.md#built-in-functions) lists every built-in
+[app reference](../reference/apps/app-class.md#built-in-functions) lists every built-in
 function.
 
 ## Python functions
@@ -120,7 +119,7 @@ def spread(frame, context):
     return {"spread": emit(context, value)}
 ```
 
-As in [your first app](../tutorials/advanced/first-app.md#function-inputs), the
+As in [your first app](../tutorials/advanced/first-app.md#declare-the-calculation), the
 function receives readings in `frame` and returns one result for each output.
 `emit()` stamps the value at the timestamp in `context`. Given `None`, it writes
 nothing, and clears anything written at that timestamp before.
@@ -135,7 +134,7 @@ function only needs the values, so it leaves timestamp handling to `emit`.
 An unannotated function receives Polars. Annotate its first parameter with
 `pd.DataFrame` to receive Arrow-backed pandas 2.x, or `pl.DataFrame` to select
 Polars explicitly. The function still takes `(frame, context)` and returns a
-dataframe for each output. See the [dataframe type reference](../reference/apps/_index.md#dataframe-type)
+dataframe for each output. See the [dataframe type reference](../reference/apps/app-class.md#dataframe-type)
 and the [pandas cleaning example](../tutorials/turbidity.md#cleaning-steps).
 
 Because it is an ordinary function, you can try it before deploying anything:
@@ -144,7 +143,7 @@ Because it is an ordinary function, you can try it before deploying anything:
 import polars as pl
 from spread import spread
 
-context = {"output_time": aq.to_timestamp("2026-01-01T00:00:00 UTC")}
+context = {"output_time": pd.Timestamp("2026-01-01T00:00:00Z")}
 spread(pl.DataFrame({"value": [0.0, 1.0, -1.0]}), context)["spread"]["value"]
 ```
 ```text
@@ -167,7 +166,7 @@ app = aq.App(
     inputs={"wave": aq.Selection.from_query(wave, measurement="wave")},
     outputs={"spread": aq.Output()},
     function=aq.PythonFunction.from_file(Path("spread.py"), "spread"),
-    window=aq.FixedBucket(10 * SECOND),
+    window=aq.FixedBucket(pd.Timedelta("10s")),
 )
 client.deploy_app(app)
 
@@ -205,7 +204,10 @@ app = aq.App(
     inputs={"wave": aq.Selection.from_query(wave, measurement="wave")},
     outputs={"spread": aq.Output()},
     function=aq.PythonFunction.from_file(Path("spread.py"), "spread"),
-    window=aq.Rolling(lookback_ns=4 * SECOND, step_ns=2 * SECOND),
+    window=aq.Rolling(
+        lookback=pd.Timedelta("4s"),
+        step=pd.Timedelta("2s"),
+    ),
 )
 client.deploy_app(app)
 spreads.dataframe().tail(4)
@@ -231,7 +233,7 @@ stored history to match.
 There are three windows to choose from. `Pointwise()` calls the function once
 for each timestamp, which suits conversions and checks on single readings.
 `FixedBucket` gives regular summaries, a value per minute or per hour.
-`Rolling` gives a trailing view at every step; add `lookahead_ns` when a result
+`Rolling` gives a trailing view at every step; add `lookahead` when a result
 needs readings from both sides, as gap filling does. A wider window costs more:
 each result reads more history, and a late or corrected reading revisits every
 window that covers it.
@@ -348,5 +350,5 @@ For complete examples with small input and output tables, see
 To see what a change will recompute before you make it, to update a
 function's code, or to recover from a function that fails, see
 [App deployment and recovery](check-deploy-apps.md). The
-[app reference](../reference/apps/_index.md#python-functions) describes every column
+[app reference](../reference/apps/app-class.md#python-functions) describes every column
 of the frame and every field of the context.

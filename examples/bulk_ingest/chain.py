@@ -11,16 +11,17 @@
 
 from pathlib import Path
 
+import pandas as pd
+
 import acquirium as aq
 
 CALCULATIONS = Path(__file__).resolve().parent / "transforms.py"
 SOURCE = "bulk-ingest"
 
 MINUTE = 60 * 1_000_000_000
-HOUR = 60 * MINUTE
 # Gaps shorter than this are filled by linear interpolation; fill_gaps reads
 # it back as its window's lookback.
-MAX_GAP = 2 * HOUR
+MAX_GAP = pd.Timedelta("2h")
 
 NTU = "http://qudt.org/vocab/unit/NTU"
 TURBIDITY = "http://qudt.org/vocab/quantitykind/Turbidity"
@@ -50,7 +51,7 @@ snap = aq.App(
     inputs={"turbidity": aq.Selection(RAW_TURBIDITY)},
     outputs={"turbidity": location_turbidity},
     function=aq.PythonFunction.from_file(CALCULATIONS, "snap_to_minute"),
-    window=aq.FixedBucket(MINUTE),
+    window=aq.FixedBucket(pd.Timedelta("1m")),
 )
 
 fill = aq.App(
@@ -58,7 +59,7 @@ fill = aq.App(
     inputs={"snapped": aq.Selection.outputs_of(snap, "turbidity")},
     outputs={"turbidity": location_turbidity},
     function=aq.PythonFunction.from_file(CALCULATIONS, "fill_gaps"),
-    window=aq.Rolling(lookback_ns=MAX_GAP, step_ns=MINUTE, lookahead_ns=MAX_GAP),
+    window=aq.Rolling(lookback=MAX_GAP, step=pd.Timedelta("1m"), lookahead=MAX_GAP),
 )
 
 plant_turbidity = aq.App(
@@ -102,7 +103,7 @@ sustained = aq.App(
     },
     outputs={"alarm": location_alarm},
     function=aq.PythonFunction.from_file(CALCULATIONS, "sustained_high_turbidity"),
-    window=aq.Rolling(lookback_ns=15 * MINUTE, step_ns=MINUTE),
+    window=aq.Rolling(lookback=pd.Timedelta("15m"), step=pd.Timedelta("1m")),
 )
 
 plant_alarms = aq.App(

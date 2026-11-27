@@ -70,6 +70,12 @@ waits about 2 s for the IPv6 attempt to fail. The server closes idle
 connections after 5 s, so an actor ticking every 10 s reconnects on each tick
 and, with `localhost`, pays that delay every time.
 
+## The [[actors]] section
+
+Each `[[actors]]` entry names an actor declaration for the server to start,
+for example `spec = "turbidity_alarm.py:alarm"`. See the
+[actor reference](../actors.md#actors-configuration).
+
 ## The [ontologies] section
 
 The package ships five ontologies, registered under canonical IRIs at

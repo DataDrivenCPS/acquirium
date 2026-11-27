@@ -4,18 +4,20 @@ title: App declarations, windows, and functions
 
 ## Windows
 
-Window declarations use integer nanoseconds for durations and origin timestamps.
-In a Python function's context, durations are `datetime.timedelta` values and
-timestamps are timezone-aware UTC `datetime` values.
+Window declarations take durations as `datetime.timedelta` values, such as
+`pd.Timedelta("5m")`. An origin is a timestamp: a `datetime`, an ISO string, or
+UTC nanoseconds, with the Unix epoch as the default. In a Python function's
+context, durations are `datetime.timedelta` values and timestamps are
+timezone-aware UTC `datetime` values.
 
 `Pointwise()` supplies readings at one timestamp and emits there. It is the
 default. Asynchronous streams are not automatically forward-filled.
 
-`FixedBucket(width_ns, origin_ns=0)` supplies a half-open bucket and emits at its
+`FixedBucket(width, origin=0)` supplies a half-open bucket and emits at its
 start. Results can change before or after the bucket ends; there is no wait for
 wall-clock completion.
 
-`Rolling(lookback_ns, step_ns, lookahead_ns=0, origin_ns=0)` emits at grid points
+`Rolling(lookback, step, lookahead=timedelta(0), origin=0)` emits at grid points
 `origin + k * step`. At time `t` it reads `[t - lookback, t + lookahead]`, including
 both endpoints. A correction repairs every window that reads the changed time.
 Empty spans produce no results. Overlapping windows reread their shared history.
@@ -45,16 +47,16 @@ average-and-threshold example, see [Soft sensor calculations](../../how-to/write
 ### Totals and integrals
 
 `aq.Native.cumulative_sum(port, reset=None)` adds each window's sum to the
-previous total. `aq.Native.integral(port, per_ns, reset=None, max_gap_ns=None)`
+previous total. `aq.Native.integral(port, per, reset=None, max_gap=None)`
 integrates one reading per pointwise timestamp. For a flow measured per hour,
-use an hour in nanoseconds as `per_ns` to obtain a volume.
+pass `per=pd.Timedelta("1h")` to obtain a volume.
 
-`reset=aq.FixedBucket(width_ns)` restarts a total at each bucket boundary.
+`reset=aq.FixedBucket(width)` restarts a total at each bucket boundary.
 Corrections repair later totals until the results stop changing. Every repaired
 window counts toward the engine's limits per instance.
 
 An integral assigns a step across a boundary to the period in which it ends.
-A step longer than `max_gap_ns` adds nothing. Integrals require the default
+A step longer than `max_gap` adds nothing. Integrals require the default
 `Pointwise()` window and one reading per timestamp.
 
 ## Python functions
@@ -201,8 +203,9 @@ uses this interface for drift detection and parameter estimation.
 
 ### As-of inputs
 
-`Selection(..., as_of=max_age_ns)` reads each selected stream's latest reading
-at or before the window timestamp, no older than the maximum age. It retains
+`Selection(..., as_of=max_age)` reads each selected stream's latest reading
+at or before the window timestamp, no older than the maximum age, such as
+`pd.Timedelta("2h")`. It retains
 that reading's own `time`. `outputs_of` accepts the same argument.
 
 An as-of input creates no windows; other inputs determine when to calculate.

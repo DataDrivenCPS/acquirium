@@ -3,6 +3,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 import time
 
+import pandas as pd
 import polars as pl
 import pyarrow as pa
 import pytest
@@ -350,8 +351,11 @@ def test_timestamp_inputs_assume_utc_and_preserve_nanoseconds():
     assert time_ns("2026-01-01") == stamp
     assert time_ns("2026-01-01T00:00:00.000000001") == stamp + 1
     assert time_ns("2026-01-01T01:00:00.000000001+01:00") == stamp + 1
+    assert time_ns(pd.Timestamp("2026-01-01T01:00:00.000000001+01:00")) == stamp + 1
     assert time_ns("1677-09-21T00:12:43.145224192Z") == -(2**63)
     assert time_ns("2262-04-11T23:47:16.854775807Z") == 2**63 - 1
+    assert time_ns(pd.Timestamp.min) == -(2**63) + 1
+    assert time_ns(pd.Timestamp.max) == 2**63 - 1
     for timestamp in ("1677-09-21T00:12:43.145224191Z", "2262-04-11T23:47:16.854775808Z", "2500-01-01"):
         with pytest.raises(ValueError, match="signed UTC nanoseconds"):
             time_ns(timestamp)

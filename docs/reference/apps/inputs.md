@@ -62,12 +62,13 @@ at or before the reading, up to one hour old. Deploy the gain publisher first.
 ```python
 from pathlib import Path
 
-hour_ns = 60 * 60 * 1_000_000_000
+import pandas as pd
+
 calibrated = aq.App(
     name="calibrated",
     inputs={
         "reading": aq.Selection.from_query(readings, measurement="reading", group="probe"),
-        "gain": aq.Selection.outputs_of(calibration, "gain", as_of=hour_ns),
+        "gain": aq.Selection.outputs_of(calibration, "gain", as_of=pd.Timedelta("1h")),
     },
     outputs={"corrected": aq.Output()},
     function=aq.PythonFunction.from_file(Path("calibrate.py"), "calibrate"),
@@ -110,6 +111,10 @@ rows apart. Selections listed under one name must agree on `as_of` and `view`.
 
 ## Input selections
 
+`Selection.from_stream(stream, as_of=None, view=None)` binds a stream handle or
+URI. Inputs declared this way feed one shared calculation. Set `as_of` to a
+maximum age, such as `pd.Timedelta("1h")`, to read the latest sample at each output timestamp.
+
 `Selection.from_query(query, measurement=..., group=None, parameters=None, view=None)`
 turns a query into a selection. `measurement` is the alias of the query's
 measurement node whose streams the input reads. Without a `group`, each matched
@@ -128,4 +133,6 @@ row's JSON `context`.
 `target_unit` adds resolved conversion factors to that row context. The function
 must apply the factors; declaring a target unit does not convert the frame.
 
-#
+`Selection.outputs_of(app, port)` binds a named output from another app and
+keeps its groups. Use `combine=True` to feed all of those groups into one
+calculation.

@@ -13,6 +13,7 @@ The pages are grouped by what you are working with.
 | [Query](query/_index.md) | the query builder returned by `acq.query()`, filters, columns, reading metadata and data |
 | [Drivers](drivers/_index.md) | the driver base classes, the hooks you override, the helpers, configuration keys and the built-in drivers |
 | [Apps](apps/_index.md) | the `App` class, its inputs and outputs, checking and deploying |
+| [Actors](actors.md) | `aq.Actor`, the handler methods, timer and graph-change messages, snapshots and transitions |
 | [Experiments](experiments/_index.md) | studies, runs, variables, recording and reading results, model adapters |
 
 ## Server

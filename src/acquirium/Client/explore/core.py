@@ -64,9 +64,13 @@ def _iso(v: "datetime | str | None") -> "str | None":
 @accepts_old_names
 @dataclass(frozen=True)
 class Query:
-    """Immutable explore query bound to an Acquirium client."""
+    """Immutable explore query, bound to an Acquirium client when it runs.
 
-    client: "AcquiriumClient | None"
+    An actor or app declaration can build one with ``aq.Query()``. The server
+    supplies the client when it resolves the query.
+    """
+
+    client: "AcquiriumClient | None" = None
     query_graph: QueryGraph = field(default_factory=QueryGraph)
     cache: Dict[str, Any] = field(default_factory=dict, compare=False)
 

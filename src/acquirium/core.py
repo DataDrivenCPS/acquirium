@@ -6,11 +6,13 @@ no stream registry, SQL connections, revision ledger, or computation scheduler.
 
 from __future__ import annotations
 
+from collections import Counter
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
-from threading import Condition, Event, Thread
+from threading import Condition, Event, Lock, Thread
 
 import polars as pl
 import pyarrow as pa
@@ -72,10 +74,6 @@ def time_ns(value: int | datetime | str | None) -> int | None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, datetime, str)):
         raise ValueError("timestamps must be UTC nanoseconds or ISO datetimes")
-    if isinstance(value, int):
-        if not -(2**63) <= value < 2**63:
-            raise ValueError("timestamp exceeds signed UTC nanoseconds")
-        return value
     if isinstance(value, str):
         try:
             parser = pl.Series([value]).str
@@ -88,17 +86,15 @@ def time_ns(value: int | datetime | str | None) -> int | None:
         if nanos // 1000 != micros:
             raise ValueError("timestamp exceeds signed UTC nanoseconds")
         return nanos
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return (
-        pc.cast(
-            pa.array([value], type=pa.timestamp("us", tz="UTC")),
-            pa.timestamp("ns", tz="UTC"),
-            safe=True,
-        )
-        .cast(pa.int64())[0]
-        .as_py()
-    )
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        micros = pa.array([value], type=pa.timestamp("us", tz="UTC")).cast(pa.int64())[0].as_py()
+        # Timestamp subclasses such as pandas.Timestamp can carry sub-microsecond precision.
+        value = micros * 1000 + getattr(value, "nanosecond", 0)
+    if not -(2**63) <= value < 2**63:
+        raise ValueError("timestamp exceeds signed UTC nanoseconds")
+    return value
 
 
 def _stop(stop, drain, failure):
@@ -152,6 +148,8 @@ class Core:
         self._submitting = 0
         self._closing = False
         self._retention_stop = Event()
+        self._snapshot_lock = Lock()
+        self._snapshot_pins: Counter[int] = Counter()
         self._retention_thread = None
         if history_epochs is not None:
             self._retention_thread = Thread(
@@ -162,14 +160,32 @@ class Core:
     def _prune_history(self, history_epochs):
         while not self._retention_stop.wait(1):
             try:
-                status = self.engine.status()
-                before = status["published"] - history_epochs + 1
-                if before > status["retention"]:
-                    self.engine.prune(before)
+                with self._snapshot_lock:
+                    status = self.engine.status()
+                    before = status["published"] - history_epochs + 1
+                    if self._snapshot_pins:
+                        before = min(before, min(self._snapshot_pins))
+                    if before > status["retention"]:
+                        self.engine.prune(before)
             except Closed:
                 return
             except EscapementError:
                 logger.exception("could not advance Escapement retention")
+
+    @contextmanager
+    def pinned_snapshot(self):
+        """Keep a published epoch readable throughout a handler's work."""
+        with self._snapshot_lock:
+            snapshot = self.engine.snapshot()
+            epoch = snapshot.epoch
+            self._snapshot_pins[epoch] += 1
+        try:
+            yield snapshot
+        finally:
+            with self._snapshot_lock:
+                self._snapshot_pins[epoch] -= 1
+                if not self._snapshot_pins[epoch]:
+                    del self._snapshot_pins[epoch]
 
     def ingest(self, source: str, request_id: str, frame: pl.DataFrame, *, replace=()) -> IngestResult:
         """Submit ``stream_uri``, timezone-aware ``ts`` and ``value`` rows, or rows

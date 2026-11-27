@@ -8,10 +8,10 @@ store is `escapement-epoch.duckdb` under the data directory. Set `engine_path`
 to use another file or a PostgreSQL URL.
 
 The engine keeps a durable inbox of accepted writes and plan activations. Each
-epoch applies the next run of accepted requests, evaluates the affected app
-groups in dependency order, and commits source values, derived values, version
-history and progress together. While an epoch runs, readers see the last
-published one.
+epoch applies the next run of accepted requests, evaluates the affected
+synchronous app groups in dependency order, and commits source values, derived
+values, version history and progress together. While an epoch runs, readers see
+the last published one.
 
 Acquirium owns everything semantic: the graph and its ontology inference,
 stream registrations, app compilation, unit resolution, and the HTTP and Python
@@ -60,8 +60,10 @@ publishes, Acquirium projects its output metadata into the graph. A restart
 rebuilds that projection from the active plan. Each activation has its own
 retry identity, so returning to an earlier plan activates it again.
 
-A failed function retains its last successful outputs. Its downstream operators
-are blocked, while source data and independent branches continue publishing.
+A failed function retains its last successful outputs. Downstream operators of
+a failed synchronous function are blocked, while source data and independent
+branches continue publishing. Readers of an asynchronous function continue
+using its published outputs.
 Failure status is committed with the values and survives restart.
 [How derived streams stay current](apps.md#published-snapshots-and-failure-recovery)
 describes freshness and recovery; [app deployment and recovery](../how-to/check-deploy-apps.md#recovery-from-a-failed-calculation)

@@ -73,6 +73,7 @@ chapters:
     - file: reference/apps/outputs.md
     - file: reference/apps/deploying.md
     - file: reference/apps/cli.md
+  - file: reference/actors.md
   - file: reference/experiments/_index.md
     sections:
     - file: reference/experiments/studies-and-runs.md
@@ -97,6 +98,7 @@ chapters:
   - file: explanation/units.md
   - file: explanation/drivers.md
   - file: explanation/apps.md
+  - file: explanation/soft-sensor-actors.md
   - file: explanation/stream-lifecycle.md
   - file: explanation/experiments.md
   - file: explanation/text-resolution.md

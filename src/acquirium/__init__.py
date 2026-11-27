@@ -6,6 +6,7 @@ from acquirium.apps import App, Selection, Output, ReplacementOutput, Parameter
 from acquirium.app_spec import FixedBucket, Native, Pointwise, PythonFunction, Rolling
 from acquirium.debug import console
 from acquirium.Client.streams import Stream, StreamInterval
+from acquirium.actors import Actor, GraphChange, InputChange, TimerFired, Transition
 from acquirium.Experiments import timestamp
 from acquirium.ExperimentValues import register_value_handler
 from acquirium.ModelAdapters import AdapterDefinition, Component, ModelAdapter

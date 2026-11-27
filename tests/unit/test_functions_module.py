@@ -86,6 +86,8 @@ def test_public_datetime_roundtrip_is_exact(ns):
 
 
 def test_submicrosecond_values_are_rejected_instead_of_collapsing():
+    # Python calculations use microsecond timestamps. Protect input rows, the
+    # window anchor, and batch output times from silent truncation.
     with pytest.raises(ValueError, match="microsecond precision"):
         run(lambda frame, context: {}, frame=native_frame([NS, NS + 1]))
     with pytest.raises(ValueError, match="microsecond precision"):
@@ -107,15 +109,27 @@ def test_output_dates_cannot_overflow_the_engine_timestamp_range():
         checked(result)
 
 
-def test_function_window_precision_is_validated_before_deployment():
+def test_app_declaration_preserves_native_precision_and_validates_python_windows():
     import acquirium as aq
 
+    origin = pd.Timestamp(AT) + pd.Timedelta(1, "ns")
+    window = aq.FixedBucket(pd.Timedelta(1001, "ns"), origin=origin)
+    outputs = {"mean": aq.Output()}
     function = {"kind": "python", "path": "calculation.py", "entrypoint": "mean", "sha256": "unused"}
-    app = aq.App("precision", {}, {"mean": aq.Output()}, function, aq.FixedBucket(1001))
+    app = aq.App("precision", {}, outputs, function, window)
     with pytest.raises(ValueError, match="microsecond precision"):
         app.to_dict()
-    # Native engine calculations retain their nanosecond contract.
-    aq.App("native", {}, {"mean": aq.Output()}, aq.Native.mean("mean"), aq.FixedBucket(1001)).to_dict()
+
+    # A native calculation can use that window. Stored declarations still use integer nanoseconds.
+    reset = aq.FixedBucket(timedelta(days=1), origin=origin)
+    integral = aq.Native.integral("mean", per=timedelta(seconds=1), max_gap=pd.Timedelta(2001, "ns"), reset=reset)
+    stored = aq.App("native", {}, outputs, integral, window).to_dict()
+    assert stored["window"] == {"kind": "fixed", "width_ns": 1001, "origin_ns": NS + 1}
+    assert stored["function"] == {
+        "kind": "integral", "port": "mean", "per_ns": 1_000_000_000, "max_gap_ns": 2001,
+        "reset": {"width_ns": 86_400_000_000_000, "origin_ns": NS + 1},
+    }
+    assert aq.App.from_dict(stored).to_dict() == stored
 
 
 def test_engine_wire_accepts_only_public_output_columns():
@@ -263,6 +277,7 @@ def test_pandas_batch_columns_and_manual_results_keep_their_timestamps():
         assert isinstance(result, pd.DataFrame)
         return {"out": result}
 
+    # Group the batch by output time and verify the published timestamp and mean.
     result = batch(calculate)
     assert result["time"].dt.epoch("ns").to_list() == [NS]
     assert result["value"].to_list() == [12.]
@@ -277,6 +292,7 @@ def test_pandas_sequential_helpers_keep_arrow_types_and_python_context_dates():
         assert f.previous_value(context, "out") == 5.
         return {"out": f.emit(context, f.previous_value(context, "out") + frame["value"].sum())}
 
+    # Pass the previous output as another input role at the earlier timestamp.
     native = native_context(NS + 1000)
     native["inputs"].append({"port": "out", "stream": "urn:out", "role": "previous"})
     earlier = pl.DataFrame({
@@ -285,6 +301,7 @@ def test_pandas_sequential_helpers_keep_arrow_types_and_python_context_dates():
         "value": [5.], "text": pl.Series([None], dtype=pl.String),
     })
     result = run(calculate, frame=pl.concat([native_frame(), earlier]), context=native)
+    # The current output adds the current reading to the previous result.
     assert result["time"].dt.epoch("ns").item() == NS + 1000
     assert result["value"].item() == 17.
 

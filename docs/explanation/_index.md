@@ -17,6 +17,7 @@ They are background reading. For step-by-step instructions, see the [tutorial](.
 
 - [How drivers work](drivers.md): what the server does when a driver runs.
 - [How apps work](apps.md): how the calculated streams are kept up to date.
+- [Soft sensor actors](soft-sensor-actors.md) shows scheduled alarms and model fitting.
 - [How experiments work](experiments.md): studies, runs and what is stored.
 
 ## Inside the server

@@ -3,9 +3,28 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
+
+import pandas as pd
+
+from acquirium.core import time_ns
+
+
+def duration_ns(value: timedelta, name: str) -> int:
+    """Convert a duration such as ``pd.Timedelta("5m")`` to nanoseconds."""
+    if not isinstance(value, timedelta):
+        raise TypeError(f"{name} must be a timedelta, such as pd.Timedelta(\"5m\")")
+    # pd.Timedelta subclasses timedelta and adds a nanoseconds component.
+    seconds = value.days * 86_400 + value.seconds
+    return seconds * 1_000_000_000 + value.microseconds * 1000 + getattr(value, "nanoseconds", 0)
+
+
+def duration(ns: int) -> pd.Timedelta:
+    """Rebuild a stored nanosecond duration without losing precision."""
+    return pd.Timedelta(ns, unit="ns")
 
 
 @dataclass(frozen=True)
@@ -16,24 +35,35 @@ class Pointwise:
 
 @dataclass(frozen=True)
 class FixedBucket:
-    width_ns: int
-    origin_ns: int = 0
+    """Buckets of ``width``, aligned to ``origin`` (the Unix epoch by default)."""
+
+    width: timedelta
+    origin: datetime | int | str = 0
+
+    def __post_init__(self):
+        self.to_dict()
 
     def to_dict(self):
-        return {"kind": "fixed", "width_ns": self.width_ns, "origin_ns": self.origin_ns}
+        return {"kind": "fixed", "width_ns": duration_ns(self.width, "width"), "origin_ns": time_ns(self.origin)}
 
 
 @dataclass(frozen=True)
 class Rolling:
-    lookback_ns: int
-    step_ns: int
-    lookahead_ns: int = 0
-    origin_ns: int = 0
+    """A result every ``step``, reading ``lookback`` before and ``lookahead`` after it."""
+
+    lookback: timedelta
+    step: timedelta
+    lookahead: timedelta = timedelta()
+    origin: datetime | int | str = 0
+
+    def __post_init__(self):
+        self.to_dict()
 
     def to_dict(self):
         return {
-            "kind": "rolling", "step_ns": self.step_ns, "origin_ns": self.origin_ns,
-            "lookback_ns": self.lookback_ns, "lookahead_ns": self.lookahead_ns,
+            "kind": "rolling", "step_ns": duration_ns(self.step, "step"), "origin_ns": time_ns(self.origin),
+            "lookback_ns": duration_ns(self.lookback, "lookback"),
+            "lookahead_ns": duration_ns(self.lookahead, "lookahead"),
         }
 
 
@@ -67,9 +97,9 @@ class Native:
     port: str
     above: Any = None
     per_stream: bool = False
-    per_ns: int | None = None
+    per: timedelta | None = None
     reset: FixedBucket | None = None
-    max_gap_ns: int | None = None
+    max_gap: timedelta | None = None
 
     @classmethod
     def mean(cls, port, *, per_stream=False):
@@ -100,8 +130,8 @@ class Native:
         return cls("cumulative_sum", port, reset=reset)
 
     @classmethod
-    def integral(cls, port, *, per_ns, reset=None, max_gap_ns=None):
-        return cls("integral", port, per_ns=per_ns, reset=reset, max_gap_ns=max_gap_ns)
+    def integral(cls, port, *, per, reset=None, max_gap=None):
+        return cls("integral", port, per=per, reset=reset, max_gap=max_gap)
 
     def to_dict(self):
         spec = {"kind": self.kind, "port": self.port}
@@ -110,9 +140,10 @@ class Native:
         if self.kind == "threshold":
             spec["above"] = self.above
         if self.kind == "integral":
-            spec["per_ns"] = self.per_ns
+            spec["per_ns"] = duration_ns(self.per, "per")
         if self.reset is not None:
-            spec["reset"] = {"width_ns": self.reset.width_ns, "origin_ns": self.reset.origin_ns}
-        if self.max_gap_ns is not None:
-            spec["max_gap_ns"] = self.max_gap_ns
+            reset = self.reset.to_dict()
+            spec["reset"] = {"width_ns": reset["width_ns"], "origin_ns": reset["origin_ns"]}
+        if self.max_gap is not None:
+            spec["max_gap_ns"] = duration_ns(self.max_gap, "max_gap")
         return spec

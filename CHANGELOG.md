@@ -124,12 +124,19 @@ change in any release.
   operator typed JSON parameters, read as `context["parameters"]`, and selects
   only the listed groups; skipped groups appear in warnings. Parameters are part
   of the operator version, so a new value repairs that group's history.
-- Apps accept `aq.Rolling(lookback_ns, step_ns, lookahead_ns=0, origin_ns=0)`
-  windows: overlapping windows on a fixed grid, where each output at `t` reads
+- Apps accept `aq.Rolling(lookback, step, lookahead=timedelta(0), origin=0)`
+  windows. Each output at `t` on the fixed grid reads
   `[t - lookback, t + lookahead]` and a correction repairs every window that
   read it. Requires the Escapement rolling-window release.
 
 ### Changed
+- **Breaking:** app windows, integrals and as-of inputs take durations as
+  `datetime.timedelta` values, such as `pd.Timedelta("5m")`, instead of
+  integer nanoseconds. `FixedBucket(width, origin=0)`,
+  `Rolling(lookback, step, lookahead, origin)`,
+  `Native.integral(port, per=..., max_gap=...)` and `Selection(as_of=...)`
+  replace the `_ns` parameters. Stored declarations are unchanged.
+- `aq.Query()` no longer needs `client=None` in an actor or app declaration.
 - Plant and property logbook entries use the same SQL store as experiment
   records. Logbook client methods and HTTP endpoints stay available.
 - Acquirium depends on `escapement-db`, imported as `escapement`, in place of

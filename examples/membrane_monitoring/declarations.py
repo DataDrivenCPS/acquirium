@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pandas as pd
+
 import acquirium as aq
 
 DIRECTORY = Path(__file__).resolve().parent
@@ -89,7 +91,7 @@ def declarations(*, module=None):
         outputs={"permeability": output(), "variance": output()},
         function=function("permeability"),
         # One estimate per hour, from that hour's mean flux and TMP.
-        window=aq.FixedBucket(HOUR),
+        window=aq.FixedBucket(pd.Timedelta("1h")),
     )
     return [
         aq.App(
@@ -112,7 +114,7 @@ def declarations(*, module=None):
                 "tmp": measured("TransmembranePressure"),
                 # Each reading reads the latest hourly estimate at or before
                 # it, and none once the fit is two hours stale.
-                "permeability": aq.Selection.outputs_of(permeability, "permeability", as_of=2 * HOUR),
+                "permeability": aq.Selection.outputs_of(permeability, "permeability", as_of=pd.Timedelta("2h")),
             },
             outputs={"expected": output(), "residual": output()},
             function=function("residual", sequential=False),

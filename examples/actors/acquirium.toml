@@ -1,0 +1,17 @@
+[server]
+host = "127.0.0.1"
+data_dir = ".acquirium"
+exact_only = true
+
+[[drivers]]
+spec = "driver.py:WaterTreatmentDriver"
+interval = 1.0
+
+[[actors]]
+spec = "turbidity_alarm.py:alarm"
+
+[[actors]]
+spec = "membrane_fit.py:fit"
+
+[[apps]]
+spec = "membrane_fit.py:prediction"

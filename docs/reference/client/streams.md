@@ -223,6 +223,16 @@ A handle for one stream. It holds no data: each read asks the server for the cur
 
 Two handles are equal when their `stream_uri` is equal. `str(stream)` returns the `stream_uri`.
 
+For a declaration that names its streams before the server starts, use
+`Stream.from_source(source, name)` to make an unbound handle from the
+registered source and stream names.
+
+```python
+import acquirium as aq
+
+flow = aq.Stream.from_source("lab", "flow")
+```
+
 **Attributes**
 
 - `stream_uri` (`str`): the URI of the stream. `ref_uri` is a deprecated name for it and emits a `FutureWarning`.

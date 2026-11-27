@@ -4,9 +4,11 @@ import json
 import logging
 import re
 from collections.abc import Callable, Iterable
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Condition, Lock, RLock, Thread
+from threading import Condition, Event, Lock, RLock, Thread
+from typing import Any
 from urllib.parse import unquote
 
 from ontoenv import OntoEnv
@@ -170,6 +172,27 @@ def _query_result(result):
         triples += (from_ox(t) for t in result)
         return {"columns": ["triple"], "rows": [[triple] for triple in triples]}
     raise ValueError(f"Unexpected query result: {result!r}")
+
+
+def _cell_datatype(cell: dict[str, Any] | None) -> str | None:
+    """``"iri"`` for a node, the XSD IRI of a typed literal, else ``None``."""
+    if not cell:
+        return None
+    if cell.get("type") == "uri":
+        return "iri"
+    return cell.get("datatype")
+
+
+def sparql_results_to_rows(serialized: bytes) -> dict[str, Any]:
+    """Decode SPARQL results into rows of text and their RDF datatypes."""
+    payload = json.loads(serialized)
+    if "boolean" in payload:
+        return {"columns": [], "rows": [[bool(payload["boolean"])]]}
+    columns = payload["head"].get("vars", [])
+    bindings = payload["results"].get("bindings", [])
+    rows = [[binding.get(column, {}).get("value") for column in columns] for binding in bindings]
+    datatypes = [[_cell_datatype(binding.get(column)) for column in columns] for binding in bindings]
+    return {"columns": columns, "rows": rows, "datatypes": datatypes}
 
 
 def _stored_triples(graph):
@@ -351,6 +374,7 @@ class OxigraphGraphStore:
         # fresh readers wait for its complete publication.
         self._lock = RLock()
         self._rebuild_condition = Condition(self._lock)
+        self._query_watchers: set[Event] = set()
         # Held by the one selection snapshot that may exist at a time.
         self._selection_lock = Lock()
         self._query_rebuild_in_progress = False
@@ -780,6 +804,8 @@ class OxigraphGraphStore:
             self._commit_dataset(self.query_dataset)
         self._query_cache_source_version = self._source_version
         self._query_cache_closure_version = self._closure_version
+        for watcher in self._query_watchers:
+            watcher.set()
 
     def _start_query_rebuild_locked(self) -> None:
         """Start the sole background rebuild owner. Caller holds ``_lock``."""
@@ -986,6 +1012,24 @@ class OxigraphGraphStore:
             }
 
     # -------------------- SPARQL surface --------------------
+    @contextmanager
+    def watch_query_revisions(self, wake: Event):
+        """Signal the worker when a complete query view is published."""
+        with self._lock:
+            self._query_watchers.add(wake)
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._query_watchers.remove(wake)
+
+    @contextmanager
+    def current_query_view(self):
+        """Keep successive queries on one fresh inferred graph revision."""
+        with self._lock:
+            self._ensure_query_cache_current(wait_for_fresh=True)
+            yield self._query_cache_source_version
+
     def _query_default_graphs(
         self, include_dependencies: bool, *, wait_for_fresh: bool
     ) -> list[NamedNode]:

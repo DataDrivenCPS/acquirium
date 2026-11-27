@@ -45,28 +45,43 @@ releases for recovery, and deploy a newly versioned calculation.
 
 Complete any work spawned by a function before returning.
 
-### Failure status
+### Background refresh
 
-Function failures are isolated to an operator and its downstream consumers.
-Their last successful values remain queryable. Other groups and apps continue
-updating. `inspect_app(name)["app"]` includes:
+Set `freshness="asynchronous"` on `aq.App` to run an expensive calculation,
+such as a rolling aggregate over a long history, on Escapement's background
+workers. Apps default to `freshness="synchronous"` and evaluate as part of the
+epoch that changed their inputs.
 
-- `status`: `active`, `failed` for an evaluation error, or `blocked` for a failed
-  upstream operator. `pending` means a deployment or restart is still
-  publishing; the rest of the response describes the plan it replaces.
-- `stale`: whether any operator in the app is failed or blocked.
-- `failures` maps instance IDs to the epoch their output reflects and the
-  reason they are behind. The entry includes the evaluation message or the
-  upstream instances holding it.
+The refresher reads a published snapshot and computes the affected windows.
+Source writes continue publishing, and readers use the results already
+published while the refresh runs. A successful refresh publishes its results
+together with updates to synchronous apps that read them.
 
+Window declarations set the event-time calculation intervals. The refresher
+runs when work is due. Publishing a deployment or write receipt can precede
+the first results from an asynchronous app.
+
+For soft sensors that decide when to train and activate a model, see the
+[soft sensor actor examples](../../explanation/soft-sensor-actors.md).
+
+### App status
+
+`inspect_app(name)["app"]` includes `freshness` and `status`. The status can
+be `active`, `refreshing` while a background refresh is due or in progress,
+`failed` for an evaluation error or a rejected refresh, or `blocked` by an
+upstream failure. `pending` describes a plan publication in progress. The
+inspection describes the currently published plan.
+
+`stale` indicates that at least one operator is behind. `failures` maps those
+operators to the epoch their output reflects and the reason they are behind.
 `engine_snapshot()["failures"]` reports the same information by output stream.
-Publication of a receipt does not mean all derived streams are current.
-Failure status survives restart. A corrected deployment, changed input, or
+
+Failed calculations retain their last successful outputs. Readers of a failed
+synchronous app wait for recovery. Readers of an asynchronous app can continue
+using its last published output, including after a failed refresh. Failure
+status survives restart. A corrected deployment, changed input, or
 `retry_engine()` requests another attempt. Recovery recomputes the affected
 branch from current inputs, including missed deletions, before clearing its
 failure status. A database commit failure still stops publication globally.
-
-Branches share an epoch commit. A slow function can delay publication until it
-finishes or times out.
 
 Worker-pool settings and limits are in [server configuration](../server/configuration.md).

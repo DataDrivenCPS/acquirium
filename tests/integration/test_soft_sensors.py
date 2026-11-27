@@ -5,6 +5,7 @@ import os
 import time
 from dataclasses import replace
 
+import pandas as pd
 import polars as pl
 import pytest
 
@@ -112,7 +113,7 @@ def test_semantic_python_chain_repairs_the_discovered_outputs(tmp_path):
 
 
 def test_rolling_app_repairs_overlapping_windows_through_restart(tmp_path):
-    app = replace(declarations()[0], window=aq.Rolling(lookback_ns=10 * SECOND, step_ns=5 * SECOND))
+    app = replace(declarations()[0], window=aq.Rolling(lookback=pd.Timedelta("10s"), step=pd.Timedelta("5s")))
     assert aq.App.from_dict(app.to_dict()).to_dict() == app.to_dict()
     client = aq.init(data_dir=tmp_path / "data", exact_only=True, timeout=180)
     try:

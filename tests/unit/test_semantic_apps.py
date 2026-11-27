@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from unittest.mock import Mock
 
+import pandas as pd
 import pytest
 
 from tests.epoch_helpers import epoch_server, value
@@ -219,6 +220,97 @@ def test_app_declaration_rejects_a_legacy_lookback_field():
     definition["lookback"] = "all"
     with pytest.raises(ValueError, match="app fields must be"):
         App.from_dict(definition)
+
+
+def test_asynchronous_app_publishes_with_its_readers_without_delaying_writes(tmp_path):
+    import time
+
+    from acquirium import Native, PythonFunction
+
+    started = tmp_path / "refresh-started"
+    released = tmp_path / "refresh-released"
+    module = tmp_path / "fit.py"
+    module.write_text(
+        "import time\n"
+        "from pathlib import Path\n"
+        "def fit(frame, context):\n"
+        '    if frame["value"][0] == 4:\n'
+        f"        Path({str(started)!r}).touch()\n"
+        "        deadline = time.monotonic() + 30\n"
+        f"        while not Path({str(released)!r}).exists():\n"
+        "            if time.monotonic() >= deadline:\n"
+        '                raise RuntimeError("test did not release the refresh")\n'
+        "            time.sleep(0.01)\n"
+        '    return {"mean": frame.select("time", "value")}\n'
+    )
+
+    def wait_until(condition):
+        """Wait for an observable refresh milestone in the worker or server."""
+        deadline = time.monotonic() + 15
+        while not condition():
+            assert time.monotonic() < deadline, "timed out waiting for the app refresh"
+            time.sleep(0.02)
+
+    timestamp = 1_000_000_000
+    score_time = 1_500_000_000
+    directory = tmp_path / "data"
+    with epoch_server(directory) as system:
+        manager, http, client = system
+        # Train an asynchronous fit and use its most recent result in a synchronous scorer.
+        fit_inputs = mean("fit", register(system, "train")).inputs
+        score_inputs = mean("score", register(system, "measure")).inputs
+        fit = App(
+            "fit", fit_inputs, {"mean": Output()}, PythonFunction.from_file(module, "fit"),
+            freshness="asynchronous",
+        )
+        scorer = App(
+            "score",
+            {**score_inputs, "fit": Selection.outputs_of(fit, "mean", as_of=pd.Timedelta(timestamp, "ns"))},
+            {"score": Output()},
+            Native.sum("score"),
+        )
+        fit_ref = output_reference(fit.name, "urn:tank", "mean")
+        score_ref = output_reference(scorer.name, "urn:tank", "score")
+
+        invalid = http.put("/apps/fit", json={**fit.to_dict(), "freshness": "background"})
+        assert invalid.status_code == 400 and "app freshness" in invalid.text
+        assert client.deploy_app(fit, dry_run=True)["app"]["freshness"] == "asynchronous"
+        assert client.deploy_app(fit)["app"]["freshness"] == "asynchronous"
+        assert client.deploy_app(scorer)["app"]["freshness"] == "synchronous"
+
+        client.insert_timeseries("train", "temperature", [(timestamp, 2)])
+        wait_until(lambda: value(manager.core.engine.snapshot(), fit_ref, timestamp) == 2)
+
+        try:
+            # Block the second fit in its worker. The correction and a new
+            # measurement can still publish while the scorer reads the old fit.
+            receipt, = client.insert_timeseries("train", "temperature", [(timestamp, 4)], wait=5)["receipts"]
+            assert receipt["published"]
+            wait_until(started.exists)
+            status = client.inspect_app(fit.name)["app"]
+            assert status["status"] == "refreshing" and status["stale"] and status["error"] is None
+            assert {item["reason"] for item in status["failures"].values()} == {"refreshing"}
+
+            receipt, = client.insert_timeseries("measure", "temperature", [(score_time, 5)], wait=5)["receipts"]
+            assert receipt["published"]
+            during_refresh = manager.core.engine.snapshot(client.wait(receipt)["epoch"])
+            assert value(during_refresh, fit_ref, timestamp) == 2
+            assert value(during_refresh, score_ref, score_time) == 7
+        finally:
+            released.touch()
+
+        # The completed fit and the repaired score are visible at the same epoch.
+        wait_until(lambda: client.inspect_app(fit.name)["app"]["status"] == "active")
+        refreshed = manager.core.engine.snapshot()
+        assert value(refreshed, fit_ref, timestamp) == 4
+        assert value(refreshed, score_ref, score_time) == 9
+        del during_refresh, refreshed  # Release the store before reopening it.
+
+    with epoch_server(directory) as (manager, _, client):
+        # After restart the fit remains asynchronous and still repairs the scorer.
+        assert client.inspect_app(fit.name)["app"]["freshness"] == "asynchronous"
+        client.insert_timeseries("train", "temperature", [(timestamp, 6)])
+        wait_until(lambda: value(manager.core.engine.snapshot(), score_ref, score_time) == 11)
 
 
 def test_python_redeployment_uses_the_declared_source_bytes(system, tmp_path):
@@ -771,35 +863,30 @@ def test_as_of_selections_read_the_latest_reading_of_a_slower_stream(system, tmp
         "    return {'mean': emit(context, x[0] * gain[0])}\n"
     )
     template = mean("as-of", reading)
-    def selected(stream, **options):
-        return Selection(
-            f"SELECT ?stream ?group WHERE {{ BIND(<{stream}> AS ?stream) "
-            "BIND(<urn:tank> AS ?group) }",
-            **options,
-        )
+    selected = Selection.from_stream
 
     def declaration(age):
         return App(
             template.name,
-            {"x": selected(reading), "gain": selected(gain, as_of=age)},
+            {"x": selected(client.stream(reading)), "gain": selected(gain, as_of=age)},
             template.outputs,
             PythonFunction.from_file(module, "calibrated"),
         )
 
     assert "as_of" not in declaration(None).to_dict()["inputs"][1]
     with pytest.raises(ValueError, match="positive"):
-        declaration(0).to_dict()
+        declaration(pd.Timedelta(0)).to_dict()
     with pytest.raises(ValueError, match="different ages"):
-        App(template.name, {"gain": [selected(gain, as_of=5), selected(reading)]},
+        App(template.name, {"gain": [selected(gain, as_of=pd.Timedelta(5, "ns")), selected(reading)]},
             template.outputs, PythonFunction.from_file(module, "calibrated")).to_dict()
 
-    state = client.deploy_app(declaration(3000))["app"]
+    state = client.deploy_app(declaration(pd.Timedelta("3us")))["app"]
     assert state["error"] is None, state
     for source, rows in (("as-of-reading", [(t, 1.0) for t in range(1000, 9000, 1000)]),
                          ("as-of-gain", [(1000, 2.0), (5000, 3.0)])):
         manager.core.wait(manager.insert_timeseries(
             source_id=source, stream_name="temperature", rows=rows, request_id=source).receipt)
-    reference = output_reference(template.name, "urn:tank", "mean")
+    reference = output_reference(template.name, template.name, "mean")
     def values():
         snapshot = manager.core.engine.snapshot()
         return [value(snapshot, reference, t) for t in range(1000, 9000, 1000)]
@@ -810,7 +897,7 @@ def test_as_of_selections_read_the_latest_reading_of_a_slower_stream(system, tmp
     assert values() == [2, 2, 2, 2, 3, 3, 3, 3]
     version = operator()["version"]
     # A shorter maximum age is a new definition, which rebuilds the history.
-    client.deploy_app(declaration(2000))
+    client.deploy_app(declaration(pd.Timedelta("2us")))
     assert values() == [2, 2, 2, None, 3, 3, 3, None]
     assert operator()["as_of"] == {"gain": {"max_age_ns": 2000}}
     assert operator()["version"] != version
@@ -865,7 +952,7 @@ def test_a_flow_totalizer_repairs_every_later_volume(system):
         template.name,
         template.inputs,
         {"volume": Output()},
-        Native.integral("volume", per_ns=hour, reset=FixedBucket(24 * hour)),
+        Native.integral("volume", per=pd.Timedelta("1h"), reset=FixedBucket(pd.Timedelta("24h"))),
     ))
 
     def insert(rows, request_id):

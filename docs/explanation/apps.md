@@ -104,21 +104,25 @@ recomputes history with the new code. The source path can stay the same.
 
 ## Published snapshots and failure recovery
 
-A correction to a source reading and the derived changes successfully computed
-from it become visible together, in one published snapshot called an epoch.
-For a healthy chain, the average and its alarm update together.
+A correction to a source reading and the synchronous results computed from it
+become visible together, in one published snapshot called an epoch. For a
+healthy synchronous chain, the average and its alarm update together.
+
+An [asynchronous app](../reference/apps/deploying.md#background-refresh)
+computes in the background while epochs continue publishing. Its readers use
+the last published results. A successful refresh and the synchronous updates
+it causes become visible together in a later epoch.
 
 Earlier snapshots stay readable. That is what lets you look at an alarm as it
 was when someone acted on it, even after later data withdrew it.
 
-If a function fails, Acquirium retains its last successful outputs. Its
-downstream consumers also retain their outputs and do not execute against stale
-inputs. Raw readings and independent branches continue updating.
+If a function fails, Acquirium retains its last successful outputs. A failed
+synchronous function also holds its downstream consumers until recovery. Raw
+readings and independent branches continue updating.
 
-App inspection reports `failed` for a calculation error and `blocked` for its
-downstream consumers, with `stale=True` and per-operator failure details. Thus an
-epoch can contain results of different freshness. Publication of a write does
-not promise that every app is current.
+App inspection reports `failed` for a calculation error, `blocked` for
+consumers held by an upstream failure, and `refreshing` for normal background
+lag. Each sets `stale=True` and reports the reason by operator.
 
 After a corrected deployment or an explicit retry, Acquirium recomputes the
 affected branch from current inputs. It includes changes received while the

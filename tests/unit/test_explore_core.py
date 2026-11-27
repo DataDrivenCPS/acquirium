@@ -23,7 +23,7 @@ PRED_P = "urn:test#p"
 
 
 def q() -> Query:
-    return Query(client=None)
+    return Query()
 
 
 @pytest.fixture(autouse=True)

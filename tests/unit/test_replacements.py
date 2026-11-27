@@ -3,6 +3,7 @@ from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 
+import pandas as pd
 import polars as pl
 import pytest
 from escapement import NotFound
@@ -318,7 +319,7 @@ def test_competing_claims_metadata_and_group_cardinality(system):
     with pytest.raises(ValueError, match="not compatible with its input's unit"):
         manager.deploy_app(replace(app, outputs={"out": aq.ReplacementOutput(unit=DEG_C)}))
     with pytest.raises(ValueError, match="drive execution"):
-        manager.deploy_app(replace(app, inputs={"raw": selection(ref, as_of=MINUTE)}))
+        manager.deploy_app(replace(app, inputs={"raw": selection(ref, as_of=pd.Timedelta("1m"))}))
     with pytest.raises(ValueError, match="exactly one"):
         manager.deploy_app(replace(app, inputs={"raw": [selection(ref), selection("urn:another")]}))
     assert manager.core.engine.snapshot().plan() == before
@@ -421,7 +422,7 @@ def test_whole_series_cleaner_corrections_and_deletions(system):
 
     manager, _, client, _, source, _, ref = system
     app = declaration("minute-clean", ref, aq.PythonFunction.from_file(calculations.__file__, "clean"),
-                      window=aq.Rolling(lookback_ns=2 * MINUTE, step_ns=MINUTE, lookahead_ns=2 * MINUTE))
+                      window=aq.Rolling(lookback=pd.Timedelta("2m"), step=pd.Timedelta("1m"), lookahead=pd.Timedelta("2m")))
     app = replace(app, outputs={"turbidity": replace(app.outputs["out"])},
                   inputs={"raw": selection(ref, parameters={"threshold": 1.0})})
     put(system, [(0, .2), (30_000_000_000, .4), (2 * MINUTE, .6)])
@@ -458,8 +459,9 @@ def test_replacement_windows_preserve_existing_execution_modes(system, mode):
     manager, _, client, module, source, _, ref = system
     app = declaration("window-clean", ref, aq.PythonFunction.from_file(
         module, "double", batch=mode == "batch", sequential=mode == "sequential",
-    ), window=(aq.FixedBucket(1_000) if mode == "sequential"
-               else aq.Rolling(lookback_ns=1_000, step_ns=1_000, lookahead_ns=1_000)))
+    ), window=(aq.FixedBucket(pd.Timedelta("1us")) if mode == "sequential"
+               else aq.Rolling(lookback=pd.Timedelta("1us"), step=pd.Timedelta("1us"),
+                               lookahead=pd.Timedelta("1us"))))
     put(system, [(0, 1.), (1_000, 2.), (2_000, 3.)])
     assert manager.deploy_app(app)["status"] == "active"
     assert values(client, ref) == [2., 4., 6.]

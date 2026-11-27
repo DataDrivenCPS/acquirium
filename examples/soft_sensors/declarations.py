@@ -3,6 +3,8 @@
 import math
 from pathlib import Path
 
+import pandas as pd
+
 import acquirium as aq
 
 DIRECTORY = Path(__file__).resolve().parent
@@ -15,7 +17,8 @@ TANK_A = "urn:soft-sensors:tank-a"
 TANK_B = "urn:soft-sensors:tank-b"
 UNIT = "http://qudt.org/vocab/unit/DEG_C"
 QUANTITY = "http://qudt.org/vocab/quantitykind/Temperature"
-BUCKET_NS = 10_000_000_000
+BUCKET = pd.Timedelta("10s")
+BUCKET_NS = BUCKET.value  # The streaming producer aligns integer timestamps to it.
 PREFIXES = """
 PREFIX ex: <urn:soft-sensors:>
 PREFIX s223: <http://data.ashrae.org/standard223#>
@@ -65,7 +68,7 @@ def declarations(*, threshold=27.0, module=None):
             },
             outputs={"mean": output},
             function=aq.PythonFunction.from_file(module, "tank_mean"),
-            window=aq.FixedBucket(BUCKET_NS),
+            window=aq.FixedBucket(BUCKET),
         ),
         aq.App(
             name=HOTTEST,
