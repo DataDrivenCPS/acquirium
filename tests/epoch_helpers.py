@@ -50,6 +50,7 @@ def epoch_server(directory, *, read_batch_size=101, **options):
 
 
 def readings(snapshot, stream, *, start=None, end=None):
+    """Read numeric and text values from one stream at the supplied epoch."""
     try:
         rows = snapshot.read([stream], start=start, end=end)
     except NotFound:
@@ -63,11 +64,13 @@ def readings(snapshot, stream, *, start=None, end=None):
 
 
 def value(snapshot, stream, time):
+    """Return the reading at one nanosecond timestamp, or None if it is absent."""
     results = readings(snapshot, stream, start=time, end=time + 1)
     return results[0] if results else None
 
 
 def plan(module, *, name="app", source="urn:sensor", output="urn:derived", width=None):
+    """Build one engine operator from a calculation file, source, and output."""
     return {
         "templates": [{
             "id": name,
@@ -99,6 +102,7 @@ def plan(module, *, name="app", source="urn:sensor", output="urn:derived", width
 
 @contextmanager
 def pause_publication(core, directory, stream):
+    """Hold publication of writes to a stream until the test exits this block."""
     flag = directory / "blocked"
     module = directory / "blocking_calculation.py"
     module.write_text(

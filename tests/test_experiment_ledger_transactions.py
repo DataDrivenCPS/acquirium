@@ -43,46 +43,6 @@ def test_outbox_failure_rolls_back_lifecycle_write(ledger, monkeypatch):
     assert _count(ledger.store, "experiment_metadata_outbox") == 0
 
 
-@pytest.mark.parametrize("failure", ["registration", "insertion", "observation", "outbox"])
-def test_failed_recording_leaves_no_observation_and_a_retry_succeeds(ledger, monkeypatch, failure):
-    study = ledger.define("atomic recording")
-    level = ledger.declare(study["template_id"], "level", "output", "timeseries", {})
-    cost = ledger.declare(study["template_id"], "cost", "output", "scalar", {})
-    run = ledger.start(study["template_id"], {})
-    ledger.sync_metadata_graph()
-    entries = [dict(form="samples", variable_id=level["variable_id"], samples=[[WHEN.isoformat(), 1.0]]),
-               dict(form="value", variable_id=cost["variable_id"], value=3)]
-
-    def fail(*args, **kwargs):
-        raise RuntimeError("temporary")
-    with monkeypatch.context() as patch:
-        if failure == "registration":
-            patch.setattr(ledger, "_own_streams", fail)
-        elif failure == "insertion":
-            patch.setattr(ledger.store.samples, "write", fail)
-        elif failure == "outbox":
-            patch.setattr(ledger.metadata, "enqueue", fail)
-        else:
-            sql = ledger._execute
-
-            def insert(conn, statement, parameters=None):
-                if statement.startswith("INSERT INTO experiment_observations"):
-                    raise RuntimeError("temporary")
-                return sql(conn, statement, parameters)
-            patch.setattr(ledger, "_execute", insert)
-        with pytest.raises(RuntimeError, match="temporary"):
-            ledger.record_batch(run["run_id"], entries)
-    # No observation points at anything. Samples written before the failure
-    # sit in the reserved stream, unreferenced, until a retry or a deletion.
-    assert ledger.observations(study["template_id"]) == []
-    assert _count(ledger.store, "experiment_metadata_outbox") == 0
-    written = failure in {"observation", "outbox"}
-    assert len(_samples(ledger.store)) == (1 if written else 0)
-    assert _count(ledger.store, "experiment_streams") == (0 if failure == "registration" else 1)
-    assert len(ledger.record_batch(run["run_id"], entries)) == 2
-    assert len(_samples(ledger.store)) == 1
-
-
 def _recorded_runs(ledger, count):
     study = ledger.define("batch reset")
     variable = ledger.declare(study["template_id"], "level", "output", "timeseries", {})

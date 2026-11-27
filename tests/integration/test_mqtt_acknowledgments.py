@@ -53,6 +53,7 @@ def server(topic: str, source_id: str, *, refuse: bool) -> MagicMock:
 
 
 def start(aq, source_id, tmp_path, **settings) -> MQTTIngestDriver:
+    """Start an MQTT driver using the test store and the given broker settings."""
     driver = MQTTIngestDriver(
         aq,
         {"driver": {"source_id": source_id, **settings}, "server": {"data_dir": str(tmp_path)}},
@@ -71,6 +72,7 @@ def crash(driver: MQTTIngestDriver) -> None:
 
 
 def eventually(condition, timeout=10.0):
+    """Wait for an observable change made by the driver's background thread."""
     deadline = time.monotonic() + timeout
     while not condition():
         assert time.monotonic() < deadline, "condition not met in time"
@@ -94,13 +96,16 @@ def test_unaccepted_messages_survive_a_crash_and_accepted_ones_are_not_resent(tm
         for value in range(5):
             pub.publish(topic, f'{{"Value": {value}}}', qos=1).wait_for_publish()
         eventually(lambda: refused.insert_timeseries_arrow.call_count > 0)
+        # Kill the client after the server refuses a batch. The broker still owns those deliveries.
         crash(first)
 
+        # Reuse the client ID so the broker can redeliver the outstanding messages.
         accepting = server(topic, source_id, refuse=False)
         second = start(accepting, source_id, tmp_path)
         eventually(lambda: sorted(set(accepting.stored)) == [0, 1, 2, 3, 4])
         second._shutdown()
 
+        # Reconnect once more after the second client acknowledged all five messages.
         third = start(server(topic, source_id, refuse=False), source_id, tmp_path)
         time.sleep(1.0)
         assert third.aq.stored == []  # Everything accepted was acknowledged.
@@ -143,6 +148,7 @@ def test_buffer_overflow_recovers_when_the_server_returns_without_reconnecting(t
         for value in range(6):
             pub.publish(topic, f'{{"Value": {value}}}', qos=1).wait_for_publish()
         eventually(lambda: len(driver._messages) >= 2)
+        # Restore ingestion while keeping the broker connection alive.
         reconnects = []
         for client in driver._clients.values():
             reconnect = MagicMock(wraps=client.reconnect)

@@ -19,6 +19,7 @@ def core(tmp_path):
 
 
 def submit(core, request, values, *, operation="upsert"):
+    """Submit readings for one probe and return the publication receipt."""
     times, readings = zip(*values)
     frame = pl.DataFrame({
         "stream_uri": ["urn:probe"] * len(values),
@@ -30,9 +31,11 @@ def submit(core, request, values, *, operation="upsert"):
 
 
 def test_paged_feed_resumes_after_completed_epochs_and_retention(core):
+    # Publish two readings, correct the first, and delete the second.
     core.wait(submit(core, "initial", [(1, 20.0), (2, 30.0)]))
     core.wait(submit(core, "correct", [(1, 40.0)]))
     core.wait(submit(core, "delete", [(2, None)], operation="delete"))
+    # Read one change at a time, carrying the server's cursor to the next request.
     cursor, rows, complete = {"epoch": 0, "ordinal": 0}, [], 0
     while True:
         page = core.changes(**cursor, limit=1)
@@ -42,6 +45,7 @@ def test_paged_feed_resumes_after_completed_epochs_and_retention(core):
         cursor = page["cursor"]
         if not page["has_more"]:
             break
+    # The correction retracts 20 and inserts 40. The deletion retracts 30.
     assert [row["weight"] for row in rows] == [1, 1, -1, 1, -1]
     assert [row["row"]["data"]["value"] for row in rows] == [20, 30, 20, 40, 30]
     assert all(set(row["row"]["data"]) == {"value"} for row in rows)
@@ -57,6 +61,7 @@ def test_paged_feed_resumes_after_completed_epochs_and_retention(core):
     assert empty["changes"] == []
     assert empty["cursor"] == {"epoch": empty["complete_through"], "ordinal": END_OF_EPOCH}
     assert empty["cursor"]["epoch"] > cursor["epoch"]
+    # Prune the older epochs and resume from the last completed epoch.
     core.engine.prune(empty["complete_through"])
     core.wait(submit(core, "next", [(2, 30.0)]))
     resumed = core.changes(**empty["cursor"])
@@ -70,6 +75,7 @@ def test_page_excludes_publications_after_its_captured_frontier(core, monkeypatc
     snapshot = native.snapshot
 
     def growing_feed(*args, **kwargs):
+        """Publish a new reading as the feed opens its snapshot."""
         monkeypatch.setattr(native, "snapshot", snapshot)
         core.wait(submit(core, "later", [(2, 30.0)]))
         return snapshot(*args, **kwargs)
@@ -88,6 +94,7 @@ def test_consumer_resumes_checkpoints_with_old_native_fields(tmp_path):
     from examples.streaming.consumer import ChangeConsumer
 
     checkpoint = tmp_path / "sink.json"
+    # Save a consumer checkpoint from the earlier native row format.
     old = {
         "key": {"stream": "urn:probe", "time": 1000, "sample": 0},
         "data": {"value": 20., "quality": 0}, "revision": 1,
@@ -106,23 +113,24 @@ def test_consumer_resumes_checkpoints_with_old_native_fields(tmp_path):
     }
     consumer = ChangeConsumer(SimpleNamespace(changes=lambda **kwargs: page), checkpoint)
     assert consumer.values() == {("urn:probe", 1000): 20.}
+    # A retraction in the public format matches the reading from that checkpoint.
     consumer.poll()
     assert consumer.values() == {}
     assert json.loads(checkpoint.read_text())["cursor"] == page["cursor"]
 
 
-def test_feed_rejects_invalid_bounds_and_future_cursors(core):
-    for kwargs in (
-        {"epoch": 1},
-        {"ordinal": 1},
-        {"epoch": -1},
-        {"ordinal": 2**64},
-        {"limit": 0},
-        {"limit": 10_001},
-        {"limit": True},
-    ):
-        with pytest.raises(ValueError):
-            core.changes(**kwargs)
+@pytest.mark.parametrize("options", [
+    pytest.param({"epoch": 1}, id="unpublished-epoch"),
+    pytest.param({"ordinal": 1}, id="unpublished-ordinal"),
+    pytest.param({"epoch": -1}, id="negative-epoch"),
+    pytest.param({"ordinal": 2**64}, id="ordinal-overflow"),
+    pytest.param({"limit": 0}, id="zero-limit"),
+    pytest.param({"limit": 10_001}, id="limit-overflow"),
+    pytest.param({"limit": True}, id="boolean-limit"),
+])
+def test_feed_rejects_invalid_bounds_and_future_cursors(core, options):
+    with pytest.raises(ValueError):
+        core.changes(**options)
 
 
 def test_http_capacity_is_retryable_and_unpublished_admission_is_not_in_feed(tmp_path):
@@ -135,9 +143,11 @@ def test_http_capacity_is_retryable_and_unpublished_admission_is_not_in_feed(tmp
             payload = {"source_id": "pressure", "stream_name": "probe", "values": [[1, 20]]}
 
             def write(request_id):
+                """Submit the same payload without waiting for publication."""
                 return http.post("/insert_timeseries", params={"wait": 0},
                                  json=[dict(payload, request_id=request_id)])
 
+            # One request fills the queue while the calculation holds publication.
             response = write("first")
             assert response.status_code == 200, response.text
             receipt = response.json()["receipts"][0]
@@ -145,6 +155,7 @@ def test_http_capacity_is_retryable_and_unpublished_admission_is_not_in_feed(tmp
             assert http.get("/engine/changes").json()["changes"] == []
             refused = write("second")
             assert refused.status_code == 503 and refused.headers["Retry-After"] == "1"
+            # Retrying the accepted ID is still safe with a full queue.
             retried = write("first")
             assert retried.status_code == 200
             assert retried.json()["receipts"][0]["sequence"] == receipt["sequence"]
@@ -154,6 +165,7 @@ def test_http_capacity_is_retryable_and_unpublished_admission_is_not_in_feed(tmp
 
 def test_a_recording_refused_at_capacity_is_retryable_and_left_uncommitted(tmp_path, monkeypatch):
     with epoch_server(tmp_path, max_pending_requests=1) as (manager, http, _):
+        # Declare a time-series output and store the first observation in a run.
         experiments = manager.experiments
         study = experiments.define("capacity")
         level = experiments.declare(study["template_id"], "level", "output", "timeseries", {})
@@ -169,6 +181,7 @@ def test_a_recording_refused_at_capacity_is_retryable_and_left_uncommitted(tmp_p
         with monkeypatch.context() as patch:
             patch.setattr(manager.core.engine, "write", over_capacity)
             response = http.post(endpoint, json=entries)
+        # The rejected request can be retried and creates no extra ledger observation.
         assert response.status_code == 503 and response.headers["Retry-After"] == "1"
         assert http.post("/experiments/runs/missing/record", json=entries).status_code == 404
         assert len(experiments.observations(study["template_id"])) == 1

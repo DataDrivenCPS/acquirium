@@ -1,3 +1,5 @@
+"""Exercise Escapement through Acquirium's storage and Arrow read interfaces."""
+
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import datetime, timezone
@@ -14,6 +16,7 @@ from tests.epoch_helpers import plan, readings, value
 
 
 def frame(times, values, stream="urn:sensor"):
+    """Build an ingest frame with UTC nanosecond timestamps and mixed readings."""
     return pl.DataFrame(
         {
             "stream_uri": [stream] * len(times),
@@ -43,12 +46,14 @@ def epoch_core(tmp_path):
 
 def test_epoch_arrow_transport_preserves_selected_limits_and_pinned_reads(epoch_core):
     core = epoch_core
+    # Open a paged read before replacing the stream. Its limit applies to numeric rows.
     old = core.wait(core.ingest("gateway", "initial", frame([1001, 2002, 3003], [1, "Bad", 3])).receipt)
     pages = core.batches("urn:sensor", order="desc", limit=2, batch_size=1)
     latest = core.wait(core.ingest(
         "gateway", "replace", frame([1001], [99]), replace=["urn:sensor"]
     ).receipt)
 
+    # Collect after the replacement and verify the read still sees the old epoch.
     batches = list(pages)
     assert [batch.num_rows for batch in batches] == [1, 1]
     table = pa.Table.from_batches(batches)
@@ -59,6 +64,7 @@ def test_epoch_arrow_transport_preserves_selected_limits_and_pinned_reads(epoch_
     assert historical["value"].to_pylist() == [1, 3]
     assert next(core.batches("urn:sensor", mode="text", epoch=old.epoch))["value"].to_pylist() == ["Bad"]
     assert next(core.batches("urn:sensor", epoch=latest.epoch))["value"].to_pylist() == [99]
+    # Metadata counts both value kinds at the same historical epoch.
     assert core.info(["urn:none", "urn:sensor"], snapshot=old) == {
         "urn:none": {"row_count": 0, "earliest": None, "latest": None},
         "urn:sensor": {
@@ -74,6 +80,7 @@ def test_epoch_arrow_transport_preserves_selected_limits_and_pinned_reads(epoch_
 
 def test_epoch_arrow_transport_repairs_and_follows_versions(epoch_core, tmp_path):
     core = epoch_core
+    # Deploy a pass-through calculation so each derived change follows a source reading.
     module = tmp_path / "passthrough.py"
     module.write_text(
         'def calculate(frame, context):\n'
@@ -84,6 +91,7 @@ def test_epoch_arrow_transport_repairs_and_follows_versions(epoch_core, tmp_path
     old = core.wait(core.ingest("gateway", "initial", frame([1001, 2002], [10, 20])).receipt)
     assert next(core.batches("urn:derived"))["value"].to_pylist() == [10, 20]
 
+    # Delete one timestamp and correct the other twice in the same request.
     correction = frame([2002, 1001, 1001], [None, 15, 30]).with_columns(
         pl.Series("operation", ["delete", "upsert", "upsert"])
     )
@@ -129,6 +137,7 @@ def test_configured_retention_advances_and_drops_expired_history(tmp_path):
     try:
         first = core.wait(core.ingest("gateway", "first", frame([1001], [1])).receipt).epoch
         latest = core.wait(core.ingest("gateway", "latest", frame([1001], [2])).receipt).epoch
+        # Wait for background pruning to make the corrected epoch the oldest readable one.
         deadline = time.monotonic() + 5
         while core.engine.status()["retention"] < latest:
             assert time.monotonic() < deadline
@@ -145,11 +154,13 @@ def test_configured_retention_advances_and_drops_expired_history(tmp_path):
 
 def test_concurrent_ingests_share_admission_commits(core):
     def send(sender):
+        """Submit a sequence of requests under one gateway identity."""
         return [core.ingest(f"gateway-{sender}", str(i), frame([sender * 1000 + i], [i])).receipt
                 for i in range(20)]
 
     with ThreadPoolExecutor(8) as pool:
         receipts = [receipt for sent in pool.map(send, range(8)) for receipt in sent]
+    # All senders get unique receipts, and some requests share an admission commit.
     assert sorted(receipt.sequence for receipt in receipts) == list(range(1, 161))
     status = core.engine.status()
     assert status["accepted"] == 160
@@ -162,6 +173,7 @@ def test_close_lets_running_submissions_finish_and_refuses_later_ones(tmp_path):
     receipts = []
 
     def send(sender):
+        """Keep submitting requests until the closing engine refuses further writes."""
         for i in range(10**6):
             try:
                 receipts.append(owner.ingest(f"gateway-{sender}", str(i), frame([i], [i])).receipt)
@@ -238,6 +250,7 @@ def test_close_gives_up_on_a_stuck_function_and_keeps_its_work(tmp_path):
 
 
 def test_pages_preserve_nanoseconds_and_return_more_than_ten_thousand(core):
+    # Publish more readings than one ingest request can carry.
     core.wait(core.ingest("gateway", "a", frame(list(range(10_000)), [1] * 10_000)).receipt)
     core.wait(core.ingest("gateway", "b", frame(list(range(10_000, 10_007)), [2] * 7)).receipt)
     batches = list(core.batches("urn:sensor", batch_size=307))
@@ -245,6 +258,7 @@ def test_pages_preserve_nanoseconds_and_return_more_than_ten_thousand(core):
     assert table.schema == SCHEMA
     assert table.num_rows == 10_007
     assert table["ts"].cast(pa.int64()).to_pylist() == list(range(10_007))
+    # A descending read honors both the half-open time range and the row limit.
     descending = pa.Table.from_batches(
         list(
             core.batches(
@@ -278,40 +292,47 @@ def test_values_are_stored_as_their_stream_kind(core):
     assert pa.Table.from_batches(list(core.batches("urn:none", mode="text"))).num_rows == 0
 
 
-def test_duplicate_key_last_wins_and_transport_order_does_not_change_retry(core):
-    receipt = core.ingest("gateway", "batch", frame([1001, 2002, 1001], [10, 20, 30])).receipt
-    core.wait(receipt)
-    assert core.ingest("gateway", "batch", frame([2002, 1001], [20, 30])).receipt == receipt
-    assert value(core.engine.snapshot(), "urn:sensor", 1001) == 30
+@pytest.mark.parametrize("explicit_operations", [
+    pytest.param(False, id="interleaved-upserts"),
+    pytest.param(True, id="mixed-upserts-and-deletes"),
+])
+def test_ingest_keeps_the_last_effective_operation_and_retries_the_same_result(core, explicit_operations):
+    if explicit_operations:
+        # Seed each timestamp so deleting it and ignoring a null upsert have distinct effects.
+        cases = [
+            (["upsert", "delete"], [10, None], None),
+            (["delete", "upsert"], [None, 20], 20),
+            (["delete", "upsert", "delete"], [None, 20, None], None),
+            (["upsert", "delete", "upsert"], [10, None, 30], 30),
+            (["upsert", "upsert"], [10, None], 10),
+            (["delete", "upsert"], [None, None], None),
+        ]
+        times = list(range(1, len(cases) + 1))
+        core.wait(core.ingest("gateway", "seed", frame(times, [5] * len(times))).receipt)
+        rows = pl.concat([
+            frame([ts] * len(ops), values).with_columns(pl.Series("operation", ops))
+            for ts, (ops, values, _) in zip(times, cases)
+        ])
+        expected = [outcome for _, _, outcome in cases]
+        retry = frame(times, expected).with_columns(
+            pl.Series("operation", ["delete" if outcome is None else "upsert" for outcome in expected])
+        )
+    else:
+        # Omitting the operation column also keeps the last upsert for each timestamp.
+        times, expected = [1001, 2002], [30, 20]
+        rows = frame([1001, 2002, 1001], [10, 20, 30])
+        retry = frame(times, expected)
 
-
-def test_mixed_mutations_keep_the_last_surviving_operation_per_key(core):
-    cases = [
-        (["upsert", "delete"], [10, None], None),
-        (["delete", "upsert"], [None, 20], 20),
-        (["delete", "upsert", "delete"], [None, 20, None], None),
-        (["upsert", "delete", "upsert"], [10, None, 30], 30),
-        (["upsert", "upsert"], [10, None], 10),
-        (["delete", "upsert"], [None, None], None),
-    ]
-    times = list(range(1, len(cases) + 1))
-    core.wait(core.ingest("gateway", "seed", frame(times, [5] * len(times))).receipt)
-    mixed = pl.concat([
-        frame([ts] * len(ops), values).with_columns(pl.Series("operation", ops))
-        for ts, (ops, values, _) in zip(times, cases)
-    ])
-    result = core.ingest("gateway", "mixed", mixed)
+    result = core.ingest("gateway", "batch", rows)
     snapshot = core.wait(result.receipt)
-    expected = [outcome for _, _, outcome in cases]
     assert [value(snapshot, "urn:sensor", ts) for ts in times] == expected
-    canonical = frame(times, expected).with_columns(
-        pl.Series("operation", ["delete" if outcome is None else "upsert" for outcome in expected])
-    )
-    assert core.ingest("gateway", "mixed", canonical.reverse()) == result
+    # Replaying the surviving operations in reverse order returns the original result.
+    assert core.ingest("gateway", "batch", retry.reverse()) == result
 
 
 def test_fixed_buckets_repair_complete_groups_and_clear_downstream(epoch_core, tmp_path):
     core = epoch_core
+    # Average each fixed bucket, then pass each average to a pointwise consumer.
     module = tmp_path / "mean.py"
     module.write_text(
         'import polars as pl\n'
@@ -333,8 +354,10 @@ def test_fixed_buckets_repair_complete_groups_and_clear_downstream(epoch_core, t
     assert value(snapshot, "urn:bucket", -1000) == 20
     assert value(snapshot, "urn:child", 0) == 35
     assert value(snapshot, "urn:child", 1000) == 50
+    # A correction repairs its bucket and the downstream output at that timestamp.
     snapshot = core.wait(core.ingest("gateway", "late", frame([999], [70])).receipt)
     assert value(snapshot, "urn:child", 0) == 50
+    # Clearing the bucket retracts its own result and the corresponding child result.
     deletion = frame([0, 999], [None, None]).with_columns(
         pl.lit("delete").alias("operation")
     )

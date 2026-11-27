@@ -15,11 +15,13 @@ class Clock:
 
 
 def fill(window: _Window) -> None:
+    """Use every receive slot without acknowledging a message."""
     for _ in range(window.size):
         window.received()
 
 
 def drain(window: _Window) -> None:
+    """Acknowledge every message in a full receive window."""
     for _ in range(window.size):
         window.acked()
 
@@ -64,6 +66,7 @@ def test_driver_warns_while_a_window_stays_full_and_says_when_it_catches_up(
     driver._check_lag()
     assert caplog.records == []  # Too soon to judge.
 
+    # A full window for the entire reporting period means the driver is falling behind.
     clock.now += 20
     driver._check_lag()
     [warning] = caplog.records
@@ -71,6 +74,7 @@ def test_driver_warns_while_a_window_stays_full_and_says_when_it_catches_up(
     assert "falling behind client=broker|1883" in warning.getMessage()
     assert "100% of the last 30s" in warning.getMessage()
 
+    # Drain the window and report recovery once. Later periods stay quiet.
     caplog.clear()
     clock.now += 10
     drain(window)

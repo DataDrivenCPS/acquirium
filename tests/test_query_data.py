@@ -1,6 +1,7 @@
 import pytest
 import polars as pl
 from acquirium import Acquirium
+from acquirium.Client.data_object import DataObject
 from acquirium.internals.internals_namespaces import *
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -8,31 +9,99 @@ from conftest import _CSV_SOURCE_ID
 
 ##### Find all data tests #####
 
-def test_find_all_data_1(acquirium_client_csv):
-    acq = acquirium_client_csv
-    query = acq.find_all_data()
+def test_find_all_data_reads_and_shapes_registered_streams(acquirium_client_csv):
+    query = acquirium_client_csv.find_all_data()
 
     assert len(query.query_graph.data_nodes) == 1
     assert len(query.query_graph.nodes) == 1
 
-    meta = query.metadata()
-    assert len(meta) == 10
+    # Discover the ten streams, then read their year of hourly data in both shapes.
+    data = query.data()
+    assert isinstance(data, DataObject)
+    metadata = data.metadata()
+    assert metadata.height == 10
+    assert {"data_alias", "property_uri"} <= set(metadata.columns)
+    assert "stream_uri" not in metadata.columns
+    assert {"stream_uri", "source_id", "stream_name"} <= set(
+        data.metadata(include_stream_uris=True).columns
+    )
+    narrow = data.dataframe(shape="narrow")
+    assert narrow.shape == (10 * 365 * 24, 5)
+    assert "property_id" in narrow.columns
+    assert "property_uri" not in narrow.columns
+    full = data.dataframe(shape="narrow", compact=False)
+    assert {"data_alias", "property_uri", "stream_uri", "time", "value_numeric", "value_text"} <= set(full.columns)
+    wide = data.dataframe(shape="wide")
+    assert wide.shape == (365 * 24, 11)
+    assert wide.columns[0] == "time"
 
-    df_long = query.dataframe(shape="narrow")
-    assert df_long.shape == (10*365*24, 5)
+    # Query.dataframe applies date bounds, ordering, and limits before returning a frame.
+    assert query.dataframe(shape="narrow", start="2023-01-01", end="2023-06-30 23:00:00").shape == (10 * 24 * 181, 5)
+    assert query.dataframe(shape="wide", start="2023-01-01", end="2023-03-31 23:00:00").shape == (24 * 90, 11)
+    newest = query.dataframe(shape="wide", order="desc", limit=1)
+    assert newest.shape == (1, 11)
+    assert newest["time"][0] == datetime(2023, 12, 31, 23, tzinfo=ZoneInfo("UTC"))
 
-    df_long_6months = query.dataframe(shape="narrow", start="2023-01-01", end="2023-06-30 23:00:00")
-    assert df_long_6months.shape == (10*24*181, 5)
+    # Alias access and latest() expose the same readings.
+    alias, = data.aliases
+    assert {"time", "value"} <= set(data[alias].columns)
+    assert not data[alias].is_empty()
+    assert data.latest(alias).height == 10
+    latest = data.latest()
+    assert latest.columns == ["data_alias", "property_uri", "time", "value"]
+    assert latest.height == 10
+    assert latest["time"].unique().to_list() == newest["time"].to_list()
+    with pytest.raises(KeyError):
+        data["nonexistent_alias"]
 
-    df_wide = query.dataframe(shape="wide")
-    assert df_wide.shape == (365*24, 11)
 
-    df_wide_3months = query.dataframe(shape="wide", start="2023-01-01", end="2023-03-31 23:00:00")
-    assert df_wide_3months.shape == (24*90, 11)
+def test_select_streams_by_number_and_uri(acquirium_client_csv):
+    data = acquirium_client_csv.find_all_data().data()
+    info = data.stream_info()
+    assert info.columns == ["stream", "alias", "property_uri", "stream_uri", "source_id", "stream_name"]
+    assert info["stream"].to_list() == list(range(10))
+    assert set(info["source_id"]) == {_CSV_SOURCE_ID}
+    assert set(info["stream_name"]) == {f"point_{i}" for i in range(1, 11)}
+    assert data.stream_info(data.aliases[0]).equals(info)
+    with pytest.raises(KeyError):
+        data.stream_info("nonexistent_alias")
 
-    df_wide_desc = query.dataframe(shape="wide", order="desc", limit=1)
-    assert df_wide_desc.shape == (1, 11)
-    assert df_wide_desc["time"][0] == datetime(2023, 12, 31, 23, 0, 0 , tzinfo=ZoneInfo("UTC"))
+    # Use the same identity to narrow the tall, wide, and latest views.
+    first, second = info["stream_uri"][:2]
+    selected = data.dataframe(shape="narrow", compact=False, streams=[0])
+    assert selected["stream_uri"].unique().to_list() == [first]
+    assert data.dataframe(shape="narrow", compact=False, streams=first).equals(selected)
+    mixed = data.dataframe(shape="narrow", compact=False, streams=[0, second])
+    assert set(mixed["stream_uri"]) == {first, second}
+    assert data.dataframe(streams=[0]).width == 2
+    assert data.latest(streams=[0]).height == 1
+    with pytest.raises(KeyError):
+        data.dataframe(streams=[info.height])
+
+
+def test_data_groups_follow_the_entity_query(acquirium_client_csv):
+    entity = acquirium_client_csv.query().entity(ACQUIRIUM_NS.B, alias="b")
+
+    # The entity can match without selecting any readings.
+    empty = entity.data()
+    assert empty.is_empty()
+    assert empty.aliases == []
+    assert empty.entity_aliases == ["b"]
+    assert list(empty.by("b")) == []
+    assert empty.dataframe().is_empty()
+
+    # A measurement attached to B retains the B alias for grouping.
+    data = entity.measurement(alias="b_data").data(limit=5)
+    assert data.aliases == ["b_data"]
+    assert data.entity_aliases == ["b"]
+    groups = list(data.by("b"))
+    assert groups
+    for uri, group in groups:
+        assert isinstance(uri, str)
+        assert isinstance(group, DataObject)
+        assert not group.is_empty()
+    with pytest.raises(KeyError):
+        list(data.by("nonexistent_entity"))
 
 
 def test_find_all_data_2(acquirium_client_csv):

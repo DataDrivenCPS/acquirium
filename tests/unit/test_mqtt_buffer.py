@@ -34,14 +34,19 @@ def driver(tmp_path, monkeypatch):
 
 
 def message(mid, *, qos=1):
+    """Make a broker message whose numeric reading matches its packet ID."""
     return SimpleNamespace(topic="topic", qos=qos, mid=mid, payload=f'{{"Value": {mid}}}'.encode())
 
 
 def sent(driver):
+    """Decode the Arrow payloads the driver sent to Acquirium."""
     return [pl.from_arrow(call.args[1]) for call in driver.aq.insert_timeseries_arrow.call_args_list]
 
 
-@pytest.mark.parametrize("fail_first", [False, True])
+@pytest.mark.parametrize("fail_first", [
+    pytest.param(False, id="accepted-immediately"),
+    pytest.param(True, id="connection-fails-on-first-flush"),
+])
 def test_overflowed_messages_resume_without_reconnecting(driver, fail_first):
     driver._topic_specs["broker"]["topic"] = driver._topic_specs["broker"]["topic"][:1]
     receive, client = driver._on_message("broker"), Mock()
@@ -49,6 +54,7 @@ def test_overflowed_messages_resume_without_reconnecting(driver, fail_first):
     receive(client, None, message(2))
     receive(client, None, message(3))
     assert driver._windows["broker"]._unacked == 3
+    # A failed flush leaves the batch and its MQTT acknowledgment pending.
     if fail_first:
         driver.aq.insert_timeseries_arrow.side_effect = ConnectionError("offline")
         with pytest.raises(ConnectionError):
@@ -56,6 +62,7 @@ def test_overflowed_messages_resume_without_reconnecting(driver, fail_first):
         client.ack.assert_not_called()
         driver.aq.insert_timeseries_arrow.side_effect = None
         driver.aq.insert_timeseries_arrow.reset_mock()
+    # As each flush frees space, the next pending message is stored and acknowledged.
     for expected in (1, 2, 3):
         driver.tick()
         assert len(driver._pending) <= driver.max_buffered_rows
@@ -70,6 +77,7 @@ def test_one_message_spanning_several_flushes_is_decoded_once_and_acked_last(dri
     driver.decode_payload = Mock(return_value=(when, 42))
     receive, client = driver._on_message("broker"), Mock()
     receive(client, None, message(1))
+    # This message feeds three streams and each flush has room for one row.
     for _ in range(2):
         driver.flush()
         client.ack.assert_not_called()

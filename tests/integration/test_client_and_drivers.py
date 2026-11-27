@@ -27,6 +27,7 @@ START = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
 def _poll(check, *, timeout: float, message: str):
+    """Return the first result a readiness check produces before its deadline."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         result = check()
@@ -37,6 +38,7 @@ def _poll(check, *, timeout: float, message: str):
 
 
 def _frame(rows: int, stream_name: str) -> pl.DataFrame:
+    """Make a series of consecutive timestamped readings for one stream."""
     return pl.DataFrame({
         "ts": [START + timedelta(seconds=i) for i in range(rows)],
         "stream_name": [stream_name] * rows,
@@ -67,7 +69,7 @@ def test_client_inserts_round_trip_without_request_ids(tmp_path):
              "value_kind": "numeric"},
         ])
 
-        # No request_id: the client must mint one itself, as drivers rely on.
+        # Drivers rely on the client to create a request ID for both transports.
         client.insert_timeseries("gateway", "flow", [(START, 1.5)])
         client.insert_timeseries_arrow("gateway", _frame(3, "pressure").to_arrow())
 
@@ -133,6 +135,7 @@ def _pid_alive(pid: int) -> bool:
 
 
 def test_drivers_run_as_child_processes(tmp_path):
+    # Configure a file-based driver that imports its value from a sibling module.
     driver_dir = tmp_path / "drivers"
     driver_dir.mkdir()
     (driver_dir / "counter_driver.py").write_text(textwrap.dedent(DRIVER_SOURCE))
@@ -154,6 +157,7 @@ def test_drivers_run_as_child_processes(tmp_path):
     base = client.client.base_url
     try:
         def _running():
+            """Return the configured driver's process information once it is running."""
             drivers = requests.get(f"{base}/drivers/list", timeout=10).json()["drivers"]
             mine = [d for d in drivers if d["name"] == "counter" and d["status"] == "running"]
             return mine[0] if mine else None
@@ -163,6 +167,7 @@ def test_drivers_run_as_child_processes(tmp_path):
         assert pid != os.getpid() and _pid_alive(pid)
 
         def _ingested():
+            """Read enough points to show the child process is polling repeatedly."""
             frame = client.client.timeseries_df("urn:test:counter")
             return frame if frame.height >= 3 else None
 
@@ -180,12 +185,13 @@ def test_drivers_run_as_child_processes(tmp_path):
         assert "setup exploded" in response.json()["detail"]
         assert [d for d in _running_names(base) if d == "broken"] == []
 
+        # An explicit stop should reap the driver process.
         response = requests.post(f"{base}/drivers/stop", json={"name": "counter"}, timeout=30)
         assert response.status_code == 200
         assert response.json()["stopped"] is True
         assert not _pid_alive(pid)
 
-        # Restart through the API; shutting the server down stops it too.
+        # Restart through the API and check that shutting the server down stops the driver too.
         start = {
             "spec": "./drivers/counter_driver.py:CounterDriver",
             "name": "counter",
