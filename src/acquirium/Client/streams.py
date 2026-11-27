@@ -5,10 +5,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+import polars as pl
+
 from acquirium.core import time_ns
 from acquirium.ExperimentValues import timestamp as _utc
-import polars as pl
 from acquirium.internals._names import accepts_old_names
+from acquirium.internals.models import compute_stream_uri
 
 
 def _after_ns(value: datetime | str) -> int:
@@ -46,6 +48,11 @@ class Stream:
     _client: Any = field(default=None, repr=False, compare=False)
     # The request sequence of samples written through this handle.
     _after: int | None = field(default=None, repr=False, compare=False)
+
+    @classmethod
+    def from_source(cls, source: str, name: str) -> Stream:
+        """Identify a stream by its source and name without connecting to a server."""
+        return cls(str(compute_stream_uri(source, name)))
 
     def between(self, start: datetime | str, end: datetime | str) -> "StreamInterval":
         """Select the samples from ``start`` to ``end``, inclusive."""

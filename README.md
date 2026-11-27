@@ -48,14 +48,14 @@ pending if a computation fails.
 An app turns selected source streams into derived streams. New readings and
 corrections update the results, including those of downstream apps.
 
-Start with [Soft sensor app](docs/tutorials/first-app.md): generate a sine wave
-with a driver and write a Python threshold function. The
-[Turbidity alarm pipeline](docs/tutorials/turbidity.md) tutorial cleans faults,
-spikes, and gaps from turbidity readings, then raises a sustained alarm. The turbidity demo starts its own
-temporary server and checks its results.
+Start with the [first app tutorial](docs/tutorials/advanced/first-app.md) to
+deploy a simple calculation. The [turbidity pipeline](docs/tutorials/turbidity.md)
+cleans analyser readings and feeds a sustained alarm. The
+[actor examples](docs/explanation/soft-sensor-actors.md) show a scheduled alarm
+and a membrane model that retrains in the background.
 
 To build your own, see [Soft sensor calculations](docs/how-to/write-soft-sensors.md).
-The [app reference](docs/reference/apps.md) covers the interface options.
+The [app reference](docs/reference/apps/_index.md) covers the interface options.
 
 ## Documentation and tests
 

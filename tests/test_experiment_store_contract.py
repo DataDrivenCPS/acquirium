@@ -1,7 +1,8 @@
-"""Experiment ledger contract for local servers on DuckDB and isolated Timescale schemas."""
+"""Experiment ledger contract for local servers on DuckDB and PostgreSQL."""
 import base64
 import io
 from datetime import datetime, timezone
+from hashlib import sha256
 
 import polars as pl
 import pytest
@@ -42,32 +43,99 @@ def _post(ac, path, body):
 
 def test_backend_deletes_runs_studies_and_clears_experiments(ac):
     client = ac.client
+    # A plant stream is outside the ledger, even when a run annotates it.
     ac.register_streams([{"source_id": "contract", "stream_name": "site level"}])
     ac.insert_timeseries("contract", "site level", [(WHEN, 1000.0)])
     site = str(ac.reference_uri("contract", "site level"))
-    study = client.define_experiment("experiment delete contract")
-    config = _declare(client, study["template_id"], "config", "input", "file")
-    level = _declare(client, study["template_id"], "level", "output", "timeseries")
-    runs = []
-    for index in range(2):
-        run = client.start_experiment(study["template_id"], {"case": index})
-        client.attach_experiment_bytes(run["run_id"], config["variable_id"], b"shared", filename="shared.txt", media_type="text/plain")
-        client.record_experiment_batch(run["run_id"], [{"form": "samples", "variable_id": level["variable_id"],
-                                                        "samples": [[WHEN.isoformat(), float(index)]]}])
-        client.annotate_experiment_stream(run["run_id"], site, start=WHEN.isoformat())
-        runs.append(run)
+    first = client.define_experiment("tank")["template_id"]
+    second = client.define_experiment("pump")["template_id"]
+    tank_config = _declare(client, first, "config", "input", "file")["variable_id"]
+    tank_level = _declare(client, first, "level", "output", "timeseries")["variable_id"]
+    pump_config = _declare(client, second, "config", "input", "file")["variable_id"]
+    pump_level = _declare(client, second, "level", "output", "timeseries")["variable_id"]
 
+    def record(study, scenario, config, level, readings):
+        """Start a run, attach the shared bytes, and return its run and stream IDs."""
+        run = client.start_experiment(study, {"scenario": scenario})["run_id"]
+        client.attach_experiment_bytes(run, config, b"shared", filename="shared.txt")
+        [receipt] = client.record_experiment_batch(run, [
+            {"form": "samples", "variable_id": level, "samples": readings},
+        ])
+        return run, receipt["stream_uri"]
+
+    baseline, baseline_stream = record(first, "baseline", tank_config, tank_level, [(WHEN.isoformat(), 1)])
+    readings = [(WHEN.isoformat(), 2), (WHEN.replace(minute=1).isoformat(), 3)]
+    trial, trial_stream = record(first, "trial", tank_config, tank_level, readings)
+    stress, stress_stream = record(second, "stress", pump_config, pump_level, readings)
+    for run in (baseline, trial):
+        client.annotate_experiment_stream(run, site, start=WHEN.isoformat())
+    own = client.attach_experiment_bytes(baseline, tank_config, b"own", filename="own.txt")["digest"]
+    shared = sha256(b"shared").hexdigest()
+
+    # Usage counts all five samples but stores the shared attachment once.
     usage = client.experiment_usage()
-    assert (usage["runs"], usage["observations"], usage["annotations"], usage["samples"], usage["files"], usage["file_bytes"]) == (2, 4, 2, 2, 1, 6)
+    expected = {"studies": 2, "variables": 4, "runs": 3, "observations": 7,
+                "annotations": 2, "samples": 5, "files": 2, "file_bytes": 9}
+    assert {key: usage[key] for key in expected} == expected
+    assert usage["sample_bytes"] == 5 * 16
+    assert usage["total_bytes"] == usage["sample_bytes"] + usage["file_bytes"] + usage["ledger_bytes"]
+    scope = client.experiment_usage(template_id=first)
+    assert (scope["studies"], scope["runs"], scope["observations"], scope["files"], scope["file_bytes"]) == (1, 2, 5, 2, 9)
+    scope = client.experiment_usage(run_ids=[baseline])
+    assert (scope["studies"], scope["variables"], scope["runs"], scope["samples"]) == (0, 0, 1, 1)
+    assert client.experiment_usage(run_ids=[])["runs"] == 0
+    with pytest.raises(HTTPError) as missing:
+        client.experiment_usage(template_id="missing")
+    assert missing.value.response.status_code == 404
+
+    # The run and its Study cannot be deleted while it is active.
     with pytest.raises(HTTPError, match="finish or fail"):
-        client.delete_experiments([runs[0]["run_id"]])
-    for run in runs:
-        client.finish_experiment(run["run_id"])
-    assert client.delete_experiments([runs[0]["run_id"]]) == {"runs": 1, "observations": 2, "annotations": 1, "samples": 1, "files": 0}
-    assert client.delete_experiment_study(study["template_id"])["files"] == 1
-    assert client.clear_experiments(confirm=True)["studies"] == 0
+        client.delete_experiments([baseline])
+    with pytest.raises(HTTPError, match=baseline):
+        client.delete_experiment_study(first)
+    client.finish_experiment(baseline)
+    client.finish_experiment(trial)
+    assert client.delete_experiments([baseline]) == {
+        "runs": 1, "observations": 3, "annotations": 1, "samples": 1, "files": 1,
+    }
+    assert [item["run_id"] for item in client.list_experiments(first)] == [trial]
+    assert client.list_experiment_stream_annotations(run_id=baseline) == []
+    assert len(client.list_experiment_stream_annotations(run_id=trial)) == 1
+    assert client.timeseries_df(baseline_stream).is_empty()
+    assert client.timeseries_df(trial_stream).height == 2
+    with pytest.raises(HTTPError) as removed_file:
+        client.experiment_artifact(own)
+    assert removed_file.value.response.status_code == 404
+    assert client.experiment_artifact(shared) == b"shared"
+    with pytest.raises(HTTPError) as removed_run:
+        client.delete_experiments([baseline])
+    assert removed_run.value.response.status_code == 404
+
+    # The same attachment stays while the second Study uses it, then leaves on clear.
+    assert client.delete_experiment_study(first) == {
+        "studies": 1, "variables": 2, "runs": 1, "observations": 2,
+        "annotations": 1, "samples": 2, "files": 0,
+    }
+    with pytest.raises(HTTPError) as removed_study:
+        client.get_experiment_study(first)
+    assert removed_study.value.response.status_code == 404
+    assert client.experiment_usage()["files"] == 1
+    with pytest.raises(HTTPError, match="finish or fail"):
+        client.clear_experiments(confirm=True)
+    client.finish_experiment(stress, failed=True, error={"message": "abandoned"})
+    assert client.clear_experiments(confirm=True) == {
+        "studies": 1, "variables": 2, "runs": 1, "observations": 2,
+        "annotations": 0, "samples": 2, "files": 1,
+    }
+    assert client.list_experiment_studies() == []
     assert client.experiment_usage()["total_bytes"] == 0
-    assert client.timeseries_df(site).height == 1
+    with pytest.raises(HTTPError) as removed_file:
+        client.experiment_artifact(shared)
+    assert removed_file.value.response.status_code == 404
+    assert client.timeseries_df(stress_stream).is_empty()
+    assert client.timeseries_df(site)["value"].to_list() == [1000.0]
+    fresh = client.define_experiment("tank")["template_id"]
+    assert client.list_experiment_variables(fresh) == []
 
 
 def test_batch_declarations_and_observations_are_ordered_and_atomic(ac):

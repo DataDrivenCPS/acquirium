@@ -2,8 +2,12 @@
 title: 2 - Querying Data
 ---
 
-In this article we'll describe the simplest way to read data back from Acquirium.
-The examples use the two streams inserted in [1 - Inserting Data](inserting-data.md).
+Use `acq.query()` to find and read streams. For equipment or measurement types
+in an unfamiliar plant, follow the [plant model guide](../how-to/explore-a-model.md).
+If you have the source ID and stream name, or the stream URI, you can
+[read that stream directly](#reading-one-stream).
+
+The examples use `acq` and the two streams from [1 - Inserting Data](inserting-data.md).
 
 This page is also available as a [Python script](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/2_querying_data.py) and a [Jupyter notebook](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/2_querying_data.ipynb).
 
@@ -175,12 +179,17 @@ shape: (2, 2)
 └─────────────────────────────────┴──────────────┘
 ```
 
+To reuse a name or identifier you find in a plant model, see
+[Selecting by label or URI](../how-to/explore-a-model.md#selecting-by-label-or-uri).
+
 ## Reading one stream
 
-When you already know the stream, you can skip the query:
+Pass the source ID and stream name to `acq.stream()` to get a handle for one
+stream.
 
 ```python
-acq.stream("lab-import", "effluent-tds").dataframe()
+tds = acq.stream(source="lab-import", name="effluent-tds")
+tds.dataframe()
 ```
 ```text
 shape: (3, 2)
@@ -194,6 +203,9 @@ shape: (3, 2)
 │ 2026-08-08 10:10:00 UTC ┆ 418.1 │
 └─────────────────────────┴───────┘
 ```
+
+If you already have a stream URI, pass it as `uri`, as in
+`acq.stream(uri=tds.stream_uri)` for the same stream.
 
 ## Moving on
 

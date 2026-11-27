@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import functools
 import inspect
 import io
@@ -24,7 +23,9 @@ from datetime import datetime
 import uuid
 
 from acquirium.Server.config import load_active_config, load_app_target
+from acquirium.Server.actors import ActorSupervisor
 from acquirium.Server.manager import Manager
+from acquirium.Storage.graph_store import sparql_results_to_rows as _sparql_results_to_rows
 from acquirium.apps import App
 from escapement import Capacity, Closed, Fault, NotFound, Refused, Timeout
 
@@ -86,13 +87,6 @@ def _engine_errors(route):
     return mapped
 
 
-def _cell_datatype(cell: dict[str, Any] | None) -> str | None:
-    """``"iri"`` for a node, the XSD IRI of a typed literal, else ``None``."""
-    if not cell:
-        return None
-    if cell.get("type") == "uri":
-        return "iri"
-    return cell.get("datatype")
 class ExperimentTemplateRequest(BaseModel):
     """Transport names retain template/run wording; the Python API says Study."""
     name: str
@@ -387,24 +381,6 @@ def experiment_usage(request: ExperimentUsageRequest):
     except KeyError: raise HTTPException(status_code=404, detail="unknown study")
 
 
-def _sparql_results_to_rows(serialized: bytes) -> dict[str, Any]:
-    """Preserve Acquirium's SPARQL response contract without RDFLib terms.
-
-    ``rows`` holds every cell as text, as it always has. ``datatypes`` is a
-    matrix of the same shape saying what each cell is: ``"iri"`` for a node,
-    the XSD datatype IRI of a typed literal, ``None`` for a plain string or
-    an unbound cell. The client parses typed values back from it.
-    """
-    payload = json.loads(serialized)
-    if "boolean" in payload:
-        return {"columns": [], "rows": [[bool(payload["boolean"])]]}
-    columns = payload["head"].get("vars", [])
-    bindings = payload["results"].get("bindings", [])
-    rows = [[binding.get(column, {}).get("value") for column in columns] for binding in bindings]
-    datatypes = [[_cell_datatype(binding.get(column)) for column in columns] for binding in bindings]
-    return {"columns": columns, "rows": rows, "datatypes": datatypes}
-
-
 _SPARQL_RESULT_FORMATS = {
     "application/sparql-results+json": ox.QueryResultsFormat.JSON,
     "application/sparql-results+xml": ox.QueryResultsFormat.XML,
@@ -522,15 +498,16 @@ async def _start_config_drivers(supervisor: DriverSupervisor, cfg: dict) -> None
             log.exception("Config driver %s failed to start", spec)
 
 
-def _deploy_config_apps(cfg: dict) -> None:
-    """Deploy the apps declared in ``[[apps]]``."""
+def _deploy_config_apps(cfg: dict, actors: ActorSupervisor) -> None:
+    """Start configured actors before deploying apps that may read them."""
     entries = cfg.get("apps", [])
-    if not entries:
+    if not entries and not cfg.get("actors"):
         return
     from acquirium.Client.acquirium import Acquirium
 
     host, port, use_ssl = _self_connect_cfg(cfg)
     aq = Acquirium(server_url=host, server_port=port, use_ssl=use_ssl)
+    actors.start_configured(aq, cfg)
     base_dir = Path(cfg.get("__config_dir", Path.cwd()))
     for entry in entries:
         spec = entry.get("spec")
@@ -629,6 +606,7 @@ async def lifespan(app: FastAPI):
     _host, _port, _use_ssl = _self_connect_cfg(_cfg)
     supervisor = DriverSupervisor(server_url=_host, server_port=_port, use_ssl=_use_ssl)
     app.state.drivers = supervisor
+    actors = ActorSupervisor(m.core, m.graph_store)
 
     # Once the server answers /health, start configured drivers, then deploy
     # configured transformations. Drivers load their plant models during setup,
@@ -638,7 +616,7 @@ async def lifespan(app: FastAPI):
             log.error("Server never became healthy at %s; skipping configured drivers", supervisor.base_url)
             return
         await _start_config_drivers(supervisor, _cfg)
-        await asyncio.to_thread(_deploy_config_apps, _cfg)
+        await asyncio.to_thread(_deploy_config_apps, _cfg, actors)
 
     startup_task = asyncio.create_task(_startup_drivers())
 
@@ -647,12 +625,17 @@ async def lifespan(app: FastAPI):
     finally:
         summary_stop.set()
         startup_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
+        try:
             await startup_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            log.exception("Configured startup failed")
         try:
             await asyncio.to_thread(supervisor.stop_all)
         except Exception:
             log.exception("Error stopping drivers during shutdown")
+        await asyncio.to_thread(actors.close, m.drain_timeout)
         try:
             m.close()
         except Exception:

@@ -2,453 +2,115 @@
 title: Turbidity alarm pipeline
 ---
 
-A filter's effluent turbidity rises above its limit. One high reading might be
-a bubble past the sensor. Fifteen minutes of high readings means the filter
-needs attention. So the alarm we want is not a simple threshold: it has to look
-at a stretch of time, cope with bad and missing data, and change its mind when
-better data arrives.
-
-This tutorial builds that alarm from two apps. It continues from
-[Soft sensor app](advanced/first-app.md).
+Turbidity measures how cloudy water is, in nephelometric turbidity units (NTU).
+This example cleans analyser readings and raises an alarm when the cleaned
+values stay above a limit. Each arrow shows which stream the next app reads.
 
 ```text
-analyser readings ──replaced by──> turbidity-clean ──read by──> turbidity-alarm
+Analyser readings → Clean turbidity → Sustained alarm
 ```
 
-The first app cleans each analyser's readings into one value per minute. It
-does not just add another stream beside them: it declares that its output
-*replaces* them. From then on, asking for Filter 3's turbidity returns the
-cleaned values, while the analyser's own readings stay stored underneath. The
-second app asks for each location's turbidity, so it gets the clean stream
-without naming the cleaner, and decides whether turbidity has stayed above the
-limit for long enough. A report or a second alarm would get the clean stream
-the same way.
-
-The code is in [`examples/turbidity`](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/turbidity):
-`calculations.py` holds the two functions and `apps.py` the declarations. A
-short script feeds them twenty-five minutes of readings so that we can follow
-every result:
+From the repository root, run the example on a temporary server.
 
 ```sh
 uv run --locked python -m examples.turbidity.run
 ```
 
-The script starts a temporary server, loads the data, prints what the apps
-produce, and shuts down. It takes seconds, not twenty-five minutes, because
-every reading carries the time it was taken.
+The script loads a small plant model with three filters and a combined outlet.
+Each location sends two readings per minute for 25 minutes. Filter 3 has a high
+period, a fault code, a missing minute, and a spike. [Plot of the sample readings](../images/turbidity-readings.svg)
 
-## Plant and sample readings
+## Declare the data flow
 
-Four analysers measure turbidity: one at each filter's outlet and one at the
-combined effluent. Each reports a reading every thirty seconds.
+The query finds turbidity measurements and their locations. Each app uses
+`group="location"` to run one calculation per location with its own parameters.
+Both `Rolling` windows produce one result per minute.
 
-Here is part of the input data, before any cleaning. All values are in NTU;
-times are UTC on 1 January 2026. A dash means no reading arrived at that time.
-`Fault` is the analyser's fault code, reported in place of a number.
+The cleaner uses `ReplacementOutput()` to make its result the default reading
+of the analyser's measurement. The alarm uses the same measurement query, so
+it receives the cleaned values. `Output(on_group=True)` attaches the alarm to
+the location so it can be found by a query for that location.
 
-| Time | Filter 1 | Filter 2 | Filter 3 | Combined effluent |
-| --- | ---: | ---: | ---: | ---: |
-| 00:00:00 | 0.10 | 0.07 | 0.15 | 0.05 |
-| 00:00:30 | 0.20 | 0.17 | 0.25 | 0.15 |
-| 00:01:00 | 0.10 | 0.07 | 0.15 | 0.05 |
-| 00:01:30 | 0.20 | 0.17 | 0.25 | 0.15 |
-| 00:02:00 | 0.10 | 0.07 | 0.75 | 0.05 |
-| 00:02:30 | 0.20 | 0.17 | 0.85 | 0.15 |
-| … | … | … | … | … |
-| 00:05:00 | 0.10 | 0.07 | 0.75 | 0.05 |
-| 00:05:30 | 0.20 | 0.17 | `Fault` | 0.15 |
-| … | … | … | … | … |
-| 00:09:30 | 0.20 | 0.17 | 0.85 | 0.15 |
-| 00:10:00 | 0.10 | 0.07 | — | 0.05 |
-| 00:10:30 | 0.20 | 0.17 | — | 0.15 |
-| 00:11:00 | 0.10 | 0.07 | 0.75 | 0.05 |
-| … | … | … | … | … |
-| 00:20:30 | 0.20 | 0.17 | 0.85 | 0.15 |
-| 00:21:00 | 0.10 | 0.07 | 0.15 | 0.05 |
-| … | … | … | … | … |
-| 00:22:00 | 0.10 | 0.07 | 0.15 | 0.05 |
-| 00:22:30 | 0.20 | 0.17 | 9.90 | 0.15 |
-| 00:23:00 | 0.10 | 0.07 | 0.15 | 0.05 |
-
-We will follow Filter 3. Its readings rise above its 0.5 NTU limit at 00:02
-and fall below it at 00:21. Along the way it reports a fault, misses a minute,
-and later reports a single 9.9 NTU spike when a bubble passes the sensor.
-
-![Raw turbidity readings over twenty-five minutes. The upper plot shows Filter 3's full range, including the 9.9 NTU spike. The lower plot shows all four sensors from 0 to 1 NTU, with gaps for Filter 3's fault and missing readings.](../images/turbidity-readings.svg)
-
-The plot shows every sample time. Gaps remain gaps; no values have been filled
-in. The lower panel enlarges the 0–1 NTU range so Filter 3's sustained rise is
-visible alongside the other sensors.
-
-The [plant model](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/turbidity/model.ttl)
-connects each stream to its sampling location. The fault code stays in the raw
-stream as text; the [values explanation](../explanation/values.md#numbers-and-text)
-describes how numbers and text are stored.
-
-## Cleaning function
-
-### Input dataframe
-
-The cleaning app runs once per minute for each location. Each call sees the
-readings from five minutes before that minute to five minutes after it. For
-Filter 3 at 00:05, the frame holds twenty readings, from 00:00:00 to
-00:09:30. Here are four of them, with the `stream` and `context` columns left
-out:
-
-| input | time | value | text |
-| --- | --- | ---: | --- |
-| `"raw"` | 2026-01-01 00:04:30 UTC | 0.85 | `null` |
-| `"raw"` | 2026-01-01 00:05:00 UTC | 0.75 | `null` |
-| `"raw"` | 2026-01-01 00:05:30 UTC | `null` | `"Fault"` |
-| `"raw"` | 2026-01-01 00:06:00 UTC | 0.75 | `null` |
-
-`input` is the name the [app declaration](#app-declaration) gives this input,
-`"raw"`. An app with several inputs uses it to tell their rows apart.
-
-Each row has either a numeric `value` or `text`. The fault code arrives with
-`value` null and its code in `text`.
-
-The function's `context["output_time"]` is the minute being cleaned, 00:05.
-`context["parameters"]` describes the location:
-
-```python
-{"group": ("urn:turbidity:filter-3",), "threshold": 1.0}
+```{literalinclude} ../../examples/turbidity/apps.py
+:language: python
 ```
 
-`group` identifies Filter 3: the app groups readings by location, so Filter 3's
-readings never mix with another location's. `threshold` is how far, in NTU,
-Filter 3's readings may sit from the median before they count as spikes. The
-app declaration gives each location its own.
-
-The cleaning function below declares `frame: pd.DataFrame`, so Acquirium
-provides a pandas dataframe with Arrow-backed columns. Its timestamps remain
-UTC microseconds; the readings and grouping are the same as in the table.
-The alarm function later in the tutorial uses Polars.
-
-### Cleaning steps
-
-The function cleans in four steps:
+Deploy both apps after registering the plant model and streams.
 
 ```python
-from datetime import timedelta
-
-import pandas as pd
-import polars as pl
-
-from acquirium.functions import emit
-
-
-def clean(frame: pd.DataFrame, context):
-    """One clean turbidity value per minute, from the raw readings around it."""
-    # Fault codes arrive as text, with no numeric value.
-    readings = frame.dropna(subset=["value"])
-    # A spike, such as a bubble past the sensor, sits far from the median.
-    threshold = context["parameters"]["threshold"]
-    median = readings["value"].median()
-    readings = readings[(readings["value"] - median).abs() <= threshold]
-    if readings.empty:
-        return {"turbidity": readings[["time", "value"]]}
-
-    # Average the remaining readings within each minute.
-    minutes = readings.resample("1min", on="time")["value"].mean()
-    # Fill gaps between valid minutes; keep the edges unfilled.
-    filled = minutes.interpolate(limit_area="inside")
-    # Return the calculated series. The app maintains its one-minute grid.
-    return {"turbidity": filled.dropna().rename("value").rename_axis("time").reset_index()}
+clean_app, alarm_app = declarations(client)
+client.deploy_app(clean_app)
+client.deploy_app(alarm_app)
 ```
 
-1. **Faults.** Rows without a numeric value are dropped. At 00:05 that
-   leaves one reading, 0.75 NTU.
-2. **Spikes.** The median of ten minutes of readings ignores a few odd ones.
-   A reading farther from it than the location's `threshold` is dropped. At
-   00:22 Filter 3's median is 0.75 NTU and its threshold is 1 NTU, so 9.9 goes
-   and 0.15 stays.
-3. **Minute averages.** The remaining readings are averaged within each
-   minute. `resample("1min", on="time")` groups readings by their timestamp,
-   so 00:02:00 and 00:02:30 make one average at 00:02.
-4. **Gaps.** `interpolate()` fills missing minutes along a straight line
-   between the nearest valid averages. The minutes are equally spaced.
-   `limit_area="inside"` requires a valid value on both sides of a gap.
-   At 00:10 both neighbours are 0.80 NTU, so the filled value is 0.80.
+## Cleaning steps
 
-The function returns the calculated series as `time` and `value` columns.
-It may, because its output is a replacement, described
-[below](#replacing-the-analyser-readings); an ordinary output returns rows only
-at `output_time`. Acquirium keeps the row for this call's output minute. No row at that minute
-removes its previous result. Other minutes are maintained by their own calls.
-A missing minute needs valid neighbours on both sides within the window;
-existing minute averages remain unchanged.
+For each output minute, the cleaner sees five minutes of analyser readings on
+either side. The `pd.DataFrame` annotation asks Acquirium for a pandas frame.
+The `value` column holds numbers, and text fault codes have no numeric value.
+The function drops faults and spikes, averages by minute, and interpolates
+gaps between valid minutes. The app publishes the result for its output minute.
 
-### App declaration
-
-```python
-from pathlib import Path
-import acquirium as aq
-
-TURBIDITY = "http://qudt.org/vocab/quantitykind/Turbidity"
-MINUTE = 60 * 1_000_000_000
-CALCULATIONS = Path("examples/turbidity/calculations.py")
-
-# How far a reading may sit from the median around it before it counts as a spike.
-SPIKES = {
-    "urn:turbidity:filter-1": {"threshold": 1.0},
-    "urn:turbidity:filter-2": {"threshold": 1.0},
-    "urn:turbidity:filter-3": {"threshold": 1.0},
-    "urn:turbidity:combined": {"threshold": 0.5},
-}
-
-# Every location's turbidity.
-turbidity = (
-    client.query()
-    .measurement(alias="turbidity", quantity_kind=TURBIDITY)
-    .context(alias="location")
-)
-clean = aq.App(
-    name="turbidity-clean",
-    inputs={"raw": aq.Selection.from_query(
-        turbidity, measurement="turbidity", group="location", parameters=SPIKES
-    )},
-    # The clean stream replaces the analyser readings it is calculated from.
-    outputs={"turbidity": aq.ReplacementOutput()},
-    function=aq.PythonFunction.from_file(CALCULATIONS, "clean"),
-    window=aq.Rolling(lookback_ns=5 * MINUTE, step_ns=MINUTE, lookahead_ns=5 * MINUTE),
-)
+```{literalinclude} ../../examples/turbidity/calculations.py
+:language: python
+:pyobject: clean
 ```
-
-The query finds each turbidity measurement and the location it belongs to.
-`inputs` names the app's one input `"raw"`; `measurement="turbidity"` says
-which of the query's aliases selects its streams. `group="location"` makes one
-calculation per location.
-
-`parameters` gives each location its settings, keyed by the location's URI.
-The combined effluent normally reads well under 0.3 NTU, so a smaller jump
-there is already suspect, and its spike threshold is 0.5 NTU instead of 1.
-One function serves every location, and changing one location's value
-recalculates only that location's history. Only the listed locations are
-cleaned: a fifth analyser needs an entry here too, and deployment warns about
-locations the query finds but `SPIKES` leaves out.
-
-`Rolling` gives each call five minutes of readings on either side of
-`output_time`, at one-minute steps. The spike check needs that context, and so
-does a gap fill, which needs an average after the gap as well as before it.
-Note what looking ahead implies: a clean value can change when later data
-arrives.
-
-## Replacing the analyser readings
-
-Most derived streams sit beside their inputs. The high-wave stream in
-[Soft sensor app](advanced/first-app.md) is new information, and the sine wave is
-still the answer to "what did the driver produce?". Cleaning is different:
-nobody downstream should use Filter 3's raw readings when cleaned ones exist.
-The cleaner's output says so:
-
-```python
-outputs={"turbidity": aq.ReplacementOutput()}
-```
-
-An ordinary `aq.Output` describes a new measurement. A `ReplacementOutput`
-continues the measurement its input selects: the clean stream becomes the
-authoritative turbidity for each analyser, with the analyser's unit and
-quantity kind. The cleaner has one input, so the replacement needs no
-arguments; an app with several inputs names the one it replaces, as in
-`ReplacementOutput(of="raw")`.
-
-To see this, read the analyser point that the script registered for Filter 3,
-once its readings are in:
-
-```python
-analyser = client.query().measurement(alias="turbidity", uri="urn:turbidity:filter-3-turbidity")
-analyser.dataframe()                                   # The clean values.
-analyser.dataframe(view="raw", value_mode="coalesce")  # The analyser's readings.
-```
-
-| Time (UTC) | `dataframe()` | `dataframe(view="raw")` |
-| --- | ---: | ---: |
-| 00:05:00 | 0.75 | 0.75 |
-| 00:05:30 | — | `Fault` |
-| 00:09:00 | 0.80 | 0.75 |
-| 00:09:30 | — | 0.85 |
-| 00:10:00 | 0.80 | — |
-| 00:22:00 | 0.15 | 0.15 |
-| 00:22:30 | — | 9.9 |
-
-The normal read returns one clean value per minute: the fault and the spike
-are gone, and the missing minute at 00:10 is filled. `view="raw"` returns the
-readings as the analyser sent them; `value_mode="coalesce"` includes the
-`Fault` text reading. Nothing has been overwritten. A query for Filter 3's
-turbidity by location, `filter3.measurement(quantity_kind=TURBIDITY)`, also
-returns the clean values: the analyser point and the clean stream are one
-measurement.
-
-A few rules keep a replacement trustworthy:
-
-- **It is complete.** A reading the cleaner drops stays dropped; it does not
-  fall back to the raw value underneath.
-- **It measures the same thing.** It keeps the input's quantity kind and
-  value kind. It may change the unit only to a compatible one, with
-  `ReplacementOutput(unit=...)`, and reads then report that unit.
-- **It has one successor at a time.** Each stream has at most one replacement,
-  but a replacement can itself be replaced. An app that corrected the clean
-  stream for analyser drift would select `turbidity-clean`'s output and
-  declare its own `ReplacementOutput()`. Reads, and the alarm, would then
-  follow the chain to the drift-corrected stage.
-
-The cleaner's own `raw` input is the one place that does not follow the
-replacement: it binds exactly the analyser streams its query selects, because
-following the chain would lead the cleaner back to its own output. The clean
-stream is not attached to the location as a second measurement, so the
-cleaner's query never matches it.
-
-A query that names the app, such as `measurement(app="turbidity-clean")`,
-reads that app's stored output exactly. The
-[replacement reference](../reference/apps/outputs.md#replacement-outputs) lists every
-view.
 
 ## Sustained turbidity threshold
 
-### Group parameters
+The alarm receives a Polars dataframe (`pl.DataFrame`) of cleaned readings.
+`context["output_time"]` is the minute being checked. For Filter 3 the alarm
+requires 15 consecutive one-minute values above 0.5 NTU. `emit` stamps the
+result at the output time. A `1` means the alarm is on and a `0` means it is off.
 
-The alarm's settings are group parameters too. Each location has its own
-limit and its own idea of "long enough":
-
-```python
-LIMITS = {
-    "urn:turbidity:filter-1": {"limit_ntu": 0.5, "sustained_minutes": 15},
-    "urn:turbidity:filter-2": {"limit_ntu": 0.5, "sustained_minutes": 15},
-    "urn:turbidity:filter-3": {"limit_ntu": 0.5, "sustained_minutes": 15},
-    "urn:turbidity:combined": {"limit_ntu": 0.3, "sustained_minutes": 5},
-}
+```{literalinclude} ../../examples/turbidity/calculations.py
+:language: python
+:pyobject: alarm
 ```
 
-For Filter 3, the alarm function's `context["parameters"]` is:
+## Read the results
+
+Once the sample readings publish, a normal read of the Filter 3 analyser
+returns the clean values. Use `view="raw"` to inspect the original readings
+on the same stream.
 
 ```python
-{"group": ("urn:turbidity:filter-3",), "limit_ntu": 0.5, "sustained_minutes": 15}
+analyser = client.stream(source="turbidity-analysers", name="filter-3")
+clean = analyser.dataframe()
+raw = analyser.dataframe(view="raw", value_mode="coalesce")
 ```
 
-Each app sees only its own selection's parameters: the alarm has no
-`threshold`, and the cleaner has no `limit_ntu`.
+The script finds the alarm by location and app name. `stream_info()` identifies
+the output stream so the script can also read it at an earlier version of the
+data.
 
-### Alarm function
-
-```python
-def alarm(frame: pl.DataFrame, context):
-    """1 when clean turbidity stayed above the limit for the whole duration."""
-    t = context["output_time"]
-    # Report only at minutes that have a clean value.
-    if frame.filter(pl.col("time") == t).is_empty():
-        return {"alarm": emit(context, None)}
-
-    limit = context["parameters"]["limit_ntu"]
-    minutes = context["parameters"]["sustained_minutes"]
-    recent = frame.filter(pl.col("time") > t - timedelta(minutes=minutes))
-    sustained = recent.height == minutes and recent["value"].min() > limit
-    return {"alarm": emit(context, 1 if sustained else 0)}
+```{literalinclude} ../../examples/turbidity/run.py
+:language: python
+:start-after: Start alarm read
+:end-before: End alarm read
+:dedent: 4
 ```
 
-The frame holds clean values, one per minute. `recent` keeps the last fifteen
-of them, from 00:02 to 00:16 when `output_time` is 00:16. The alarm is 1 when
-there are fifteen and every one is above the limit, and 0 otherwise. The
-function does not repeat any cleaning: a missing minute in the clean stream
-means a gap the cleaner could not fill, and the alarm does not count it as high.
-
-### App declaration
-
-```python
-alarm = aq.App(
-    name="turbidity-alarm",
-    inputs={"turbidity": aq.Selection.from_query(
-        turbidity, measurement="turbidity", group="location", parameters=LIMITS
-    )},
-    outputs={"alarm": aq.Output(on_group=True)},
-    function=aq.PythonFunction.from_file(CALCULATIONS, "alarm"),
-    window=aq.Rolling(lookback_ns=15 * MINUTE, step_ns=MINUTE),
-)
-```
-
-The alarm uses the cleaner's query: each location's turbidity, without naming
-the cleaning app. This is the replacement at work. The query matches the
-analyser measurements, and the clean stream replaces them, so the alarm binds
-the clean stream once per location.
-
-A selection follows replacements to the end of the chain unless it says
-otherwise. If another app later replaces `turbidity-clean`, for example to
-correct for analyser drift, the alarm moves to that stage and recalculates its
-history. `view="raw"` would bind the analyser readings instead. To name one
-particular stage, select it with `Selection.outputs_of(clean, "turbidity", ...)`,
-which binds exactly that app's output.
-
-The window looks back fifteen minutes, the longest duration in `LIMITS`, and
-does not look ahead.
-
-## Deployment and output queries
-
-```python
-client.deploy_app(clean)
-client.deploy_app(alarm)
-```
-
-The order does not matter. An alarm deployed on its own would read the analyser
-readings; deploying the cleaner then moves it to the clean stream. The script
-then inserts the readings and reads both results for Filter 3. The clean
-values are a normal read of the analyser point; the alarm is a new
-measurement, which `on_group=True` attaches to its location:
-
-```python
-clean_values = client.query().measurement(alias="clean", uri="urn:turbidity:filter-3-turbidity")
-filter3 = client.query().entity(uri="urn:turbidity:filter-3", alias="filter3")
-alarm_values = filter3.measurement(alias="alarm", app="turbidity-alarm")
-clean_values.dataframe().join(alarm_values.dataframe(), on="time", how="left")
-```
-
-Here are the results beside the raw readings, with uneventful minutes left out:
-
-| Minute (UTC) | Raw readings | clean | alarm |
-| --- | --- | ---: | ---: |
-| 00:01 | 0.15, 0.25 | 0.20 | 0 |
-| 00:02 | 0.75, 0.85 | 0.80 | 0 |
-| 00:05 | 0.75, `Fault` | 0.75 | 0 |
-| 00:10 | none | 0.80 | 0 |
-| 00:15 | 0.75, 0.85 | 0.80 | 0 |
-| 00:16 | 0.75, 0.85 | 0.80 | 1 |
-| 00:20 | 0.75, 0.85 | 0.80 | 1 |
-| 00:21 | 0.15, 0.25 | 0.20 | 0 |
-| 00:22 | 0.15, 9.9 | 0.15 | 0 |
-
-Filter 3 has been above 0.5 NTU since 00:02, counting the filled minute at
-00:10, so its alarm comes on at 00:16, fifteen clean values later, and stays on
-until the excursion ends at 00:20. The spike at 00:22 never reaches the alarm.
+Filter 3 stays above the limit from 00:02 through 00:20. The cleaner fills the
+gap at 00:10, so the alarm is on for five minutes, from 00:16 through 00:20.
 
 ## Late readings and alarm recalculation
 
-Now the readings for 00:10 turn up late, as data from the field often does.
-They are 0.15 and 0.25 NTU: Filter 3 briefly dipped below its limit.
+The missing 00:10 readings arrive late and show a dip below the limit. The
+clean value changes from 0.80 to 0.20 NTU, splitting the high period into two
+shorter runs. Acquirium recalculates the affected minutes and the alarm clears.
 
-The script inserts those two readings and nothing else, and both apps update on
-their own. The clean value for 00:10 is now 0.20, a measured average instead of
-an estimate. That splits the excursion into two stretches, eight minutes from
-00:02 to 00:09 and ten from 00:11 to 00:20. Neither lasts fifteen, so the
-alarm is 0 for the whole run.
+An **epoch** identifies a published version of the data. The script saved
+`first_epoch` from the original insert. Reading at that epoch still shows
+the five alarm minutes, while the current alarm shows zero.
 
-Only the results that could depend on 00:10 are recomputed: the clean minutes
-whose ten-minute window includes it, and the alarm minutes whose fifteen
-minutes include those.
-
-That is the right answer, but it raises a question: the alarm *did* fire, and
-someone may have acted on it. Acquirium keeps every published version. The
-script saved the snapshot number, the epoch, when it first read the alarm, and
-reading at that epoch still shows the alarm on for five minutes:
-
-```python
-stream = alarm_values.data().stream_info()["ref_uri"][0]
-client.stream(stream).dataframe(epoch=first)
+```{literalinclude} ../../examples/turbidity/run.py
+:language: python
+:start-after: Start correction
+:end-before: End correction
+:dedent: 4
 ```
 
-So you can always tell what the data says now from what it said when a decision
-was made.
-
-The alarm in this tutorial is a stored signal of zeros and ones. To send
-notifications from it, [consume the committed changes](../how-to/consume-streaming-changes.md),
-where you also decide what to do when an alarm is later revised. To split
-cleaning into separately reusable stages instead, see
-[Data cleaning with multiple apps](../how-to/chain-cleaning-apps.md).
+For an alarm that checks on a wall-clock schedule, see the [standalone timer
+actor](../explanation/soft-sensor-actors.md#standalone-turbidity-alarm). To
+send notifications from stored alarm changes, see the [change feed guide](../how-to/consume-streaming-changes.md).

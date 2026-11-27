@@ -77,8 +77,9 @@ def test_client_inserts_round_trip_without_request_ids(tmp_path):
         assert pressure["value"].to_list() == [0.0, 1.0, 2.0]
 
         # The server's reason must reach the caller, not just the status code.
-        with pytest.raises(requests.HTTPError, match="is not registered"):
+        with pytest.raises(requests.HTTPError, match="is not registered") as error:
             client.insert_timeseries_arrow("gateway", _frame(1, "unregistered").to_arrow())
+        assert error.value.response.status_code == 400
 
         # Frames over the per-request cap go up as several requests.
         driver = _BulkDriver(client, {"server": {"data_dir": str(tmp_path)}})

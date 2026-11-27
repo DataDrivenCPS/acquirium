@@ -1,7 +1,5 @@
 """Turbidity cleaning and alarm calculations for the turbidity tutorial."""
 
-from datetime import timedelta
-
 import pandas as pd
 import polars as pl
 
@@ -29,13 +27,13 @@ def clean(frame: pd.DataFrame, context):
 
 def alarm(frame: pl.DataFrame, context):
     """1 when clean turbidity stayed above the limit for the whole duration."""
-    t = context["output_time"]
+    t = pd.Timestamp(context["output_time"])
     # Report only at minutes that have a clean value.
     if frame.filter(pl.col("time") == t).is_empty():
         return {"alarm": emit(context, None)}
 
     limit = context["parameters"]["limit_ntu"]
     minutes = context["parameters"]["sustained_minutes"]
-    recent = frame.filter(pl.col("time") > t - timedelta(minutes=minutes))
+    recent = frame.filter(pl.col("time") > t + pd.Timedelta(f"-{minutes}m"))
     sustained = recent.height == minutes and recent["value"].min() > limit
     return {"alarm": emit(context, 1 if sustained else 0)}

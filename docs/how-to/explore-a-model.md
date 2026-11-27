@@ -105,6 +105,29 @@ Here the text `pump` was matched to the class `Pump`.
 **Note:** Every method returns a new query and leaves the original unchanged.
 `pumps` can be kept in a variable and extended in several ways, as in the next steps.
 
+## Selecting by label or URI
+
+The name shown in `pump.label` is the equipment's label. Pass it as `label=`
+to `entity()`. You can also select a measurement by its label within that
+equipment.
+
+```python
+p1 = acq.query().entity(label="High-pressure Pump P1", alias="pump")
+power_on_p1 = p1.measurement(label="P1 mechanical power", alias="power")
+power_on_p1.metadata()
+```
+
+The result has one row, with `wbs:P1` in `pump` and `wbs:P1-mechanical-power`
+in `power`. Labels match exactly and can be shared by several nodes.
+
+To select a specific node, pass its identifier as `uri=`. You can copy the
+short form from the result or get the full URI with `resolved_nodes()`.
+
+```python
+acq.query().entity(uri="wbs:P1").measurement(uri="wbs:P1-mechanical-power")
+power_on_p1.resolved_nodes(alias="power")  # ['urn:swro/P1-mechanical-power']
+```
+
 ## Seeing the values you can filter on
 
 `facets()` does what `options()` does, for every attribute of a node in one call.

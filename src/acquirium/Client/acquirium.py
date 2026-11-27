@@ -334,14 +334,31 @@ class Acquirium:
         """Return the canonical Acquirium reference URI for ``(source_id, stream_name)``."""
         return compute_stream_uri(source_id, stream_name)
 
-    def stream(self, source_id_or_uri: str | URIRef, name: str | None = None) -> Stream:
+    def stream(
+        self,
+        source: str | URIRef | None = None,
+        name: str | None = None,
+        *,
+        uri: str | URIRef | None = None,
+        source_id_or_uri: str | URIRef | None = None,
+    ) -> Stream:
         """Return a handle for one stored stream.
 
-        ``ac.stream(source_id, name)`` names a stream by the source and stream
-        name its driver writes with; ``ac.stream(stream_uri)`` wraps a reference
-        URI. Use ``stream.between(start, end)`` to select a time range.
+        Use ``client.stream(source="lab", name="flow")`` for a named stream
+        or ``client.stream(uri=stream_uri)`` for a stream URI. A single
+        positional argument is also accepted as a URI.
         """
-        stream_uri = compute_stream_uri(str(source_id_or_uri), name) if name is not None else source_id_or_uri
+        if source_id_or_uri is not None:
+            if source is not None:
+                raise TypeError("stream() received both source and source_id_or_uri")
+            source = source_id_or_uri
+        if uri is not None:
+            if source is not None or name is not None:
+                raise TypeError("stream() takes either uri or source and name")
+            return Stream(str(uri), self.client)
+        if source is None:
+            raise TypeError("stream() requires a URI or a source and name")
+        stream_uri = compute_stream_uri(str(source), name) if name is not None else source
         return Stream(str(stream_uri), self.client)
 
     def point(self, uri: str) -> Point:

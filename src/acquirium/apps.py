@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import asdict, dataclass, field
+from datetime import timedelta
 import functools
 from hashlib import sha256
 import json
@@ -17,8 +18,9 @@ from uuid import uuid4
 from pathlib import Path
 from threading import RLock
 from typing import Any, Mapping, Sequence
+from typing import Literal as TypeLiteral
 
-from acquirium.app_spec import FixedBucket, Native, Pointwise, PythonFunction, Rolling
+from acquirium.app_spec import FixedBucket, Native, Pointwise, PythonFunction, Rolling, duration, duration_ns
 from acquirium.functions import WINDOW_BUILTINS
 from escapement import Receipt
 from rdflib import Graph, Literal, RDF, RDFS, URIRef
@@ -71,14 +73,25 @@ class Selection:
     # Per-group operator parameters (JSON values), keyed by group. When set,
     # only the listed groups are selected; inspect warns about the groups skipped.
     parameters: Mapping[str, Mapping[str, Any]] | None = None
-    # A maximum age in nanoseconds: read this input as of each window, its
-    # latest reading at or before the window's timestamp and no older, instead
-    # of the readings in the window. Such an input creates no windows.
-    as_of: int | None = None
+    # A maximum age, such as pd.Timedelta("2h"): read this input as of each
+    # window, its latest reading at or before the window's timestamp and no
+    # older, instead of the readings in the window. Such an input creates no windows.
+    as_of: timedelta | None = None
     # Which replacement stage each selected identity binds: "current" (the
     # chain's final stage), "raw" (its original input), or "stored" (exactly
     # the stream selected). Unset means "current", or "stored" for outputs_of.
     view: str | None = None
+
+    @classmethod
+    def from_stream(cls, stream, *, as_of=None, view=None):
+        """Bind a stream handle or URI to the app's shared input group."""
+        uri = str(stream)
+        if not looks_like_uri(uri):
+            raise ValueError("stream must be an Acquirium stream handle or URI")
+        return cls(
+            f"SELECT ?stream WHERE {{ BIND({URIRef(uri).n3()} AS ?stream) }}",
+            group=None, as_of=as_of, view=view,
+        )
 
     @classmethod
     def outputs_of(cls, app, port, *, combine=False, parameters=None, as_of=None):
@@ -88,7 +101,7 @@ class Selection:
         group. ``combine=True`` feeds every upstream group into one operator.
         ``parameters`` maps groups to values the function reads from
         ``context["parameters"]``. ``as_of`` reads the port as of each window,
-        no older than that many nanoseconds, as for any selection.
+        no older than that duration, as for any selection.
         Deployment rejects the selection while ``app`` is not deployed with
         this port.
         """
@@ -157,6 +170,8 @@ def _selection_dict(selection):
     for key in ("as_of", "view"):
         if data[key] is None:
             del data[key]
+    if "as_of" in data:
+        data["as_of"] = duration_ns(data["as_of"], "as_of")
     return data
 
 
@@ -242,6 +257,7 @@ class App:
     outputs: Mapping[str, Output | ReplacementOutput]
     function: PythonFunction | Native | Mapping[str, Any]
     window: Pointwise | FixedBucket | Rolling = field(default_factory=Pointwise)
+    freshness: TypeLiteral["synchronous", "asynchronous"] = "synchronous"
 
     def to_dict(self):
         if (
@@ -254,6 +270,8 @@ class App:
             )
         if not isinstance(self.window, (Pointwise, FixedBucket, Rolling)):
             raise ValueError("only pointwise, fixed-bucket and rolling windows are supported")
+        if self.freshness not in ("synchronous", "asynchronous"):
+            raise ValueError("app freshness must be 'synchronous' or 'asynchronous'")
         function = _function_dict(self.function)
         items = _input_items(self.inputs)
         if any(not key for key in self.outputs):
@@ -282,10 +300,8 @@ class App:
                 raise ValueError(f"output {port!r} must be an Output or a ReplacementOutput")
         ages = {}
         for name, selection in items:
-            if selection.as_of is not None and (
-                type(selection.as_of) is not int or selection.as_of <= 0
-            ):
-                raise ValueError("as_of must be a positive number of nanoseconds")
+            if selection.as_of is not None and duration_ns(selection.as_of, "as_of") <= 0:
+                raise ValueError("as_of must be a positive duration")
             if ages.setdefault(name, selection.as_of) != selection.as_of:
                 raise ValueError(f"input {name!r} is read as of different ages")
             if selection.view is not None and selection.view not in replacements.VIEWS:
@@ -301,32 +317,37 @@ class App:
                     raise ValueError("parameter values must be JSON") from error
         if function.get("kind") == "python":
             sizes = [value for key, value in self.window.to_dict().items() if key.endswith("_ns")]
-            sizes.extend(selection.as_of for _, selection in items if selection.as_of is not None)
+            sizes.extend(duration_ns(selection.as_of, "as_of") for _, selection in items
+                         if selection.as_of is not None)
             if any(type(value) is int and value % 1000 for value in sizes):
                 raise ValueError("Python soft sensor windows and as-of ages must have microsecond precision")
-        return dict(
+        data = dict(
             name=self.name,
             inputs=[{"input": name, **_selection_dict(selection)} for name, selection in items],
             outputs=outputs,
             function=function,
             window=self.window.to_dict(),
         )
+        # Keep existing synchronous declarations and plans in their stored form.
+        if self.freshness != "synchronous":
+            data["freshness"] = self.freshness
+        return data
 
     @classmethod
     def from_dict(cls, data):
-        allowed = {"name", "inputs", "outputs", "function", "window"}
-        if set(data) != allowed:
-            raise ValueError(f"app fields must be {sorted(allowed)}")
+        required = {"name", "inputs", "outputs", "function", "window"}
+        if not required <= set(data) <= (required | {"freshness"}):
+            raise ValueError(f"app fields must be {sorted(required)}, with optional 'freshness'")
         window = data["window"]
         if window["kind"] == "pointwise":
             value = Pointwise()
         elif window["kind"] == "fixed":
-            value = FixedBucket(window["width_ns"], window.get("origin_ns", 0))
+            value = FixedBucket(duration(window["width_ns"]), window.get("origin_ns", 0))
         elif window["kind"] == "rolling":
             value = Rolling(
-                window["lookback_ns"],
-                window["step_ns"],
-                window.get("lookahead_ns", 0),
+                duration(window["lookback_ns"]),
+                duration(window["step_ns"]),
+                duration(window.get("lookahead_ns", 0)),
                 window.get("origin_ns", 0),
             )
         else:
@@ -335,6 +356,8 @@ class App:
         for item in data["inputs"]:
             item = dict(item)
             name = item.pop("input")
+            if item.get("as_of") is not None:
+                item["as_of"] = duration(item["as_of"])
             inputs.setdefault(name, []).append(Selection(**item))
         app = cls(
             data["name"],
@@ -342,6 +365,7 @@ class App:
             {key: _output_from_dict(item) for key, item in data["outputs"].items()},
             data["function"],
             value,
+            freshness=data.get("freshness", "synchronous"),
         )
         app.to_dict()
         return app
@@ -841,7 +865,7 @@ class Apps:
                 "id": name,
                 "definition": {
                     "function": function, "window": window, "roles": roles,
-                    "ports": ports, "freshness": "synchronous",
+                    "ports": ports, "freshness": apps[name].freshness,
                 },
                 "annotations": {
                     "app": declaration,
@@ -982,10 +1006,12 @@ class Apps:
             name = definition["name"]
             plan, _, _ = self._candidate({**self.state["apps"], name: definition})
             preview = self.core.engine.preview(plan)
-            report = next(t["annotations"]["report"] for t in plan["templates"] if t["id"] == name)
+            template = next(t for t in plan["templates"] if t["id"] == name)
+            report = template["annotations"]["report"]
             return {
                 "name": name, "dry_run": True, "plan": _plan_id(plan),
                 "active_plan": _plan_id(self.state["plan"]), "epoch": preview["base"],
+                "freshness": template["definition"]["freshness"],
                 "matches": report["matches"], "warnings": _warnings(report),
                 "within_limits": all(item["within_limits"] for item in preview["instances"].values()),
                 "instances": [
@@ -1060,11 +1086,20 @@ class Apps:
                 operator["version"] = _digest([spec, instance["parameters"], outputs, instance["annotations"]])
                 operators.append(operator)
             errors = [item["message"] for item in failures.values() if "message" in item]
-            status = ("failed" if errors else "pending" if pending
-                      else "blocked" if failures else "active")
+            if errors:
+                status = "failed"
+            elif pending:
+                status = "pending"
+            elif failures:
+                status = (
+                    "refreshing" if all(item["reason"] == "refreshing" for item in failures.values())
+                    else "blocked"
+                )
+            else:
+                status = "active"
             result.append({
                 "name": name, "definition": definition, "operators": operators, "status": status,
-                "active_plan": active_plan,
+                "active_plan": active_plan, "freshness": spec["freshness"],
                 "error": error or "\n".join(dict.fromkeys(errors)) or None,
                 "stale": bool(failures), "failures": failures,
                 "matches": report[name]["matches"], "warnings": _warnings(report[name]),

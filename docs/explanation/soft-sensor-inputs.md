@@ -106,8 +106,9 @@ provide the setup steps.
 
 ```python
 import acquirium as aq
+import pandas as pd
 
-MINUTE = 60 * 1_000_000_000
+MINUTE = pd.Timedelta("1m")
 summary_function = aq.PythonFunction.from_file("temperature_functions.py", "summarize")
 
 by_tank = aq.App(
@@ -164,14 +165,12 @@ The probes are registered under source `"input-demo"` with local names
 
 ```python
 # Supply the time of the sample, even though it reaches the server later.
-sample_time = aq.to_timestamp("2026-01-01T10:00:40 UTC")
+sample_time = pd.Timestamp("2026-01-01T10:00:40Z")
 client.insert_timeseries("input-demo", "a2", [(sample_time, 26.0)])
 ```
 
-`aq.to_timestamp` returns a timezone-aware UTC datetime. You can also write
-`"2026-01-01T10:00:40Z"` or `"2026-01-01T03:00:40-07:00"`; both represent
-the same instant. See [timestamp conversion](../reference/client/_index.md#timestamp-conversion)
-for accepted formats and timezone rules.
+The `Z` sets the time zone to UTC. A timestamp of
+`"2026-01-01T03:00:40-07:00"` represents the same instant.
 
 ### Group and window selection
 
@@ -247,9 +246,9 @@ are timezone-aware Python datetimes. Written with `aq.to_timestamp`, they are:
 
 ```python
 {
-    "output_time": aq.to_timestamp("2026-01-01T10:00:00 UTC"),
-    "window_start": aq.to_timestamp("2026-01-01T10:00:00 UTC"),
-    "window_end": aq.to_timestamp("2026-01-01T10:01:00 UTC"),
+    "output_time": pd.Timestamp("2026-01-01T10:00:00Z"),
+    "window_start": pd.Timestamp("2026-01-01T10:00:00Z"),
+    "window_end": pd.Timestamp("2026-01-01T10:01:00Z"),
     "parameters": {
         "group": ("urn:input-demo:tank-a",),  # The group key: tank A.
     },
@@ -327,15 +326,15 @@ runs the function. Acquirium selects windows using the sample timestamp.
 ## Window types
 
 The window type determines which readings enter a call and the timestamp of
-its results. For a rolling window, `lookback_ns` sets how far back to read
-from the output timestamp. `step_ns` sets the interval between output
+its results. For a rolling window, `lookback` sets how far back to read
+from the output timestamp. `step` sets the interval between output
 timestamps. These examples use tank A's four readings and a one-minute step.
 
 | Window | Readings in a call | Mean output |
 | --- | --- | --- |
 | `aq.Pointwise()` | At 10:00:10: 20 and 24. At 10:00:40: 22 and 26. | 22 at 10:00:10; 24 at 10:00:40. |
 | `aq.FixedBucket(MINUTE)` | All four readings in the 10:00 minute. | 23 at 10:00:00, the bucket start. |
-| `aq.Rolling(lookback_ns=MINUTE, step_ns=MINUTE)` | For the output at 10:01: all four readings from 10:00 through 10:01. | 23 at 10:01:00. |
+| `aq.Rolling(lookback=MINUTE, step=MINUTE)` | For the output at 10:01: all four readings from 10:00 through 10:01. | 23 at 10:01:00. |
 
 ```text
 same tank A readings:       10:00:10 ●             10:00:40 ●
@@ -366,7 +365,7 @@ output at 10:02:00: pull tank A's readings from 10:00:00 through 10:02:00
 Acquirium builds an input frame for each window. The second frame also
 includes A1's reading at 10:01:10, because it falls within that window.
 
-A rolling window includes both endpoints. Adding `lookahead_ns=MINUTE` lets
+A rolling window includes both endpoints. Adding `lookahead=MINUTE` lets
 the call also read samples up to one minute **after** its output timestamp.
 This is useful for interpolation; a later sample can fill an earlier gap.
 As later data arrives, that earlier output may change.
@@ -519,6 +518,6 @@ earlier output timestamps remain distinct from the current output timestamp.
 
 For runnable calculations, continue with the
 [soft sensor examples](../how-to/soft-sensor-examples.md). For every frame
-column and option, see the [app reference](../reference/apps/_index.md#python-functions).
+column and option, see the [app reference](../reference/apps/app-class.md#python-functions).
 [Derived stream updates](apps.md) explains what happens when an old
 reading, a group membership, or a function changes.

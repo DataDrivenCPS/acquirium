@@ -20,10 +20,10 @@ dataframe, start with [Soft sensor inputs](../explanation/soft-sensor-inputs.md)
 
 ## Timestamp conventions
 
-Use `aq.to_timestamp("2026-01-01T10:00:40 UTC")` to create a sample timestamp.
-It returns a timezone-aware UTC datetime and also accepts RFC 3339 / ISO 8601
-strings with `Z` or numeric offsets. With no timezone, UTC is assumed. See
-[timestamp conversion](../reference/client/_index.md#timestamp-conversion).
+Use `pd.Timestamp("2026-01-01T10:00:40Z")` to create a sample timestamp.
+The `Z` sets its time zone to UTC. Subtract `pd.Timedelta("5m")` to move
+the timestamp five minutes earlier. App windows and as-of ages take the
+same `pd.Timedelta` durations.
 
 A sample has one timestamp, which you supply when inserting it:
 

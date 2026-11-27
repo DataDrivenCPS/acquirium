@@ -52,17 +52,25 @@ def test_booleans_follow_the_stream_kind(own_acquirium, transport):
         assert acq.client.timeseries_df(uri)["value"].to_list() == values
 
 
-def test_undeclared_text_stream_switches_to_numeric_later(own_acquirium):
+def test_read_modes_use_declared_and_inferred_stream_kinds(own_acquirium):
     acq = own_acquirium
     source = "kind-late"
     registration = {"source_id": source, "stream_name": "late"}
-    acq.register_streams([registration])
+    acq.register_streams([
+        registration,
+        {"source_id": source, "stream_name": "mode", "value_kind": "text"},
+    ])
     at = datetime(2026, 11, 1, tzinfo=timezone.utc)
     stream = acq.stream(source, "late")
-    acq.insert_timeseries(source, "late", [(at, "Bad")])
+    later = at + timedelta(seconds=1)
+    # The declared text stream stringifies numbers. The other stream starts with a fault code.
+    acq.insert_timeseries_batch(source, {"mode": [(at, "AUTO"), (later, 3)], "late": [(at, "Bad")]})
+    assert acq.stream(source, "mode").dataframe()["value"].to_list() == ["AUTO", "3"]
     assert stream.dataframe()["value"].to_list() == ["Bad"]
 
-    acq.insert_timeseries(source, "late", [(at + timedelta(seconds=1), " 3.0 ")])
+    # The first numeric value changes the default view while the fault code remains readable.
+    acq.insert_timeseries(source, "late", [(later, " 70.5 ")])
     acq.register_streams([registration])
-    assert stream.dataframe()["value"].to_list() == [3.0]
+    assert stream.dataframe()["value"].to_list() == [70.5]
     assert stream.dataframe(value_mode="text")["value"].to_list() == ["Bad"]
+    assert stream.dataframe(value_mode="coalesce")["value"].to_list() == ["Bad", "70.5"]

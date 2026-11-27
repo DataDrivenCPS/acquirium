@@ -25,8 +25,7 @@ at 00:00 and 00:02. Arrival time does not enter the calculation.
 Save this as `pipeline_functions.py` in your working directory:
 
 ```python
-from datetime import timedelta
-
+import pandas as pd
 import polars as pl
 from acquirium.functions import emit
 
@@ -39,7 +38,7 @@ def reject_invalid(frame, context):
 
 
 def interpolate(frame, context):
-    output_time = context["output_time"]
+    output_time = pd.Timestamp(context["output_time"])
     readings = frame.select("time", "value").drop_nulls("value").sort("time")
     sample_time = pl.col("time")
 
@@ -55,8 +54,8 @@ def interpolate(frame, context):
     if not before.is_empty() and not after.is_empty():
         earlier_time, earlier_value = before.row(0)
         later_time, later_value = after.row(0)
-        gap = later_time - earlier_time
-        if gap <= timedelta(minutes=2):
+        gap = pd.Timestamp(later_time) - pd.Timestamp(earlier_time)
+        if gap <= pd.Timedelta("2m"):
             # Linear interpolation: move this fraction of the way to the later value.
             fraction = (output_time - earlier_time) / gap
             value = earlier_value + fraction * (later_value - earlier_value)
@@ -75,12 +74,12 @@ calculation file. With the repository's development environment, use
 `uv run python` to start the session.
 
 ```python
-from datetime import timedelta
 from pathlib import Path
-import acquirium as aq
 
-MINUTE = 60 * 1_000_000_000
-start = aq.to_timestamp("2026-01-01T00:00:00 UTC")
+import acquirium as aq
+import pandas as pd
+
+start = pd.Timestamp("2026-01-01T00:00:00Z")
 client = aq.init(data_dir="./cleaning-pipeline-data")
 
 client.register_streams([{
@@ -91,7 +90,7 @@ client.register_streams([{
 }])
 # These timestamps describe the samples, even though we insert them together.
 client.insert_timeseries("cleaning-pipeline", "signal", [
-    (start + timedelta(minutes=minute), value)
+    (start + pd.Timedelta(minutes=minute), value)
     for minute, value in enumerate([0.2, 9.0, 0.8, 0.4])
 ])
 raw = client.query().measurement(
@@ -129,9 +128,9 @@ filled = aq.App(
     function=aq.PythonFunction.from_file(calculations, "interpolate"),
     # Calculate every minute using observations from both sides of that minute.
     window=aq.Rolling(
-        lookback_ns=2 * MINUTE,
-        step_ns=MINUTE,
-        lookahead_ns=2 * MINUTE,
+        lookback=pd.Timedelta("2m"),
+        step=pd.Timedelta("1m"),
+        lookahead=pd.Timedelta("2m"),
     ),
 )
 high = aq.App(
@@ -187,7 +186,7 @@ accessible. The alarm is an ordinary output and does not extend the chain.
 ```python
 # Replace the reading at 00:02; this is a correction, not an extra sample.
 client.insert_timeseries("cleaning-pipeline", "signal", [
-    (start + timedelta(minutes=2), 0.4),
+    (start + pd.Timedelta("2m"), 0.4),
 ])
 print(filled_data.dataframe())
 print(high_data.dataframe())

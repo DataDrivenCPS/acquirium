@@ -1,111 +1,26 @@
-"""Experiment metadata: saved through the server, and the ledger's graph handling in-process.
+"""Experiment metadata through a local server and the ledger's graph boundary.
 
 Tests of what users see go through a local server started with aq.init(). The
-ones that need a failure, a count of graph work, or a graph edited underneath
-the ledger build the server's ledger in-process against a memory graph.
+ones that need a count of graph work or a graph edited underneath the ledger
+open the storage components directly.
 """
-import json
-import threading
 from datetime import datetime, timezone
-from types import SimpleNamespace
 from unittest.mock import Mock
 
 import polars as pl
 import pytest
-from rdflib import Dataset, Literal, URIRef
-from rdflib.namespace import RDF
+from rdflib import Literal, URIRef
+from rdflib.namespace import XSD
 from requests import HTTPError
 
 from acquirium.Client.explore.attributes import ATTR_NS
 from acquirium.ExperimentMetadata import EXPERIMENT, annotation_uri, run_uri, variable_uri
 from acquirium.Experiments import ExperimentStore
 from acquirium.Storage.ledger import DuckDBLedger
-from acquirium.Storage.graph_registry import source_graph_uri
 from acquirium.internals.internals_namespaces import HAS_UNIT
 
 PSI = "http://qudt.org/vocab/unit/PSI"
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
-
-
-class MemoryGraphStore:
-    """An RDF store without inference; queries and updates execute as SPARQL."""
-
-    def __init__(self):
-        self.dataset = Dataset(default_union=True)
-        self.version = 0
-        self.updates = 0
-
-    source_graph_uri = staticmethod(source_graph_uri)
-
-    def insert_graph(self, content, *, replace, graph_uri):
-        graph = self.dataset.graph(graph_uri)
-        if replace:
-            graph.remove((None, None, None))
-        for triple in content:
-            graph.add(triple)
-        self.version += 1
-
-    def sparql_update(self, update, *, graph_uri):
-        self.dataset.graph(graph_uri).update(update)
-        self.version += 1
-        self.updates += 1
-
-    def metadata_update(self, update, *, graph_uri):
-        self.dataset.update(update)
-        self.version += 1
-        self.updates += 1
-
-    def query(self, query, **kwargs):
-        payload = json.loads(self.dataset.query(query).serialize(format="json"))
-        columns = payload["head"]["vars"]
-        rows, datatypes = [], []
-        for binding in payload["results"]["bindings"]:
-            rows.append([binding.get(name, {}).get("value") for name in columns])
-            datatypes.append([
-                "iri" if binding.get(name, {}).get("type") == "uri"
-                else binding.get(name, {}).get("datatype")
-                for name in columns
-            ])
-        return {"columns": columns, "rows": rows, "datatypes": datatypes}
-
-    sparql_query = query
-
-    def clear_graphs(self, graph_uris=(), *, prefix=None):
-        targets = {URIRef(uri) for uri in graph_uris}
-        if prefix is not None:
-            targets.update(graph.identifier for graph in self.dataset.graphs() if str(graph.identifier).startswith(prefix))
-        for uri in targets:
-            self.dataset.graph(uri).remove((None, None, None))
-        self.version += 1
-        return len(targets)
-
-    def flush_metadata(self):
-        pass
-
-    def metadata_documents(self, subjects):
-        from acquirium.Metadata import read_documents
-        from types import SimpleNamespace
-        return read_documents(SimpleNamespace(sparql_query=self.sparql_query), subjects)
-
-    def metadata_triples(self, subjects, *, graph_uri):
-        graph = self.dataset.graph(URIRef(graph_uri))
-        return {str(subject): [[str(s), str(p), o.n3()] for s,p,o in graph.triples((URIRef(subject), None, None))]
-                for subject in subjects}
-
-    def graph_status(self):
-        return {"source_version": self.version}
-
-
-
-def _values(ac, sparql):
-    """The first column of a query against the server's graph."""
-    return [row[0] for row in ac.client.sparql_query(sparql)["rows"]]
-
-
-def _mentioning(ac, identifier):
-    """Nodes in the server's graph whose URI or values mention ``identifier``."""
-    return set(_values(ac, f"SELECT DISTINCT ?s WHERE {{ ?s ?p ?o "
-                           f"FILTER(CONTAINS(STR(?s), '{identifier}') || CONTAINS(STR(?o), '{identifier}')) }}"))
 
 
 # Through the server
@@ -129,6 +44,7 @@ def test_metadata_filters_are_scoped_and_observations_follow_selection(ac):
     high_flow = study.experiments.where(ac.attr.settings.flow >= 15)
     assert [run.run_id for run in high_flow.all()] == [second.run_id]
     assert high_flow.observations(cost).frame()["value"].to_list() == [11.0]
+    assert high_flow.scalars(metadata=["settings.flow"]).select("settings.flow", "cost").rows() == [(20, 11.0)]
     assert len(study.experiments.where(tags="b").all()) == 2
     absent = study.experiments.where(scenario="absent")
     assert absent.all() == []
@@ -143,14 +59,18 @@ def test_metadata_filters_are_scoped_and_observations_follow_selection(ac):
 
 def test_scalar_variable_unit_strings_and_uris_share_semantic_filter(ac):
     study = ac.study.define("pressure")
-    pressure = study.output("pressure").scalar(unit="PSI", settings={"sensor": "A"})
+    pressure = study.output("pressure").scalar(unit="PSI", settings={"sensor": "A"}, category="simulation")
     other = ac.study.define("other")
     other.output("pressure").scalar(unit="PSI")
 
     assert study.variables.where(unit="psi").all() == [pressure]
     assert study.variables.where(unit=URIRef(PSI)).all() == [pressure]
     assert pressure.unit == "PSI"  # Saved objects retain their original shape and values.
-    assert _values(ac, f"SELECT ?unit WHERE {{ <{pressure.uri}> <{HAS_UNIT}> ?unit }}") == [PSI]
+    result = ac.client.sparql_query(
+        f"SELECT ?unit WHERE {{ <{pressure.uri}> <{HAS_UNIT}> ?unit }}",
+        wait_for_fresh=True,
+    )
+    assert result["rows"] == [[PSI]]
     frame = study.variables.query().include("unit").metadata(include_dependencies=False)
     assert frame["variable.unit"].to_list() == ["unit:PSI"]
     objects = study.variables.query().include("unit", "unit.raw").metadata_objects(include_dependencies=False)
@@ -159,6 +79,10 @@ def test_scalar_variable_unit_strings_and_uris_share_semantic_filter(ac):
     assert study.variables.where(**{"unit.raw": "PSI"}).all() == [pressure]
     assert study.variables.where(role="input").where(unit="PSI").all() == []
     assert study.variables.where(role="input").query().metadata().height == 0
+    assert pressure.metadata["category"] == "simulation"
+    assert study.variables.where(**{"metadata.category": "simulation"}).all() == [pressure]
+    with pytest.raises(ValueError, match="category"):
+        study.variables.where(category="simulation").all()
 
 
 def test_server_reads_return_saved_metadata(ac):
@@ -169,7 +93,8 @@ def test_server_reads_return_saved_metadata(ac):
     pressure.record(2)
     run.annotate_stream("urn:site:stream", start=NOW, metadata={"treatment": "A"})
     run.finish()
-    study.start({"settings": {"mode": "trial", "duration": 60}}).finish()
+    trial = study.start({"settings": {"mode": "trial", "duration": 60}})
+    trial.finish()
     study.output("other").scalar(unit=PSI, settings={"duration": 60})
 
     reopened = ac.study.get("recorded objects")
@@ -184,43 +109,36 @@ def test_server_reads_return_saved_metadata(ac):
     assert [item["variable_metadata"] for item in observations] == [reopened.variables["pressure"].declaration.document()] * 2
     assert reopened.stream_annotations()[0].metadata == {"treatment": "A"}
 
+    # Objects retain each run's own keys. The shared table schema fills an absent field with null.
+    query = reopened.experiments.query().include("settings")
+    objects = [item["experiment"] for item in query.metadata_objects()]
+    assert {item["id"]: item["settings"] for item in objects} == {
+        run.uri: {"mode": "baseline"}, trial.uri: {"mode": "trial", "duration": 60},
+    }
+    assert {"duration": None, "mode": "baseline"} in query.metadata()["experiment.settings"].to_list()
+    assert query.where(run_id=run.run_id).metadata_objects() == [
+        {"experiment": {"id": run.uri, "settings": {"mode": "baseline"}}},
+    ]
 
-@pytest.mark.parametrize("values", [
-    {"settings": {"enabled": True, "threshold": 1.5}},
-    {"tags": ["A", "B", "A"]},
-    {"items": [{"name": "A"}, {"name": "B", "count": 2}]},
-    {"matrix": [[1, 2], [3, 4]]},
-    {"tags": ["A", None, "B"]},
-    {"datasheet": "https://example.org/input"},
-    {"id": "pump-7"},
-    {"id": "urn:example:pump-7"},
-])
-def test_shared_metadata_object_round_trip(ac, values):
+
+@pytest.mark.parametrize("identity", ["pump-7", "urn:example:pump-7"], ids=["label", "uri"])
+def test_saved_run_documents_preserve_mixed_metadata(ac, identity):
     study = ac.study.define("round trip")
+    values = {
+        "id": identity,
+        "settings": {"enabled": True, "threshold": 1.5},
+        "tags": ["A", None, "B", "A"],
+        "items": [{"name": "A"}, {"name": "B", "count": 2}],
+        "matrix": [[1, 2], [3, 4]],
+        "datasheet": "https://example.org/input",
+        "metadata": {"any.key": [None, {}, []]},
+    }
     run = study.start(values)
-    assert ac.study.get("round trip").experiments.get(run.run_id).metadata == values
-
-
-def test_native_objects_keep_each_runs_own_fields_without_experiment_cleanup(ac):
-    study = ac.study.define("native field presence")
-    baseline = study.start({"settings": {"mode": "baseline"}})
-    baseline.finish()
-    trial = study.start({"settings": {"mode": "trial", "duration": 60}})
-    trial.finish()
-    query = study.experiments.query().include("settings")
-    objects = query.metadata_objects()
-    settings_by_run = {item["experiment"]["id"]: item["experiment"]["settings"] for item in objects}
-    assert settings_by_run == {
-        baseline.uri: {"mode": "baseline"},
-        trial.uri: {"mode": "trial", "duration": 60},
-    }
-    settings = query.metadata()["experiment.settings"].to_list()
-    baseline_settings = next(item for item in settings if item["mode"] == "baseline")
-    assert baseline_settings == {
-        "duration": None, "mode": "baseline",
-    }
-    single = query.where(run_id=baseline.run_id).metadata_objects()
-    assert single == [{"experiment": {"id": baseline.uri, "settings": {"mode": "baseline"}}}]
+    reopened = ac.study.get("round trip")
+    assert reopened.experiments.get(run.run_id).metadata == values
+    obj = reopened.experiments.query().include("tags", "metadata").metadata_objects()[0]["experiment"]
+    assert obj["tags"] == values["tags"]
+    assert obj["metadata"] == values["metadata"]
 
 
 def test_null_empty_metadata_is_removed_but_recorded_json_is_preserved(ac):
@@ -233,17 +151,6 @@ def test_null_empty_metadata_is_removed_but_recorded_json_is_preserved(ac):
     assert run.observations().latest().value == {"tags": [], "notes": None, "settings": {}}
 
 
-def test_selection_refreshes_after_writes(ac):
-    study = ac.study.define("recovery")
-    study.start({"scenario": "baseline"}).finish()
-    selected = study.experiments.where(scenario="trial")
-    assert selected.all() == []
-    saved = study.start({"scenario": "trial"})
-    assert [run.run_id for run in selected.all()] == [saved.run_id]
-    saved.finish()
-    assert study.experiments.where(status="succeeded", scenario="trial").all()[0].run_id == saved.run_id
-
-
 def test_lifecycle_writes_keep_metadata_edits(ac):
     study = ac.study.define("concurrent lifecycle")
     run = study.start({"scenario": "baseline"})
@@ -254,12 +161,25 @@ def test_lifecycle_writes_keep_metadata_edits(ac):
 
 
 def test_variable_metadata_edits_keep_the_user_namespace(ac):
+    from acquirium.Client.metadata import plan_write, update_text
+
     study = ac.study.define("edited declaration")
-    study.output("pressure").scalar(unit="PSI", metadata={"saved": [None, {}, []]})
-    ac.insert_metadata(study.output["pressure"].uri, {"category": "edited"})
+    pressure = study.output("pressure").scalar(unit="PSI", metadata={"saved": [None, {}, []]})
+    ac.insert_metadata(pressure.uri, {"review": "edited"})
     reopened = ac.study.get("edited declaration").output["pressure"]
-    assert reopened.metadata == {"saved": [None, {}, []], "category": "edited"}
+    assert reopened.metadata == {"saved": [None, {}, []], "review": "edited"}
     assert reopened.unit == "PSI"
+    # Write an explicit override to the metadata source. The ledger's saved
+    # reads use that document in preference to the original declaration.
+    pascal = "http://qudt.org/vocab/unit/PA"
+    override = plan_write(
+        pressure.uri, {"metadata": {"category": "replaced"}, "unit": pascal},
+        role="data", resolve=lambda *_: None,
+    )
+    ac.client.sparql_update(update_text([override]), source_id="metadata")
+    reopened = ac.study.get("edited declaration").output["pressure"]
+    assert reopened.metadata == {"category": "replaced", "review": "edited"}
+    assert reopened.unit == pascal
 
 
 def test_a_study_variable_unit_and_medium_are_fixed(ac):
@@ -287,22 +207,24 @@ def test_empty_study_native_queries_and_lifecycle_filter_override(ac):
     study = ac.study.define("empty")
     assert study.variables.where(role="input").query().metadata().height == 0
     assert study.experiments.where(status="succeeded").query().metadata().height == 0
-    run = study.start({"scenario": "baseline"})
+    study.start({"scenario": "setup"}).finish()
     selected = study.experiments.where(status="running", scenario="baseline")
+    assert selected.all() == []
+    run = study.start({"scenario": "baseline"})
     assert [item.run_id for item in selected.all()] == [run.run_id]
     run.finish()
     assert selected.all() == []
     assert [item.run_id for item in selected.where(status="succeeded").all()] == [run.run_id]
 
 
-def test_graph_queries_see_writes_made_just_before(ac):
-    study = ac.study.define("discovery")
-    run = study.start({"operator": "ana"})
-    assert _values(ac, f"SELECT ?v WHERE {{ <{run.uri}> <{ATTR_NS}operator> ?v }}") == ["ana"]
-
-
 def test_each_new_run_key_is_filterable_right_after_the_run(ac):
     study = ac.study.define("keys")
+    first = study.start({"operator": "ana"})
+    fresh = ac.client.sparql_query(
+        f"SELECT ?v WHERE {{ <{first.uri}> <{ATTR_NS}operator> ?v }}", wait_for_fresh=True,
+    )
+    assert fresh["rows"] == [["ana"]]
+    first.finish()
     for index in range(4):
         run = study.start({f"setting{index}": index})
         run.finish()
@@ -312,9 +234,25 @@ def test_each_new_run_key_is_filterable_right_after_the_run(ac):
 
 
 def test_deleted_records_leave_the_metadata_graph(ac):
+    def nodes_mentioning(identifier):
+        """Find graph nodes whose URI or triple values contain a run or Study ID."""
+        # The server rebuilds its query view in the background. Wait for the
+        # write or delete just performed so we can check its effect on the graph.
+        result = ac.client.sparql_query(f"""
+            SELECT DISTINCT ?s WHERE {{
+                ?s ?p ?o .
+                FILTER(CONTAINS(STR(?s), '{identifier}') || CONTAINS(STR(?o), '{identifier}'))
+            }}
+        """, wait_for_fresh=True)
+        return {uri for (uri,) in result["rows"]}
+
+    # Declare a Study and two output variables that its runs will share.
     study = ac.study.define("cases")
     cost = study.output("cost").scalar(unit="PSI")
     level = study.output("level").timeseries()
+
+    # Run a baseline and a trial. Record a scalar and a timestamped reading
+    # in each run so both have records to check when we delete them.
     runs = []
     for scenario in ("baseline", "trial"):
         run = study.start({"scenario": scenario})
@@ -322,48 +260,34 @@ def test_deleted_records_leave_the_metadata_graph(ac):
         level.record([(NOW, 1.0)])
         run.finish()
         runs.append(run)
-    annotation = runs[0].annotate_stream("urn:plant:flow", start=NOW)
-    # A run's node, its annotations, and its recorded streams all name the run.
-    assert {run_uri(runs[0].run_id), annotation_uri(annotation.annotation_id)} < _mentioning(ac, runs[0].run_id)
 
+    # Link the finished baseline run to a plant stream by URI. The run,
+    # its annotation, and its recorded streams all mention the run ID.
+    annotation = runs[0].annotate_stream("urn:plant:flow", start=NOW)
+    assert {run_uri(runs[0].run_id), annotation_uri(annotation.annotation_id)} < nodes_mentioning(runs[0].run_id)
+
+    # Delete the baseline. Its graph nodes should disappear and the trial should remain.
     runs[0].delete()
-    assert _mentioning(ac, runs[0].run_id) == set()
-    assert run_uri(runs[1].run_id) in _mentioning(ac, runs[1].run_id)
+    assert not nodes_mentioning(runs[0].run_id)
+    assert run_uri(runs[1].run_id) in nodes_mentioning(runs[1].run_id)
     assert study.experiments.where(scenario="baseline").all() == []
 
+    # Deleting the Study should also remove the trial and its records.
     study.delete()
-    assert _mentioning(ac, runs[1].run_id) == set()
-    assert _mentioning(ac, study.study_id) == set()
+    assert not nodes_mentioning(runs[1].run_id)
+    assert not nodes_mentioning(study.study_id)
 
+    # Create a populated Study to check that clearing all Studies also clears
+    # their metadata from the graph.
     other = ac.study.define("other")
     other_level = other.output("level").timeseries()
     run = other.start({"scenario": "baseline"})
     other_level.record([(NOW, 1.0)])
     run.finish()
     ac.study.clear(confirm=True)
-    assert _mentioning(ac, run.run_id) == set()
-    assert _mentioning(ac, other.study_id) == set()
+    assert not nodes_mentioning(run.run_id)
+    assert not nodes_mentioning(other.study_id)
     assert ac.study.all() == []
-
-
-def test_scalars_follow_attribute_selections(ac):
-    study = ac.study.define("sweep")
-    cost = study.output("cost").scalar(unit="PSI")
-    for flow in (10, 20, 30):
-        run = study.start({"settings": {"flow": flow}})
-        cost.record(flow * 1.5)
-        run.finish()
-    high_flow = study.experiments.where(ac.attr.settings.flow >= 15)
-    assert high_flow.scalars(metadata=["settings.flow"]).select("settings.flow", "cost").rows() == [(20, 30.0), (30, 45.0)]
-
-
-def test_native_experiment_objects_use_shared_lossless_documents(ac):
-    study = ac.study.define("native documents")
-    run = study.start({"tags": ["A", None, "B"], "metadata": {"any.key": [None, {}, []]}})
-    obj = study.experiments.query().include("tags", "metadata").metadata_objects()[0]["experiment"]
-    assert obj["tags"] == ["A", None, "B"]
-    assert obj["metadata"] == {"any.key": [None, {}, []]}
-    assert ac.client.get_experiment(run.run_id)["metadata"]["tags"] == obj["tags"]
 
 
 def test_compatibility_metadata_filters_match_complete_saved_fields(ac):
@@ -378,197 +302,57 @@ def test_compatibility_metadata_filters_match_complete_saved_fields(ac):
     assert len(runs({"absent": None})) == 3
 
 
-def test_variable_user_queries_use_namespace_and_semantics_keep_their_paths(ac):
-    study = ac.study.define("normalized query paths")
-    variable = study.output("pressure").scalar(unit="PSI", category="simulation")
-    assert variable.metadata == {"category": "simulation"}
-    assert variable.unit == "PSI"
-    assert study.variables.where(**{"metadata.category": "simulation"}).all() == [variable]
-    assert study.variables.where(unit="PSI").all() == [variable]
-    with pytest.raises(ValueError, match="category"):
-        study.variables.where(category="simulation").all()
-
-
-# The ledger in-process
+# The ledger's graph boundary
 
 
 @pytest.fixture
-def local(tmp_path, samples):
-    """The server's ledger on a DuckDB store and a memory graph."""
-    store = DuckDBLedger(tmp_path / "experiments.duckdb", samples=samples, recreate=True)
-    graph = MemoryGraphStore()
-
-    def resolve(text, kind):
-        return PSI if kind == "unit" and text in {"PSI", "psi"} else None
-
-    ledger = ExperimentStore(store, graph_store=graph, resolve=resolve)
-    yield SimpleNamespace(store=store, graph=graph, ledger=ledger)
-    store.close()
+def duckdb_experiments(tmp_path, samples, source_graph):
+    """Open a ledger for graph behavior that is shared by the two SQL backends."""
+    store = DuckDBLedger(tmp_path / "experiments.duckdb", samples=samples)
+    try:
+        yield ExperimentStore(store, graph_store=source_graph)
+    finally:
+        store.close()
 
 
-def _study(ledger, name, variables=(), runs=()):
-    """Define a Study, declare ``(label, kind, metadata)`` outputs, start runs with metadata."""
-    study = ledger.define(name)["template_id"]
-    declared = [ledger.declare(study, label, "output", kind, metadata) for label, kind, metadata in variables]
-    started = [ledger.start(study, metadata) for metadata in runs]
-    return study, declared, started
-
-
-def _pending(store):
-    with store._own_conn() as conn:
-        return conn.execute("SELECT count(*) FROM experiment_metadata_outbox").fetchone()[0]
-
-
-def test_saved_metadata_reads_shared_objects_instead_of_sql_values(local, monkeypatch):
-    ledger = local.ledger
-    study, declared, _ = _study(ledger, "objects", [
-        ("pressure", "scalar", {"unit": "PSI", "settings": {"mode": "baseline"}}),
-        ("other pressure", "scalar", {"unit": PSI, "settings": {"duration": 60}})])
-    saved = ledger.variables(study)
-    stale = [{**item, "metadata": {"stale_sql_value": True}} for item in saved]
-
-    import acquirium.ExperimentMetadata as shared
-    original = shared.read_documents
-    calls = []
-
-    def tracked(client, subjects, **kwargs):
-        calls.append(subjects)
-        return original(client, subjects, **kwargs)
-
-    monkeypatch.setattr(shared, "read_documents", tracked)
-    result = ledger.read_metadata(stale, EXPERIMENT.Variable, "variable_id")
-    assert [item["metadata"] for item in result] == [item["metadata"] for item in saved]
-    assert calls and all(set(subjects) == {item["variable_id"] for item in declared} for subjects in calls)
-
-
-def test_container_shapes_come_from_shared_objects(local):
-    ledger = local.ledger
-    study, _, (first,) = _study(local.ledger, "containers", runs=[{"tag": ["A", "B"]}])
-    ledger.finish(first["run_id"], "succeeded")
-    values = {"items": [{"name": "A"}, {"name": "B", "count": 2}], "matrix": [[1, 2], [3, 4]], "tag": "A",
-              "id": "pump-7"}
-    run = ledger.start(study, values)
-    record = {**ledger.run(run["run_id"]), "metadata": {}}  # Without SQL snapshots, these must come from the graph.
-    assert ledger.read_metadata([record], EXPERIMENT.Run, "run_id")[0]["metadata"] == values
-
-
-def test_object_reads_repair_failed_publication_and_do_not_hide_read_errors(local, monkeypatch):
-    ledger, store, graph = local.ledger, local.store, local.graph
-    _, _, (run,) = _study(ledger, "read recovery", runs=[{"scenario": "baseline"}])
-    with monkeypatch.context() as patch:
-        patch.setattr(graph, "metadata_update", Mock(side_effect=OSError("graph unavailable")))
-        with pytest.raises(OSError, match="graph unavailable"):
-            ledger.read_metadata([ledger.run(run["run_id"])], EXPERIMENT.Run, "run_id")
-    assert _pending(store) > 0
-    result = ledger.read_metadata([ledger.run(run["run_id"])], EXPERIMENT.Run, "run_id")
-    assert result[0]["metadata"] == {"scenario": "baseline"}
-    assert _pending(store) == 0
-    monkeypatch.setattr(graph, "sparql_query", Mock(side_effect=OSError("read failed")))
-    with pytest.raises(OSError, match="read failed"):
-        ledger.read_metadata([ledger.run(run["run_id"])], EXPERIMENT.Run, "run_id")
-
-
-def test_backfill_annotations_and_restart_preserve_source_objects(local):
-    ledger, graph = local.ledger, local.graph
-    _, _, (saved,) = _study(ledger, "old", runs=[{"scenario": "baseline"}])
-    item = ledger.annotate_stream(saved["run_id"], "urn:site:stream", NOW, metadata={"treatment": "A"})
-    ledger.close_stream_annotation(item["annotation_id"], NOW)
+def test_ledger_reads_hydrate_each_unique_subject_once(duckdb_experiments, source_graph, monkeypatch):
+    ledger = duckdb_experiments
+    study = ledger.define("batched metadata")["template_id"]
+    pressure = ledger.declare(study, "pressure", "output", "scalar", {"unit": PSI})
+    cost = ledger.declare(study, "cost", "output", "scalar", {"metadata": {"region": "east"}})
+    metadata = {"metadata": {"exact.key": [None, {}, []]}}
+    first = ledger.start(study, metadata)["run_id"]
+    second = ledger.start(study, {"scenario": "trial"})["run_id"]
+    pressure_id, cost_id = pressure["variable_id"], cost["variable_id"]
+    for identifier, value in ((pressure_id, 1), (cost_id, 7), (pressure_id, 2)):
+        ledger.observe(first, identifier, value=value)
     ledger.sync_metadata_graph()
-    reopened = ExperimentStore(local.store, graph_store=graph, resolve=ledger.metadata_graph.resolve)
-    reopened.sync_metadata_graph()
-    assert (URIRef(run_uri(saved["run_id"])), RDF.type, EXPERIMENT.Run) in graph.dataset
-    assert (URIRef(annotation_uri(item["annotation_id"])), URIRef(ATTR_NS + "treatment"), Literal("A")) in graph.dataset
-    assert reopened.run(saved["run_id"])["metadata"] == {"scenario": "baseline"}
 
+    # Read at the ledger entry points the server uses. A list read hydrates
+    # each subject exactly once even when two observations name it.
+    read = Mock(wraps=source_graph.metadata_documents)
+    monkeypatch.setattr(source_graph, "metadata_documents", read)
+    for fetch, subjects in (
+        (lambda: ledger.variables(study), [pressure_id, cost_id]),
+        (lambda: ledger.runs(study), [run_uri(first), run_uri(second)]),
+        (lambda: ledger.run(first), [run_uri(first)]),
+    ):
+        read.reset_mock()
+        fetch()
+        read.assert_called_once()
+        assert sorted(read.call_args.args[0]) == sorted(subjects)
 
-class NamespacedGraphStore(MemoryGraphStore):
-    """A graph that binds namespaces, as the server's graph store does."""
-
-    def namespace_manager(self):
-        self.dataset.bind("plant", "urn:plant#")
-        return self.dataset.namespace_manager
-
-
-def test_uri_values_under_a_bound_namespace_are_written_as_uris(tmp_path, samples):
-    store = DuckDBLedger(tmp_path / "experiments.duckdb", samples=samples, recreate=True)
-    graph = NamespacedGraphStore()
-    ledger = ExperimentStore(store, graph_store=graph, resolve=lambda *_: None)
-    study = ledger.define("namespaces")["template_id"]
-    values = {"feeds": "urn:plant#tank", "datasheet": "https://example.org/ds.pdf"}
-    variable = ledger.declare(study, "level", "output", "scalar", dict(values))
-    run = ledger.start(study, dict(values))
-    annotation = ledger.annotate_stream(run["run_id"], "urn:site:stream", NOW, metadata=dict(values))
-    ledger.sync_metadata_graph()
-    # a variable keeps its metadata under the metadata key
-    for subject, prefix in ((variable_uri(variable["variable_id"]), "metadata."), (run_uri(run["run_id"]), ""),
-                            (annotation_uri(annotation["annotation_id"]), "")):
-        assert (URIRef(subject), URIRef(ATTR_NS + prefix + "feeds"), URIRef("urn:plant#tank")) in graph.dataset
-        assert (URIRef(subject), URIRef(ATTR_NS + prefix + "datasheet"),
-                Literal("https://example.org/ds.pdf")) in graph.dataset
-    assert ledger.run(run["run_id"])["metadata"] == values
-    store.close()
-
-
-def test_recording_values_does_no_graph_work(local):
-    ledger, graph = local.ledger, local.graph
-    _, (cost,), (run,) = _study(ledger, "values", [("cost", "scalar", {})], [{}])
-    ledger.sync_metadata_graph()
-    before = graph.updates
-    ledger.observe(run["run_id"], cost["variable_id"], value=1)
-    ledger.observe(run["run_id"], cost["variable_id"], value=2)
-    assert graph.updates == before
-
-
-def test_missing_authoritative_document_fails_without_sql_fallback(local):
-    from acquirium.Metadata import document_predicate
-    ledger = local.ledger
-    _, _, (run,) = _study(ledger, "authoritative", runs=[{"scenario": "baseline"}])
-    ledger.sync_metadata_graph()
-    local.graph.dataset.remove((URIRef(run_uri(run["run_id"])), document_predicate("run_id"), None))
-    with pytest.raises(RuntimeError, match="no document"):
-        ledger.run(run["run_id"])
-    with local.store._own_conn() as conn:
-        assert conn.execute("SELECT status FROM experiment_runs WHERE run_id=?", [run["run_id"]]).fetchone() == ("running",)
-
-
-@pytest.mark.parametrize("missing_kind", [EXPERIMENT.Run, EXPERIMENT.Variable])
-def test_observation_hydration_requires_both_authoritative_documents(local, missing_kind):
-    from acquirium.ExperimentMetadata import node_uri
-    from acquirium.Metadata import document_predicate
-    ledger = local.ledger
-    _, (variable,), (run,) = _study(ledger, "missing observation metadata", [("result", "scalar", {})], [{}])
-    ledger.sync_metadata_graph()
-    identifier, field = ((run["run_id"], "run_id") if missing_kind == EXPERIMENT.Run
-                         else (variable["variable_id"], "variable_id"))
-    local.graph.dataset.remove((URIRef(node_uri(missing_kind, identifier)), document_predicate(field), None))
-    with pytest.raises(RuntimeError, match="no document"):
-        ledger.metadata.read_observation_metadata([
-            {"experiment_id": run["run_id"], "variable_id": variable["variable_id"]}])
-
-
-def test_hydration_batches_kinds_legacy_ids_and_duplicate_rows(local, monkeypatch):
-    from acquirium.Metadata import document_triples
-    ledger, graph = local.ledger, local.graph
-    study, (variable,), (run,) = _study(ledger, "mixed hydration", [("pressure", "scalar", {"unit": "psi"})],
-                                        [{"metadata": {"exact.key": [None, {}, []]}}])
-    declaration = ledger.variables(study)[0]["metadata"]
-    run_id, variable_id = run["run_id"], variable["variable_id"]
-    # A legacy variable's bare UUID can equal a run ID; they remain distinct nodes.
-    legacy = {"unit": "PSI", "metadata": {"legacy": [None, {}, []]}}
-    experiments = graph.dataset.graph(source_graph_uri("experiments"))
-    for triple in document_triples(variable_uri(run_id), {"variable_id": run_id, **legacy}):
-        experiments.add(triple)
-    read = Mock(wraps=graph.metadata_documents)
-    monkeypatch.setattr(graph, "metadata_documents", read)
-    rows = [{"experiment_id": run_id, "variable_id": identifier, "value": index}
-            for index, identifier in enumerate([run_id, variable_id, run_id])]
-    result = ledger.metadata.read_observation_metadata(rows)
-    assert [item["value"] for item in result] == [0, 1, 2]
-    assert [item["variable_metadata"] for item in result] == [legacy, declaration, legacy]
-    assert all(item["experiment_metadata"] == {"metadata": {"exact.key": [None, {}, []]}} for item in result)
+    read.reset_mock()
+    observations = ledger.observations(study)
+    assert [item["value"] for item in observations] == [1, 7, 2]
+    assert [item["variable_metadata"] for item in observations] == [
+        pressure["metadata"], cost["metadata"], pressure["metadata"],
+    ]
+    assert [item["experiment_metadata"] for item in observations] == [metadata] * 3
     read.assert_called_once()
-    assert set(read.call_args.args[0]) == {run_uri(run_id), variable_uri(variable_id), variable_uri(run_id)}
-    assert ledger.metadata.read(EXPERIMENT.Variable, [run_id, run_id]) == {run_id: legacy}
+    assert sorted(read.call_args.args[0]) == sorted([run_uri(first), pressure_id, cost_id])
+
+    assert ledger.metadata.read(EXPERIMENT.Variable, [cost_id, cost_id]) == {cost_id: cost["metadata"]}
     read.reset_mock()
     assert ledger.metadata.read(EXPERIMENT.Variable, []) == {}
     assert ledger.metadata.read_observation_metadata([]) == []
@@ -576,85 +360,67 @@ def test_hydration_batches_kinds_legacy_ids_and_duplicate_rows(local, monkeypatc
     read.assert_not_called()
 
 
-def test_restart_retains_resolved_units_without_a_resolver(local):
-    ledger, graph = local.ledger, local.graph
-    study, (pressure,), (run,) = _study(ledger, "pinned units", [("pressure", "scalar", {"unit": "psi"})],
-                                        [{"scenario": "baseline"}])
-    declaration = ledger.variables(study)[0]["metadata"]
+def test_uri_values_under_a_bound_namespace_are_written_as_uris(duckdb_experiments, source_graph):
+    ledger = duckdb_experiments
+    source_graph.insert_graph("@prefix plant: <urn:plant#> . plant:tank plant:status 'active' .")
+    study = ledger.define("namespaces")["template_id"]
+    values = {"feeds": "urn:plant#tank", "datasheet": "https://example.org/ds.pdf"}
+    variable = ledger.declare(study, "level", "output", "scalar", values)
+    run = ledger.start(study, values)["run_id"]
+    annotation = ledger.annotate_stream(run, "urn:site:stream", NOW, metadata=values)
     ledger.sync_metadata_graph()
-    reopened = ExperimentStore(local.store, graph_store=graph, resolve=lambda text, kind: None)
-    assert reopened.variables(study)[0]["metadata"] == declaration
-    reopened.finish(run["run_id"], "succeeded")
-    assert reopened.run(run["run_id"])["metadata"] == {"scenario": "baseline"}
-    assert (URIRef(variable_uri(pressure["variable_id"])), HAS_UNIT, URIRef(PSI)) in graph.dataset
-    missing = ExperimentStore(local.store, graph_store=MemoryGraphStore())
-    with pytest.raises(RuntimeError, match="restore its graph backup"):
-        missing.run(run["run_id"])
+
+    # All three node kinds preserve URI terms. The variable's user metadata
+    # is under its metadata key on the graph.
+    asserted = source_graph.data_graph("experiments")
+    for subject, prefix in ((variable_uri(variable["variable_id"]), "metadata."), (run_uri(run), ""),
+                            (annotation_uri(annotation["annotation_id"]), "")):
+        assert (URIRef(subject), URIRef(ATTR_NS + prefix + "feeds"), URIRef("urn:plant#tank")) in asserted
+        assert (URIRef(subject), URIRef(ATTR_NS + prefix + "datasheet"),
+                Literal("https://example.org/ds.pdf", datatype=XSD.string)) in asserted
+    assert ledger.run(run)["metadata"] == values
 
 
-def test_reads_wait_for_durable_graph_delivery(local, monkeypatch):
-    ledger, graph = local.ledger, local.graph
-    _, _, (run,) = _study(ledger, "publication race", runs=[{"scenario": "a"}])
-    entered, release = threading.Event(), threading.Event()
-    update = graph.metadata_update
+@pytest.mark.parametrize("missing", ["run", "variable"])
+def test_missing_document_prevents_observation_hydration(duckdb_experiments, source_graph, missing):
+    from acquirium.Metadata import document_predicate
 
-    def slow_update(*args, **kwargs):
-        entered.set()
-        assert release.wait(5)
-        return update(*args, **kwargs)
-    monkeypatch.setattr(graph, "metadata_update", slow_update)
-    results = []
-    first = threading.Thread(target=lambda: results.append(ledger.run(run["run_id"])))
-    first.start()
-    assert entered.wait(5)
-    second = threading.Thread(target=lambda: results.append(ledger.run(run["run_id"])))
-    second.start()
-    second.join(.1)
-    assert second.is_alive()
-    release.set()
-    first.join(5)
-    second.join(5)
-    assert len(results) == 2
-    assert all(item["metadata"] == {"scenario": "a"} for item in results)
-
-
-def test_writes_between_reads_publish_in_one_graph_update(local):
-    ledger, graph = local.ledger, local.graph
-    study, (pressure,), _ = _study(ledger, "sweep", [("pressure", "scalar", {"unit": "psi"})])
+    ledger = duckdb_experiments
+    study = ledger.define("corrupted graph")["template_id"]
+    variable = ledger.declare(study, "result", "output", "scalar", {})["variable_id"]
+    run = ledger.start(study, {"scenario": "baseline"})["run_id"]
+    ledger.observe(run, variable, value=1.0)
     ledger.sync_metadata_graph()
-    before = graph.updates
+
+    # Simulate a missing authoritative document while the SQL rows remain.
+    subject, field = {"run": (run_uri(run), "run_id"), "variable": (variable, "variable_id")}[missing]
+    graph = source_graph.source_dataset.graph(source_graph.source_graph_uri("experiments"))
+    graph.remove((URIRef(subject), document_predicate(field), None))
+    with pytest.raises(RuntimeError, match="no document"):
+        ledger.observations(study)
+    if missing == "run":
+        with pytest.raises(RuntimeError, match="no document"):
+            ledger.run(run)
+    with ledger.store._own_conn() as conn:
+        assert conn.execute("SELECT status FROM experiment_runs WHERE run_id=?", [run]).fetchone() == ("running",)
+
+
+def test_writes_between_reads_publish_in_one_graph_update(duckdb_experiments, source_graph, monkeypatch):
+    ledger = duckdb_experiments
+    study = ledger.define("sweep")["template_id"]
+    pressure = ledger.declare(study, "pressure", "output", "scalar", {"unit": PSI})["variable_id"]
+    ledger.sync_metadata_graph()
+    update = Mock(wraps=source_graph.metadata_update)
+    monkeypatch.setattr(source_graph, "metadata_update", update)
     for flow in range(20):
-        run = ledger.start(study, {"settings": {"flow": flow}})
-        ledger.observe(run["run_id"], pressure["variable_id"], value=flow)
-        ledger.finish(run["run_id"], "succeeded")
-    assert graph.updates == before  # writes only queue their nodes
-    # The server publishes queued writes before it answers a graph query.
+        run = ledger.start(study, {"settings": {"flow": flow}})["run_id"]
+        ledger.observe(run, pressure, value=flow)
+        ledger.finish(run, "succeeded")
+    update.assert_not_called()
+
+    # Before a graph query, the server publishes the pending runs in their final states.
     ledger.publish_queued_metadata()
-    assert graph.updates == before + 1
-    # Each run is published once, in its final state.
-    statuses = {str(o) for o in graph.dataset.objects(None, URIRef(ATTR_NS + "status"))}
-    assert statuses == {"succeeded"}
-
-
-def test_each_read_hydrates_its_result_batch_once(local, monkeypatch):
-    ledger, graph = local.ledger, local.graph
-    study, (output,), (run,) = _study(ledger, "batch hydration", [("result", "scalar", {})], [{"scenario": "one"}])
-    ledger.observe(run["run_id"], output["variable_id"], value=1)
-    ledger.sync_metadata_graph()
-    read = Mock(wraps=graph.metadata_documents)
-    monkeypatch.setattr(graph, "metadata_documents", read)
-    # What the server's variable, run, and observation routes return.
-    for fetch in (lambda: ledger.variables(study), lambda: ledger.runs(study),
-                  lambda: ledger.run(run["run_id"]), lambda: ledger.observations(study)):
-        read.reset_mock()
-        fetch()
-        assert read.call_count == 1
-
-
-def test_an_experiment_store_needs_a_sample_store(tmp_path):
-    store = DuckDBLedger(tmp_path / "experiments.duckdb")
-    try:
-        with pytest.raises(ValueError, match="sample store"):
-            ExperimentStore(store, graph_store=MemoryGraphStore())
-    finally:
-        store.close()
+    update.assert_called_once()
+    subjects = source_graph.data_graph("experiments").subject_objects(URIRef(ATTR_NS + "status"))
+    statuses = {str(subject): str(status) for subject, status in subjects}
+    assert len(statuses) == 20 and set(statuses.values()) == {"succeeded"}

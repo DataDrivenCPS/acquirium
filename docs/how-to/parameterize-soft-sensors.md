@@ -44,12 +44,13 @@ Run these blocks in order in a Python session beside the calculation file.
 With the repository's development environment, use `uv run python`.
 
 ```python
-from datetime import timedelta
 from pathlib import Path
+
 import acquirium as aq
+import pandas as pd
 
 client = aq.init(data_dir="./parameterized-sensor-data")
-start = aq.to_timestamp("2026-01-01T00:00:00 UTC")
+start = pd.Timestamp("2026-01-01T00:00:00Z")
 client.register_streams([
     {
         "source_id": "parameter-demo",
@@ -61,7 +62,7 @@ client.register_streams([
 ])
 rows = [
     # These are sample timestamps, independent of when the batch is uploaded.
-    (start + timedelta(minutes=minute), value)
+    (start + pd.Timedelta(minutes=minute), value)
     for minute, value in enumerate([0.4, 0.7, 0.9])
 ]
 client.insert_timeseries_batch("parameter-demo", {

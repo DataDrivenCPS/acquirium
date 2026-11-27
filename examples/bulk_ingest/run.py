@@ -106,7 +106,7 @@ def expected_outputs(raw):
     def fill(snapped):
         times, out = sorted(snapped), dict(snapped)
         for t0, t1 in zip(times, times[1:]):
-            if t1 - t0 < MAX_GAP:
+            if t1 - t0 < MAX_GAP.value:
                 for t in range(t0 + MINUTE_NS, t1, MINUTE_NS):
                     out[t] = snapped[t0] + (snapped[t1] - snapped[t0]) * (t - t0) / (t1 - t0)
         return out

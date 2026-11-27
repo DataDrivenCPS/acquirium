@@ -4,16 +4,17 @@
 """
 
 import tempfile
-from datetime import timedelta
 from pathlib import Path
 
-import polars as pl
+import pandas as pd
 
 import acquirium as aq
-from examples.turbidity.apps import NTU, SOURCE, TURBIDITY, declarations
+from examples.turbidity.apps import declarations
 
-START = aq.to_timestamp("2026-01-01T00:00:00 UTC")
-MINUTE = timedelta(minutes=1)
+SOURCE = "turbidity-analysers"
+TURBIDITY = "http://qudt.org/vocab/quantitykind/Turbidity"
+START = pd.Timestamp("2026-01-01T00:00:00Z")
+MINUTE = pd.Timedelta("1m")
 LOCATIONS = {"filter-1": 0.15, "filter-2": 0.12, "filter-3": 0.2, "combined": 0.1}
 
 
@@ -37,59 +38,55 @@ def readings(location, normal):
     return rows
 
 
-def run(client):
+def register(client):
     client.insert_graph_file(Path(__file__).with_name("model.ttl"), source_id="turbidity-plant")
     client.register_streams([{
         "source_id": SOURCE,
         "stream_name": location,
         "property_uri": f"urn:turbidity:{location}-turbidity",
-        "unit": NTU,
+        "unit": "http://qudt.org/vocab/unit/NTU",
         "quantity_kind": TURBIDITY,
         "value_kind": "numeric",
         "data_source": SOURCE,
     } for location in LOCATIONS])
-    for app in declarations(client):
-        client.deploy_app(app)
 
+
+def run(client):
+    register(client)
+    clean_app, alarm_app = declarations(client)
+    client.deploy_app(clean_app)
+    client.deploy_app(alarm_app)
     receipt = client.insert_timeseries_batch(SOURCE, {
         location: readings(location, normal) for location, normal in LOCATIONS.items()
     })["receipts"][0]
-    first = client.wait(receipt)["epoch"]
+    first_epoch = client.wait(receipt)["epoch"]
 
-    filter3 = client.query().entity(uri="urn:turbidity:filter-3", alias="filter3")
-    # A normal read returns the clean stream; view="raw" returns the analyser's samples.
-    clean = client.query().measurement(alias="clean", uri="urn:turbidity:filter-3-turbidity")
-    raw = client.query().measurement(alias="raw", uri="urn:turbidity:filter-3-turbidity")
-    alarm = filter3.measurement(alias="alarm", app="turbidity-alarm")
+    # Start alarm read
+    alarm_uri = (
+        client.query()
+        .entity(uri="urn:turbidity:filter-3")
+        .measurement(app=alarm_app.name)
+        .data()
+        .stream_info()["stream_uri"]
+        .item()
+    )
+    alarm = client.stream(uri=alarm_uri)
+    print(f"Alarm minutes before the late readings: {alarm.dataframe()['value'].sum():.0f}")
+    # End alarm read
 
-    def show(label):
-        table = (
-            raw.dataframe(value_mode="coalesce", view="raw")
-            .group_by(pl.col("time").dt.truncate("1m"))
-            .agg(pl.col("raw").sort_by("time").str.join(", "))
-            .join(clean.dataframe(), on="time", how="full", coalesce=True)
-            .join(alarm.dataframe(), on="time", how="left")
-            .sort("time")
-        )
-        print(label)
-        with pl.Config(tbl_rows=-1, fmt_str_lengths=40):
-            print(table)
-
-    show("Filter 3")
-    alarm_on = alarm.dataframe().filter(pl.col("alarm") == 1)["time"]
-    print(f"Sustained alarm on: {alarm_on.min():%H:%M} to {alarm_on.max():%H:%M}")
-
-    # The missing readings arrive late. They show a brief dip below the limit.
-    late = [(START + 10 * MINUTE, 0.15), (START + 10.5 * MINUTE, 0.25)]
-    receipt = client.insert_timeseries(SOURCE, "filter-3", late)["receipts"][0]
+    # Start correction
+    # The missing readings show a brief dip below the alarm limit.
+    missing_minute = START + 10 * MINUTE
+    receipt = client.insert_timeseries(SOURCE, "filter-3", [
+        (missing_minute, 0.15),
+        (missing_minute + MINUTE / 2, 0.25),
+    ])["receipts"][0]
     client.wait(receipt)
-    show("Filter 3 after the late readings")
-    print(f"Sustained alarm, at most: {alarm.dataframe()['alarm'].max():.0f}")
 
-    # The snapshot taken before the correction still holds the original alarm.
-    stream = alarm.data().stream_info()["stream_uri"][0]
-    earlier = client.stream(stream).dataframe(epoch=first)
-    print(f"At the first snapshot, the alarm was on for {earlier['value'].sum():.0f} minutes")
+    print(f"Alarm minutes after the late readings: {alarm.dataframe()['value'].sum():.0f}")
+    earlier = alarm.dataframe(epoch=first_epoch)
+    print(f"Alarm minutes in the original snapshot: {earlier['value'].sum():.0f}")
+    # End correction
 
 
 def main():

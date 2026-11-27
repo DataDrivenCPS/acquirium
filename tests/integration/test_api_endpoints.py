@@ -1,11 +1,12 @@
 """The HTTP API, called with requests against a server started with aq.init()."""
 
-import uuid
 from datetime import datetime, timezone
 
 import pyarrow.ipc as ipc
 import pytest
 import requests
+
+from acquirium.core import time_ns
 
 
 @pytest.fixture(scope="module")
@@ -97,97 +98,60 @@ class TestGraphEndpoints:
 # ── Timeseries Endpoints ──────────────────────────────────
 
 
-class TestTimeseriesEndpoints:
-    TEST_SOURCE = "test"
-    TEST_REF_NAME = "api_ts_ref"
-    TEST_POINT = "urn:test:api_ts_point"
+def test_timeseries_reads_and_replaces_one_day_of_samples(url, own_acquirium):
+    point = "urn:test:api_ts_point"
+    own_acquirium.register_streams([
+        {"source_id": "test", "stream_name": "hourly", "property_uri": point, "value_kind": "numeric"},
+    ])
 
-    @pytest.fixture(scope="class", autouse=True)
-    def _register_stream(self, own_acquirium):
-        own_acquirium.register_streams([{"source_id": self.TEST_SOURCE, "stream_name": self.TEST_REF_NAME,
-                                         "property_uri": self.TEST_POINT, "value_kind": "numeric"}])
-
-    def _post_rows(self, url, values, *, replace=False):
-        return requests.post(f"{url}/insert_timeseries", json=[{
-            "source_id": self.TEST_SOURCE,
-            "stream_name": self.TEST_REF_NAME,
-            "request_id": str(uuid.uuid4()),
-            "replace": replace,
-            "values": values,
+    def write(request_id, readings, *, replace=False):
+        """Write or replace readings through the HTTP endpoint."""
+        response = requests.post(f"{url}/insert_timeseries", json=[{
+            "source_id": "test", "stream_name": "hourly", "request_id": request_id,
+            "replace": replace, "values": readings,
         }])
+        assert response.status_code == 200, response.text
+        return response.json()
 
-    def _insert_data(self, url, n=5):
-        return self._post_rows(url, [
-            [datetime(2025, 1, 1, h, 0, tzinfo=timezone.utc).isoformat(), float(h)]
-            for h in range(n)
-        ])
+    def values(uri=point, **params):
+        """Read the value column from the Arrow endpoint."""
+        response = requests.get(f"{url}/timeseries", params={"uri": uri, **params})
+        assert response.status_code == 200, response.text
+        return ipc.open_stream(response.content).read_all()["value"].to_pylist()
 
-    def test_insert_and_query(self, url):
-        resp = self._insert_data(url, 5)
-        assert resp.status_code == 200
+    # Write one reading per hour, then read the whole stream and a half-open range.
+    initial = write("one-day", [
+        [datetime(2025, 1, 1, hour, tzinfo=timezone.utc).isoformat(), float(hour)]
+        for hour in range(24)
+    ])
+    assert values() == list(range(24))
+    assert values(start="2025-01-01T05:00:00Z", end="2025-01-01T10:00:00Z", order="desc") == [
+        9.0, 8.0, 7.0, 6.0, 5.0,
+    ]
+    info = requests.post(f"{url}/timeseries_info", json={"uris": [point]})
+    assert info.status_code == 200, info.text
+    assert info.json()[point]["row_count"] == 24
 
-        resp = requests.get(f"{url}/timeseries", params={
-            "uri": self.TEST_POINT,
-        })
-        assert resp.status_code == 200
-        # Response is Arrow IPC
-        reader = ipc.open_stream(resp.content)
-        table = reader.read_all()
-        assert table.num_rows >= 5
+    # Delete one reading. The same Arrow route still serves it at the earlier epoch.
+    epoch = own_acquirium.wait(initial["receipts"][0])["epoch"]
+    removed = requests.post(f"{url}/delete_timeseries", json={
+        "source_id": "test", "stream_name": "hourly",
+        "request_id": "delete-hour", "timestamps": [time_ns("2025-01-01T05:00:00Z")],
+    })
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["published"]
+    interval = {"start": "2025-01-01T05:00:00Z", "end": "2025-01-01T06:00:00Z"}
+    assert values(**interval) == []
+    assert values(epoch=epoch, **interval) == [5.0]
 
-    def test_time_range(self, url):
-        self._insert_data(url, 24)
-        resp = requests.get(f"{url}/timeseries", params={
-            "uri": self.TEST_POINT,
-            "start": "2025-01-01T05:00:00Z",
-            "end": "2025-01-01T10:00:00Z",
-        })
-        assert resp.status_code == 200
-        reader = ipc.open_stream(resp.content)
-        table = reader.read_all()
-        assert table.num_rows <= 6
+    # Replacement leaves one reading. The string bounds distinguish adjacent nanoseconds.
+    timestamp = "2025-06-01T00:00:00.000000001Z"
+    assert write("replacement", [[timestamp, 999.0]], replace=True)["rows_inserted"] == 1
+    assert values() == [999.0]
+    assert values(start=timestamp, end="2025-06-01T00:00:00.000000002Z") == [999.0]
+    assert values(end=timestamp) == []
+    assert values("urn:test:api_nonexistent") == []
 
-    def test_order(self, url):
-        self._insert_data(url, 5)
-        resp = requests.get(f"{url}/timeseries", params={
-            "uri": self.TEST_POINT,
-            "order": "desc",
-        })
-        assert resp.status_code == 200
-        reader = ipc.open_stream(resp.content)
-        table = reader.read_all()
-        if table.num_rows >= 2:
-            ts_col = table.column("ts")
-            assert ts_col[0].as_py() >= ts_col[1].as_py()
-
-    def test_timeseries_info(self, url):
-        self._insert_data(url, 3)
-        resp = requests.post(f"{url}/timeseries_info", json={
-            "uris": [self.TEST_POINT],
-        })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert self.TEST_POINT in data
-        assert data[self.TEST_POINT]["row_count"] >= 3
-
-    def test_replace_rows(self, url):
-        self._insert_data(url, 10)
-        resp = self._post_rows(url, [[datetime(2025, 6, 1, tzinfo=timezone.utc).isoformat(), 999.0]],
-                               replace=True)
-        assert resp.status_code == 200
-        assert resp.json()["rows_inserted"] == 1
-        result = requests.get(f"{url}/timeseries", params={"uri": self.TEST_POINT})
-        assert result.status_code == 200
-        assert ipc.open_stream(result.content).read_all().column("value").to_pylist() == [999.0]
-
-    def test_empty_uri(self, url):
-        resp = requests.get(f"{url}/timeseries", params={
-            "uri": "urn:test:api_nonexistent",
-        })
-        assert resp.status_code == 200
-        reader = ipc.open_stream(resp.content)
-        table = reader.read_all()
-        assert table.num_rows == 0
 
 # ── Logbook Endpoints ───────────────────────────────────────
 
