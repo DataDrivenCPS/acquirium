@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import shutil
+from textwrap import dedent
 import time
 
 import pytest
@@ -15,11 +16,31 @@ pytestmark = pytest.mark.usefixtures("separate_server")
 def test_config_deploys_the_sine_driver_and_python_threshold(tmp_path):
     # Copy the example and speed up its config-loaded driver.
     example = Path(__file__).resolve().parents[2] / "examples/transformation"
-    for name in ("acquirium.toml", "publish.py", "sine_threshold.py", "threshold_app.py"):
+    for name in ("acquirium.toml", "publish.py", "sine_threshold.py"):
         shutil.copyfile(example / name, tmp_path / name)
+
+    # Keep the startup factory local to the test that exercises the config loader.
+    (tmp_path / "configured_threshold.py").write_text(dedent("""\
+        from pathlib import Path
+
+        import acquirium as aq
+
+
+        def build_app(client, parameters):
+            wave = client.query().measurement(alias="wave", uri="urn:example:sine-wave")
+            return aq.App(
+                name="high-wave",
+                inputs={"wave": aq.Selection.from_query(wave, measurement="wave")},
+                outputs={"high": aq.Output()},
+                function=aq.PythonFunction.from_file(
+                    Path(__file__).with_name("sine_threshold.py"), "threshold"
+                ),
+                window=aq.Pointwise(),
+            )
+        """))
     config = tmp_path / "acquirium.toml"
     contents = config.read_text().replace("interval = 1.0", "interval = 0.05")
-    config.write_text(contents + '\n[[apps]]\nspec = "threshold_app.py:high_wave"\n')
+    config.write_text(contents + '\n[[apps]]\nspec = "configured_threshold.py:build_app"\n')
 
     client = aq.init(config, timeout=60)
     try:

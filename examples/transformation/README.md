@@ -6,34 +6,12 @@ Start the server and its driver from the repository root.
 uv run --locked acquirium server --config examples/transformation/acquirium.toml
 ```
 
-In a second terminal, run `uv run --locked python` from the repository root,
-then deploy the calculation and read its results.
+Follow [Build your first soft sensor](../../docs/tutorials/advanced/first-app.md)
+to read the signal, declare the threshold app, and deploy it. The
+[polling driver](publish.py) produces one reading per second. The
+[threshold function](sine_threshold.py) keeps values above 0.5.
 
-```python
-import acquirium as aq
-from examples.transformation.threshold_app import high_wave
-
-client = aq.Acquirium(server_url="127.0.0.1", server_port=8000)
-client.deploy_app(high_wave(client, {}))
-client.query().measurement(uri="urn:example:sine-wave").dataframe().tail(8)
-client.query().measurement(app="high-wave").dataframe().tail(3)
-```
-
-The driver generates one reading per second. The Python function keeps values
-above 0.5. Stop the server with Ctrl-C; data is retained under `.data/`.
-
-See [Build your first soft sensor](../../docs/tutorials/advanced/first-app.md)
-for a walkthrough of writing a function and deploying its declaration.
-[publish.py](publish.py) is the polling driver;
-[sine_threshold.py](sine_threshold.py) is the calculation;
-[threshold_app.py](threshold_app.py) packages its declaration for deployment.
-
-To deploy it at startup, add this to the example config and restart the server:
-
-```toml
-[[apps]]
-spec = "threshold_app.py:high_wave"
-```
+Stop the server with Ctrl-C. It stores readings under `.data/`.
 
 [temperature_conversion.py](temperature_conversion.py) is a separate Python
 calculation converting a registered Fahrenheit stream to Celsius.

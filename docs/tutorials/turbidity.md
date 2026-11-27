@@ -2,9 +2,9 @@
 title: Build a turbidity alarm pipeline
 ---
 
-Turbidity measures how cloudy water is, in nephelometric turbidity units (NTU).
-This example cleans analyser readings and raises an alarm when the cleaned
-values stay above a limit. Each arrow shows which stream the next app reads.
+This pipeline cleans turbidity readings and raises an alarm when they stay
+above a limit. Turbidity measures how cloudy water is, in nephelometric
+turbidity units (NTU).
 
 ```text
 Analyser readings → Clean turbidity → Sustained alarm
@@ -23,27 +23,18 @@ The script loads a small plant model with three filters and a combined outlet.
 Each location sends two readings per minute for 25 minutes. Filter 3 has a high
 period, a fault code, a missing minute, and a spike. [Plot of the sample readings](../images/turbidity-readings.svg)
 
-## Declare the data flow
+## Deploy the cleaner
 
-The query finds turbidity measurements and their locations. Each app uses
-`group="location"` to run one calculation per location with its own parameters.
-Both `Rolling` windows produce one result per minute.
+After registering the plant, the script selects turbidity measurements and
+groups them by location. Each location has a maximum distance from the local
+median for rejecting spikes. The rolling window steps once per minute.
+`ReplacementOutput()` makes the cleaned values the default for each analyser.
 
-The cleaner uses `ReplacementOutput()` to make its result the default reading
-of the analyser's measurement. The alarm uses the same measurement query, so
-it receives the cleaned values. `Output(on_group=True)` attaches the alarm to
-the location so it can be found by a query for that location.
-
-```{literalinclude} ../../examples/turbidity/apps.py
+```{literalinclude} ../../examples/turbidity/run.py
 :language: python
-```
-
-Deploy both apps after registering the plant model and streams.
-
-```python
-clean_app, alarm_app = declarations(client)
-client.deploy_app(clean_app)
-client.deploy_app(alarm_app)
+:start-after: Start cleaner deployment
+:end-before: End cleaner deployment
+:dedent: 4
 ```
 
 ## Cleaning steps
@@ -57,6 +48,20 @@ gaps between valid minutes. The app publishes the result for its output minute.
 ```{literalinclude} ../../examples/turbidity/calculations.py
 :language: python
 :pyobject: clean
+```
+
+## Deploy the alarm
+
+The alarm uses the same measurement query, which now selects the cleaned
+values. Its settings give each location a limit and duration.
+`Output(on_group=True)` attaches the result to the location so you can query
+for a filter's alarm.
+
+```{literalinclude} ../../examples/turbidity/run.py
+:language: python
+:start-after: Start alarm deployment
+:end-before: End alarm deployment
+:dedent: 4
 ```
 
 ## Sustained turbidity threshold
@@ -73,45 +78,34 @@ returned number at the output time. A `1` means the alarm is on and a `0` means 
 
 ## Read the results
 
-Once the sample readings publish, a normal read of the Filter 3 analyser
-returns the clean values. Use `view="raw"` to inspect the original readings
-on the same stream.
-
-```python
-analyser = client.stream(source="turbidity-analysers", name="filter-3")
-clean = analyser.dataframe()
-raw = analyser.dataframe(view="raw", value_mode="coalesce")
-```
-
-The script finds the alarm by location and app name. `stream_info()` identifies
-the output stream so the script can also read it at an earlier version of the
-data.
-
-```{literalinclude} ../../examples/turbidity/run.py
-:language: python
-:start-after: Start alarm read
-:end-before: End alarm read
-:dedent: 4
-```
-
+Once both apps are deployed, the script inserts the sample readings.
 Filter 3 stays above the limit from 00:02 through 00:20. The cleaner fills the
 gap at 00:10, so the alarm is on for five minutes, from 00:16 through 00:20.
+To inspect the original analyser samples alongside the cleaned values, see
+[reading replacement outputs](../reference/apps/outputs.md#replacement-outputs).
 
 ## Late readings and alarm recalculation
 
-The missing 00:10 readings arrive late and show a dip below the limit. The
-clean value changes from 0.80 to 0.20 NTU, splitting the high period into two
-shorter runs. Acquirium recalculates the affected minutes and the alarm clears.
-
-An **epoch** identifies a published version of the data. The script saved
-`first_epoch` from the original insert. Reading at that epoch still shows
-the five alarm minutes, while the current alarm shows zero.
+The script inserts two late readings for the gap at 00:10.
 
 ```{literalinclude} ../../examples/turbidity/run.py
 :language: python
-:start-after: Start correction
-:end-before: End correction
+:start-after: Start late insert
+:end-before: End late insert
 :dedent: 4
+```
+
+The clean value changes from 0.80 to 0.20 NTU, splitting the high period into
+two runs that are too short to trigger the alarm. An **epoch** identifies a
+published version of the data. Reading the alarm with `epoch=first_epoch`
+shows its state before the late readings.
+
+The demo prints:
+
+```text
+Alarm minutes before the late readings: 5
+Alarm minutes after the late readings: 0
+Alarm minutes in the original snapshot: 5
 ```
 
 For an alarm that checks on a wall-clock schedule, see the [standalone timer

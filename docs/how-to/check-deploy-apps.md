@@ -53,14 +53,13 @@ state["status"], state["error"], state["warnings"]
 and the stream each output is written to. Deploying one app leaves the others
 in place.
 
-The same steps work from the command line, given a file with a function that
-takes `(client, parameters)` and returns the `App`:
+You can also inspect the deployed app from the command line.
 
 ```sh
-acquirium app deploy examples/transformation/threshold_app.py:high_wave --dry-run
-acquirium app deploy examples/transformation/threshold_app.py:high_wave
-acquirium app inspect high-wave --json
+acquirium app inspect wave-mean --json
 ```
+
+See [App commands](../reference/apps/cli.md) for CLI deployment from a file.
 
 ## Calculation updates
 

@@ -1,9 +1,11 @@
 """Authoritative reads and physical app inputs through a real server restart."""
+from datetime import timedelta
+from pathlib import Path
+
 import polars as pl
 import pytest
 
 import acquirium as aq
-from examples.turbidity.apps import declarations
 from examples.turbidity.run import LOCATIONS, SOURCE, TURBIDITY, readings, register
 
 # Each test starts its own server with aq.init().
@@ -23,8 +25,39 @@ def calibrate(frame: pl.DataFrame, context):
     try:
         # Set up four turbidity streams and deploy the cleaner and its downstream alarm.
         register(client)
-        clean, alarm = declarations(client)
+        calculations = Path(__file__).resolve().parents[2] / "examples/turbidity/calculations.py"
+        minute = timedelta(minutes=1)
+        groups = [f"urn:turbidity:{location}" for location in LOCATIONS]
+        cleaner_parameters = {group: {"threshold": 1.0} for group in groups}
+        cleaner_parameters["urn:turbidity:combined"] = {"threshold": 0.5}
+        alarm_parameters = {group: {"limit_ntu": 0.5, "sustained_minutes": 15} for group in groups}
+        alarm_parameters["urn:turbidity:combined"] = {"limit_ntu": 0.3, "sustained_minutes": 5}
+        turbidity = (
+            client.query()
+            .measurement(alias="turbidity", quantity_kind=TURBIDITY)
+            .context(alias="location")
+        )
+        clean = aq.App(
+            name="turbidity-clean",
+            inputs={"raw": aq.Selection.from_query(
+                turbidity, measurement="turbidity", group="location",
+                parameters=cleaner_parameters,
+            )},
+            outputs={"turbidity": aq.ReplacementOutput()},
+            function=aq.PythonFunction.from_file(calculations, "clean"),
+            window=aq.Rolling(lookback=5 * minute, step=minute, lookahead=5 * minute),
+        )
         client.deploy_app(clean)
+        alarm = aq.App(
+            name="turbidity-alarm",
+            inputs={"turbidity": aq.Selection.from_query(
+                turbidity, measurement="turbidity", group="location",
+                parameters=alarm_parameters,
+            )},
+            outputs={"alarm": aq.Output(on_group=True)},
+            function=aq.PythonFunction.from_file(calculations, "alarm"),
+            window=aq.Rolling(lookback=15 * minute, step=minute),
+        )
         client.deploy_app(alarm)
         receipt = client.insert_timeseries_batch(SOURCE, {
             location: readings(location, normal) for location, normal in LOCATIONS.items()

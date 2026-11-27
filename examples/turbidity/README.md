@@ -1,25 +1,13 @@
 # Turbidity alarm pipeline
 
+Run from the repository root.
+
 ```sh
 uv run --locked python -m examples.turbidity.run
 ```
 
-Run from the repository root. A temporary server runs twenty-five minutes of
-readings from four locations through two apps declared in [apps.py](apps.py):
-`turbidity-clean` drops fault codes and spikes, averages each minute, and fills
-short gaps; `turbidity-alarm` reads the clean stream and raises an alarm when
-turbidity stays above a location's limit for long enough. The functions are in
-[calculations.py](calculations.py).
+The [tutorial](../../docs/tutorials/turbidity.md) explains the two apps and
+shows the output before and after late readings arrive.
 
-The cleaner declares `frame: pd.DataFrame` and receives Arrow-backed pandas
-2.x. It uses resampling and linear interpolation. The alarm declares
-`frame: pl.DataFrame` and receives Polars. The cleaner returns its calculated
-series and declares `ReplacementOutput()`, so normal measurement reads return
-the clean stream. Use `view="raw"` to read the original samples. The alarm
-selects each location's turbidity measurement, so it binds the clean stream as
-the authoritative stage; it returns one number per minute.
-
-Filter 3 is high with a fault code, a missing minute, and a spike; the alarm
-fires. Late readings for the missing minute then clear the alarm, and the
-snapshot taken before them still shows it. The
-[tutorial](../../docs/tutorials/turbidity.md) explains each step.
+- [calculations.py](calculations.py) implements the cleaning and alarm functions.
+- [run.py](run.py) starts a temporary server, declares and deploys both apps, then loads the sample data and compares the alarm snapshots.

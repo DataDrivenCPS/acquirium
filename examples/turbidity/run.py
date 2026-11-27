@@ -9,7 +9,6 @@ from pathlib import Path
 import pandas as pd
 
 import acquirium as aq
-from examples.turbidity.apps import declarations
 
 SOURCE = "turbidity-analysers"
 TURBIDITY = "http://qudt.org/vocab/quantitykind/Turbidity"
@@ -53,15 +52,78 @@ def register(client):
 
 def run(client):
     register(client)
-    clean_app, alarm_app = declarations(client)
+
+    # Start cleaner deployment
+    calculations = Path(__file__).with_name("calculations.py")
+    # Find the turbidity measurements and their plant locations.
+    turbidity = (
+        client.query()
+        .measurement(alias="turbidity", quantity_kind=TURBIDITY)
+        .context(alias="location")
+    )
+    clean_app = aq.App(
+        name="turbidity-clean",
+        inputs={
+            "raw": aq.Selection.from_query(
+                turbidity,
+                measurement="turbidity",
+                group="location",
+                # Set the largest acceptable deviation from the local median.
+                parameters={
+                    "urn:turbidity:filter-1": {"threshold": 1.0},
+                    "urn:turbidity:filter-2": {"threshold": 1.0},
+                    "urn:turbidity:filter-3": {"threshold": 1.0},
+                    "urn:turbidity:combined": {"threshold": 0.5},
+                },
+            ),
+        },
+        # Make cleaned values the default for the analyser measurement.
+        outputs={"turbidity": aq.ReplacementOutput()},
+        function=aq.PythonFunction.from_file(calculations, "clean"),
+        # Clean each minute using readings on either side.
+        window=aq.Rolling(
+            lookback=pd.Timedelta("5m"),
+            step=pd.Timedelta("1m"),
+            lookahead=pd.Timedelta("5m"),
+        ),
+    )
     client.deploy_app(clean_app)
+    # End cleaner deployment
+
+    # Start alarm deployment
+    # The same query now reads the cleaner's output.
+    alarm_app = aq.App(
+        name="turbidity-alarm",
+        inputs={
+            "turbidity": aq.Selection.from_query(
+                turbidity,
+                measurement="turbidity",
+                group="location",
+                parameters={
+                    "urn:turbidity:filter-1": {"limit_ntu": 0.5, "sustained_minutes": 15},
+                    "urn:turbidity:filter-2": {"limit_ntu": 0.5, "sustained_minutes": 15},
+                    "urn:turbidity:filter-3": {"limit_ntu": 0.5, "sustained_minutes": 15},
+                    # The combined outlet uses a lower limit and shorter duration.
+                    "urn:turbidity:combined": {"limit_ntu": 0.3, "sustained_minutes": 5},
+                },
+            ),
+        },
+        # Attach the alarm to its plant location for queries.
+        outputs={"alarm": aq.Output(on_group=True)},
+        function=aq.PythonFunction.from_file(calculations, "alarm"),
+        # Read enough history for the longest configured duration.
+        window=aq.Rolling(lookback=pd.Timedelta("15m"), step=pd.Timedelta("1m")),
+    )
     client.deploy_app(alarm_app)
+    # End alarm deployment
+
+    # Load the baseline and save its published epoch.
     receipt = client.insert_timeseries_batch(SOURCE, {
         location: readings(location, normal) for location, normal in LOCATIONS.items()
     })["receipts"][0]
     first_epoch = client.wait(receipt)["epoch"]
 
-    # Start alarm read
+    # Resolve Filter 3's alarm stream for current and historical reads.
     alarm_uri = (
         client.query()
         .entity(uri="urn:turbidity:filter-3")
@@ -72,9 +134,8 @@ def run(client):
     )
     alarm = client.stream(uri=alarm_uri)
     print(f"Alarm minutes before the late readings: {alarm.dataframe()['value'].sum():.0f}")
-    # End alarm read
 
-    # Start correction
+    # Start late insert
     # The missing readings show a brief dip below the alarm limit.
     missing_minute = START + 10 * MINUTE
     receipt = client.insert_timeseries(SOURCE, "filter-3", [
@@ -82,11 +143,12 @@ def run(client):
         (missing_minute + MINUTE / 2, 0.25),
     ])["receipts"][0]
     client.wait(receipt)
+    # End late insert
 
+    # Compare the updated alarm with the original snapshot.
     print(f"Alarm minutes after the late readings: {alarm.dataframe()['value'].sum():.0f}")
     earlier = alarm.dataframe(epoch=first_epoch)
     print(f"Alarm minutes in the original snapshot: {earlier['value'].sum():.0f}")
-    # End correction
 
 
 def main():
