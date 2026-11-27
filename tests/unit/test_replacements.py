@@ -24,6 +24,7 @@ DEG_F = "http://qudt.org/vocab/unit/DEG_F"
 
 
 def selection(ref, *, group="urn:replacement:tank", parameters=None, as_of=None, unit=None, **kwargs):
+    """Select one stored stream under the test tank's group."""
     bind = f" BIND(<{unit}> AS ?unit)" if unit else ""
     return aq.Selection(
         f"SELECT ?stream ?group ?unit WHERE {{ BIND(<{ref}> AS ?stream) BIND(<{group}> AS ?group){bind} }}",
@@ -32,6 +33,7 @@ def selection(ref, *, group="urn:replacement:tank", parameters=None, as_of=None,
 
 
 def declaration(name, ref, function, **kwargs):
+    """Declare an app whose output replaces the selected source measurement."""
     return aq.App(name, {"raw": selection(ref)}, {"out": aq.ReplacementOutput()}, function, **kwargs)
 
 
@@ -50,11 +52,13 @@ def test_declaration_roundtrip():
     assert replace(two, outputs={"out": aq.ReplacementOutput(of="raw")}).to_dict()["outputs"]["out"]["replaces"] == "raw"
 
 
-@pytest.mark.parametrize("inputs", [["raw"], {"": "raw"}, {"raw": []}, {"raw": ["query"]}])
+@pytest.mark.parametrize("inputs", [
+    pytest.param(["raw"], id="list-instead-of-mapping"),
+    pytest.param({"": selection("urn:raw")}, id="empty-input-name"),
+    pytest.param({"raw": []}, id="empty-selection-list"),
+    pytest.param({"raw": ["query"]}, id="string-instead-of-selection"),
+])
 def test_inputs_map_names_to_selections(inputs):
-    if isinstance(inputs, dict):
-        inputs = {name: [selection("urn:raw") if item == "raw" else item for item in value]
-                  if isinstance(value, list) else selection("urn:raw") for name, value in inputs.items()}
     with pytest.raises(ValueError, match="input"):
         aq.App("bad", inputs, {"out": aq.Output()}, aq.Native.mean("out")).to_dict()
 
@@ -152,6 +156,7 @@ def passthrough(frame: pl.DataFrame, context):
 
 @pytest.fixture
 def system(runtime, request):
+    """Register a separate turbidity probe for this test on the shared server."""
     manager, http, client, module = runtime
     source = request.node.name.replace("[", "-").replace("]", "")
     point = f"urn:replacement:{source}"
@@ -165,17 +170,22 @@ def system(runtime, request):
 
 
 def put(system, rows, request="data"):
+    """Write turbidity readings and return the published snapshot."""
     manager, _, _, _, source, _, _ = system
     return manager.core.wait(manager.insert_timeseries(
         source_id=source, stream_name="ntu", rows=rows, request_id=request).receipt)
 
 
 def values(client, ref, **kwargs):
+    """Read the value column for a reference at the requested view or epoch."""
     return client.client.timeseries_df(ref, **kwargs)["value"].to_list()
 
 
-def test_chain_views_history_pagination_and_middle_removal(system):
+def test_replacement_views_and_consumers_follow_plan_changes(system):
+    from acquirium.internals.internals_namespaces import S223
+
     manager, http, client, module, _, point, ref = system
+    # Seed raw readings, then deploy two successive calculations that each double the values.
     initial_snapshot = put(system, [(0, 1.), (1_000, 2.)])
     initial = initial_snapshot.epoch
     function = aq.PythonFunction.from_file(module, "double")
@@ -187,10 +197,12 @@ def test_chain_views_history_pagination_and_middle_removal(system):
     # Deliberately select the physical stage without upstream metadata hints.
     manager.deploy_app(second)
     head = output_reference("second", "urn:replacement:tank", "out")
+    # Current, raw, and stored reads expose different stages of the same measurement.
     assert values(client, point) == [4., 8.]
     assert values(client, ref, view="raw") == [1., 2.]
     assert values(client, clean, view="stored") == [2., 4.]
     assert values(client, head, view="raw") == [1., 2.]
+    # Historical reads use the stage that was active at the requested epoch.
     assert values(client, ref, epoch=initial) == [1., 2.]
     assert values(client, ref, epoch=initial, after=manager.core.engine.snapshot(initial).applied) == [1., 2.]
     with pytest.raises(ValueError, match="precedes"):
@@ -198,6 +210,7 @@ def test_chain_views_history_pagination_and_middle_removal(system):
     assert values(client, ref, epoch=first_epoch) == [2., 4.]
     assert client.client.resolve_storage_keys([point, ref]) == {point: head, ref: head}
     assert client.client.resolve_storage_keys([head], view="raw") == {head: ref}
+    # Extents, existence checks, and explicit view resolution agree with value reads.
     assert client.client.timeseries_info_batch([ref])[ref].row_count == 2
     assert client.client.timeseries_exists_batch([ref], view="raw") == {ref}
     resolved = client.client.stream_views([ref, clean])
@@ -208,6 +221,31 @@ def test_chain_views_history_pagination_and_middle_removal(system):
     }
     assert client.client.stream_views([ref], epoch=first_epoch)["streams"][ref]["current"] == clean
     assert http.get("/timeseries", params={"uri": ref, "view": "typo"}).status_code == 422
+
+    # One query can read the same registered measurement in two views.
+    tank = "urn:replacement:test-tank"
+    client.insert_graph(f"<{tank}> <{S223.hasProperty}> <{point}> .", source_id="test-tank")
+    data = (
+        client.query().entity(uri=tank, alias="tank")
+        .measurement(frm="tank", alias="current", quantity_kind=TURBIDITY)
+        .measurement(frm="tank", alias="stored", stream=ref)
+    ).data()
+    assert {(binding.alias, binding.view) for binding in data.bindings} == {
+        ("current", "current"), ("stored", "stored"),
+    }
+    assert data.total_rows == 4
+    frame = data.dataframe(shape="narrow", compact=False).sort("time")
+    assert frame.filter(pl.col("data_alias") == "current")["value_numeric"].to_list() == [4., 8.]
+    assert frame.filter(pl.col("data_alias") == "stored")["value_numeric"].to_list() == [1., 2.]
+
+    # A calculation matching all three stages follows the identity once.
+    follower = reader(ref, clean, head)
+    manager.deploy_app(follower)
+    assert bound(manager, "reader") == [head]
+    assert manager.apps.inspect("reader")["matches"] == {"turbidity": 1}
+    out = output_reference("reader", "urn:replacement:tank", "out")
+    assert values(client, out) == [4., 8.]
+
     # The iterator captures both the resolved head and its epoch before deployment.
     pages = manager.timeseries_batch(ref, batch_size=1)
     first_page = next(pages)
@@ -215,14 +253,30 @@ def test_chain_views_history_pagination_and_middle_removal(system):
     assert first_page["value"].to_pylist() == [4.]
     assert [v for page in pages for v in page["value"].to_pylist()] == [8.]
     assert values(client, ref) == [2., 4.]
+    assert bound(manager, "reader") == [clean]
+    assert values(client, out) == [2., 4.]
     manager.deploy_app(second)
+    assert bound(manager, "reader") == [head]
+    assert values(client, out) == [4., 8.]
+    # The first stage is still required by the second stage's physical input.
     with pytest.raises(ValueError, match="removed output"):
         manager.remove_app("first")
     # Rebinding the consumer and removing the old stage can be one deployment.
     old_version = manager.apps.inspect("second")["operators"][0]["version"]
-    manager.apps._install({"second": declaration("second", ref, function).to_dict()})
+    manager.apps._install({
+        "second": declaration("second", ref, function).to_dict(), "reader": follower.to_dict(),
+    })
     assert manager.apps.inspect("second")["operators"][0]["version"] != old_version
     assert values(client, ref) == [2., 4.]
+    assert bound(manager, "reader") == [head]
+    assert values(client, out) == [2., 4.]
+
+    # Explicit input views can still bind the original samples or exact stage.
+    manager.deploy_app(reader(ref, head, view="raw"))
+    assert bound(manager, "reader") == [ref]
+    manager.deploy_app(reader(ref, view="stored"))
+    assert bound(manager, "reader") == [ref]
+    assert values(client, out) == [1., 2.]
     with pytest.raises(NotFound, match="not published"):
         manager.resolve_storage_keys([ref], epoch=manager.core.engine.snapshot().epoch + 1)
 
@@ -236,47 +290,9 @@ def reader(*refs, view=None, group="urn:replacement:tank"):
 
 
 def bound(manager, name):
+    """List the physical stream references bound to an app's operators."""
     return [item["stream"] for operator in manager.apps.inspect(name)["operators"]
             for item in operator["inputs"]]
-
-
-def test_consumers_follow_the_chain_as_stages_are_added_and_removed(system):
-    manager, _, client, module, _, _, ref = system
-    put(system, [(0, 1.), (1_000, 2.)])
-    function = aq.PythonFunction.from_file(module, "double")
-    first = declaration("first", ref, function)
-    manager.deploy_app(first)
-    clean = output_reference("first", "urn:replacement:tank", "out")
-    second = declaration("second", clean, function)
-    manager.deploy_app(second)
-    head = output_reference("second", "urn:replacement:tank", "out")
-    # The query matches all three stages; the reader binds the identity once.
-    manager.deploy_app(reader(ref, clean, head))
-    assert bound(manager, "reader") == [head]
-    assert manager.apps.inspect("reader")["matches"] == {"turbidity": 1}
-    out = output_reference("reader", "urn:replacement:tank", "out")
-    assert values(client, out) == [4., 8.]
-    # Removing the final stage moves the reader back one stage.
-    manager.remove_app("second")
-    assert bound(manager, "reader") == [clean]
-    assert values(client, out) == [2., 4.]
-    # Adding it again moves the reader forward, and its history follows.
-    manager.deploy_app(second)
-    assert bound(manager, "reader") == [head]
-    assert values(client, out) == [4., 8.]
-    # Removing the middle stage still requires rebinding the stage that claims it.
-    with pytest.raises(ValueError, match="removed output"):
-        manager.remove_app("first")
-    manager.apps._install({"second": declaration("second", ref, function).to_dict(),
-                           "reader": reader(ref, clean, head).to_dict()})
-    assert bound(manager, "reader") == [head]
-    assert values(client, out) == [2., 4.]
-    # An explicit view binds the original samples or exactly the stream selected.
-    manager.deploy_app(reader(ref, head, view="raw"))
-    assert bound(manager, "reader") == [ref]
-    manager.deploy_app(reader(ref, view="stored"))
-    assert bound(manager, "reader") == [ref]
-    assert values(client, out) == [1., 2.]
 
 
 def test_a_replacing_app_cannot_follow_its_own_output(system):
@@ -284,6 +300,7 @@ def test_a_replacing_app_cannot_follow_its_own_output(system):
     first = declaration("first", ref, aq.PythonFunction.from_file(module, "double"))
     follower = replace(first, inputs={**first.inputs, "reference": selection(ref)},
                        outputs={"out": aq.ReplacementOutput(of="raw")})
+    # The reference defaults to the current head and would make this app read its own output.
     with pytest.raises(ValueError, match="follows its own output"):
         manager.deploy_app(follower)
     looking_back = replace(follower, inputs={**first.inputs, "reference": selection(ref, view="raw")})
@@ -295,6 +312,7 @@ def test_competing_claims_metadata_and_group_cardinality(system):
     app = declaration("first", ref, aq.PythonFunction.from_file(module, "double"))
     manager.deploy_app(app)
     before = manager.core.engine.snapshot().plan()
+    # All of these declarations are rejected without disturbing the published plan.
     with pytest.raises(ValueError, match="competing replacements"):
         manager.deploy_app(replace(app, name="sibling"))
     with pytest.raises(ValueError, match="not compatible with its input's unit"):
@@ -378,6 +396,7 @@ def test_failed_new_head_stale_values_and_successful_empty_result(system):
     put(system, [(0, 1.)])
     app = declaration("clean", ref, aq.PythonFunction.from_file(module, "double"))
     broken = replace(app, inputs={"raw": selection(ref, parameters={"fail": True})})
+    # A head that has never completed has no current value. Raw reads still work.
     assert manager.deploy_app(broken)["status"] == "failed"
     assert values(client, ref) == []
     assert values(client, ref, view="raw") == [1.]
@@ -385,57 +404,16 @@ def test_failed_new_head_stale_values_and_successful_empty_result(system):
     assert client.client.timeseries_exists_batch([ref], view="raw") == {ref}
     manager.deploy_app(app)
     assert values(client, ref) == [2.]
+    # After a successful calculation, a later failure leaves the last completed value visible.
     assert manager.deploy_app(broken)["stale"] is True
     put(system, [(0, 3.)], "new-raw")
     assert values(client, ref) == [2.]
     assert values(client, ref, view="raw") == [3.]
+    # A successful empty calculation retracts the stale output.
     empty = replace(app, function=aq.PythonFunction.from_file(module, "empty"))
     assert manager.deploy_app(empty)["status"] == "active"
     assert values(client, ref) == []
     assert client.client.timeseries_info_batch([ref])[ref].row_count == 0
-
-
-def test_discovery_deduplicates_identity_and_explicit_app_query_is_stored(system, monkeypatch):
-    manager, _, client, module, _, point, ref = system
-    put(system, [(0, 1.)])
-    first = declaration("first", ref, aq.PythonFunction.from_file(module, "double"))
-    manager.deploy_app(first)
-    clean = output_reference("first", "urn:replacement:tank", "out")
-    manager.deploy_app(declaration("second", clean, first.function))
-    # Match both the source property and its stages under one data node.
-    query = client.query().measurement(alias="turbidity", quantity_kind=TURBIDITY)
-    # This module fixture has other sources; restrict to this chain's references.
-    monkeypatch.setattr(type(query), "execute", lambda *_, **__: {"columns": ["v0", "ext0"], "rows": [
-        [point, ref], [clean + "__point", clean],
-        [output_reference("second", "urn:replacement:tank", "out") + "__point",
-         output_reference("second", "urn:replacement:tank", "out")],
-    ]})
-    data = query.data()
-    assert len(data.bindings) == 1
-    assert data.bindings[0].stream_uri == ref
-    assert data.dataframe(shape="narrow")["value_numeric"].to_list() == [4.]
-    assert data.total_rows == 1
-    assert query.data(view="raw").dataframe(shape="narrow")["value_numeric"].to_list() == [1.]
-    # A normal measurement and an explicit reference can read the same
-    # identity in different views in one DataObject.
-    from acquirium.Client.query_graph import DataNodeInfo
-    graph = query.query_graph
-    graph = graph.with_node(replace(graph.nodes[0], id=1, alias="stored"))
-    graph = graph.with_data_node(DataNodeInfo(1, refs=(ref,)))
-    mixed = query._with_graph(graph)
-    monkeypatch.setattr(type(query), "execute", lambda *_, **__: {
-        "columns": ["v0", "ext0", "v1", "ext1"], "rows": [[point, ref, point, ref]],
-    })
-    both = mixed.data()
-    assert not both.is_empty()
-    assert both.total_rows == 2
-    table = both.dataframe(shape="narrow", compact=False)
-    assert dict(table.select("data_alias", "value_numeric").iter_rows()) == {"turbidity": 4., "stored": 1.}
-    monkeypatch.undo()
-    stored = client.query().measurement(alias="first", app="first").data()
-    assert stored.bindings[0].view == "stored"
-    assert stored.dataframe(shape="narrow")["value_numeric"].to_list() == [2.]
-    assert stored.total_rows == 1
 
 
 def test_whole_series_cleaner_corrections_and_deletions(system):
@@ -449,6 +427,8 @@ def test_whole_series_cleaner_corrections_and_deletions(system):
     put(system, [(0, .2), (30_000_000_000, .4), (2 * MINUTE, .6)])
     manager.deploy_app(app)
     assert values(client, ref) == pytest.approx([.3, .45, .6])
+    # A late correction changes the nearby smoothed values. Deleting their
+    # source readings retracts those outputs while leaving the last minute.
     put(system, [(30_000_000_000, .6)], "correction")
     assert values(client, ref) == pytest.approx([.4, .5, .6])
     manager.core.wait(manager.delete_timeseries(source, "ntu", [0, 30_000_000_000], request_id="deleted").receipt)
@@ -468,6 +448,7 @@ def test_removed_text_replacement_keeps_its_historical_read_kind(system):
     manager.deploy_app(app)
     epoch = manager.core.engine.snapshot().epoch
     assert values(client, ref) == ["running"]
+    # An old epoch still knows that the removed stage published text.
     manager.remove_app(app.name)
     assert values(client, ref, epoch=epoch) == ["running"]
 

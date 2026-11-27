@@ -1,399 +1,142 @@
-"""Live ingest through metadata-driven plan changes and a restart.
+"""Admit writes while a metadata edit is activating a new app plan."""
 
-A writer keeps submitting readings, late corrections, and deletes while
-metadata edits move streams between groups, add groups, and remove them. Each
-edit makes Acquirium compile and activate a new plan. Readers check that every
-snapshot they see is coherent: each operator's output is the pointwise mean of
-the inputs that snapshot's own plan lists, and outputs of groups the plan does
-not hold are empty. History is checked again epoch by epoch, before and after a
-restart.
-"""
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from time import monotonic, sleep
 
-from __future__ import annotations
-
-import math
-import threading
-import time
-
-import pyarrow as pa
-import pyarrow.ipc as ipc
+import polars as pl
 import pytest
-from fastapi.testclient import TestClient
-from escapement import NotFound
 
-from acquirium import App, Output, Selection
-from acquirium.apps import _plan_id, output_reference
+from acquirium import App, Native, Output, PythonFunction, Selection
+from acquirium.apps import output_reference
 from acquirium.internals.internals_namespaces import OUTPUT_GROUP, PRODUCED_BY
-from acquirium.internals.models import compute_stream_uri
-from acquirium.Server.app import app as api
-from acquirium.Server.manager import Manager
-
-SOURCE = "live"
-STREAMS = "abc"
-REFS = {name: str(compute_stream_uri(SOURCE, name)) for name in STREAMS}
-FEEDS = "urn:live#feeds"
-GROUPS = ("urn:live:g1", "urn:live:g2")
-MEAN, TOTAL = "live-mean", "live-total"
-OUTPUTS = {output_reference(MEAN, group, "mean"): group for group in GROUPS}
-TOTAL_OUTPUT = output_reference(TOTAL, TOTAL, "mean")
-# Three minutes apart, so the run spans more than one sealed UTC day.
-BASE, STEP = 1_767_225_600 * 10**9, 180 * 10**9
-LIMIT = 1_000_000
-
-# Which streams feed which group. Moves, additions and removals of groups.
-MEMBERSHIPS = [
-    {"g1": "ab"},
-    {"g1": "bc"},
-    {"g1": "a", "g2": "bc"},
-    {"g2": "abc"},
-    {"g1": "ac", "g2": "b"},
-    {"g1": "abc"},
-]
-
-
-def membership_turtle(membership):
-    return "\n".join(
-        f"<{REFS[stream]}> <{FEEDS}> <urn:live:{group}> ."
-        for group, streams in membership.items()
-        for stream in streams
-    )
-
-
-def apps(kind="mean"):
-    """The group app, computing ``kind`` per group, and the app combining
-    its groups' outputs."""
-    function = {"kind": kind, "port": "mean"}
-    if kind == "mean":
-        function["per_stream"] = False
-    mean = App(
-        MEAN,
-        {"input": Selection(f"SELECT ?stream ?group WHERE {{ ?stream <{FEEDS}> ?group }}")},
-        {"mean": Output()},
-        function,
-    )
-    total = App(
-        TOTAL,
-        {"input": Selection.outputs_of(mean, "mean", combine=True)},
-        {"mean": Output()},
-        {"kind": "mean", "port": "mean", "per_stream": False},
-    )
-    return mean, total
-
-
-REDUCE = {"mean": lambda values: sum(values) / len(values), "max": max}
-
-
-def operators(plan):
-    declarations = {row["id"]: row["annotations"]["app"] for row in plan["templates"]}
-    return [
-        {**instance, "id": f"{instance['template']}/{instance['key']}",
-         "function": declarations[instance["template"]]["function"],
-         "inputs": [binding for binding in plan["bindings"]
-                    if (binding["template"], binding["instance"]) == (instance["template"], instance["key"])]}
-        for instance in plan["instances"] if instance["template"] in (MEAN, TOTAL)
-    ]
-
-
-def plan_groups(plan):
-    return {
-        OUTPUTS[stream]
-        for op in operators(plan)
-        for stream in op["outputs"].values()
-        if stream in OUTPUTS
-    }
-
-
-def incoherence(plan, read):
-    """What makes one epoch's rows disagree with its plan, or None.
-
-    ``read(stream)`` returns ``{event_time_ns: value}`` at that epoch. Each
-    operator reduces its inputs' readings at each time with its function."""
-    live = set()
-    for op in operators(plan):
-        rows = [read(item["stream"]) for item in op["inputs"]]
-        times = set().union(*rows)
-        expected = {
-            ts: REDUCE[op["function"]["kind"]](values)
-            for ts in times
-            if (values := [row[ts] for row in rows if ts in row])
-        }
-        for stream in op["outputs"].values():
-            live.add(stream)
-            actual = read(stream)
-            if actual.keys() != expected.keys():
-                return (
-                    f"{op['id']}: output times differ; missing "
-                    f"{sorted(expected.keys() - actual.keys())[:5]}, extra "
-                    f"{sorted(actual.keys() - expected.keys())[:5]}"
-                )
-            for ts, value in expected.items():
-                if not math.isclose(actual[ts], value, rel_tol=1e-12):
-                    return f"{op['id']}: output at {ts} is {actual[ts]}, inputs give {value}"
-    for stream in [*OUTPUTS, TOTAL_OUTPUT]:
-        if stream not in live and read(stream):
-            return f"{stream} is outside the plan but has {len(read(stream))} rows"
-    return None
-
-
-def read_rows(snapshot, stream):
-    try:
-        batch = snapshot.read([stream], limit=LIMIT)
-    except NotFound:
-        return {}
-    with pa.RecordBatchReader.from_stream(batch) as reader:
-        table = reader.read_all()
-    return dict(zip(table["time"].cast(pa.int64()).to_pylist(), table["number"].to_pylist()))
-
-
-def check_snapshot(snapshot):
-    cache = {}
-
-    def read(stream):
-        if stream not in cache:
-            cache[stream] = read_rows(snapshot, stream)
-        return cache[stream]
-
-    return incoherence(snapshot.plan(), read)
-
-
-def check_epoch(engine, epoch):
-    return check_snapshot(engine.snapshot(epoch))
-
-
-def check_http(http, manager):
-    """Read like a client: find the app's groups in the graph, capture an
-    epoch, then read every stream at it.
-
-    When the graph did not change in between, the epoch's plan must hold
-    exactly the groups the graph named. Returns the problem, if any, and the
-    plan read with whether that comparison applied."""
-    before = manager.graph_store.graph_status()["source_version"]
-    groups = metadata_groups(manager)
-    snapshot = http.get("/engine/snapshot").json()
-    epoch, plan = snapshot["epoch"], snapshot["plan"]
-    compared = before == manager.graph_store.graph_status()["source_version"]
-    if compared and groups != plan_groups(plan):
-        return f"graph names {sorted(groups)}, epoch {epoch} plans {sorted(plan_groups(plan))}", None
-    cache = {}
-
-    def read(stream):
-        if stream not in cache:
-            response = http.get("/timeseries", params={"uri": stream, "epoch": epoch})
-            assert response.status_code == 200, response.text
-            table = ipc.open_stream(response.content).read_all()
-            times = table["ts"].cast(pa.int64()).to_pylist()
-            cache[stream] = dict(zip(times, table["value"].to_pylist()))
-        return cache[stream]
-
-    return incoherence(plan, read), (_plan_id(plan), compared)
-
-
-def metadata_groups(manager):
-    result = manager.graph_store.sparql_query(
-        f'SELECT ?group WHERE {{ ?point <{PRODUCED_BY}> "{MEAN}" ; <{OUTPUT_GROUP}> ?group }}',
-        wait_for_fresh=True,
-    )
-    return {str(row[0]) for row in result.get("rows", [])}
-
-
-class Writer(threading.Thread):
-    """Submits one request per tick: new readings for every stream, and now
-    and then a late correction or a delete of an older reading."""
-
-    def __init__(self, manager, start, oracle):
-        super().__init__(daemon=True)
-        self.manager, self.tick, self.oracle = manager, start, oracle
-        self.stop = threading.Event()
-        self.error = None
-        self.receipt = None
-
-    def run(self):
-        try:
-            while not self.stop.is_set():
-                i = self.tick
-                ts = BASE + i * STEP
-                batch = {name: [(ts, float((i * 7 + k * 13) % 101))] for k, name in enumerate(STREAMS)}
-                if i % 4 == 3:
-                    batch["b"].append((ts - 2 * STEP, float(500 + i)))
-                for name, items in batch.items():
-                    for at, value in items:
-                        self.oracle[(name, at)] = value
-                self.receipt = self.manager.insert_timeseries_batch(
-                    SOURCE, batch, request_id=f"put-{i}"
-                ).receipt
-                if i % 9 == 8:
-                    old = BASE + (i - 3) * STEP
-                    self.receipt = self.manager.core.ingest(
-                        SOURCE, f"delete-{i}", delete_frame(REFS["c"], old)
-                    ).receipt
-                    self.oracle.pop(("c", old), None)
-                self.tick += 1
-                time.sleep(0.002)
-        except BaseException as error:  # pragma: no cover - reported by the test
-            self.error = error
-
-
-def delete_frame(ref, ts):
-    import polars as pl
-
-    return pl.DataFrame(
-        {
-            "stream_uri": [ref],
-            "ts": pl.Series([ts], dtype=pl.Int64).cast(pl.Datetime("ns", "UTC")),
-            "operation": ["delete"],
-            "value": pl.Series([None], dtype=pl.Object),
-        }
-    )
-
-
-class Reader(threading.Thread):
-    def __init__(self, check):
-        super().__init__(daemon=True)
-        self.check = check
-        self.stop = threading.Event()
-        self.problems, self.seen, self.checks = [], set(), 0
-        self.error = None
-
-    def run(self):
-        try:
-            while not self.stop.is_set():
-                problem, seen = self.check()
-                self.checks += 1
-                self.seen.add(seen)
-                if problem:
-                    self.problems.append(problem)
-        except BaseException as error:  # pragma: no cover - reported by the test
-            self.error = error
-
-
-def open_manager(directory):
-    manager = Manager(data_dir=directory, exact_only=True)
-    manager.recover_apps()
-    api.state.manager = manager
-    # Small pages make one read span several engine queries at its epoch.
-    api.state.read_batch_size = 97
-    return manager, TestClient(api)
-
-
-def membership(manager, groups):
-    """A step that installs ``groups`` and checks that, once the edit
-    returns, the metadata graph and the published plan agree."""
-
-    def step():
-        manager.insert_graph(membership_turtle(groups), source_id="membership", replace=True)
-        plan = manager.core.engine.snapshot().plan()
-        assert metadata_groups(manager) == plan_groups(plan) == {
-            f"urn:live:{group}" for group in groups
-        }
-
-    return step
-
-
-def live_round(manager, http, steps, *, start, oracle):
-    """Write continuously while each step changes the plan in turn."""
-    writer = Writer(manager, start, oracle)
-
-    def snapshot_check():
-        snapshot = manager.core.engine.snapshot()
-        return check_snapshot(snapshot), _plan_id(snapshot.plan())
-
-    readers = [Reader(snapshot_check), Reader(lambda: check_http(http, manager))]
-    for thread in [writer, *readers]:
-        thread.start()
-    try:
-        for step in steps:
-            time.sleep(0.15)
-            step()
-        time.sleep(0.15)
-    finally:
-        for thread in [writer, *readers]:
-            thread.stop.set()
-            thread.join(30)
-    for thread in [writer, *readers]:
-        assert thread.error is None, thread.error
-    manager.core.wait(writer.receipt)
-    for reader in readers:
-        assert reader.problems == [], reader.problems[:3]
-        assert reader.checks > 0
-    return writer, readers
-
-
-def assert_current(manager, oracle):
-    snapshot = manager.core.engine.snapshot()
-    assert check_snapshot(snapshot) is None
-    for name in STREAMS:
-        expected = {ts: value for (stream, ts), value in oracle.items() if stream == name}
-        assert read_rows(snapshot, REFS[name]) == expected
-    return snapshot
-
-
-def assert_history(manager, epochs):
-    problems = {epoch: check_epoch(manager.core.engine, epoch) for epoch in epochs}
-    assert {epoch: problem for epoch, problem in problems.items() if problem} == {}
+from tests.epoch_helpers import epoch_server
 
 
 @pytest.mark.integration
 def test_live_ingest_through_plan_changes_stays_coherent_across_restart(tmp_path):
-    oracle = {}
-    manager, http = open_manager(tmp_path)
-    try:
+    directory = tmp_path / "server"
+    started = tmp_path / "started"
+    release = tmp_path / "release"
+    module = tmp_path / "calculation.py"
+    module.write_text(
+        "import time\n"
+        "from pathlib import Path\n"
+        "from acquirium.functions import emit\n"
+        "def calculate(frame, context):\n"
+        "    if context['parameters']['group'] == ('urn:test:new',):\n"
+        f"        Path({str(started)!r}).touch()\n"
+        "        deadline = time.monotonic() + 30\n"
+        f"        while not Path({str(release)!r}).exists():\n"
+        "            if time.monotonic() >= deadline:\n"
+        "                raise RuntimeError('plan activation was not released')\n"
+        "            time.sleep(0.01)\n"
+        "    return {'mean': emit(context, frame['value'].mean())}\n",
+        encoding="utf-8",
+    )
+    mean = App(
+        "group-mean",
+        {"input": Selection("SELECT ?stream ?group WHERE { ?stream <urn:test:group> ?group }")},
+        {"mean": Output()},
+        PythonFunction.from_file(module, "calculate"),
+    )
+    total = App(
+        "total",
+        {"input": Selection.outputs_of(mean, "mean", combine=True)},
+        {"total": Output()},
+        Native.sum("total"),
+    )
+    old = output_reference(mean.name, "urn:test:old", "mean")
+    new = output_reference(mean.name, "urn:test:new", "mean")
+    combined = output_reference(total.name, total.name, "total")
+    first_time, next_day = 0, 86_400_000_000_000
+
+    def read(ref, epoch):
+        """Read one stream through HTTP at the requested epoch."""
+        frame = client.client.timeseries_df(ref, epoch=epoch)
+        return list(zip(frame["ts"].cast(pl.Int64), frame["value"]))
+
+    def assign(a_group, b_group):
+        """Change the source bindings and wait for their app plan to publish."""
         manager.insert_graph(
-            "\n".join(
-                f'<{ref}> <urn:acquirium#sourceId> "{SOURCE}" ; <urn:acquirium#refName> "{name}" .'
-                for name, ref in REFS.items()
-            ),
-            source_id=SOURCE,
+            f"<{a}> <urn:test:group> <urn:test:{a_group}> .\n"
+            f"<{b}> <urn:test:group> <urn:test:{b_group}> .",
+            source_id="membership", replace=True,
         )
-        manager.insert_graph(membership_turtle(MEMBERSHIPS[0]), source_id="membership", replace=True)
-        mean, total = apps()
-        manager.deploy_app(mean)
-        manager.deploy_app(total)
-        first = manager.core.engine.snapshot().epoch
 
-        # Metadata edits change existing operators' inputs, which Escapement
-        # repairs incrementally; groups they add are new operators.
-        writer, readers = live_round(
-            manager, http, [membership(manager, groups) for groups in MEMBERSHIPS[1:]],
-            start=0, oracle=oracle,
+    def wait_until_started(edit):
+        """Wait for the worker marker and surface an early graph-edit failure."""
+        deadline = monotonic() + 15
+        while not started.exists():
+            if edit.done():
+                edit.result()
+                pytest.fail("the graph edit completed before its worker blocked")
+            assert monotonic() < deadline, "the new plan did not start computing"
+            sleep(0.01)
+
+    with epoch_server(directory, read_batch_size=1) as (manager, _, client):
+        # Both probes initially contribute to the old group and its downstream total.
+        client.register_streams([
+            {"source_id": "live", "stream_name": name, "value_kind": "numeric"}
+            for name in ("a", "b")
+        ])
+        a, b = (str(client.stream("live", name)) for name in ("a", "b"))
+        assign("old", "old")
+        client.deploy_app(mean)
+        client.deploy_app(total)
+        receipt, = client.insert_timeseries_batch("live", {
+            "a": [(first_time, 2), (next_day, 8)],
+            "b": [(first_time, 6), (next_day, 12)],
+        })["receipts"]
+        original = client.wait(receipt)["epoch"]
+        original_rows = [(first_time, 4), (next_day, 10)]
+        assert read(old, original) == read(combined, original) == original_rows
+        assert read(new, original) == []
+
+        # Block the new group inside its worker after the engine accepts the plan.
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            moving = executor.submit(assign, "new", "new")
+            try:
+                wait_until_started(moving)
+                corrected, = client.insert_timeseries(
+                    "live", "b", [(first_time, 10)], request_id="correct", wait=0,
+                )["receipts"]
+                deleted = client.delete_timeseries(
+                    "live", "b", [next_day], request_id="delete", wait=0,
+                )
+                assert all(r["accepted"] and not r["published"] for r in (corrected, deleted))
+                assert read(old, original) == read(combined, original) == original_rows
+                assert read(new, original) == []
+            finally:
+                release.touch()
+            moving.result(timeout=15)
+
+        # After activation and queued writes, the graph, plan, and outputs agree.
+        client.wait(deleted)
+        published = client.engine_snapshot()
+        assert published["plan_current"]
+        assert {
+            op["key"] for op in published["plan"]["instances"] if op["template"] == mean.name
+        } == {"urn:test:new"}
+        matches = manager.graph_store.sparql_query(
+            f'SELECT ?group WHERE {{ ?point <{PRODUCED_BY}> "{mean.name}" ; <{OUTPUT_GROUP}> ?group }}',
+            wait_for_fresh=True,
         )
-        assert len(readers[0].seen) >= 3
-        assert any(compared for _, compared in readers[1].seen)
+        assert [str(group) for group, in matches["rows"]] == ["urn:test:new"]
+        latest = published["epoch"]
+        latest_rows = [(first_time, 6), (next_day, 8)]
+        assert read(new, latest) == read(combined, latest) == latest_rows
+        assert read(old, latest) == []
+        assert read(b, latest) == [(first_time, 10)]
 
-        # Redefining the group app replaces its outputs
-        # while the app reading them stays deployed.
-        writer, _ = live_round(
-            manager, http,
-            [
-                lambda: manager.deploy_app(apps("max")[0]),
-                lambda: manager.deploy_app(apps("mean")[0]),
-            ],
-            start=writer.tick, oracle=oracle,
-        )
-        before = assert_current(manager, oracle)
-        before_epoch, before_plan = before.epoch, before.plan()
-        del before
-        assert_history(manager, range(first, before_epoch + 1))
-        tick = writer.tick
-    finally:
-        http.close()
-        manager.close()
-
-    manager, http = open_manager(tmp_path)
-    try:
-        snapshot = manager.core.engine.snapshot()
-        # Recovery republishes nothing and keeps the exact plan and rows.
-        assert snapshot.epoch == before_epoch
-        assert snapshot.plan() == before_plan
-        assert_current(manager, oracle)
-        assert_history(manager, range(first, snapshot.epoch + 1))
-
-        live_round(
-            manager, http,
-            [membership(manager, MEMBERSHIPS[2]), membership(manager, MEMBERSHIPS[0])],
-            start=tick, oracle=oracle,
-        )
-        after = assert_current(manager, oracle)
-        assert_history(manager, range(snapshot.epoch, after.epoch + 1))
-    finally:
-        http.close()
-        manager.close()
+    with epoch_server(directory, read_batch_size=1) as (manager, _, client):
+        # Recovery keeps both epochs. A further membership edit still repairs the total.
+        recovered = client.engine_snapshot()
+        assert (recovered["epoch"], recovered["plan"]) == (latest, published["plan"])
+        assert read(old, original) == read(combined, original) == original_rows
+        assert read(new, latest) == read(combined, latest) == latest_rows
+        assign("new", "old")
+        current = client.engine_snapshot()["epoch"]
+        assert read(new, current) == [(first_time, 2), (next_day, 8)]
+        assert read(old, current) == [(first_time, 10)]
+        assert read(combined, current) == [(first_time, 12), (next_day, 8)]

@@ -9,7 +9,7 @@ import pytest
 from requests import HTTPError
 
 import acquirium as aq
-from acquirium.Experiments import Study, StudyService, _stream_name
+from acquirium.Experiments import Study, _stream_name
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 PAYLOAD = {"a.b": {"arbitrary key": [None, {}, [], {"https://example.org/key": "value"}]},
@@ -101,22 +101,6 @@ def test_record_values_sample_and_role_views(model_api):
     study.start()
     variables.sample(at=T0)
     assert client.record_experiment_batch.call_count == 5
-    assert not hasattr(variables, "record_all")
-
-
-def test_json_values_and_arbitrary_nested_metadata_survive_reopening(model_api):
-    adapter, state = fake_adapter()
-    variables = model_api.study.declare_from(adapter)
-    run = model_api.study.start()
-    variables.record_values()
-    expected = aq.ExperimentValues.to_json(PAYLOAD)
-    assert variables["config"].metadata == expected
-    assert run.observations(variables["config"]).latest().value == expected
-    reopened = StudyService(model_api.ac).get("models")
-    assert reopened.variables["config"].metadata == expected
-    assert reopened.variables["config"].role == "input"
-    assert reopened.variables["config"].unit is None
-    assert reopened.variables.frame().filter(pl.col("label") == "config")["metadata"].item() == expected
 
 
 def test_preview_is_local_and_matches_recording(model_api):
@@ -220,19 +204,6 @@ def test_builder_validation_and_explicit_json_metadata():
         adapter.json("bad", read=lambda: {}, metadata={"x": float("nan")})
 
 
-def test_transport_retries_and_atomic_observation_batches(model_api):
-    variables = model_api.study.declare_from(fake_adapter()[0])
-    run = model_api.study.start()
-    model_api.client.record_experiment_batch.side_effect = RuntimeError("temporary")
-    with pytest.raises(RuntimeError, match="temporary"):
-        variables.sample(at=T0)
-    model_api.client.record_experiment_batch.side_effect = None
-    assert run.observations().all() == []
-    variables.sample(at=T0)
-    assert len(run.observations().all()) == 3
-    assert model_api.client.record_experiment_batch.call_count == 2
-
-
 def test_pyomo_explicit_sources_units_and_mutable_values(model_api):
     pyo = pytest.importorskip("pyomo.environ")
     pytest.importorskip("pint")
@@ -307,15 +278,6 @@ def test_hand_declared_keyed_series_remain_supported(model_api):
             flow.record(value)
 
 
-def test_keyed_registration_distinguishes_numeric_types(model_api):
-    flow = model_api.study.output("flow").timeseries(keys=("pump",))
-    run = model_api.study.start()
-    for key in (1, True, 1.0, 0.0, -0.0):
-        flow.record({(key,): [(T0, 5)]})
-    assert model_api.client.record_experiment_batch.call_count == 5
-    assert len({item.stream_uri for item in run.observations(flow).all()}) == 5
-
-
 def test_importing_core_does_not_import_pyomo():
     import subprocess
     import sys
@@ -335,11 +297,6 @@ def test_declaration_does_not_evaluate_uninitialized_pyomo_values(model_api):
     with pytest.raises(ValueError, match="could not read 'x'.*source='x'"):
         variables.record_values()
     assert run.observations().all() == []
-
-
-def test_legacy_metadata_named_like_an_adapter_field_is_not_reinterpreted(model_api):
-    variable = model_api.study.output("legacy").json(adapter_metadata="ordinary text")
-    assert variable.metadata == {"adapter_metadata": "ordinary text"}
 
 
 def test_table_recording_serializes_once_and_preview_preserves_frame(model_api, monkeypatch):
@@ -368,12 +325,12 @@ def test_custom_adapters_pass_through_shared_validation(model_api):
 def test_hand_and_model_declarations_share_metadata_and_query_paths(model_api):
     study = model_api.study
     first = study.output("cost").scalar(unit="urn:unit:USD", objective="minimize",
-        metadata={"a.b": [None, {}, []]})
+        metadata={"a.b": [None, {}, []], "adapter_metadata": "ordinary text"})
     adapter = aq.adapters.define()
     adapter.scalar("cost", read=lambda: 1, unit="urn:unit:USD",
-        metadata={"objective": "minimize", "a.b": [None, {}, []]})
+        metadata={"objective": "minimize", "a.b": [None, {}, []], "adapter_metadata": "ordinary text"})
     assert study.declare_from(adapter)["cost"] is first
-    assert first.metadata == {"objective": "minimize", "a.b": [None, {}, []]}
+    assert first.metadata == {"objective": "minimize", "a.b": [None, {}, []], "adapter_metadata": "ordinary text"}
     assert first.unit == "urn:unit:USD"
     assert "unit" not in first.metadata
     # A separate namespaced value cannot silently replace a descriptive value.

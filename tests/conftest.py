@@ -62,6 +62,31 @@ def acquirium_client_csv(own_acquirium):
 
 
 @pytest.fixture
+def open_source_graph(tmp_path_factory):
+    """Open real source graphs for storage tests that need no bundled ontologies."""
+    from contextlib import ExitStack
+    from acquirium.Storage import graph_store
+
+    with ExitStack() as opened:
+        def open_graph():
+            directory = tmp_path_factory.mktemp("source-graph")
+            with pytest.MonkeyPatch.context() as patch:
+                patch.setattr(graph_store, "BUNDLED_FILES", ())
+                graph = graph_store.OxigraphGraphStore(
+                    store_path=directory / "graph", env_root=directory / "ontoenv",
+                )
+            opened.callback(graph.close)
+            return graph
+
+        yield open_graph
+
+
+@pytest.fixture
+def source_graph(open_source_graph):
+    return open_source_graph()
+
+
+@pytest.fixture
 def samples(tmp_path):
     """Experiment samples sent to an in-memory Escapement."""
     from acquirium.core import Core
@@ -106,6 +131,14 @@ def local_acquirium(tmp_path_factory):
             yield options
         finally:
             aq.shutdown()
+
+
+@pytest.fixture
+def ledger(experiment_ledger, source_graph):
+    """The experiment store on a test ledger with a real source graph."""
+    from acquirium.Experiments import ExperimentStore
+
+    return ExperimentStore(experiment_ledger, graph_store=source_graph)
 
 
 @pytest.fixture

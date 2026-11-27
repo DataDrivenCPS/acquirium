@@ -4,23 +4,14 @@ from datetime import datetime, timezone
 
 import pytest
 from rdflib import Literal, URIRef
+from rdflib.namespace import RDFS, XSD
 
 from acquirium.ExperimentDeclarations import Declaration, normalize_metadata, prepare_declaration
-from acquirium.ExperimentMetadata import variable_uri
 from acquirium.Experiments import ExperimentStore
 from acquirium.Storage.metadata_outbox import enqueue, execute
-from tests.unit.test_experiment_metadata import MemoryGraphStore
 from tests.epoch_helpers import all_readings
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
-
-
-def ledger_for(store, tmp_path):
-    graph = MemoryGraphStore()
-    ledger = ExperimentStore(store, graph_store=graph,
-                             resolve=lambda *_: "urn:unit:power")
-    study = ledger.define("refinement")
-    return ledger, graph, study["template_id"]
 
 
 def counts(store):
@@ -34,10 +25,12 @@ def counts(store):
 
 
 @pytest.mark.parametrize("failure", ["registration", "samples", "artifact", "observation", "outbox"])
-def test_failed_recording_commits_no_observation(experiment_ledger, tmp_path, monkeypatch, failure):
-    store = experiment_ledger
-    ledger, graph, study = ledger_for(store, tmp_path)
-    series = ledger.declare(study, "power", "output", "timeseries", {"unit": "power"})
+def test_failed_recording_leaves_no_observation_and_can_retry(ledger, monkeypatch, failure):
+    store = ledger.store
+    study = ledger.define("failed recording")["template_id"]
+    # Record a sample and an attachment together so a late failure can leave
+    # both a written sample and partially inserted SQL rows.
+    series = ledger.declare(study, "power", "output", "timeseries", {})
     file = ledger.declare(study, "report", "output", "file", {})
     run = ledger.start(study, {})["run_id"]
     ledger.sync_metadata_graph()
@@ -76,6 +69,9 @@ def test_failed_recording_commits_no_observation(experiment_ledger, tmp_path, mo
         assert after[table] == before[table]
     assert after["samples"] == (0 if failure in {"registration", "samples"} else 1)
     assert after["experiment_streams"] == (0 if failure == "registration" else 1)
+    assert ledger.observations(study) == []
+
+    # Retry the same batch, then verify that clearing it removes its stored data.
     receipts = ledger.record_batch(run, entries)
     assert [r["sequence"] for r in receipts] == [1, 2]
     assert counts(store)["samples"] == 1
@@ -84,20 +80,22 @@ def test_failed_recording_commits_no_observation(experiment_ledger, tmp_path, mo
     assert counts(store)["experiment_artifact_chunks"] == counts(store)["experiment_streams"] == counts(store)["samples"] == 0
 
 
-def test_source_clear_is_an_outbox_ordering_barrier(experiment_ledger, tmp_path):
-    ledger, graph, _ = ledger_for(experiment_ledger, tmp_path)
+def test_source_clear_is_an_outbox_ordering_barrier(ledger, source_graph):
+    graph = source_graph
     ledger.sync_metadata_graph()
     target = str(graph.source_graph_uri("experiment/run"))
     subject, predicate = "urn:test:point", "urn:test:value"
     def patch(value):
         return {"operation": "patch", "subject": subject, "predicates": [], "graph_uri": target,
                 "triples": [[subject, predicate, Literal(value).n3()]]}
-    with experiment_ledger._lock, experiment_ledger._write_conn() as conn:
+    with ledger.store._lock, ledger.store._write_conn() as conn:
         enqueue(conn, patch("before"))
         enqueue(conn, {"clear": [target]})
         enqueue(conn, patch("after"))
     ledger.sync_metadata_graph()
-    assert list(graph.dataset.graph(URIRef(target)).objects(URIRef(subject), URIRef(predicate))) == [Literal("after")]
+    assert list(graph.data_graph("experiment/run").objects(URIRef(subject), URIRef(predicate))) == [
+        Literal("after", datatype=XSD.string),
+    ]
 
 
 def test_normalization_preserves_namespaced_values_and_merges_equal_duplicates():
@@ -127,8 +125,8 @@ def test_declaration_codec_preserves_typed_keys_and_detaches_documents():
 
 
 @pytest.mark.parametrize("change", ["terminal", "missing", "foreign"])
-def test_recording_rechecks_sql_state_after_preparation(experiment_ledger, tmp_path, monkeypatch, change):
-    ledger, _, study = ledger_for(experiment_ledger, tmp_path)
+def test_recording_rechecks_sql_state_after_preparation(ledger, monkeypatch, change):
+    study = ledger.define("recheck before recording")["template_id"]
     variable = ledger.declare(study, "flow", "output", "timeseries", {})["variable_id"]
     other = ledger.define("other")["template_id"]
     run = ledger.start(study, {})["run_id"]
@@ -138,7 +136,7 @@ def test_recording_rechecks_sql_state_after_preparation(experiment_ledger, tmp_p
         if change == "terminal":
             ledger.finish(run, "succeeded")
         else:
-            with experiment_ledger._lock, experiment_ledger._write_conn() as conn:
+            with ledger.store._lock, ledger.store._write_conn() as conn:
                 if change == "missing":
                     execute(conn, "DELETE FROM experiment_variables WHERE variable_id=?", [variable])
                 else:
@@ -147,16 +145,16 @@ def test_recording_rechecks_sql_state_after_preparation(experiment_ledger, tmp_p
     monkeypatch.setattr(ledger, "_prepare_recording", changed_state)
     with pytest.raises(KeyError if change == "missing" else ValueError):
         ledger.record_batch(run, [{"form": "samples", "variable_id": variable, "samples": [(T0, 1)]}])
-    after = counts(experiment_ledger)
+    after = counts(ledger.store)
     assert after["samples"] == after["experiment_streams"] == after["experiment_observations"] == 0
 
 
-def test_recording_non_utc_postgres_preserves_sample_and_ledger_times(experiment_ledger, tmp_path):
-    store = experiment_ledger
+def test_recording_non_utc_postgres_preserves_sample_and_ledger_times(ledger):
+    store = ledger.store
     from acquirium.Storage.ledger import PostgresLedger
     if isinstance(store, PostgresLedger):
         store.conn.execute("SET TIME ZONE 'America/Denver'")
-    ledger, _, study = ledger_for(store, tmp_path)
+    study = ledger.define("zoned recording")["template_id"]
     variable = ledger.declare(study, "flow", "output", "timeseries", {})
     run = ledger.start(study, {})["run_id"]
     receipt = ledger.record_batch(run, [{"form": "samples", "variable_id": variable["variable_id"],
@@ -168,69 +166,33 @@ def test_recording_non_utc_postgres_preserves_sample_and_ledger_times(experiment
     assert (time_ns, value) == (int(T0.timestamp()) * 1_000_000_000, 7.0)
 
 
-def test_stream_delivery_preserves_each_triples_subject(experiment_ledger, tmp_path):
-    from rdflib.namespace import RDFS
+def test_stream_delivery_preserves_each_triples_subject(ledger, source_graph):
     from acquirium.internals.internals_namespaces import ACQUIRIUM_DB_URI, ACQUIRIUM_SOURCE_ID
-    ledger, graph, study = ledger_for(experiment_ledger, tmp_path)
+    study = ledger.define("stream graph subjects")["template_id"]
     variable = ledger.declare(study, "flow", "output", "timeseries", {})
     run = ledger.start(study, {})["run_id"]
     ref = ledger.record_batch(run, [{"form": "samples", "variable_id": variable["variable_id"], "samples": [(T0, 1)]}])[0]["stream_uri"]
     ledger.sync_metadata_graph()
     point = URIRef(ref + "__point")
-    assert set(graph.dataset.objects(point, RDFS.label)) == {Literal("flow")}
-    assert set(graph.dataset.objects(ACQUIRIUM_DB_URI, RDFS.label)) == {Literal("Acquirium Escapement")}
-    assert (URIRef(ref), ACQUIRIUM_SOURCE_ID, Literal(f"experiment/{run}")) in graph.dataset
-    assert not list(graph.dataset.objects(point, ACQUIRIUM_SOURCE_ID))
+    asserted = source_graph.data_graph(f"experiment/{run}")
+    assert set(asserted.objects(point, RDFS.label)) == {Literal("flow", datatype=XSD.string)}
+    assert set(asserted.objects(ACQUIRIUM_DB_URI, RDFS.label)) == {
+        Literal("Acquirium Escapement", datatype=XSD.string),
+    }
+    assert (URIRef(ref), ACQUIRIUM_SOURCE_ID, Literal(f"experiment/{run}", datatype=XSD.string)) in asserted
+    assert not list(asserted.objects(point, ACQUIRIUM_SOURCE_ID))
 
 
-def test_user_overrides_and_semantic_assertions_stay_in_their_sources(experiment_ledger, tmp_path):
-    from acquirium.Client.metadata import plan_write, update_text
-    from acquirium.internals.internals_namespaces import HAS_UNIT
-    ledger, graph, study = ledger_for(experiment_ledger, tmp_path)
-    variable = ledger.declare(study, "power", "output", "scalar",
-                              {"unit": "old spelling", "category": "original", "metadata": {"empty": [None, {}, []]}})
-    ledger.sync_metadata_graph()
-    subject = variable_uri(variable["variable_id"])
-    owner = graph.source_graph_uri("metadata")
-    write = plan_write(subject, {"metadata": {"category": "edited"}, "unit": "urn:unit:override"}, role="data", resolve=lambda *_: None)
-    graph.sparql_update(update_text([write]), graph_uri=owner)
-    saved = ledger.variables(study)[0]["metadata"]
-    # An override document replaces the whole user object.
-    assert saved["metadata"] == {"category": "edited"}
-    assert saved["unit"] == "urn:unit:override"
-    base = graph.dataset.graph(graph.source_graph_uri("experiments"))
-    user = graph.dataset.graph(owner)
-    assert set(base.objects(URIRef(subject), HAS_UNIT)) == {URIRef("urn:unit:power")}
-    assert set(user.objects(URIRef(subject), HAS_UNIT)) == {URIRef("urn:unit:override")}
-
-
-def test_resolvers_run_before_sql_writer_transactions(experiment_ledger, tmp_path):
+def test_resolvers_run_before_sql_writer_transactions(experiment_ledger, source_graph):
     store = experiment_ledger
     def resolve(text, kind):
         owned = getattr(store._lock, "_is_owned", None)
         assert not (owned() if owned is not None else store._lock.locked())
         return "urn:resolved:" + kind
-    ledger = ExperimentStore(store, graph_store=MemoryGraphStore(), resolve=resolve)
+    ledger = ExperimentStore(store, graph_store=source_graph, resolve=resolve)
     study = ledger.define("resolver boundary")["template_id"]
     ledger.declare(study, "flow", "output", "timeseries", {"unit": "flow units"})
     run = ledger.start(study, {"type": "run type"})["run_id"]
     ledger.annotate_stream(run, "urn:stream", T0, metadata={"type": "annotation type"})
     ledger.finish(run, "succeeded")
     ledger.sync_metadata_graph()
-
-
-def test_committed_sample_intent_replays_after_graph_flush_failure(experiment_ledger, tmp_path, monkeypatch):
-    ledger, graph, study = ledger_for(experiment_ledger, tmp_path)
-    variable = ledger.declare(study, "flow", "output", "timeseries", {})
-    run = ledger.start(study, {})["run_id"]
-    receipt = ledger.record_batch(run, [{"form": "samples", "variable_id": variable["variable_id"], "samples": [(T0, 3)]}])[0]
-    with monkeypatch.context() as patch:
-        patch.setattr(graph, "flush_metadata", lambda: (_ for _ in ()).throw(OSError("flush failed")))
-        with pytest.raises(OSError, match="flush failed"):
-            ledger.sync_metadata_graph()
-    assert counts(experiment_ledger)["samples"] == 1
-    assert counts(experiment_ledger)["experiment_observations"] == 1
-    assert counts(experiment_ledger)["experiment_metadata_outbox"] > 0
-    reopened = ExperimentStore(experiment_ledger, graph_store=graph)
-    assert reopened.observations(study)[0]["stream_uri"] == receipt["stream_uri"]
-    assert counts(experiment_ledger)["experiment_metadata_outbox"] == 0

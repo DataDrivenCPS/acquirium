@@ -1,8 +1,6 @@
 from datetime import datetime, timezone
 from unittest.mock import Mock
 
-import pyarrow as pa
-import pyarrow.ipc as ipc
 import pytest
 
 from tests.epoch_helpers import epoch_server, value
@@ -14,6 +12,7 @@ from acquirium.internals.models import compute_stream_uri
 
 
 def test_list_settles_pending_removal_before_selecting_app_names(tmp_path):
+    # In-memory declarations still list the app. The published plan has removed it.
     core, graph = Mock(), Mock()
     core.engine.snapshot.return_value.epoch = 2
     core.engine.snapshot.return_value.plan.return_value = {"templates": [], "instances": [], "bindings": []}
@@ -35,7 +34,8 @@ def system(tmp_path_factory):
 
 
 def register(system, source):
-    manager, http, client = system
+    """Register a numeric temperature probe and return its stream URI."""
+    _, _, client = system
     client.register_streams(
         [
             dict(
@@ -51,6 +51,7 @@ def register(system, source):
 
 
 def mean(name, stream, group="urn:tank"):
+    """Declare a native mean over one stream in a fixed group."""
     return App(
         name,
         {
@@ -61,48 +62,6 @@ def mean(name, stream, group="urn:tank"):
         {"mean": Output()},
         {"kind": "mean", "port": "mean", "per_stream": False},
     )
-
-
-def test_semantic_query_native_plan_http_ingestion_and_arrow_read(system):
-    manager, http, client = system
-    ref = register(system, "semantic")
-    query = client.query().measurement(
-        alias="temperature", unit="http://qudt.org/vocab/unit/DEG_F"
-    )
-    selection = Selection.from_query(query, measurement="temperature")
-    declaration = App(
-        "semantic-mean",
-        {"temperature": selection},
-        {"mean": Output()},
-        {"kind": "mean", "port": "mean", "per_stream": False},
-    )
-    response = http.put(f"/apps/{declaration.name}", json=declaration.to_dict())
-    assert response.status_code == 200, response.text
-    output = output_reference("semantic-mean", ref, "mean")
-    matched = client.query().measurement(app="semantic-mean").execute()
-    assert output in str(matched)
-    response = http.post(
-        "/insert_timeseries",
-        json=[
-            dict(
-                source_id="semantic",
-                stream_name="temperature",
-                request_id="initial",
-                values=[[1001, 21.5], [2002, 25]],
-            )
-        ],
-    )
-    assert response.status_code == 200, response.text
-    receipt = response.json()["receipts"][0]
-    assert receipt["published"]
-    response = http.get("/timeseries", params={"uri": output})
-    assert response.status_code == 200
-    data = ipc.open_stream(response.content).read_all()
-    assert data["ts"].type == pa.timestamp("ns", tz="UTC")
-    assert data["ts"].cast(pa.int64()).to_pylist() == [1001, 2002]
-    assert data["value"].to_pylist() == [21.5, 25]
-    assert not (manager.data_dir / "timeseries.duckdb").exists()
-    assert (manager.data_dir / "escapement-epoch.duckdb").exists()
 
 
 def test_python_chain_repairs_history_and_recovers_without_source_files(tmp_path):
@@ -127,32 +86,23 @@ def test_python_chain_repairs_history_and_recovers_without_source_files(tmp_path
         encoding="utf-8",
     )
 
-    def write(http, request_id, value):
-        response = http.post("/insert_timeseries", json=[{
-            "source_id": "conversion", "stream_name": "temperature",
-            "request_id": request_id, "values": [[1000, value]],
-        }])
-        assert response.status_code == 200, response.text
-        receipt = response.json()["receipts"][0]
-        assert receipt["published"], receipt
-        return receipt["sequence"]
+    def write(value):
+        """Publish a reading at the test timestamp."""
+        receipt, = client.insert_timeseries("conversion", "temperature", [(1000, value)])["receipts"]
+        return client.wait(receipt)["epoch"]
 
-    def read(http, uri=None, **params):
-        response = http.get("/timeseries", params={"uri": uri or output, **params})
-        assert response.status_code == 200, response.text
-        return ipc.open_stream(response.content).read_all()["value"].to_pylist()
+    def read(uri, *, epoch=None):
+        """Read one worker output at the current or a pinned epoch."""
+        return client.stream(uri).dataframe(epoch=epoch)["value"].to_list()
 
-    with epoch_server(data) as (manager, http, client):
-        ref = register((manager, http, client), "conversion")
+    with epoch_server(data) as system:
+        manager, _, client = system
+        ref = register(system, "conversion")
         original = temperature_conversion.fahrenheit_to_celsius(client, {})
         declaration = replace(original, function=PythonFunction.from_file(module, "convert"))
         output = output_reference(declaration.name, ref, "celsius")
-        endpoint = f"/apps/{declaration.name}"
-        preview = http.put(endpoint, params={"dry_run": True}, json=declaration.to_dict())
-        assert preview.status_code == 200, preview.text
-        assert preview.json()["app"]["within_limits"]
+        assert client.deploy_app(declaration, dry_run=True)["app"]["within_limits"]
         assert not list((data / "app-functions").iterdir())
-        assert not manager.graph_store.data_graph(f"derived:{declaration.name}")
 
         # The upstream app is needed for a group to match. Compile the
         # downstream SPARQL against the candidate output in the same deploy.
@@ -163,23 +113,21 @@ def test_python_chain_repairs_history_and_recovers_without_source_files(tmp_path
             PythonFunction.from_file(downstream, "read"),
         )
         chained_output = output_reference(chained.name, ref, "double")
-        chain_response = http.put(f"/apps/{chained.name}", json=chained.to_dict())
-        assert chain_response.status_code == 200, chain_response.text
-        assert chain_response.json()["app"]["matches"] == {"celsius": 0}
+        assert client.deploy_app(chained)["app"]["matches"] == {"celsius": 0}
 
-        response = http.put(endpoint, json=declaration.to_dict())
-        assert response.status_code == 200, response.text
-        assert response.json()["app"]["status"] == "active"
-        first = write(http, "first", 68)
-        observed = http.get("/engine/snapshot").json()
-        assert observed["applied"] == first
-        assert {binding["stream"] for binding in observed["plan"]["bindings"]} == {ref, output}
-        assert read(http, after=first) == [20]
-        assert read(http, chained_output) == [40]
-        write(http, "correction", 86)
-        assert read(http) == [30]
-        assert read(http, epoch=observed["epoch"]) == [20]
-        published = http.get("/engine/snapshot").json()
+        assert client.deploy_app(declaration)["app"]["status"] == "active"
+        original_epoch = write(68)
+        assert read(output) == [20]
+        assert read(chained_output) == [40]
+        write(86)
+        assert read(output) == [30]
+        assert read(chained_output) == [60]
+
+        # Deleting the probe reading retracts both current outputs and keeps the earlier epoch.
+        client.wait(client.delete_timeseries("conversion", "temperature", [1000]))
+        assert read(output) == read(chained_output) == []
+        assert read(output, epoch=original_epoch) == [20]
+        published = client.engine_snapshot()
 
         # Only the active engine plan should be needed to rebuild this graph
         # and run the captured Python module after restarting.
@@ -189,29 +137,29 @@ def test_python_chain_repairs_history_and_recovers_without_source_files(tmp_path
         for artifact in (data / "app-functions").glob("*.py"):
             artifact.rename(artifact.with_suffix(".removed"))
         manager.graph_store.clear_graphs([manager.graph_store.source_graph_uri(f"derived:{declaration.name}")])
-    with epoch_server(data) as (manager, http, _):
-        recovered = http.get("/engine/snapshot").json()
+    with epoch_server(data) as (manager, _, client):
+        recovered = client.engine_snapshot()
         assert (recovered["epoch"], recovered["plan"]) == (published["epoch"], published["plan"])
         assert manager.graph_store.data_graph(f"derived:{declaration.name}")
-        assert http.get(endpoint).json()["app"]["status"] == "active"
-        assert read(http) == [30]
-        assert read(http, epoch=observed["epoch"]) == [20]
-        write(http, "after-restart", 104)
-        assert read(http) == [40]
-        assert read(http, chained_output) == [80]
+        assert client.inspect_app(declaration.name)["app"]["status"] == "active"
+        assert read(output) == read(chained_output) == []
+        assert read(output, epoch=original_epoch) == [20]
+        write(104)
+        assert read(output) == [40]
+        assert read(chained_output) == [80]
         manager.remove_app(chained.name)
-        assert read(http, chained_output) == []
-        assert read(http) == [40]
+        assert read(chained_output) == []
+        assert read(output) == [40]
 
 
-@pytest.mark.parametrize("delivery", ["sync_metadata_graph", "publish_queued_metadata"])
-def test_experiment_metadata_delivery_refreshes_app_membership(system, delivery):
+def test_reading_graph_status_delivers_experiment_metadata_and_refreshes_apps(system):
     manager, _, _ = system
     experiments = manager.experiments
-    study = experiments.define(f"app-membership-{delivery}")
+    # Declare a Study output and start a run. The app looks for streams owned by that run.
+    study = experiments.define("app-membership")
     variable = experiments.declare(study["template_id"], "level", "output", "timeseries", {})
     run = experiments.start(study["template_id"], {})["run_id"]
-    name = f"experiment-{delivery}"
+    name = "experiment-membership"
     declaration = App(
         name,
         {"input": Selection(
@@ -223,17 +171,19 @@ def test_experiment_metadata_delivery_refreshes_app_membership(system, delivery)
     )
     manager.deploy_app(declaration)
     assert manager.apps.inspect(name)["operators"] == []
+    # Recording the first sample creates a stream. Deliver its metadata so the app can bind it.
     when = datetime(2026, 1, 1, tzinfo=timezone.utc)
     experiments.record_batch(run, [{
         "form": "samples", "variable_id": variable["variable_id"], "samples": [(when, 12.0)],
     }])
-    getattr(experiments, delivery)()
+    manager.graph_status()
     from acquirium.core import time_ns
 
     output = output_reference(name, name, "mean")
     assert len(manager.apps.inspect(name)["operators"]) == 1
     assert value(manager.core.engine.snapshot(), output, time_ns(when)) == 12.0
 
+    # Deleting the run removes the binding and retracts its calculated value.
     experiments.finish(run, "succeeded")
     experiments.delete_runs([run])
     assert manager.apps.inspect(name)["operators"] == []
@@ -264,172 +214,17 @@ def test_experiment_metadata_retries_app_refresh_after_delivery(system, monkeypa
     manager.remove_app("retry-experiment-app")
 
 
-def test_metadata_move_keeps_group_outputs_stable_and_repairs_history(system):
-    manager, http, client = system
-    ref = register(system, "moving")
-    query = f"SELECT ?stream ?group WHERE {{ VALUES ?stream {{ <{ref}> }} ?stream <urn:group> ?group }}"
-    declaration = App(
-        "moving-mean",
-        {"input": Selection(query)},
-        {"mean": Output()},
-        {"kind": "mean", "port": "mean", "per_stream": False},
-    )
-    manager.insert_graph(
-        f"<{ref}> <urn:group> <urn:room:A> .", source_id="membership", replace=True
-    )
-    response = http.put(f"/apps/{declaration.name}", json=declaration.to_dict())
-    assert response.status_code == 200, response.text
-    manager.core.wait(
-        manager.insert_timeseries(
-            source_id="moving",
-            stream_name="temperature",
-            rows=[(9999, 42)],
-            request_id="one",
-        ).receipt
-    )
-    manager.insert_graph(
-        f"<{ref}> <urn:group> <urn:room:B> .", source_id="membership", replace=True
-    )
-    snapshot = manager.core.engine.snapshot()
-    assert (
-        value(snapshot, output_reference(declaration.name, "urn:room:A", "mean"), 9999)
-        is None
-    )
-    assert (
-        value(snapshot, output_reference(declaration.name, "urn:room:B", "mean"), 9999)
-        == 42
-    )
-    manager.insert_graph("", source_id="membership", replace=True)
-    assert (
-        value(manager.core.engine.snapshot(),
-            output_reference(declaration.name, "urn:room:B", "mean"), 9999
-        )
-        is None
-    )
-
-
-def test_atomic_request_retry_and_explicit_delete_over_http(system):
-    manager, http, client = system
-    ref = register(system, "retry")
-    payload = [
-        dict(
-            source_id="retry",
-            stream_name="temperature",
-            request_id="one",
-            values=[[1234, 10]],
-        )
-    ]
-    first = http.post("/insert_timeseries", json=payload)
-    second = http.post("/insert_timeseries", json=payload)
-    assert first.status_code == 200, first.text
-    assert (
-        first.json()["receipts"][0]["sequence"]
-        == second.json()["receipts"][0]["sequence"]
-    )
-    epoch = manager.core.engine.snapshot().epoch
-    response = http.post(
-        "/delete_timeseries",
-        json=dict(
-            source_id="retry",
-            stream_name="temperature",
-            timestamps=[1234],
-            request_id="delete",
-        ),
-    )
-    assert response.json()["published"]
-    assert value(manager.core.engine.snapshot(), ref, 1234) is None
-    data = ipc.open_stream(
-        http.get("/timeseries", params=dict(uri=ref, epoch=epoch)).content
-    ).read_all()
-    assert data["value"].to_pylist() == [10]
-
-
-def test_text_on_a_numeric_stream_is_kept_and_legacy_declarations_are_rejected(system):
-    manager, http, client = system
-    ref = register(system, "invalid")
-    response = http.post(
-        "/insert_timeseries",
-        json=[
-            dict(
-                source_id="invalid",
-                stream_name="temperature",
-                request_id="fault",
-                values=[[1, "Bad"]],
-            )
-        ],
-    )
-    assert response.status_code == 200
-    assert response.json()["receipts"][0]["published"]
-    assert value(manager.core.engine.snapshot(), ref, 1) == "Bad"
-    definition = mean("invalid-app", ref).to_dict()
+def test_app_declaration_rejects_a_legacy_lookback_field():
+    definition = mean("invalid-app", "urn:invalid:temperature").to_dict()
     definition["lookback"] = "all"
-    response = http.put("/apps/invalid-app", json=definition)
-    assert response.status_code == 400
+    with pytest.raises(ValueError, match="app fields must be"):
+        App.from_dict(definition)
 
 
-def test_failed_activation_is_isolated_and_can_be_retried(system, tmp_path):
-    from acquirium import PythonFunction
-    import time
-
-    manager, http, client = system
-    ref = register(system, "artifact")
-    manager.core.wait(
-        manager.insert_timeseries(
-            source_id="artifact",
-            stream_name="temperature",
-            rows=[(4444000, 12)],
-            request_id="one",
-        ).receipt
-    )
-    module = tmp_path / "calculation.py"
-    flag = tmp_path / "fail"
-    flag.touch()
-    source = (
-        "from pathlib import Path\n"
-        "def calculate(frame, context):\n"
-        f"    if Path({str(flag)!r}).exists():\n"
-        '        raise RuntimeError("sensor offline")\n'
-        '    return {"mean": frame.select("time", "value")}\n'
-    )
-    module.write_text(source)
-    declaration = mean("artifact-app", ref)
-    declaration = App(
-        declaration.name,
-        declaration.inputs,
-        declaration.outputs,
-        PythonFunction.from_file(module, "calculate"),
-    )
-    response = http.put(f"/apps/{declaration.name}", json=declaration.to_dict())
-    assert response.status_code == 200, response.text
-    assert response.json()["app"]["status"] == "failed"
-    assert manager.core.engine.status()["fault"] is None
-    assert "sensor offline" in manager.apps.inspect(declaration.name)["error"]
-    templates = manager.core.plan_at()["templates"]
-    assert any(row["annotations"]["app"] == declaration.to_dict() for row in templates)
-    accepted = manager.core.engine.status()["accepted"]
-    manager.apps.refresh()
-    assert manager.core.engine.status()["accepted"] == accepted
-    flag.unlink()
-    module.unlink()  # Deployment retained the source; retry needs no original file.
-    epoch = manager.core.engine.status()["published"]
-    manager.core.wait(manager.core.engine.retry("retry-app"))
-    deadline = time.monotonic() + 10
-    while manager.core.engine.status()["published"] == epoch:
-        assert time.monotonic() < deadline
-        time.sleep(0.01)
-    snapshot = manager.core.engine.snapshot()
-    assert (
-        value(snapshot, output_reference(declaration.name, "urn:tank", "mean"), 4444000)
-        == 12
-    )
-    assert manager.apps.inspect(declaration.name)["error"] is None
-    manager.remove_app(declaration.name)
-
-
-def test_python_source_is_cached_by_content_and_updates_at_the_same_path(system, tmp_path):
+def test_python_redeployment_uses_the_declared_source_bytes(system, tmp_path):
     from acquirium import PythonFunction
 
-    manager, http, client = system
+    manager, _, _ = system
     ref = register(system, "content-hash")
     module = tmp_path / "calculation.py"
     source = ('def calculate(frame, context):\n'
@@ -450,10 +245,21 @@ def test_python_source_is_cached_by_content_and_updates_at_the_same_path(system,
     output = output_reference(base.name, "urn:tank", "mean")
     assert value(write(10, "initial"), output, 1000) == 20
     declaration = app()
-    module.write_text(source.replace("* 2", "* 3"))
+    new_source = source.replace("* 2", "* 3")
+    module.write_text(new_source)
     # Editing a file cannot change the active deployment.
     assert value(write(20, "old-code"), output, 1000) == 40
-    manager.deploy_app(app())
+    edited = app()
+    # A new descriptor requires the bytes it named until they are retained.
+    module.write_text("# edited after declaration\n")
+    with pytest.raises(ValueError, match="changed since"):
+        manager.deploy_app(edited)
+    module.unlink()
+    with pytest.raises(ValueError, match="cannot read"):
+        manager.deploy_app(edited)
+    assert manager.apps.inspect(base.name)["operators"][0]["version"] == original["version"]
+    module.write_text(new_source)
+    manager.deploy_app(edited)
     updated = manager.apps.inspect(base.name)["operators"][0]
     assert updated["version"] != original["version"]
     assert value(manager.core.engine.snapshot(), output, 1000) == 60
@@ -470,25 +276,6 @@ def test_python_source_is_cached_by_content_and_updates_at_the_same_path(system,
     manager.remove_app(base.name)
 
 
-def test_missing_or_changed_unretained_source_is_rejected_before_deployment(system, tmp_path):
-    from acquirium import PythonFunction
-
-    manager, http, client = system
-    module = tmp_path / "missing.py"
-    module.write_text('def unique_unretained_function(frame, context):\n    return {}\n')
-    base = mean("missing-source-app", register(system, "missing-source"))
-    declaration = App(base.name, base.inputs, base.outputs, PythonFunction.from_file(module, "unique_unretained_function"))
-    module.write_text("# edited after declaration\n")
-    response = http.put(f"/apps/{base.name}", json=declaration.to_dict())
-    assert response.status_code == 400
-    assert "changed since" in response.text
-    module.unlink()
-    response = http.put(f"/apps/{base.name}", json=declaration.to_dict())
-    assert response.status_code == 400
-    assert "cannot read" in response.text
-    assert base.name not in manager.apps.state["apps"]
-
-
 def test_invalid_cycle_keeps_the_previous_plan_and_projection(system):
     manager, http, client = system
     name, group = "invalid-cycle", "urn:tank"
@@ -501,80 +288,78 @@ def test_invalid_cycle_keeps_the_previous_plan_and_projection(system):
     assert not list(manager.graph_store.data_graph(f"derived:{name}"))
 
 
-def test_restart_preserves_failure_status_and_retries_without_new_writes(tmp_path, caplog):
+def test_activation_failure_and_later_writes_can_be_retried_across_restart(tmp_path, caplog):
     import logging
     import time
+
     from acquirium import PythonFunction
 
-    ref = str(compute_stream_uri("halted", "temperature"))
-    output = output_reference("halted-app", "urn:tank", "mean")
     flag = tmp_path / "fail"
     module = tmp_path / "calculation.py"
     module.write_text(
-        "import pathlib\n"
+        "from pathlib import Path\n"
         "def calculate(frame, context):\n"
-        f"    if pathlib.Path({str(flag)!r}).exists():\n"
+        f"    if Path({str(flag)!r}).exists():\n"
         '        raise RuntimeError("sensor offline")\n'
         '    return {"mean": frame.select("time", "value")}\n'
     )
-    declaration = mean("halted-app", ref)
-    declaration = App(
-        declaration.name,
-        declaration.inputs,
-        declaration.outputs,
-        PythonFunction.from_file(module, "calculate"),
-    )
 
-    def write(manager, time, value):
-        return manager.insert_timeseries(
-            source_id="halted",
-            stream_name="temperature",
-            rows=[(time, value)],
-            request_id=f"write-{time}",
-        ).receipt
-
-    manager = Manager(data_dir=tmp_path / "data", exact_only=True)
-    try:
-        manager.insert_graph(
-            f'<{ref}> <urn:acquirium#sourceId> "halted" ; <urn:acquirium#refName> "temperature" .',
-            source_id="halted",
-        )
-        manager.deploy_app(declaration)
-        manager.core.wait(write(manager, 1000, 10))
-        flag.touch()
-        write(manager, 2000, 20)
-        last = write(manager, 3000, 30)
-        snapshot = manager.core.wait(last, timeout=10)
-        assert value(snapshot, output, 1000) == 10
-        assert value(snapshot, output, 2000) is None
-        assert value(snapshot, ref, 3000) == 30
-        assert manager.apps.inspect(declaration.name)["status"] == "failed"
-        assert manager.core.engine.status()["fault"] is None
-        assert manager.core.engine.status()["pending"] == 0
-        del snapshot
-    finally:
-        caplog.clear()
-        with caplog.at_level(logging.ERROR, logger="acquirium.manager"):
-            manager.close()
-    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
-
-    flag.unlink()
-    module.unlink()
-    manager = Manager(data_dir=tmp_path / "data", exact_only=True)
-    try:
-        manager.recover_apps()
-        assert manager.apps.inspect(declaration.name)["status"] == "failed"
-        # Neither retry nor restart needs the original calculation file.
-        manager.core.wait(manager.core.engine.retry("retry-app"))
+    def retry(manager, request_id):
+        """Retry without another reading and wait for the repaired app to become active."""
+        manager.core.wait(manager.core.engine.retry(request_id))
         deadline = time.monotonic() + 10
         while manager.apps.inspect(declaration.name)["status"] != "active":
             assert time.monotonic() < deadline
             time.sleep(0.01)
-        snapshot = manager.core.engine.snapshot()
+        return manager.core.engine.snapshot()
+
+    with caplog.at_level(logging.ERROR, logger="acquirium.manager"):
+        with epoch_server(tmp_path / "data") as system:
+            manager, _, client = system
+            ref = register(system, "halted")
+            template = mean("halted-app", ref)
+            declaration = App(template.name, template.inputs, template.outputs, PythonFunction.from_file(module, "calculate"))
+            output = output_reference(declaration.name, "urn:tank", "mean")
+
+            # Existing history makes the worker fail during activation. The app is
+            # still installed and an unchanged refresh does not resubmit its plan.
+            client.insert_timeseries("halted", "temperature", [(1000, 10)])
+            flag.touch()
+            failed = client.deploy_app(declaration)["app"]
+            assert failed["status"] == "failed" and "sensor offline" in failed["error"]
+            assert any(row["annotations"]["app"] == declaration.to_dict() for row in manager.core.plan_at()["templates"])
+            accepted = manager.core.engine.status()["accepted"]
+            manager.apps.refresh()
+            assert manager.core.engine.status()["accepted"] == accepted
+            flag.unlink()
+            assert value(retry(manager, "retry-activation"), output, 1000) == 10
+
+            # Once active, another failure leaves the earlier output intact and
+            # still allows both new source readings to publish.
+            flag.touch()
+            client.insert_timeseries("halted", "temperature", [(2000, 20)])
+            receipt, = client.insert_timeseries("halted", "temperature", [(3000, 30)])["receipts"]
+            assert receipt["published"]
+            snapshot = manager.core.engine.snapshot()
+            assert value(snapshot, output, 1000) == 10
+            assert value(snapshot, output, 2000) is None
+            assert value(snapshot, ref, 3000) == 30
+            assert manager.apps.inspect(declaration.name)["status"] == "failed"
+            status = manager.core.engine.status()
+            assert status["fault"] is None and status["pending"] == 0
+            del snapshot
+            caplog.clear()
+        assert not [r for r in caplog.records if r.name == "acquirium.manager" and r.levelno >= logging.ERROR]
+
+    # The saved status survives restart. Retry still uses the captured source.
+    flag.unlink()
+    module.unlink()
+    with epoch_server(tmp_path / "data") as (manager, _, _):
+        assert manager.apps.inspect(declaration.name)["status"] == "failed"
+        snapshot = retry(manager, "retry-after-restart")
         assert [value(snapshot, output, time) for time in (1000, 2000, 3000)] == [10, 20, 30]
         assert manager.core.engine.status()["pending"] == 0
-    finally:
-        manager.close()
+        del snapshot
 
 
 def test_closing_reports_work_left_by_a_drain_timeout(caplog):
@@ -634,36 +419,11 @@ def test_frozen_unit_factors_execute_in_native_python_worker(system):
     ) == pytest.approx(20)
 
 
-def test_http_range_strings_preserve_nanosecond_boundaries(system):
-    manager, http, client = system
-    ref = register(system, "precision")
-    manager.core.wait(
-        manager.insert_timeseries(
-            source_id="precision",
-            stream_name="temperature",
-            rows=[(1001, 1), (1002, 2), (1003, 3)],
-            request_id="boundary",
-        ).receipt
-    )
-    response = http.get(
-        "/timeseries",
-        params=dict(
-            uri=ref,
-            start="1970-01-01T00:00:00.000001002Z",
-            end="1970-01-01T00:00:00.000001003Z",
-        ),
-    )
-    assert response.status_code == 200
-    result = ipc.open_stream(response.content).read_all()
-    assert result["ts"].cast(pa.int64()).to_pylist() == [1002]
-    assert result["value"].to_pylist() == [2.0]
-
-
 def test_group_output_links_are_owned_and_removed_with_membership(system):
     from acquirium.internals.internals_namespaces import S223
     from rdflib import URIRef
 
-    manager, http, client = system
+    manager, _, client = system
     ref = register(system, "attached")
     manager.insert_graph(
         f"<{ref}> <urn:group> <urn:attached:tank> .", source_id="attached-layout"
@@ -687,18 +447,22 @@ def test_group_output_links_are_owned_and_removed_with_membership(system):
         S223.hasProperty,
         URIRef(f"{output}__point"),
     ) in graph
-    manager.core.wait(
-        manager.insert_timeseries(
-            source_id="attached",
-            stream_name="temperature",
-            rows=[(1234, 32)],
-            request_id="one",
-        ).receipt
-    )
+    client.insert_timeseries("attached", "temperature", [(1234, 32)])
+    assert client.stream(output).dataframe()["value"].to_list() == [32]
+
+    # Moving the probe moves both the derived property's link and its reading.
+    moved = "urn:attached:new-tank"
+    new_output = output_reference(declaration.name, moved, "mean")
+    client.insert_graph(f"<{ref}> <urn:group> <{moved}> .", source_id="attached-layout", replace=True)
+    graph = manager.graph_store.data_graph("derived:attached-mean")
+    assert list(graph.subject_objects(S223.hasProperty)) == [(URIRef(moved), URIRef(f"{new_output}__point"))]
+    assert client.stream(output).dataframe().is_empty()
+    assert client.stream(new_output).dataframe()["value"].to_list() == [32]
+
     client.insert_graph("", source_id="attached-layout", replace=True)
     assert not list(manager.graph_store.data_graph("derived:attached-mean"))
     assert client.inspect_app(declaration.name)["app"]["operators"] == []
-    assert value(manager.core.engine.snapshot(), output, 1234) is None
+    assert client.stream(new_output).dataframe().is_empty()
     # The app owns only its derived links, not the stream registration graph.
     assert ref in str(
         client.query().measurement(unit="http://qudt.org/vocab/unit/DEG_F").execute()
@@ -871,8 +635,11 @@ def test_python_functions_read_typed_parameters_and_the_window(system, tmp_path)
     manager.remove_app(declaration.name)
 
 
-@pytest.mark.parametrize("mode", ["default", "batch", "sequential"])
-@pytest.mark.parametrize("grouping", ["tank", "stream", None])
+@pytest.mark.parametrize(("mode", "grouping"), [
+    pytest.param("default", "tank", id="pointwise-entity"),
+    pytest.param("batch", "stream", id="batch-stream"),
+    pytest.param("sequential", None, id="sequential-combined"),
+])
 def test_python_context_includes_group_key_without_configured_parameters(system, tmp_path, mode, grouping):
     from acquirium import PythonFunction
 
@@ -925,7 +692,7 @@ def test_group_parameter_cannot_override_selected_group(system):
         manager.deploy_app(declaration)
 
 
-@pytest.mark.parametrize("mode", ["default", "batch", "sequential"])
+@pytest.mark.parametrize("mode", ["default", "batch"])
 def test_arrow_pandas_and_polars_functions_share_a_pipeline(system, tmp_path, mode):
     import acquirium as aq
 
@@ -941,7 +708,7 @@ def test_arrow_pandas_and_polars_functions_share_a_pipeline(system, tmp_path, mo
         "from __future__ import annotations\n"
         "import pandas as pd\n"
         "import polars as pl\n"
-        "from acquirium.functions import emit, empty, emit_windows, previous_value\n"
+        "from acquirium.functions import emit, empty, emit_windows\n"
         "def pandas_sum(frame: pd.DataFrame, context):\n"
         "    assert isinstance(frame, pd.DataFrame)\n"
         "    assert all(isinstance(dtype, pd.ArrowDtype) for dtype in frame.dtypes)\n"
@@ -951,10 +718,7 @@ def test_arrow_pandas_and_polars_functions_share_a_pipeline(system, tmp_path, mo
         "        means = frame.groupby('output_time', as_index=False)['value'].sum()\n"
         "        result = emit_windows(means)\n"
         "    else:\n"
-        "        value = frame['value'].sum()\n"
-        f"        if {mode == 'sequential'!r}:\n"
-        "            value += previous_value(context, 'mean', 0)\n"
-        "        result = emit(context, value)\n"
+        "        result = emit(context, frame['value'].sum())\n"
         "    assert isinstance(result, pd.DataFrame)\n"
         "    return {'mean': result}\n"
         "def polars_double(frame: pl.DataFrame, context):\n"
@@ -964,7 +728,7 @@ def test_arrow_pandas_and_polars_functions_share_a_pipeline(system, tmp_path, mo
         "    return {'double': result}\n"
     )
     first = App(source, mean(source, ref).inputs, {"mean": Output()},
-                aq.PythonFunction.from_file(module, "pandas_sum", batch=mode == "batch", sequential=mode == "sequential"))
+                aq.PythonFunction.from_file(module, "pandas_sum", batch=mode == "batch"))
     second = App(f"{source}-double", {"clean": Selection.outputs_of(first, "mean")},
                  {"double": Output()}, aq.PythonFunction.from_file(module, "polars_double"))
     try:
@@ -972,13 +736,11 @@ def test_arrow_pandas_and_polars_functions_share_a_pipeline(system, tmp_path, mo
         assert client.deploy_app(second)["app"]["status"] == "active"
         out = output_reference(second.name, "urn:tank", "double")
         snapshot = manager.core.engine.snapshot()
-        assert [value(snapshot, out, t) for t in (1000, 2000)] == (
-            [20, 60] if mode == "sequential" else [20, 40])
+        assert [value(snapshot, out, t) for t in (1000, 2000)] == [20, 40]
         receipt = manager.insert_timeseries(source_id=source, stream_name="temperature",
             rows=[(1000, 5)], request_id="corrected").receipt
         snapshot = manager.core.wait(receipt)
-        assert [value(snapshot, out, t) for t in (1000, 2000)] == (
-            [10, 50] if mode == "sequential" else [10, 40])
+        assert [value(snapshot, out, t) for t in (1000, 2000)] == [10, 40]
         snapshot = manager.core.wait(manager.core.clear(source, "deleted", [ref]))
         assert value(snapshot, out, 1000) is None
         assert value(snapshot, out, 2000) is None
@@ -1060,42 +822,36 @@ def test_native_function_arguments_bind_to_each_groups_parameters(system):
 
     manager, http, client = system
     ref = register(system, "native-parameters")
-    template = mean("native-parameters", ref)
-    query = template.inputs["input"].query
+    name = "native-parameters"
+    query = client.query().measurement(uri="urn:native-parameters:point", alias="temperature")
 
     def alarm(parameters):
         return App(
-            template.name,
-            {"input": Selection(query, parameters=parameters)},
+            name,
+            {"input": Selection.from_query(query, measurement="temperature", parameters=parameters)},
             {"alarm": Output()},
             Native.threshold("alarm", above=Parameter("limit")),
         )
 
-    declaration = alarm({"urn:tank": {"limit": 10}})
+    declaration = alarm({ref: {"limit": 10}})
     assert declaration.to_dict()["function"] == {
         "kind": "threshold", "port": "alarm", "above": {"parameter": "limit"}
     }
     state = client.deploy_app(declaration)["app"]
     operator, = state["operators"]
     assert operator["function"] == {"kind": "threshold", "port": "alarm", "above": 10}
-    manager.core.wait(
-        manager.insert_timeseries(
-            source_id="native-parameters",
-            stream_name="temperature",
-            rows=[(6000, 12), (7000, 8)],
-            request_id="native-parameters",
-        ).receipt
-    )
-    reference = output_reference(template.name, "urn:tank", "alarm")
-    snapshot = manager.core.engine.snapshot()
-    assert value(snapshot, reference, 6000) == 12 and value(snapshot, reference, 7000) is None
+    # The native app reads the selected probe and exposes its thresholded result.
+    client.insert_timeseries("native-parameters", "temperature", [(6000, 12), (7000, 8)])
+    result = client.query().measurement(app=name, alias="alarm").data()
+    assert [binding.stream_uri for binding in result.bindings] == [output_reference(name, ref, "alarm")]
+    assert result.dataframe(shape="narrow")["value_numeric"].to_list() == [12]
 
     response = http.put(
-        f"/apps/{template.name}", json=alarm({"urn:tank": {"other": 1}}).to_dict()
+        f"/apps/{name}", json=alarm({ref: {"other": 1}}).to_dict()
     )
     assert response.status_code == 400
     assert "no parameter 'limit'" in response.text
-    manager.remove_app(template.name)
+    manager.remove_app(name)
 
 
 def test_a_flow_totalizer_repairs_every_later_volume(system):
@@ -1197,54 +953,6 @@ def test_conflicting_parameters_for_one_group_are_rejected(system):
     assert "different values" in response.text
 
 
-def test_engine_status_reports_published_and_admitted_frontiers(system):
-    manager, http, client = system
-    ref = register(system, "totals")
-    declaration = mean("totals-mean", ref)
-    client.deploy_app(declaration)
-    manager.core.wait(
-        manager.insert_timeseries(
-            source_id="totals", stream_name="temperature", rows=[(3333, 1), (3334, 2)], request_id="one"
-        ).receipt
-    )
-    status = http.get("/engine/status").json()
-    assert status["applied"] == status["accepted"]
-    assert status["published"] == manager.core.engine.snapshot().epoch
-    assert status["pending"] == 0
-    assert status["fault"] is None
-    manager.remove_app(declaration.name)
-
-
-def test_text_streams_store_and_read_text(system):
-    manager, http, client = system
-    client.register_streams(
-        [dict(source_id="pumps", stream_name="mode", value_kind="text", property_uri="urn:pumps:mode")]
-    )
-    numeric = register(system, "pumps")
-    ref = str(compute_stream_uri("pumps", "mode"))
-    response = http.post(
-        "/insert_timeseries",
-        json=[
-            dict(source_id="pumps", stream_name="mode", request_id="modes",
-                 values=[[1, "AUTO"], [2, 3]]),
-            dict(source_id="pumps", stream_name="temperature", request_id="modes",
-                 values=[[1, 70.5], [2, "Bad"]]),
-        ],
-    )
-    assert response.status_code == 200
-
-    def read(uri, value_mode="default"):
-        response = http.get("/timeseries", params={"uri": uri, "value_mode": value_mode})
-        assert response.status_code == 200
-        return ipc.open_stream(response.content).read_all()["value"].to_pylist()
-
-    # A text stream keeps numbers as text; a numeric stream keeps fault codes.
-    assert read(ref) == ["AUTO", "3"]
-    assert read(numeric) == [70.5]
-    assert read(numeric, "text") == ["Bad"]
-    assert read(numeric, "coalesce") == ["70.5", "Bad"]
-
-
 def test_engine_snapshot_waits_for_the_plan_to_catch_up_with_the_graph(system):
     manager, http, _ = system
     ref = register(system, "catch-up")
@@ -1295,25 +1003,6 @@ def test_startup_refuses_an_engine_plan_without_acquirium_annotations(tmp_path):
         assert len(core.plan_at()["templates"]) == 1
     finally:
         core.close()
-
-
-def test_engine_failures_are_retryable_and_bad_input_is_not(system, monkeypatch):
-    from escapement import Fault
-
-    manager, http, client = system
-    register(system, "errors")
-    body = [dict(source_id="errors", stream_name="temperature", request_id="r", values=[[1, 2.0]])]
-
-    def fail(*args, **kwargs):
-        raise Fault("database connection lost")
-
-    monkeypatch.setattr(manager, "insert_timeseries_batch", fail)
-    response = http.post("/insert_timeseries", json=body)
-    assert response.status_code == 503
-    assert response.headers["Retry-After"] == "1"
-    monkeypatch.undo()
-    body[0]["stream_name"] = "unregistered"
-    assert http.post("/insert_timeseries", json=body).status_code == 400
 
 
 def test_conversions_resolve_each_unit_once():

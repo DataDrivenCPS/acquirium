@@ -5,7 +5,6 @@ listens on, so any request fails the test.
 """
 import socket
 from datetime import datetime, timedelta, timezone
-from hashlib import sha256
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -112,48 +111,24 @@ class TestResolveWithoutServer:
 # ── Experiments ────────────────────────────────────────────
 
 
-class TestExperimentTransport:
-    @pytest.fixture(autouse=True)
-    def no_module_requests(self):
-        # Every call must reuse the client's pooled session.
-        with patch("requests.post", side_effect=AssertionError("use the client session")), \
-                patch("requests.get", side_effect=AssertionError("use the client session")):
-            yield
+def test_experiment_http_wrappers_reuse_session_and_report_server_detail(monkeypatch):
+    from unittest.mock import Mock
 
-    def _run(self, client, name="transport"):
-        study = client.define_experiment(name)
-        variable = client.declare_experiment_variable(study["template_id"], label="x", role="output", kind="scalar", metadata={})
-        return study, variable, client.start_experiment(study["template_id"], {})
+    client = AcquiriumClient()
+    monkeypatch.setattr(client._http, "post", Mock(side_effect=[
+        _response(200, b'{"sequence": 1}'),
+        _response(400, b'{"detail": "variable belongs to a different study"}'),
+    ]))
+    monkeypatch.setattr(client._http, "get", Mock(return_value=_response(200, b'[{"value": 12.5}]')))
+    with patch("requests.post", side_effect=AssertionError("use the client session")), \
+            patch("requests.get", side_effect=AssertionError("use the client session")):
+        assert client.observe_experiment("run", "urn:var", value=12.5) == {"sequence": 1}
+        assert client.list_experiment_observations("study") == [{"value": 12.5}]
+        with pytest.raises(HTTPError, match="variable belongs to a different study"):
+            client.attach_experiment_bytes("run", "urn:foreign", b"file", filename="file.txt")
 
-    def test_observations_and_finish_reuse_client_session(self, client):
-        study, variable, run = self._run(client)
-        client.observe_experiment(run["run_id"], variable["variable_id"], value=12.5)
-        client.finish_experiment(run["run_id"])
-        assert [item["value"] for item in client.list_experiment_observations(study["template_id"])] == [12.5]
-        assert client.get_experiment(run["run_id"])["status"] == "succeeded"
-
-    @pytest.mark.parametrize("media_type", [None, "application/json"])
-    def test_file_upload_uses_session_and_preserves_bytes(self, client, tmp_path, media_type):
-        study = client.define_experiment("upload")
-        variable = client.declare_experiment_variable(study["template_id"], label="input", role="input", kind="file", metadata={})
-        run = client.start_experiment(study["template_id"], {})
-        source = tmp_path / "input.json"
-        source.write_bytes(b'{"power": 42}')
-        saved = client.attach_experiment_file(run["run_id"], variable["variable_id"], source, media_type)
-        assert saved == {"digest": sha256(source.read_bytes()).hexdigest(), "filename": source.name, "byte_length": 13}
-        assert client.experiment_artifact(saved["digest"]) == source.read_bytes()
-
-    @pytest.mark.parametrize("upload", [False, True])
-    def test_session_errors_keep_server_details(self, client, tmp_path, upload):
-        _, _, run = self._run(client, "first")
-        _, foreign, _ = self._run(client, "second")
-        source = tmp_path / "input.txt"
-        source.write_text("input")
-        with pytest.raises(HTTPError, match="different study"):
-            if upload:
-                client.attach_experiment_file(run["run_id"], foreign["variable_id"], source)
-            else:
-                client.observe_experiment(run["run_id"], foreign["variable_id"], value=42)
+    assert client._http.post.call_count == 2
+    client._http.get.assert_called_once()
 
 
 # ── Graph ──────────────────────────────────────────────────

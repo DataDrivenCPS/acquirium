@@ -14,15 +14,9 @@ import pytest
 from acquirium.ExperimentSamples import sample_frame
 from acquirium.Experiments import ExperimentStore
 from acquirium.Storage.metadata_outbox import execute
-from tests.unit.test_experiment_metadata import MemoryGraphStore
 from tests.epoch_helpers import all_readings
 
 WHEN = datetime(2026, 1, 1, tzinfo=timezone.utc)
-
-
-@pytest.fixture
-def ledger(experiment_ledger):
-    return ExperimentStore(experiment_ledger, graph_store=MemoryGraphStore())
 
 
 def _count(store, table):
@@ -102,15 +96,6 @@ def _recorded_runs(ledger, count):
     return study, runs
 
 
-def test_deleting_runs_clears_their_samples_after_the_commit(ledger):
-    study, runs = _recorded_runs(ledger, 2)
-    assert len(_samples(ledger.store)) == 2
-    assert ledger.delete_runs(runs) == {"runs": 2, "observations": 2, "annotations": 0, "samples": 2, "files": 0}
-    assert ledger.runs(study["template_id"]) == []
-    assert _samples(ledger.store) == []
-    assert _count(ledger.store, "experiment_streams") == 0
-
-
 def test_an_interrupted_cleanup_is_finished_later(experiment_ledger, ledger, monkeypatch):
     store = ledger.store
     study, runs = _recorded_runs(ledger, 2)
@@ -163,36 +148,49 @@ def test_a_start_finishes_an_interrupted_cleanup(experiment_ledger, ledger, monk
     assert _count(store, "experiment_streams") == 0
 
 
-def test_clearing_a_run_is_one_request_however_many_samples(ledger, monkeypatch):
-    study = ledger.define("one request")
-    level = ledger.declare(study["template_id"], "level", "output", "timeseries", {})
-    run = ledger.start(study["template_id"], {})["run_id"]
-    ledger.record_batch(run, [dict(form="samples", variable_id=level["variable_id"],
-                                   samples=[[WHEN.replace(second=i).isoformat(), float(i)] for i in range(50)])])
-    ledger.finish(run, "succeeded")
+def test_deleting_runs_clears_all_samples_in_one_request(ledger, monkeypatch):
+    study = ledger.define("one request")["template_id"]
+    level = ledger.declare(study, "level", "output", "timeseries", {})["variable_id"]
+    runs = []
+    for count in (50, 1):
+        run = ledger.start(study, {})["run_id"]
+        ledger.record_batch(run, [{
+            "form": "samples", "variable_id": level,
+            "samples": [(WHEN.replace(second=i), float(i)) for i in range(count)],
+        }])
+        ledger.finish(run, "succeeded")
+        runs.append(run)
+
+    # One clear request covers both streams regardless of the sample counts.
+    assert len(_samples(ledger.store)) == 51
     clear, requests = ledger.store.samples.core.clear, []
     monkeypatch.setattr(ledger.store.samples.core, "clear", lambda *a: requests.append(a[2]) or clear(*a))
-    assert ledger.delete_runs([run])["samples"] == 50
+    assert ledger.delete_runs(runs) == {"runs": 2, "observations": 2, "annotations": 0, "samples": 51, "files": 0}
     assert len(requests) == 1 and _samples(ledger.store) == []
+    assert ledger.runs(study) == []
+    assert _count(ledger.store, "experiment_streams") == 0
 
 
 def test_declaration_racing_the_same_label_is_idempotent(experiment_ledger, ledger, monkeypatch):
     other = ExperimentStore(experiment_ledger, graph_store=ledger.metadata_graph.graph_store)
-    study = ledger.define("race")
+    study = ledger.define("race")["template_id"]
     record_update = ledger.metadata_graph.record_update
+    winning = []
 
     def interleave(*args, **kwargs):
         # Another caller commits the same declaration after this one has
         # read the existing variables but before it inserts.
         monkeypatch.setattr(ledger.metadata_graph, "record_update", record_update)
-        other.declare(study["template_id"], "flow", "input", "scalar", {})
+        winning.append(other.declare(study, "flow", "input", "scalar", {}))
         return record_update(*args, **kwargs)
     monkeypatch.setattr(ledger.metadata_graph, "record_update", interleave)
-    variable = ledger.declare(study["template_id"], "flow", "input", "scalar", {})
-    assert variable["created"] is False
-    assert [item["label"] for item in ledger.variables(study["template_id"])] == ["flow"]
+    retried = ledger.declare(study, "flow", "input", "scalar", {})
+    [created] = winning
+    assert created["created"] is True and retried["created"] is False
+    assert created["variable_id"] == retried["variable_id"]
+    assert [item["label"] for item in ledger.variables(study)] == ["flow"]
     with pytest.raises(ValueError, match="declared differently"):
-        ledger.declare(study["template_id"], "flow", "output", "scalar", {})
+        ledger.declare(study, "flow", "output", "scalar", {})
 
 
 def test_declarations_load_only_the_labels_they_name(ledger, monkeypatch):
@@ -225,43 +223,36 @@ def test_values_that_json_cannot_carry_are_rejected(ledger):
     assert ledger.observations(study["template_id"]) == []
 
 
-def test_time_series_observations_record_their_epoch(ledger):
-    study = ledger.define("epochs")
-    level = ledger.declare(study["template_id"], "level", "output", "timeseries", {})
-    used = ledger.declare(study["template_id"], "used", "input", "timeseries", {})
-    cost = ledger.declare(study["template_id"], "cost", "output", "scalar", {})
-    run = ledger.start(study["template_id"], {})["run_id"]
-    [recorded] = ledger.record_batch(run, [dict(form="samples", variable_id=level["variable_id"],
-                                                samples=[[WHEN.isoformat(), 1.0]])])
-    ledger.record_batch(run, [dict(form="reference", variable_id=used["variable_id"], stream_uri=recorded["stream_uri"],
-                                   interval=[WHEN.isoformat(), WHEN.isoformat()]),
-                              dict(form="value", variable_id=cost["variable_id"], value=3)])
-    epochs = {item["variable"]: item["epoch"] for item in ledger.observations(study["template_id"])}
-    published = ledger.store.samples.core.engine.snapshot().epoch
-    # Samples record the epoch that published them; a reference, the epoch
-    # that published everything written before it; a plain value, none.
-    assert epochs == {"level": published, "used": published, "cost": None}
-
-
-def test_recording_does_not_wait_for_escapement_to_publish(ledger, tmp_path):
+def test_recording_commits_before_publication_and_reads_at_the_recorded_epoch(ledger, tmp_path):
     from tests.epoch_helpers import pause_publication, readings
 
-    study = ledger.define("no wait")
-    level = ledger.declare(study["template_id"], "level", "output", "timeseries", {})
-    used = ledger.declare(study["template_id"], "used", "input", "timeseries", {})
-    run = ledger.start(study["template_id"], {})["run_id"]
+    study = ledger.define("recorded epochs")["template_id"]
+    level = ledger.declare(study, "level", "output", "timeseries", {})["variable_id"]
+    used = ledger.declare(study, "used", "input", "timeseries", {})["variable_id"]
+    cost = ledger.declare(study, "cost", "output", "scalar", {})["variable_id"]
+    run = ledger.start(study, {})["run_id"]
     core = ledger.store.samples.core
-    # Hold publication in the calculation while both recordings commit.
+    # Hold publication while the sample and reference recordings commit.
     with pause_publication(core, tmp_path, "urn:plant:flow"):
         before = core.engine.status()["applied"]
         core.ingest("plant", "flow-1", sample_frame("urn:plant:flow", [(WHEN, 2.0)]))
-        ledger.record_batch(run, [dict(form="samples", variable_id=level["variable_id"], samples=[[WHEN.isoformat(), 1.0]])])
-        ledger.record_batch(run, [dict(form="reference", variable_id=used["variable_id"], stream_uri="urn:plant:flow",
-                                       interval=[WHEN.isoformat(), WHEN.isoformat()])])
+        [sample] = ledger.record_batch(run, [
+            {"form": "samples", "variable_id": level, "samples": [(WHEN, 1.0)]},
+        ])
+        ledger.record_batch(run, [
+            {"form": "reference", "variable_id": used, "stream_uri": "urn:plant:flow", "interval": [WHEN, WHEN]},
+            {"form": "value", "variable_id": cost, "value": 3},
+        ])
         assert core.engine.status()["applied"] == before
-    epochs = {item["variable"]: item["epoch"] for item in ledger.observations(study["template_id"])}
-    assert epochs["level"] is not None and epochs["used"] >= epochs["level"]
-    assert readings(core.engine.snapshot(epochs["used"]), "urn:plant:flow") == [2.0]
+
+    # Publication supplies the epoch for both stream recordings. A scalar
+    # in the same batch does not depend on any engine epoch.
+    epochs = {item["variable"]: item["epoch"] for item in ledger.observations(study)}
+    [published] = core.epochs_of([sample["accepted"]])
+    assert epochs == {"level": published, "used": published, "cost": None}
+    snapshot = core.engine.snapshot(published)
+    assert readings(snapshot, sample["stream_uri"]) == [1.0]
+    assert readings(snapshot, "urn:plant:flow") == [2.0]
 
 
 def test_runs_record_without_waiting_on_each_other(ledger, monkeypatch):

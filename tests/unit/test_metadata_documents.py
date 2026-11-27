@@ -9,7 +9,6 @@ from acquirium.Client.metadata import plan_write, update_text
 from acquirium.Client.explore.core import Query
 from tests.graph_query_client import _GraphQueryClient
 from acquirium.Storage.graph_registry import source_graph_uri
-from tests.unit.test_experiment_metadata import MemoryGraphStore
 
 
 PAYLOAD = {"arbitrary.key": [None, {}, [], {"日本語 key": {"": "value"}}],
@@ -29,8 +28,8 @@ def test_document_codec_is_lossless_and_typed():
             dumps(invalid)
 
 
-def test_shared_writer_objects_preserve_arbitrary_json_and_null_slots():
-    graph = MemoryGraphStore()
+def test_shared_writer_objects_preserve_arbitrary_json_and_null_slots(source_graph):
+    graph = source_graph
     uri, cls = "urn:example:document", "urn:example:Class"
     source = source_graph_uri("test")
     content = Graph()
@@ -54,12 +53,12 @@ def test_shared_writer_objects_preserve_arbitrary_json_and_null_slots():
     graph.sparql_update(update_text([patch]), graph_uri=source)
     stored = read_documents(client, [uri])[uri]
     assert stored == {"metadata": {"new key": [None, {}]}, "created": values["created"]}
-    assert not list(graph.dataset.objects(URIRef(uri), document_predicate("tags")))
+    assert not list(graph.data_graph("test").objects(URIRef(uri), document_predicate("tags")))
     assert Query(client).entity(cls, alias="item").include("all").metadata_objects()[0]["item"]["metadata"] == stored["metadata"]
 
 
-def test_semantic_document_retains_order_and_spelling():
-    graph = MemoryGraphStore()
+def test_semantic_document_retains_order_and_spelling(source_graph):
+    graph = source_graph
     write = plan_write("urn:example:scalar", {"unit": ["psi", "PSI"]}, role="data", resolve=lambda *args: "urn:unit:PSI")
     content = Graph()
     for triple in write.triples:
@@ -68,9 +67,9 @@ def test_semantic_document_retains_order_and_spelling():
     assert read_documents(_GraphQueryClient(graph), ["urn:example:scalar"])["urn:example:scalar"] == {"unit": ["psi", "PSI"]}
 
 
-def test_explicit_metadata_edits_take_precedence_over_source_documents():
+def test_explicit_metadata_edits_take_precedence_over_source_documents(source_graph):
     from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
-    graph = MemoryGraphStore()
+    graph = source_graph
     uri = "urn:example:node"
     for source, value in (("driver", "original"), (METADATA_SOURCE_ID, "edited")):
         write = plan_write(uri, {"metadata": {"value": value}}, role="entity", resolve=lambda *args: None)
@@ -112,6 +111,8 @@ def test_metadata_edits_use_the_same_values_for_filters_tables_and_objects(tmp_p
         assert (URIRef(uri), URIRef("urn:acquirium:attr#scenario"), Literal("baseline")) in graph.source_dataset.graph(source)
         # Semantic assertions keep PR 120's additive ownership semantics.
         assert set(graph._source_data_graph().objects(URIRef(uri), HAS_UNIT)) == {URIRef(original["unit"]), URIRef(edits["unit"])}
+        assert set(graph.data_graph("driver").objects(URIRef(uri), HAS_UNIT)) == {URIRef(original["unit"])}
+        assert set(graph.data_graph("metadata").objects(URIRef(uri), HAS_UNIT)) == {URIRef(edits["unit"])}
         # Removing an edit reveals the source value again.
         graph.sparql_update(update_text([plan_write(uri, {"scenario": None}, role="data", resolve=lambda *args: None)]),
                             graph_uri=source_graph_uri("metadata"))
@@ -128,8 +129,8 @@ def test_metadata_edits_use_the_same_values_for_filters_tables_and_objects(tmp_p
     ("items", "items.1.name", [None, {"cost": 1}, {}, {"name": "B", "cost": 2}, None]),
     ("all", "items.name", [None, {"cost": 1}, {}, {"cost": 2}, None]),
 ])
-def test_object_selection_and_exclusion_preserve_list_paths(selection, excluded, expected):
-    graph = MemoryGraphStore()
+def test_object_selection_and_exclusion_preserve_list_paths(source_graph, selection, excluded, expected):
+    graph = source_graph
     uri, cls = "urn:example:node", "urn:example:Class"
     items = [None, {"name": "A", "cost": 1}, {}, {"name": "B", "cost": 2}, None]
     content = Graph()
@@ -146,8 +147,8 @@ def test_object_selection_and_exclusion_preserve_list_paths(selection, excluded,
     assert query.include("items", "items.1.name").metadata_objects()[0]["item"].keys() == {"id", "items"}
 
 
-def test_indexed_object_selection_applies_casts_at_the_original_position():
-    graph = MemoryGraphStore()
+def test_indexed_object_selection_applies_casts_at_the_original_position(source_graph):
+    graph = source_graph
     uri, cls = "urn:example:node", "urn:example:Class"
     graph.sparql_update(f"INSERT DATA {{ <{uri}> a <{cls}> }}", graph_uri=source_graph_uri("test"))
     write = plan_write(uri, {"items": [None, {"cost": 1}, {"cost": 2}]}, role="entity", resolve=lambda *args: None)
@@ -156,14 +157,14 @@ def test_indexed_object_selection_applies_casts_at_the_original_position():
     assert query.metadata_objects() == [{"item": {"id": uri, "items": [None, {"cost": "1"}, None]}}]
 
 
-def test_http_documents_preserve_types_and_read_asserted_source(tmp_path, monkeypatch, samples):
+def test_http_documents_preserve_types_and_read_asserted_source(tmp_path, monkeypatch, samples, source_graph):
     from types import SimpleNamespace
     from importlib import import_module
     from fastapi.testclient import TestClient
     from acquirium.Client.client import AcquiriumClient
     from acquirium.Experiments import ExperimentStore
     from acquirium.Storage.ledger import DuckDBLedger
-    graph = MemoryGraphStore()
+    graph = source_graph
     store = DuckDBLedger(tmp_path / "documents.duckdb", samples=samples)
     ledger = ExperimentStore(store, graph_store=graph)
     uri = "urn:example:document"

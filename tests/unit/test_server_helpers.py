@@ -1,10 +1,20 @@
 """Tests for server helper functions in acquirium.Server.app."""
 
+from escapement import Fault
+
 from acquirium.Server.app import (
     _accepted_sparql_formats,
+    _engine_http_error,
     _self_connect_cfg,
     _sparql_results_to_rows,
 )
+
+
+def test_engine_fault_returns_retryable_http_status():
+    error = _engine_http_error(Fault("database connection lost"))
+    assert error.status_code == 503
+    assert error.headers == {"Retry-After": "1"}
+    assert error.detail == "database connection lost"
 
 
 def test_local_runtime_self_address_overrides_reusable_driver_config(monkeypatch):
