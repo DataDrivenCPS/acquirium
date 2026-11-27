@@ -4,6 +4,9 @@ title: Streams
 
 A stream is one series of timestamped values. It is identified by a `source_id` and a `stream_name`, and Acquirium derives its `stream_uri` from the two. A stream must be registered before values are inserted into it. Registration also links the stream to a property in the graph and records metadata such as the unit.
 
+See the [Querying Data tutorial](../../tutorials/querying-data.md#reading-one-stream)
+for an example of reading a known stream.
+
 | Item | Purpose |
 |---|---|
 | [`Acquirium.register_streams`](#acquiriumregister_streams) | Register streams and their metadata |
@@ -153,15 +156,18 @@ In the example, `urn:ex:tank-1-temp` now has the unit `DEG_C` and the label `"Ta
 ## `Acquirium.stream`
 
 ```python
-Acquirium.stream(source_id_or_uri, name=None)
+Acquirium.stream(source, name)
+Acquirium.stream(uri=stream_uri)
 ```
 
 Returns a [`Stream`](#stream) handle. The call does not contact the server and does not check that the stream exists.
 
 **Parameters**
 
-- `source_id_or_uri` (`str` or `URIRef`): the `source_id` when `name` is given. Otherwise the `stream_uri`.
-- `name` (`str`, optional): the `stream_name`.
+- `source` (`str`): the `source_id` used to register or write to the stream.
+- `name` (`str`): the `stream_name` within that source.
+- `uri` (`str` or `URIRef`): use this form when you already have the `stream_uri`.
+  A single positional argument also accepts a stream URI.
 
 **Returns**
 
@@ -170,9 +176,9 @@ A [`Stream`](#stream).
 **Example**
 
 ```python
-flow = acq.stream("lab", "flow")
+flow = acq.stream(source="lab", name="flow")
 print(flow)
-print(acq.stream(flow.stream_uri) == flow)
+print(acq.stream(uri=flow.stream_uri) == flow)
 ```
 
 ```text

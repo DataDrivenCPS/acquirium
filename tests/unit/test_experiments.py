@@ -1031,9 +1031,15 @@ def test_stream_handles_name_a_stream_and_a_range():
     from acquirium.Client.streams import StreamInterval
 
     client = Mock()
-    by_name = Acquirium.stream(SimpleNamespace(client=client), "site-driver", "biogas-flow")
+    ac = SimpleNamespace(client=client)
+    by_name = Acquirium.stream(ac, source="site-driver", name="biogas-flow")
     assert by_name == Stream(str(compute_stream_uri("site-driver", "biogas-flow")))
-    assert Acquirium.stream(SimpleNamespace(client=client), by_name.stream_uri) == by_name
+    assert Acquirium.stream(ac, uri=by_name.stream_uri) == by_name
+    assert Acquirium.stream(ac, "site-driver", "biogas-flow") == by_name
+    assert Acquirium.stream(ac, by_name.stream_uri) == by_name
+    assert Acquirium.stream(ac, source_id_or_uri="site-driver", name="biogas-flow") == by_name
+    with pytest.raises(TypeError, match="either uri or source and name"):
+        Acquirium.stream(ac, source="site-driver", name="biogas-flow", uri=by_name.stream_uri)
     assert str(by_name) == by_name.stream_uri and repr(by_name) == f"<Stream {by_name.stream_uri}>"
     interval = by_name.between("2026-01-01T00:00:00", "2026-01-02T00:00:00Z")
     assert (interval.start, interval.end) == (T0, T0.replace(day=2))  # naive times are UTC
