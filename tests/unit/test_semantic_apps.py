@@ -4,9 +4,10 @@ from unittest.mock import Mock
 import pandas as pd
 import pytest
 
-from tests.epoch_helpers import epoch_server, value
+from tests import app_calculations
+from tests.epoch_helpers import epoch_server, plan, value
 
-from acquirium import App, Selection, Output
+from acquirium import App, Output, PythonFunction, Selection
 from acquirium.apps import Apps, output_reference
 from acquirium.Server.manager import Manager
 from acquirium.internals.models import compute_stream_uri
@@ -52,7 +53,7 @@ def register(system, source):
 
 
 def mean(name, stream, group="urn:tank"):
-    """Declare a native mean over one stream in a fixed group."""
+    """Declare a mean over one stream in a fixed group."""
     return App(
         name,
         {
@@ -61,7 +62,7 @@ def mean(name, stream, group="urn:tank"):
             )
         },
         {"mean": Output()},
-        {"kind": "mean", "port": "mean", "per_stream": False},
+        PythonFunction.from_file(app_calculations.__file__, "mean"),
     )
 
 
@@ -78,12 +79,11 @@ def test_python_chain_repairs_history_and_recovers_without_source_files(tmp_path
     downstream = tmp_path / "downstream.py"
     downstream.write_text(
         'import json\n'
-        'from acquirium.functions import emit\n'
         'def read(frame, context):\n'
         '    binding = json.loads(frame["context"][0])\n'
         '    assert binding["group"] == context["parameters"]["group"][0]\n'
         '    assert binding["stream"] == frame["stream"][0]\n'
-        '    return {"double": emit(context, 2 * frame["value"][0])}\n',
+        '    return {"double": 2 * frame["value"][0]}\n',
         encoding="utf-8",
     )
 
@@ -168,7 +168,7 @@ def test_reading_graph_status_delivers_experiment_metadata_and_refreshes_apps(sy
             group=None,
         )},
         {"mean": Output()},
-        {"kind": "mean", "port": "mean", "per_stream": False},
+        PythonFunction.from_file(app_calculations.__file__, "mean"),
     )
     manager.deploy_app(declaration)
     assert manager.apps.inspect(name)["operators"] == []
@@ -225,8 +225,6 @@ def test_app_declaration_rejects_a_legacy_lookback_field():
 def test_asynchronous_app_publishes_with_its_readers_without_delaying_writes(tmp_path):
     import time
 
-    from acquirium import Native, PythonFunction
-
     started = tmp_path / "refresh-started"
     released = tmp_path / "refresh-released"
     module = tmp_path / "fit.py"
@@ -267,7 +265,7 @@ def test_asynchronous_app_publishes_with_its_readers_without_delaying_writes(tmp
             "score",
             {**score_inputs, "fit": Selection.outputs_of(fit, "mean", as_of=pd.Timedelta(timestamp, "ns"))},
             {"score": Output()},
-            Native.sum("score"),
+            PythonFunction.from_file(app_calculations.__file__, "total"),
         )
         fit_ref = output_reference(fit.name, "urn:tank", "mean")
         score_ref = output_reference(scorer.name, "urn:tank", "score")
@@ -314,8 +312,6 @@ def test_asynchronous_app_publishes_with_its_readers_without_delaying_writes(tmp
 
 
 def test_python_redeployment_uses_the_declared_source_bytes(system, tmp_path):
-    from acquirium import PythonFunction
-
     manager, _, _ = system
     ref = register(system, "content-hash")
     module = tmp_path / "calculation.py"
@@ -383,8 +379,6 @@ def test_invalid_cycle_keeps_the_previous_plan_and_projection(system):
 def test_activation_failure_and_later_writes_can_be_retried_across_restart(tmp_path, caplog):
     import logging
     import time
-
-    from acquirium import PythonFunction
 
     flag = tmp_path / "fail"
     module = tmp_path / "calculation.py"
@@ -478,8 +472,6 @@ def test_closing_reports_work_left_by_a_drain_timeout(caplog):
 
 def test_frozen_unit_factors_execute_in_native_python_worker(system):
     from pathlib import Path
-    from acquirium import PythonFunction
-
     manager, http, client = system
     ref = register(system, "units")
     selection = Selection(
@@ -529,7 +521,7 @@ def test_group_output_links_are_owned_and_removed_with_membership(system):
             )
         },
         {"mean": Output(on_group=True)},
-        {"kind": "mean", "port": "mean", "per_stream": False},
+        PythonFunction.from_file(app_calculations.__file__, "mean"),
     )
     client.deploy_app(declaration)
     output = output_reference(declaration.name, "urn:attached:tank", "mean")
@@ -539,7 +531,7 @@ def test_group_output_links_are_owned_and_removed_with_membership(system):
         S223.hasProperty,
         URIRef(f"{output}__point"),
     ) in graph
-    client.insert_timeseries("attached", "temperature", [(1234, 32)])
+    client.insert_timeseries("attached", "temperature", [(1000, 32)])
     assert client.stream(output).dataframe()["value"].to_list() == [32]
 
     # Moving the probe moves both the derived property's link and its reading.
@@ -573,7 +565,7 @@ def test_output_attachment_rejects_literal_groups_without_changing_active_plan(s
             )
         },
         {"mean": Output(on_group=True)},
-        {"kind": "mean", "port": "mean", "per_stream": False},
+        PythonFunction.from_file(app_calculations.__file__, "mean"),
     )
     previous = manager.core.engine.snapshot().plan()
     response = http.put(f"/apps/{declaration.name}", json=declaration.to_dict())
@@ -589,7 +581,7 @@ def test_output_attachment_requires_a_boolean():
             "invalid-output",
             {},
             {"value": Output(on_group="yes")},
-            {"kind": "mean", "port": "value", "per_stream": False},
+            PythonFunction.from_file(app_calculations.__file__, "mean"),
         ).to_dict()
 
 
@@ -609,7 +601,7 @@ def test_outputs_of_chains_by_port_combines_groups_and_guards_dependencies(syste
             name,
             {"mean": Selection.outputs_of(first, "mean", **options)},
             {"mean": Output()},
-            {"kind": "mean", "port": "mean", "per_stream": False},
+            PythonFunction.from_file(app_calculations.__file__, "mean"),
         )
 
     response = http.put("/apps/ports-early", json=downstream("ports-early").to_dict())
@@ -626,13 +618,13 @@ def test_outputs_of_chains_by_port_combines_groups_and_guards_dependencies(syste
     assert same["matches"] == {"mean": 1} and not same["warnings"]
     snapshot = manager.core.wait(
         manager.insert_timeseries(
-            source_id="ports", stream_name="temperature", rows=[(5555, 7)], request_id="one"
+            source_id="ports", stream_name="temperature", rows=[(5000, 7)], request_id="one"
         ).receipt
     )
     # The default keeps the upstream group; combine uses one group for the app.
-    assert value(snapshot, output_reference("ports-same", "urn:tank", "mean"), 5555) == 7
+    assert value(snapshot, output_reference("ports-same", "urn:tank", "mean"), 5000) == 7
     assert (
-        value(snapshot, output_reference("ports-combined", "ports-combined", "mean"), 5555)
+        value(snapshot, output_reference("ports-combined", "ports-combined", "mean"), 5000)
         == 7
     )
     assert combined["matches"] == {"mean": 1}
@@ -667,7 +659,7 @@ def test_selection_parameters_become_operator_parameters_for_listed_groups(syste
             name,
             {"mean": Selection.outputs_of(first, "mean", parameters=parameters)},
             {"mean": Output()},
-            {"kind": "mean", "port": "mean", "per_stream": False},
+            PythonFunction.from_file(app_calculations.__file__, "mean"),
         )
 
     state = client.deploy_app(thresholds("parameters-listed", {"urn:tank": {"threshold": 3.5}}))["app"]
@@ -695,8 +687,6 @@ def test_selection_parameters_become_operator_parameters_for_listed_groups(syste
 
 
 def test_python_functions_read_typed_parameters_and_the_window(system, tmp_path):
-    from acquirium import PythonFunction
-
     manager, http, client = system
     ref = register(system, "typed-parameters")
     manager.core.wait(
@@ -709,11 +699,10 @@ def test_python_functions_read_typed_parameters_and_the_window(system, tmp_path)
     )
     module = tmp_path / "scaled.py"
     module.write_text(
-        "from acquirium.functions import emit\n"
         "def scaled(frame, context):\n"
         "    assert context['operator']['window'] == {'kind': 'pointwise'}\n"
         "    assert context['parameters']['group'] == ('urn:tank',)\n"
-        "    return {'mean': emit(context, frame['value'][0] * context['parameters']['scale'])}\n"
+        "    return {'mean': frame['value'][0] * context['parameters']['scale']}\n"
     )
     template = mean("typed-parameters", ref)
     selection = Selection(template.inputs["input"].query, parameters={"urn:tank": {"scale": 2.5}})
@@ -733,8 +722,6 @@ def test_python_functions_read_typed_parameters_and_the_window(system, tmp_path)
     pytest.param("sequential", None, id="sequential-combined"),
 ])
 def test_python_context_includes_group_key_without_configured_parameters(system, tmp_path, mode, grouping):
-    from acquirium import PythonFunction
-
     manager, _, client = system
     source = f"group-context-{mode}-{grouping or 'combined'}"
     ref = register(system, source)
@@ -745,7 +732,7 @@ def test_python_context_includes_group_key_without_configured_parameters(system,
     module = tmp_path / "identity.py"
     module.write_text(
         "import polars as pl\n"
-        "from acquirium.functions import emit, emit_windows\n"
+        "from acquirium.functions import emit_windows\n"
         "def identify(frame, context):\n"
         "    key = context['parameters']['group']\n"
         "    assert isinstance(key, tuple)\n"
@@ -754,7 +741,7 @@ def test_python_context_includes_group_key_without_configured_parameters(system,
         "    if 'windows' in context:\n"
         "        times = [window['output_time'] for window in context['windows']]\n"
         "        return {'identity': emit_windows(pl.DataFrame({'output_time': times, 'text': [group] * len(times)}))}\n"
-        "    return {'identity': emit(context, group)}\n"
+        "    return {'identity': group}\n"
     )
     selection = Selection(
         f"SELECT ?stream ?tank WHERE {{ BIND(<{ref}> AS ?stream) BIND(<urn:tank> AS ?tank) }}",
@@ -846,21 +833,18 @@ def test_arrow_pandas_and_polars_functions_share_a_pipeline(system, tmp_path, mo
 
 
 def test_as_of_selections_read_the_latest_reading_of_a_slower_stream(system, tmp_path):
-    from acquirium import PythonFunction
-
     manager, http, client = system
     reading = register(system, "as-of-reading")
     gain = register(system, "as-of-gain")
     module = tmp_path / "calibrated.py"
     module.write_text(
         "import polars as pl\n"
-        "from acquirium.functions import emit, empty\n"
         "def calibrated(frame, context):\n"
         "    x = frame.filter(pl.col('input') == 'x')['value']\n"
         "    gain = frame.filter(pl.col('input') == 'gain')['value']\n"
         "    if x.is_empty() or gain.is_empty():\n"
-        "        return {'mean': empty()}\n"
-        "    return {'mean': emit(context, x[0] * gain[0])}\n"
+        "        return {'mean': None}\n"
+        "    return {'mean': x[0] * gain[0]}\n"
     )
     template = mean("as-of", reading)
     selected = Selection.from_stream
@@ -904,45 +888,8 @@ def test_as_of_selections_read_the_latest_reading_of_a_slower_stream(system, tmp
     manager.remove_app(template.name)
 
 
-def test_native_function_arguments_bind_to_each_groups_parameters(system):
-    from acquirium import Native, Parameter
-
-    manager, http, client = system
-    ref = register(system, "native-parameters")
-    name = "native-parameters"
-    query = client.query().measurement(uri="urn:native-parameters:point", alias="temperature")
-
-    def alarm(parameters):
-        return App(
-            name,
-            {"input": Selection.from_query(query, measurement="temperature", parameters=parameters)},
-            {"alarm": Output()},
-            Native.threshold("alarm", above=Parameter("limit")),
-        )
-
-    declaration = alarm({ref: {"limit": 10}})
-    assert declaration.to_dict()["function"] == {
-        "kind": "threshold", "port": "alarm", "above": {"parameter": "limit"}
-    }
-    state = client.deploy_app(declaration)["app"]
-    operator, = state["operators"]
-    assert operator["function"] == {"kind": "threshold", "port": "alarm", "above": 10}
-    # The native app reads the selected probe and exposes its thresholded result.
-    client.insert_timeseries("native-parameters", "temperature", [(6000, 12), (7000, 8)])
-    result = client.query().measurement(app=name, alias="alarm").data()
-    assert [binding.stream_uri for binding in result.bindings] == [output_reference(name, ref, "alarm")]
-    assert result.dataframe(shape="narrow")["value_numeric"].to_list() == [12]
-
-    response = http.put(
-        f"/apps/{name}", json=alarm({ref: {"other": 1}}).to_dict()
-    )
-    assert response.status_code == 400
-    assert "no parameter 'limit'" in response.text
-    manager.remove_app(name)
-
-
 def test_a_flow_totalizer_repairs_every_later_volume(system):
-    from acquirium import FixedBucket, Native
+    from examples.soft_sensors import transforms
 
     manager, http, client = system
     ref = register(system, "flow-totalizer")
@@ -951,8 +898,8 @@ def test_a_flow_totalizer_repairs_every_later_volume(system):
     client.deploy_app(App(
         template.name,
         template.inputs,
-        {"volume": Output()},
-        Native.integral("volume", per=pd.Timedelta("1h"), reset=FixedBucket(pd.Timedelta("24h"))),
+        {"volume": Output(), "rate": Output()},
+        PythonFunction.from_file(transforms.__file__, "daily_volume", sequential=True),
     ))
 
     def insert(rows, request_id):
@@ -975,8 +922,6 @@ def test_a_flow_totalizer_repairs_every_later_volume(system):
 
 
 def test_dry_run_reports_the_work_of_a_deploy_without_making_it(system):
-    from acquirium import Native
-
     manager, http, client = system
     ref = register(system, "dry-run")
     manager.core.wait(
@@ -999,7 +944,10 @@ def test_dry_run_reports_the_work_of_a_deploy_without_making_it(system):
     assert preview["active_plan"] == manager.apps.preview(declaration)["active_plan"]
 
     client.deploy_app(declaration)
-    redefined = App(declaration.name, declaration.inputs, declaration.outputs, Native.sum("mean"))
+    redefined = App(
+        declaration.name, declaration.inputs, declaration.outputs,
+        PythonFunction.from_file(app_calculations.__file__, "total"),
+    )
     preview = client.deploy_app(redefined, dry_run=True)["app"]
     changed, = [row for row in preview["instances"] if row["template"] == declaration.name]
     assert (changed["windows"], changed["input_rows"], changed["output_rows"]) == (2, 2, 2)
@@ -1009,10 +957,10 @@ def test_dry_run_reports_the_work_of_a_deploy_without_making_it(system):
 
     dependent = App(
         "dry-run-dependent",
-        {"mean": Selection.outputs_of(App("dry-run-missing", {}, {"mean": Output()}, Native.sum("mean")),
+        {"mean": Selection.outputs_of(App("dry-run-missing", {}, {"mean": Output()}, declaration.function),
                                       "mean")},
         {"mean": Output()},
-        Native.mean("mean"),
+        declaration.function,
     )
     response = http.put(
         f"/apps/{dependent.name}", params={"dry_run": "true"}, json=dependent.to_dict()
@@ -1046,12 +994,12 @@ def test_engine_snapshot_waits_for_the_plan_to_catch_up_with_the_graph(system):
     query = f"SELECT ?stream ?group WHERE {{ VALUES ?stream {{ <{ref}> }} ?stream <urn:catch-up> ?group }}"
     declaration = App(
         "catch-up-mean", {"input": Selection(query)}, {"mean": Output()},
-        {"kind": "mean", "port": "mean", "per_stream": False},
+        PythonFunction.from_file(app_calculations.__file__, "mean"),
     )
     manager.insert_graph(f"<{ref}> <urn:catch-up> <urn:room:A> .", source_id="catch-up-groups")
     manager.deploy_app(declaration)
     manager.core.wait(manager.insert_timeseries(
-        source_id="catch-up", stream_name="temperature", rows=[(4242, 7)], request_id="one",
+        source_id="catch-up", stream_name="temperature", rows=[(4000, 7)], request_id="one",
     ).receipt)
     moved = output_reference(declaration.name, "urn:room:B", "mean")
     # The graph moves the stream, as any graph write does before the apps
@@ -1060,7 +1008,7 @@ def test_engine_snapshot_waits_for_the_plan_to_catch_up_with_the_graph(system):
         f"<{ref}> <urn:catch-up> <urn:room:B> .", replace=True,
         graph_uri=manager.graph_store.source_graph_uri("catch-up-groups"),
     )
-    assert value(manager.core.engine.snapshot(), moved, 4242) is None
+    assert value(manager.core.engine.snapshot(), moved, 4000) is None
     response = http.get("/engine/snapshot")
     assert response.status_code == 200, response.text
     body = response.json()
@@ -1070,15 +1018,13 @@ def test_engine_snapshot_waits_for_the_plan_to_catch_up_with_the_graph(system):
         for stream in op["outputs"].values()
     }
     assert outputs == {moved}
-    assert value(manager.core.engine.snapshot(), moved, 4242) == 7
+    assert value(manager.core.engine.snapshot(), moved, 4000) == 7
     manager.remove_app(declaration.name)
 
 
 def test_startup_refuses_an_engine_plan_without_acquirium_annotations(tmp_path):
     from acquirium.apps import Apps
     from acquirium.core import Core
-    from tests.epoch_helpers import plan
-
     module = tmp_path / "calculation.py"
     module.write_text("def calculate(frame, context): return {}\n")
     core = Core(tmp_path / "engine.duckdb", module_paths=[str(tmp_path)])

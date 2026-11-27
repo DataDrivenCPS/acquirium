@@ -2,14 +2,13 @@
 from pathlib import Path
 
 import acquirium as aq
-from acquirium.functions import emit, empty
 
 
 def convert(frame, context):
     if frame.is_empty():
-        return {"celsius": empty()}
+        return {"celsius": None}
     fahrenheit = frame["value"][0]
-    return {"celsius": emit(context, (fahrenheit - 32) * 5 / 9)}
+    return {"celsius": (fahrenheit - 32) * 5 / 9}
 
 
 def fahrenheit_to_celsius(client, parameters):

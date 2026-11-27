@@ -19,6 +19,7 @@ import math
 import random
 import time
 from datetime import datetime, timedelta, timezone
+from dataclasses import replace
 from pathlib import Path
 
 import acquirium as aq
@@ -167,15 +168,12 @@ def soft_sensors(batch):
         return SOFT_SENSORS
     # The same apps, with each Python function swapped for its batch version.
     return [
-        aq.App(
-            app.name,
-            app.inputs,
-            app.outputs,
-            aq.PythonFunction.from_file(DIRECTORY / "batch_transforms.py", app.function.entrypoint, batch=True),
-            app.window,
+        replace(
+            app,
+            function=aq.PythonFunction.from_file(
+                DIRECTORY / "batch_transforms.py", app.function.entrypoint, batch=True,
+            ),
         )
-        if isinstance(app.function, aq.PythonFunction)
-        else app
         for app in SOFT_SENSORS
     ]
 

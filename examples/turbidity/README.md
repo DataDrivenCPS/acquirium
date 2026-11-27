@@ -17,7 +17,7 @@ The cleaner declares `frame: pd.DataFrame` and receives Arrow-backed pandas
 series and declares `ReplacementOutput()`, so normal measurement reads return
 the clean stream. Use `view="raw"` to read the original samples. The alarm
 selects each location's turbidity measurement, so it binds the clean stream as
-the authoritative stage; it uses `emit` to return one reading per call.
+the authoritative stage; it returns one number per minute.
 
 Filter 3 is high with a fault code, a missing minute, and a spike; the alarm
 fires. Late readings for the missing minute then clear the alarm, and the

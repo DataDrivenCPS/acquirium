@@ -4,11 +4,12 @@ import pytest
 from rdflib import Graph, Literal, RDF, RDFS, URIRef
 import shifty
 
-from acquirium import App, Output, Selection
+from acquirium import App, Output, PythonFunction, Selection
 from acquirium.apps import output_reference
 from acquirium._ontologies import S223_IRI, load_bundled_graph
 from acquirium.internals.internals_namespaces import QUDT, S223
 from acquirium.Server.manager import Manager
+from tests import app_calculations
 
 UNIT = "http://qudt.org/vocab/unit/DEG_C"
 KIND = "http://qudt.org/vocab/quantitykind/Temperature"
@@ -24,18 +25,19 @@ def manager(tmp_path_factory):
 
 
 @pytest.mark.parametrize("fields, quantitative", [
-    ({"unit": UNIT, "quantity_kind": KIND}, True),
-    ({"unit": UNIT}, False),
-    ({"quantity_kind": KIND}, False),
-    ({}, False),
-    ({"value_kind": "text", "unit": UNIT, "quantity_kind": KIND}, False),
+    pytest.param({"unit": UNIT, "quantity_kind": KIND}, True, id="numeric-with-unit-and-kind"),
+    pytest.param({"unit": UNIT}, False, id="unit-only"),
+    pytest.param({"quantity_kind": KIND}, False, id="quantity-kind-only"),
+    pytest.param({}, False, id="no-quantity-metadata"),
+    pytest.param({"value_kind": "text", "unit": UNIT, "quantity_kind": KIND}, False, id="text-output"),
 ])
 def test_output_property_types_and_discovery(manager, fields, quantitative):
+    # Attach the calculated property to the plant group so clients can discover it there.
     declaration = App(
         "property-types",
         {"input": Selection("SELECT ?stream ?group WHERE { BIND(<urn:input> AS ?stream) BIND(<urn:plant> AS ?group) }")},
         {"result": Output(on_group=True, **fields)},
-        {"kind": "mean", "port": "result", "per_stream": False},
+        PythonFunction.from_file(app_calculations.__file__, "mean"),
     )
     manager.deploy_app(declaration)
     reference = output_reference(declaration.name, "urn:plant", "result")
@@ -44,6 +46,7 @@ def test_output_property_types_and_discovery(manager, fields, quantitative):
     assert (point, RDF.type, S223.Property) in metadata
     assert ((point, RDF.type, S223.QuantifiableProperty) in metadata) is quantitative
     assert (point, RDF.type, S223.ObservableProperty) not in metadata
+    # The fresh query view includes the attachment written during deployment.
     matches = manager.graph_store.sparql_query(f"""
         SELECT ?point WHERE {{
             <urn:plant> <{S223.hasProperty}> ?point .
@@ -65,6 +68,7 @@ def test_quantifiable_property_validation_without_an_observing_sensor():
     data.add((unit, RDF.type, QUDT.Unit))
     data.add((kind, RDF.type, QUDT.QuantityKind))
     selected = [str(S223.QuantifiableProperty), str(S223.ObservableProperty)]
+    # A computed property satisfies the shape with a unit and quantity kind.
     assert shifty.validate(data, shapes, shape_names=selected)[0]
     data.remove((point, QUDT.hasQuantityKind, kind))
     assert not shifty.validate(data, shapes, shape_names=selected)[0]

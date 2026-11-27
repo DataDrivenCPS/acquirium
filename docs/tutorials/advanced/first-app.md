@@ -1,50 +1,92 @@
 ---
-title: Declaring and deploying apps
+title: Build your first soft sensor
 ---
 
-An app calculates streams from existing readings. This tutorial adds power in kilowatts to each pump in the [full example](../a-full-example.md). Run that tutorial first and use the same data folder.
+A soft sensor uses existing readings to calculate a new stream. Here you'll
+build a threshold detector that records a sine-wave reading whenever it
+exceeds 0.5. The driver generates the input, a Python function checks each
+reading, and an app declaration connects the two.
 
-The [example script](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/advanced_apps.py) and [notebook](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/advanced_apps.ipynb) use the declaration in [plant_apps.py](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/plant_apps.py).
+You'll need a checkout of the [Acquirium repository](https://github.com/DataDrivenCPS/acquirium)
+and uv. Run the commands from the repository root.
 
-## Declare the calculation
+## Start the server
 
-The query finds each pump's power measurement. `Selection.from_query` binds the matching stream for each pump to the named input `power`. The selection skips the app’s own outputs so that redeploying keeps the same inputs. The `Pointwise` window runs the function for each affected timestamp. The function emits one output in kilowatts for each input value.
+In the first terminal, start Acquirium with the example configuration.
 
-```{literalinclude} ../../../examples/documentation/plant_apps.py
-:language: python
+```sh
+uv run --locked acquirium server --config examples/transformation/acquirium.toml
 ```
 
-## Preview and deploy
+The configuration starts the sine-wave driver in `examples/transformation/publish.py`.
+It writes one reading per second. Leave the server running while you work.
+
+## Read the input signal
+
+In a second terminal, run `uv run --locked python` and connect to the server.
 
 ```python
 import acquirium as aq
-from plant_apps import pump_power_kw
 
-acq = aq.init()
-app = pump_power_kw(acq)
-print(acq.deploy_app(app, dry_run=True))
-print(acq.deploy_app(app))
+client = aq.Acquirium(server_url="127.0.0.1", server_port=8000)
+wave = client.query().measurement(alias="wave", uri="urn:example:sine-wave")
+print(wave.dataframe().tail(8))
 ```
 
-The preview estimates the work before activation. Deployment computes existing history and keeps the outputs current as readings arrive or are corrected.
+Once the driver has collected eight readings, you should see the signal rise
+above 0.5 and fall again. If the table has fewer rows, wait a few seconds
+and run the last line again.
+
+## Define the threshold
+
+Open `examples/transformation/sine_threshold.py`. This file contains the
+calculation the server will run.
+
+```{literalinclude} ../../../examples/transformation/sine_threshold.py
+:language: python
+:pyobject: threshold
+```
+
+The `value` column contains the numeric reading. The function returns that
+reading on the `high` output port when it exceeds 0.5. Returning `None`
+leaves the output empty at that timestamp.
+
+## Connect the calculation to the stream
+
+Open `examples/transformation/threshold_app.py`. It tells Acquirium which
+stream to read, which function to run, and which output to publish.
+
+```{literalinclude} ../../../examples/transformation/threshold_app.py
+:language: python
+```
+
+`Selection.from_query` selects the same sine-wave measurement you read earlier.
+`PythonFunction.from_file` points to the calculation in the separate file.
+The `high` port matches the function's return key. `Pointwise()` runs the
+function at each input timestamp and publishes any result at that same time.
+
+## Deploy and read the output
+
+Back in the Python session, import the declaration, deploy it, and query the
+new stream by app name.
 
 ```python
-readings = acq.query().entity("pump", alias="pump").measurement(app="pump-power-kw")
-print(readings.dataframe(shape="narrow", limit=3))
+from examples.transformation.threshold_app import high_wave
 
-acq.insert_timeseries(
-    source_id="csv-data",
-    stream_name="P1-mechanical-power",
-    rows=[("2026-01-01", 1_200_000.0)],
-)
-print(readings.dataframe(shape="narrow", start="2026-01-01"))
+app = high_wave(client, {})
+client.deploy_app(app)
+
+high = client.query().measurement(alias="high", app=app.name)
+print(high.dataframe().tail(4))
 ```
 
-The new reading produces 1,200 kW. A correction at the same timestamp will update the output. To deploy a changed calculation, rebuild the declaration from the edited file and call `deploy_app` again.
+The derived stream contains readings such as 0.707 and 1.0. Each one has
+the timestamp of its source reading. Deployment checks the readings already
+stored, and the server keeps evaluating new readings after you exit Python.
+Run the last line again a few seconds later to see new results. When you're
+finished, stop the server with Ctrl-C in the first terminal.
 
-```python
-acq.remove_app(app.name)
-aq.shutdown()
-```
+## Next steps
 
-See the [app reference](../../reference/apps/_index.md) for window and output options and [deploying and inspecting apps](../../how-to/check-deploy-apps.md) for recovery steps.
+- [Build a turbidity alarm pipeline](../turbidity.md) to clean readings and detect when they stay above a threshold.
+- [Write a soft sensor](../../how-to/write-soft-sensors.md) to use this server to calculate a windowed mean and chain another detector.

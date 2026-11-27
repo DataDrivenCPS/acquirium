@@ -23,8 +23,5 @@ def pump_power_kw(acq):
 
 
 def watts_to_kilowatts(frame, context):
-    from acquirium.functions import emit, empty
-
-    if frame.is_empty():
-        return {"power": empty()}
-    return {"power": emit(context, frame["value"][0] / 1000)}
+    watts = frame["value"].first()
+    return {"power": None if watts is None else watts / 1000}

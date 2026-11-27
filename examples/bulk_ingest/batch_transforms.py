@@ -99,3 +99,9 @@ def sustained_high_turbidity(frame, context):
         ((pl.col("samples") == minutes + 1) & (pl.col("lowest") == 1)).cast(pl.Float64).alias("value"),
     )
     return {"alarm": emit_windows(result)}
+
+
+def plant_alarms(frame, context):
+    """Count locations in sustained alarm at each minute of the batch."""
+    counts = frame.drop_nulls("value").group_by("output_time").agg(pl.col("value").sum())
+    return {"locations": emit_windows(counts)}

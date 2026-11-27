@@ -26,6 +26,12 @@ New to Acquirium?
 Get started
 ```
 
+## Soft sensors
+
+- [Build your first soft sensor](tutorials/advanced/first-app.md) by detecting high readings on a live signal.
+- [Build a turbidity alarm pipeline](tutorials/turbidity.md) that cleans data and recalculates alarms when readings arrive late.
+- [Write a soft sensor](how-to/write-soft-sensors.md) using your own streams, windows, and parameters.
+
 ## Get help and contribute
 
 1. Found a bug or a performance issue? Open a [GitHub issue](https://github.com/DataDrivenCPS/acquirium/issues).

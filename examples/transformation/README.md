@@ -1,12 +1,13 @@
 # Sine-wave driver and Python threshold
 
-Start the driver from the repository root:
+Start the server and its driver from the repository root.
 
 ```sh
 uv run --locked acquirium server --config examples/transformation/acquirium.toml
 ```
 
-In a Python session, deploy the calculation and read its results:
+In a second terminal, run `uv run --locked python` from the repository root,
+then deploy the calculation and read its results.
 
 ```python
 import acquirium as aq
@@ -21,8 +22,9 @@ client.query().measurement(app="high-wave").dataframe().tail(3)
 The driver generates one reading per second. The Python function keeps values
 above 0.5. Stop the server with Ctrl-C; data is retained under `.data/`.
 
-Follow [Soft sensor app](../../docs/tutorials/first-app.md) to write the function
-and build its declaration. [publish.py](publish.py) is the polling driver;
+See [Build your first soft sensor](../../docs/tutorials/advanced/first-app.md)
+for a walkthrough of writing a function and deploying its declaration.
+[publish.py](publish.py) is the polling driver;
 [sine_threshold.py](sine_threshold.py) is the calculation;
 [threshold_app.py](threshold_app.py) packages its declaration for deployment.
 

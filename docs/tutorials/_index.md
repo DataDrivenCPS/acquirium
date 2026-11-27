@@ -12,6 +12,11 @@ Then follow the pages in number order:
 - [4 - Inserting a Plant Model](inserting-plant-model.md): insert a plant model and connect streams to it
 - [5 - A Full Example](a-full-example.md): a desalination plant with one year of data
 
-The [advanced topics](advanced/_index.md) continue from there with drivers, apps and experiments.
+## Soft sensors
+
+- [Build your first soft sensor](advanced/first-app.md) by deploying a threshold detector on a sine-wave stream.
+- [Build a turbidity alarm pipeline](turbidity.md) by chaining a cleaning app and a sustained alarm.
+
+The [advanced topics](advanced/_index.md) cover drivers and experiments.
 
 Pages 1 to 5 are also available as scripts and notebooks in [examples/documentation](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/documentation).

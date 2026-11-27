@@ -111,7 +111,7 @@ plant_alarms = aq.App(
     inputs={"sustained": aq.Selection.outputs_of(sustained, "alarm", combine=True)},
     outputs={"locations": plant_count},
     # Sustained alarms are 0 or 1, so their sum counts the locations in alarm.
-    function=aq.Native.sum("locations"),
+    function=aq.PythonFunction.from_file(CALCULATIONS, "plant_alarms"),
 )
 
 SOFT_SENSORS = [snap, fill, plant_turbidity, high, sustained, plant_alarms]

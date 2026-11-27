@@ -11,12 +11,12 @@ chapters:
   - file: tutorials/inserting-metadata.md
   - file: tutorials/inserting-plant-model.md
   - file: tutorials/a-full-example.md
-  - file: tutorials/acquirium-at-a-glance.md
+  - file: tutorials/advanced/first-app.md
   - file: tutorials/turbidity.md
+  - file: tutorials/acquirium-at-a-glance.md
   - file: tutorials/advanced/_index.md
     sections:
     - file: tutorials/advanced/writing-a-driver.md
-    - file: tutorials/advanced/first-app.md
     - file: tutorials/advanced/experiments.md
 - file: how-to/_index.md
   sections:
@@ -25,10 +25,6 @@ chapters:
   - file: how-to/query-cookbook.md
   - file: how-to/access-a-shared-server.md
   - file: how-to/write-soft-sensors.md
-  - file: how-to/chain-cleaning-apps.md
-  - file: how-to/clean-data-with-multiple-outputs.md
-  - file: how-to/parameterize-soft-sensors.md
-  - file: how-to/soft-sensor-examples.md
   - file: how-to/consume-streaming-changes.md
   - file: how-to/check-deploy-apps.md
   - file: how-to/record-a-whole-model.md

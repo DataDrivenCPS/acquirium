@@ -11,7 +11,7 @@ import math
 
 import polars as pl
 
-from acquirium.functions import emit, empty, previous_value
+from acquirium.functions import previous_value
 
 
 def smoothed(frame, context):
@@ -19,14 +19,14 @@ def smoothed(frame, context):
     the time since the previous reading."""
     values = frame["value"].drop_nulls()
     if values.is_empty():
-        return {"smoothed": empty()}
+        return {"smoothed": None}
     value = values.mean()
     previous = context.get("previous")
     if previous is not None:
         elapsed = context["output_time"] - previous["output_time"]
         weight = math.exp(-elapsed.total_seconds() / context["parameters"]["tau_seconds"])
         value = weight * previous_value(context, "smoothed") + (1 - weight) * value
-    return {"smoothed": emit(context, value)}
+    return {"smoothed": value}
 
 
 def drift(frame, context):
@@ -37,12 +37,12 @@ def drift(frame, context):
     the first window where it does."""
     values = frame["value"].drop_nulls()
     if values.is_empty():
-        return {"cusum": empty(), "alarm": empty()}
+        return {"cusum": None, "alarm": None}
     parameters = context["parameters"]
     excess = values.mean() - parameters["target"] - parameters["slack"]
     statistic = max(0.0, previous_value(context, "cusum", 0.0) + excess)
     alarm = statistic if statistic > parameters["limit"] else None
-    return {"cusum": emit(context, statistic), "alarm": emit(context, alarm)}
+    return {"cusum": statistic, "alarm": alarm}
 
 
 def permeability(frame, context):
@@ -53,7 +53,7 @@ def permeability(frame, context):
     flux = frame.filter(pl.col("input") == "flux")["value"].drop_nulls()
     tmp = frame.filter(pl.col("input") == "tmp")["value"].drop_nulls()
     if flux.is_empty() or tmp.is_empty() or tmp.mean() <= 0:
-        return {"permeability": empty(), "variance": empty()}
+        return {"permeability": None, "variance": None}
     parameters = context["parameters"]
     forgetting = parameters["forgetting"]
     estimate = previous_value(context, "permeability", parameters["initial"])
@@ -62,7 +62,7 @@ def permeability(frame, context):
     gain = variance * x / (forgetting + x * variance * x)
     estimate += gain * (y - x * estimate)
     variance = (1 - gain * x) * variance / forgetting
-    return {"permeability": emit(context, estimate), "variance": emit(context, variance)}
+    return {"permeability": estimate, "variance": variance}
 
 
 def residual(frame, context):
@@ -72,9 +72,9 @@ def residual(frame, context):
     tmp = frame.filter(pl.col("input") == "tmp")["value"].drop_nulls()
     estimate = frame.filter(pl.col("input") == "permeability")["value"].drop_nulls()
     if flux.is_empty() or tmp.is_empty() or estimate.is_empty():
-        return {"expected": empty(), "residual": empty()}
+        return {"expected": None, "residual": None}
     expected = estimate[-1] * tmp.mean()
     return {
-        "expected": emit(context, expected),
-        "residual": emit(context, flux.mean() - expected),
+        "expected": expected,
+        "residual": flux.mean() - expected,
     }

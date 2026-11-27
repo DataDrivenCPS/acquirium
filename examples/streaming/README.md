@@ -1,7 +1,7 @@
 # Streaming examples
 
 Deploy the high-mean alarm from the
-[soft sensor calculation guide](../../docs/how-to/write-soft-sensors.md), then
+[soft sensor calculation guide](../../docs/how-to/write-soft-sensors.md#chain-apps), then
 run the webhook consumer:
 
 ```sh

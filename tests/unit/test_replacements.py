@@ -13,6 +13,7 @@ from acquirium import replacements
 from acquirium.apps import output_reference
 from acquirium.functions import _epoch_outputs
 from acquirium.internals.models import compute_stream_uri
+from tests import app_calculations
 from tests.epoch_helpers import epoch_server
 
 NTU = "http://qudt.org/vocab/unit/NTU"
@@ -39,7 +40,7 @@ def declaration(name, ref, function, **kwargs):
 
 
 def test_declaration_roundtrip():
-    app = declaration("clean", "urn:raw", aq.Native.mean("out"))
+    app = declaration("clean", "urn:raw", aq.PythonFunction.from_file(app_calculations.__file__, "mean"))
     assert app.to_dict()["outputs"] == {"out": {"replaces": "raw", "unit": None, "label": None}}
     assert aq.App.from_dict(app.to_dict()).to_dict() == app.to_dict()
     ordinary = replace(app, outputs={"out": aq.Output()})
@@ -61,12 +62,12 @@ def test_declaration_roundtrip():
 ])
 def test_inputs_map_names_to_selections(inputs):
     with pytest.raises(ValueError, match="input"):
-        aq.App("bad", inputs, {"out": aq.Output()}, aq.Native.mean("out")).to_dict()
+        aq.App("bad", inputs, {"out": aq.Output()}, aq.PythonFunction.from_file(app_calculations.__file__, "mean")).to_dict()
 
 
 def test_several_selections_feed_one_input_and_roundtrip():
     app = aq.App("pair", {"raw": [selection("urn:a"), selection("urn:b")], "gain": selection("urn:g")},
-                 {"out": aq.Output()}, aq.Native.mean("out"))
+                 {"out": aq.Output()}, aq.PythonFunction.from_file(app_calculations.__file__, "mean"))
     data = app.to_dict()
     assert [item["input"] for item in data["inputs"]] == ["raw", "raw", "gain"]
     loaded = aq.App.from_dict(data)
@@ -75,14 +76,14 @@ def test_several_selections_feed_one_input_and_roundtrip():
 
 
 def test_selection_views_roundtrip_and_default_by_selection_kind():
-    app = declaration("clean", "urn:raw", aq.Native.mean("out"))
+    app = declaration("clean", "urn:raw", aq.PythonFunction.from_file(app_calculations.__file__, "mean"))
     assert "view" not in app.to_dict()["inputs"][0]
     raw = replace(app, inputs={"raw": replace(app.inputs["raw"], view="raw")})
     assert aq.App.from_dict(raw.to_dict()).inputs["raw"].view == "raw"
     with pytest.raises(ValueError, match="view"):
         replace(app, inputs={"raw": replace(app.inputs["raw"], view="typo")}).to_dict()
     reader = aq.App("reader", {"turbidity": selection("urn:raw")}, {"out": aq.Output()},
-                    aq.Native.mean("out"))
+                    aq.PythonFunction.from_file(app_calculations.__file__, "mean"))
     both = replace(reader, inputs={**reader.inputs, "stage": aq.Selection.outputs_of(app, "out")})
     declarations = {"clean": app.to_dict(), "reader": both.to_dict()}
     assert replacements.input_views(declarations) == {
@@ -136,7 +137,6 @@ def runtime(tmp_path_factory):
     root = tmp_path_factory.mktemp("replacements")
     module = root / "functions.py"
     module.write_text('''import polars as pl
-from acquirium.functions import emit
 
 def double(frame: pl.DataFrame, context):
     if context["parameters"].get("fail"):
@@ -287,7 +287,7 @@ def reader(*refs, view=None, group="urn:replacement:tank"):
     rows = " ".join(f"<{ref}>" for ref in refs)
     query = f"SELECT ?stream ?group WHERE {{ VALUES ?stream {{ {rows} }} BIND(<{group}> AS ?group) }}"
     return aq.App("reader", {"turbidity": aq.Selection(query, view=view)},
-                  {"out": aq.Output()}, aq.Native.mean("out"))
+                  {"out": aq.Output()}, aq.PythonFunction.from_file(app_calculations.__file__, "mean"))
 
 
 def bound(manager, name):

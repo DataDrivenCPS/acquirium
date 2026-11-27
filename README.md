@@ -43,18 +43,18 @@ normalized payload to retry within the engine's bounded retry window. A response
 reports durable acceptance separately from publication; accepted work remains
 pending if a computation fails.
 
-## Derived streams
+## Soft sensors and derived streams
 
 An app turns selected source streams into derived streams. New readings and
 corrections update the results, including those of downstream apps.
 
-Start with the [first app tutorial](docs/tutorials/advanced/first-app.md) to
-deploy a simple calculation. The [turbidity pipeline](docs/tutorials/turbidity.md)
+Start with [Build your first soft sensor](docs/tutorials/advanced/first-app.md)
+to deploy a simple calculation. The [turbidity pipeline](docs/tutorials/turbidity.md)
 cleans analyser readings and feeds a sustained alarm. The
 [actor examples](docs/explanation/soft-sensor-actors.md) show a scheduled alarm
 and a membrane model that retrains in the background.
 
-To build your own, see [Soft sensor calculations](docs/how-to/write-soft-sensors.md).
+For windows, outputs, and group settings, see [Write a soft sensor](docs/how-to/write-soft-sensors.md).
 The [app reference](docs/reference/apps/_index.md) covers the interface options.
 
 ## Documentation and tests

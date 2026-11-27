@@ -1,7 +1,7 @@
 """Helpers for app calculation files.
 
-A Python function returns one frame per output port. ``emit`` and ``empty``
-build those frames for a function called once per window, and ``emit_windows``
+A Python function returns a mapping from output ports to values or frames.
+Per-window values use the window's output time. ``emit_windows`` builds frames
 for a batch function. A sequential function reads its earlier results with
 ``previous_value`` and ``previous_outputs``, and ``same_period`` says whether
 a period boundary lies between the previous window and this one. ``SCHEMA`` gives the Polars output schema.
@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 from functools import cache
 import inspect
 import json
+from numbers import Real
 from typing import get_type_hints
 
 import polars as pl
@@ -104,15 +105,19 @@ def emit(context, value):
     >>> result["time"].item() == at
     True
     """
+    return _as_library(_scalar_output(context["output_time"], value))
+
+
+def _scalar_output(output_time, value):
     if value is None or (_FRAME_LIBRARY.get() == "pandas" and _pandas().isna(value)):
-        return empty()
-    _check_datetime(context["output_time"])
+        return pl.DataFrame(schema=SCHEMA)
+    _check_datetime(output_time)
     text = value if isinstance(value, str) else None
-    return _as_library(pl.DataFrame({
-        "time": [context["output_time"]],
+    return pl.DataFrame({
+        "time": [output_time],
         "value": [None if text is not None else float(value)],
         "text": [text],
-    }, schema=SCHEMA))
+    }, schema=SCHEMA)
 
 
 def emit_windows(frame):
@@ -283,10 +288,15 @@ def _epoch_input(frame, context, window, ports):
     return public, public_context
 
 
-def _epoch_outputs(outputs, ports, replaced, anchors):
+def _epoch_outputs(outputs, ports, replaced, anchors, *, scalar_time=None):
     results = {}
     for port, output in outputs.items():
-        out = _as_polars(output)
+        if scalar_time is not None and (output is None or isinstance(output, (Real, str)) or (
+            _FRAME_LIBRARY.get() == "pandas" and output is _pandas().NA
+        )):
+            out = _scalar_output(scalar_time, output)
+        else:
+            out = _as_polars(output)
         if "time" not in out:
             raise ValueError("return a 'time' column; use reset_index() on a pandas time index")
         unexpected = set(out.columns) - SCHEMA.keys()
@@ -316,7 +326,8 @@ def _epoch_function(function, window, ports, replaced):
         token = _FRAME_LIBRARY.set(library)
         try:
             outputs = function(_as_library(public, library), public_context)
-            return _epoch_outputs(outputs, ports, replaced, [public_context["output_time"]])
+            output_time = public_context["output_time"]
+            return _epoch_outputs(outputs, ports, replaced, [output_time], scalar_time=output_time)
         finally:
             _FRAME_LIBRARY.reset(token)
 
@@ -376,100 +387,6 @@ def _epoch_batch_function(function, window, ports, replaced):
         return {port: pl.concat(frames) for port, frames in result.items()}
 
     return call
-
-
-def _builtin_function(spec, ports):
-    """Compute cumulative_sum or integral for one window, carrying its
-    previous output."""
-    from acquirium.apps import _RATE_PORT, _bind_parameters
-
-    def calculate(frame, context):
-        options = _bind_parameters(spec, context["parameters"], context["template"], context["instance"])
-        kind, port, anchor = options["kind"], options["port"], context["anchor_ns"]
-        own, state, rows = _split_own_ports(frame, context)
-        saved = {own[row["stream"]]: row for row in
-                 state.with_columns(pl.col("time").cast(pl.Int64)).iter_rows(named=True)}
-        rows = rows.drop_nulls("value")
-        values = rows["value"]
-        reading = {}
-        reset = options.get("reset")
-
-        def carry(previous_time):
-            total = saved.get(port)
-            if total is None:
-                return 0.0
-            if reset is not None:
-                width, origin = reset["width_ns"], reset.get("origin_ns", 0)
-                if (previous_time - origin) // width != (anchor - origin) // width:
-                    return 0.0
-            return total["value"]
-
-        if len(values):
-            if kind == "cumulative_sum":
-                reading[port] = carry(saved.get(port, {"time": anchor})["time"]) + values.sum()
-            elif kind == "integral":
-                if len(values) != 1:
-                    raise ValueError("integral expects at most one number per window")
-                previous = saved.get(_RATE_PORT)
-                reading[_RATE_PORT] = values[0]
-                reading[port] = 0.0
-                if previous is not None:
-                    elapsed = anchor - previous["time"]
-                    amount = carry(previous["time"])
-                    if options.get("max_gap_ns") is None or elapsed <= options["max_gap_ns"]:
-                        amount += (previous["value"] + values[0]) / 2 * elapsed / options["per_ns"]
-                    reading[port] = amount
-        return {
-            output: pl.DataFrame({
-                "time": pl.Series([anchor] if output in reading else [], dtype=pl.Int64).cast(pl.Datetime("ns", "UTC")),
-                "value": pl.Series([reading[output]] if output in reading else [], dtype=pl.Float64),
-            })
-            for output in ports
-        }
-
-    return calculate
-
-
-# Built-in calculations that read only their window run once per batch;
-# cumulative_sum and integral read their previous output, so run per window.
-WINDOW_BUILTINS = frozenset({"mean", "sum", "min", "max", "count", "threshold"})
-
-
-def _builtin_batch_function(spec, ports):
-    """Compute a built-in that reads only its window, for every window in a
-    batch at once. Each window's output is at its anchor; a window without
-    numbers has none."""
-    from acquirium.apps import _bind_parameters
-
-    kind, port = spec["kind"], spec["port"]
-    _ns = pl.Datetime("ns", "UTC")
-
-    def calculate(frame, context):
-        rows = frame.drop_nulls("value").with_columns(pl.col("anchor").cast(pl.Int64))
-        schema = {"time": _ns, "value": pl.Float64, "text": pl.String, "instance": frame.schema["instance"]}
-        results = []
-        for (instance,), group in rows.group_by("instance", maintain_order=True):
-            options = _bind_parameters(
-                spec, context["instances"][instance]["parameters"], context["template"], instance
-            )
-            if kind == "threshold":
-                if (group.group_by("anchor").len()["len"] > 1).any():
-                    raise ValueError("threshold expects at most one number per group")
-                result = group.filter(pl.col("value") > options["above"])
-            else:
-                if kind == "mean" and options.get("per_stream"):
-                    group = group.group_by("anchor", "stream").agg(pl.col("value").mean())
-                value = pl.len() if kind == "count" else getattr(pl.col("value"), kind)()
-                result = group.group_by("anchor").agg(value.alias("value"))
-            results.append(result.select(
-                pl.col("anchor").cast(_ns).alias("time"), pl.col("value").cast(pl.Float64),
-                pl.lit(None, pl.String).alias("text"), pl.lit(instance, schema["instance"]).alias("instance"),
-            ))
-        empty = pl.DataFrame(schema=schema)
-        out = pl.concat(results) if results else empty
-        return {output: out if output == port else empty for output in ports}
-
-    return calculate
 
 
 __all__ = [

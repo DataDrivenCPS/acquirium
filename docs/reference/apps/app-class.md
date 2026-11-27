@@ -24,41 +24,6 @@ Empty spans produce no results. Overlapping windows reread their shared history.
 
 Apps do not choose arbitrary output timestamps or run on a wall-clock schedule.
 
-## Built-in functions
-
-`aq.Native.mean(port, per_stream=False)`, `sum`, `min`, `max`, and `count` reduce
-all input rows in each window to one numeric result. An empty window produces
-no row. The default mean weights observations equally.
-
-`aq.Native.threshold(port, above)` passes through a window's single input value
-when it is greater than `above`; otherwise it produces no row. It does not emit
-zeros and ones. Acquirium supplies these calculations to the Python workers.
-
-Use `aq.Parameter("limit")` in place of a function argument to resolve it from
-each group's parameters, for example:
-
-```python
-function=aq.Native.threshold("alarm", above=aq.Parameter("limit"))
-```
-
-Deployment fails when a group lacks the required parameter. For a complete
-average-and-threshold example, see [Soft sensor calculations](../../how-to/write-soft-sensors.md).
-
-### Totals and integrals
-
-`aq.Native.cumulative_sum(port, reset=None)` adds each window's sum to the
-previous total. `aq.Native.integral(port, per, reset=None, max_gap=None)`
-integrates one reading per pointwise timestamp. For a flow measured per hour,
-pass `per=pd.Timedelta("1h")` to obtain a volume.
-
-`reset=aq.FixedBucket(width)` restarts a total at each bucket boundary.
-Corrections repair later totals until the results stop changing. Every repaired
-window counts toward the engine's limits per instance.
-
-An integral assigns a step across a boundary to the period in which it ends.
-A step longer than `max_gap` adds nothing. Integrals require the default
-`Pointwise()` window and one reading per timestamp.
-
 ## Python functions
 
 `PythonFunction.from_file(path, entrypoint, batch=False, sequential=False)` pins
@@ -88,9 +53,10 @@ timestamps remain Python datetimes. pandas operations may allocate new buffers
 or convert individual columns; Arrow-backed input does not guarantee that
 every pandas operation is zero-copy.
 
-During a calculation, `emit`, `empty`, and `previous_outputs`
-use the selected library. pandas missing scalar values passed to `emit` produce
-an empty result. `emit_windows` accepts either library and returns that same
+During a calculation, `empty` and `previous_outputs` use the selected
+library. A returned pandas missing scalar, such as `pd.NA`, clears the port
+like `None`.
+`emit_windows` accepts either library and returns that same
 kind of dataframe. Outside a calculation, helpers default to Polars.
 
 An app may return pandas or Polars dataframes, including different types on
@@ -116,8 +82,8 @@ holds the group key and configured parameter values, and `operator` holds its de
 including `operator["window"]`.
 
 `context["operator"]["outputs"]` maps each declared output name to its full
-stream URI for the current group. The function returns dataframes under those
-output names; Acquirium routes them to the corresponding URIs.
+stream URI for the current group. Acquirium routes the function's results to
+those streams by output name.
 
 Context timestamps are timezone-aware Python datetimes. Function timestamps
 and window declarations must align to microseconds; finer values are rejected
@@ -134,16 +100,25 @@ retain the engine's integer representation.
 
 For `Pointwise()`, `output_time` is the input timestamp. For `Rolling()`, it is
 the output's grid point, and the frame can contain samples before or after
-that point, as allowed by the declared window. `emit(context, value)` uses
-`output_time` as the result's timestamp.
+that point, as allowed by the declared window.
 
 Context also lists the declared inputs, including those with no readings. Each
 input's `span_start` and `span_end` describe the part of the window it
 covers, as a half-open span.
 
-Return a mapping with every declared port. Each port's frame has these columns
-in order. The types below are Polars types; pandas frames use the equivalent
-Arrow types or compatible numeric and timezone-aware datetime types.
+Return a mapping keyed by output port. A per-window function can return a
+number or string at `context["output_time"]`. Return `None` or omit a port to
+clear its result for that window.
+
+```python
+def mean(frame, context):
+    return {"mean": frame["value"].mean()}
+```
+
+Return a dataframe when the result needs multiple rows or explicit timestamps.
+Batch functions always return dataframes. The types below are Polars types.
+Pandas frames use equivalent Arrow types or compatible numeric and
+timezone-aware datetime types.
 
 | Column | Type |
 | --- | --- |
@@ -151,14 +126,9 @@ Arrow types or compatible numeric and timezone-aware datetime types.
 | `value` | `Float64` |
 | `text` | `String` |
 
-Numeric results set `value` and leave `text` null; numeric functions may also
-omit the `text` column. Use finite numbers.
-`acquirium.functions.emit(context, value)`
-returns a one-row dataframe at `context["output_time"]`; a `None` value produces
-an empty dataframe. The helper constructs the function's return value.
-Acquirium stores the results after the function returns.
-`empty()` also builds an empty frame. An empty result removes the previous
-result for that window. Return the complete result, including unchanged rows.
+Numeric results set `value` and may omit `text`. Use finite numbers.
+`acquirium.functions.empty()` builds an empty frame. Return the complete
+result for the window, including unchanged rows.
 
 Functions use only their declared inputs and frozen context. Do not query the
 live graph, fetch undeclared history, or depend on wall-clock time. Results must
@@ -200,6 +170,9 @@ continues until state and outputs stop changing.
 `batch=True` does not apply to sequential functions. The
 [membrane-monitoring example](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/membrane_monitoring)
 uses this interface for drift detection and parameter estimation.
+The [daily flow totalizer](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/soft_sensors/transforms.py)
+stores the previous rate on a second port and uses it to integrate the next
+interval. It restarts the carried volume at each UTC day boundary.
 
 ### As-of inputs
 

@@ -11,6 +11,11 @@ change in any release.
 ## [Unreleased]
 
 ### Removed
+- **Breaking:** Apps use `PythonFunction` for all calculations. On servers
+  with older `aq.Native` declarations, redeploy those apps as Python functions
+  before upgrading. Use dataframe returns such as `emit(context, value)` on
+  the earlier version. Keep the app and output names to keep their stream URIs.
+  Functions read each group's parameters from `context["parameters"]`.
 - The legacy materializer and its `check_app()`, `reprocess_app()`, and
   `app_dag()` interfaces. Preview a deployment with `deploy_app(dry_run=True)`.
   Escapement repairs affected windows as readings or definitions change.
@@ -50,6 +55,8 @@ change in any release.
   from `self.config` themselves. A value assigned in `setup()` still wins.
 
 ### Added
+- Per-window app functions can return numbers, strings, or `None` directly
+  under the output name. Acquirium timestamps values at the window output time.
 - Replacement outputs: `aq.ReplacementOutput(of=None, unit=None, label=None)`
   continues the measurement an input selects instead of describing a new one.
   Normal reads, and app inputs that select that measurement, return the final
@@ -64,11 +71,6 @@ change in any release.
   longer import `escapement` directly.
 - `examples/streaming/alarm_webhook.py`, a short change-feed consumer that posts
   to a webhook when an alarm is raised or cleared.
-- Running totals: `aq.Native.cumulative_sum(port, reset=None)` and
-  `aq.Native.integral(port, per_ns, reset=None, max_gap_ns=None)`, for
-  totalizers such as a volume from a flow rate. Each result builds on the one
-  before in time order; a late reading or correction repairs every later
-  total it changes, and a `reset` period bounds how far.
 - Sequential Python functions:
   `aq.PythonFunction.from_file(path, entrypoint, sequential=True)` runs once
   per window in time order with the previous window's outputs as
@@ -86,8 +88,8 @@ change in any release.
 - Text values are back on the Escapement core. Each reading is a number or
   text, stored as its stream's `value_kind`: a fault code such as `"Bad"` on a
   numeric stream is kept as text. `value_mode` takes `numeric`, `text` and
-  `coalesce` again. Native app functions read only numbers; Python functions
-  get `value` and `text` columns and may emit text, declared with
+  `coalesce` again. App functions get `value` and `text` columns and can return
+  text on a port declared with
   `Output(value_kind="text")`. Null, blank and non-finite values are dropped.
 - `[server] engine_path` accepts a `postgres://` URL to keep the engine's store
   in PostgreSQL; the tables go in the URL's `search_path` schema.
@@ -97,10 +99,6 @@ change in any release.
   operators new, redefined, rebound or unchanged, groups to re-evaluate, input
   rows read, rows cleared, and apps downstream of a change. Nothing is published
   or activated. Uses Escapement `Engine.preview`.
-- `aq.Native.mean/sum/max/min/count/threshold(port, ...)` declare engine-native
-  functions, which need no Python worker. `aq.Parameter(name)` takes a native
-  argument such as the threshold's `above` from each group's `parameters`.
-  The soft-sensor example's alarm and the bulk-ingest plant alarm count use them.
 - Soft-sensor functions can be declared with
   `PythonFunction.from_file(path, entrypoint, batch=True)` to receive every
   affected window in one call (Escapement batch functions). `examples/bulk_ingest
@@ -130,12 +128,11 @@ change in any release.
   read it. Requires the Escapement rolling-window release.
 
 ### Changed
-- **Breaking:** app windows, integrals and as-of inputs take durations as
+- **Breaking:** app windows and as-of inputs take durations as
   `datetime.timedelta` values, such as `pd.Timedelta("5m")`, instead of
   integer nanoseconds. `FixedBucket(width, origin=0)`,
-  `Rolling(lookback, step, lookahead, origin)`,
-  `Native.integral(port, per=..., max_gap=...)` and `Selection(as_of=...)`
-  replace the `_ns` parameters. Stored declarations are unchanged.
+  `Rolling(lookback, step, lookahead, origin)`, and `Selection(as_of=...)`
+  replace the `_ns` parameters. Stored Python app declarations keep the same format.
 - `aq.Query()` no longer needs `client=None` in an actor or app declaration.
 - Plant and property logbook entries use the same SQL store as experiment
   records. Logbook client methods and HTTP endpoints stay available.

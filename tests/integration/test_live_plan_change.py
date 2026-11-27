@@ -7,9 +7,10 @@ from time import monotonic, sleep
 import polars as pl
 import pytest
 
-from acquirium import App, Native, Output, PythonFunction, Selection
+from acquirium import App, Output, PythonFunction, Selection
 from acquirium.apps import output_reference
 from acquirium.internals.internals_namespaces import OUTPUT_GROUP, PRODUCED_BY
+from tests import app_calculations
 from tests.epoch_helpers import epoch_server
 
 
@@ -22,7 +23,6 @@ def test_live_ingest_through_plan_changes_stays_coherent_across_restart(tmp_path
     module.write_text(
         "import time\n"
         "from pathlib import Path\n"
-        "from acquirium.functions import emit\n"
         "def calculate(frame, context):\n"
         "    if context['parameters']['group'] == ('urn:test:new',):\n"
         f"        Path({str(started)!r}).touch()\n"
@@ -31,7 +31,7 @@ def test_live_ingest_through_plan_changes_stays_coherent_across_restart(tmp_path
         "            if time.monotonic() >= deadline:\n"
         "                raise RuntimeError('plan activation was not released')\n"
         "            time.sleep(0.01)\n"
-        "    return {'mean': emit(context, frame['value'].mean())}\n",
+        "    return {'mean': frame['value'].mean()}\n",
         encoding="utf-8",
     )
     mean = App(
@@ -44,7 +44,7 @@ def test_live_ingest_through_plan_changes_stays_coherent_across_restart(tmp_path
         "total",
         {"input": Selection.outputs_of(mean, "mean", combine=True)},
         {"total": Output()},
-        Native.sum("total"),
+        PythonFunction.from_file(app_calculations.__file__, "total"),
     )
     old = output_reference(mean.name, "urn:test:old", "mean")
     new = output_reference(mean.name, "urn:test:new", "mean")

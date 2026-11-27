@@ -5,44 +5,44 @@ title: App deployment and recovery
 Deploying an app can mean recomputing months of history. This guide shows how to see what a
 deployment will do before you make it, how to check on an app afterwards, how
 to change its code, and how to recover when a calculation fails. The examples
-continue from [calculating a derived stream](write-soft-sensors.md), on the
+continue from [Write a soft sensor](write-soft-sensors.md#choose-inputs-and-windows), on the
 sine-wave server.
 
 ## Deployment preview
 
-Before switching `wave-spread` from ten-second buckets to a rolling window, ask
-what the change would do:
+Before switching `wave-mean` from fixed buckets to a rolling window, preview
+how much history the change would recompute.
 
 ```python
-preview = client.deploy_app(app, dry_run=True)
-preview["app"]["apps"]
-```
-```text
-{'wave-spread': {'operators': 1, 'groups': 23, 'input_rows': 78,
-                 'cleared_rows': 5, 'changes': {'redefined': 1},
-                 'downstream': False}}
+from dataclasses import replace
+
+rolling_mean = replace(
+    mean,
+    window=aq.Rolling(lookback=pd.Timedelta("4s"), step=pd.Timedelta("2s")),
+)
+preview = client.deploy_app(rolling_mean, dry_run=True)["app"]
+print(preview["instances"])
 ```
 
-Nothing has changed yet. The preview says the app would be *redefined*, which
-means its results are thrown away and recomputed: 23 windows to calculate, from
-78 stored readings, replacing the 5 bucket results it has now. No other app
-reads its output, so nothing `downstream` is affected. On a real plant, the
-same numbers tell a change to one filter's settings apart from a rebuild of a
-year of history.
+The preview lists the affected app groups and estimates the input rows
+and stored results involved. If you deployed `high-mean`, the preview flags
+that its inputs may change. The counts depend on how much data the driver has
+produced. See the [deployment reference](../reference/apps/deploying.md)
+for the preview fields.
 
 The preview does not run your function, so it cannot tell you whether the
 function works. Try the function on a small frame first, as the
 [calculation guide](write-soft-sensors.md#python-functions) does.
 
-Check `preview["app"]["warnings"]` as well. A selection that matches no streams
+Check `preview["warnings"]` as well. A selection that matches no streams
 is allowed, because the driver may not have registered them yet, but more often
 it means the query is narrower than you meant.
 
 ## Deployment and status
 
 ```python
-client.deploy_app(app)
-state = client.inspect_app("wave-spread")["app"]
+client.deploy_app(rolling_mean)
+state = client.inspect_app("wave-mean")["app"]
 state["status"], state["error"], state["warnings"]
 ```
 ```text
@@ -79,11 +79,8 @@ Here is a function with a bug, saved as `ratio.py`. It divides by each
 reading, and the sine wave passes through zero:
 
 ```python
-from acquirium.functions import emit
-
-
 def ratio(frame, context):
-    return {"ratio": emit(context, 1 / frame["value"][0])}
+    return {"ratio": 1 / frame["value"][0]}
 ```
 
 Deploy it:
@@ -111,9 +108,9 @@ print(client.inspect_app("wave-ratio")["app"]["error"])
 ```text
 execution failed: Python function failed: Traceback (most recent call last):
   ...
-  File "/tmp/.tmpVdTlNB/function.py", line 5, in ratio
-    return {"ratio": emit(context, 1 / frame["value"][0])}
-                                   ~~^~~~~~~~~~~~~~~~~~~
+  File "/tmp/.tmpVdTlNB/function.py", line 2, in ratio
+    return {"ratio": 1 / frame["value"][0]}
+                     ~~^~~~~~~~~~~~~~~~~~~
 ZeroDivisionError: float division by zero
 ```
 
@@ -129,14 +126,11 @@ current.
 To recover, edit `ratio.py`:
 
 ```python
-from acquirium.functions import emit
-
-
 def ratio(frame, context):
     value = frame["value"][0]
     if abs(value) < 1e-9:
-        return {"ratio": emit(context, None)}
-    return {"ratio": emit(context, 1 / value)}
+        return {"ratio": None}
+    return {"ratio": 1 / value}
 ```
 
 Rebuild the declaration and deploy it:

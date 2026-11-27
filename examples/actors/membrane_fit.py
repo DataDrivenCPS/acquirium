@@ -6,7 +6,6 @@ import pandas as pd
 import polars as pl
 
 import acquirium as aq
-from acquirium.functions import emit, empty
 
 
 class MembraneFit:
@@ -58,8 +57,8 @@ def predict(frame, context):
     pressure = frame.filter(pl.col("input") == "pressure")["value"].drop_nulls()
     permeability = frame.filter(pl.col("input") == "permeability")["value"].drop_nulls()
     if pressure.is_empty() or permeability.is_empty():
-        return {"flux": empty()}
-    return {"flux": emit(context, pressure.item() * permeability.item())}
+        return {"flux": None}
+    return {"flux": pressure.item() * permeability.item()}
 
 
 prediction = aq.App(

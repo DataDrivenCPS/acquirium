@@ -370,7 +370,7 @@ This is the end of the tutorial that shows the core of Acquirium.
 From here, there are three advanced features of Acquirium:
 
 - [Writing a driver](advanced/writing-a-driver.md): set up a driver to continuously insert data.
-- [Your first app](advanced/first-app.md): create soft sensors or compute derived streams from the existing ones.
+- [Build your first soft sensor](advanced/first-app.md) with a live threshold detector, or [derive a power stream for each pump in this plant](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/advanced_apps.py).
 - [Running experiments](advanced/experiments.md): record the inputs and results of simulations and tests in Acquirium.
 
 Every method used in this tutorial is described in the [reference](../reference/_index.md).

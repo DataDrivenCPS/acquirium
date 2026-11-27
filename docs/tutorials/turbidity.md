@@ -1,5 +1,5 @@
 ---
-title: Turbidity alarm pipeline
+title: Build a turbidity alarm pipeline
 ---
 
 Turbidity measures how cloudy water is, in nephelometric turbidity units (NTU).
@@ -9,6 +9,9 @@ values stay above a limit. Each arrow shows which stream the next app reads.
 ```text
 Analyser readings → Clean turbidity → Sustained alarm
 ```
+
+For a single calculation with a few sample readings, start with
+[Build your first soft sensor](advanced/first-app.md).
 
 From the repository root, run the example on a temporary server.
 
@@ -60,8 +63,8 @@ gaps between valid minutes. The app publishes the result for its output minute.
 
 The alarm receives a Polars dataframe (`pl.DataFrame`) of cleaned readings.
 `context["output_time"]` is the minute being checked. For Filter 3 the alarm
-requires 15 consecutive one-minute values above 0.5 NTU. `emit` stamps the
-result at the output time. A `1` means the alarm is on and a `0` means it is off.
+requires 15 consecutive one-minute values above 0.5 NTU. Acquirium stamps the
+returned number at the output time. A `1` means the alarm is on and a `0` means it is off.
 
 ```{literalinclude} ../../examples/turbidity/calculations.py
 :language: python
@@ -114,3 +117,5 @@ the five alarm minutes, while the current alarm shows zero.
 For an alarm that checks on a wall-clock schedule, see the [standalone timer
 actor](../explanation/soft-sensor-actors.md#standalone-turbidity-alarm). To
 send notifications from stored alarm changes, see the [change feed guide](../how-to/consume-streaming-changes.md).
+To choose windows, outputs, and settings for your own pipeline, see
+[Write a soft sensor](../how-to/write-soft-sensors.md).

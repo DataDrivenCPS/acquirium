@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 
@@ -86,64 +85,4 @@ class PythonFunction:
             spec["batch"] = True
         if self.sequential:
             spec["sequential"] = True
-        return spec
-
-
-@dataclass(frozen=True)
-class Native:
-    """Built-in Acquirium calculations executed by the Python workers."""
-
-    kind: str
-    port: str
-    above: Any = None
-    per_stream: bool = False
-    per: timedelta | None = None
-    reset: FixedBucket | None = None
-    max_gap: timedelta | None = None
-
-    @classmethod
-    def mean(cls, port, *, per_stream=False):
-        return cls("mean", port, per_stream=per_stream)
-
-    @classmethod
-    def sum(cls, port):
-        return cls("sum", port)
-
-    @classmethod
-    def max(cls, port):
-        return cls("max", port)
-
-    @classmethod
-    def min(cls, port):
-        return cls("min", port)
-
-    @classmethod
-    def count(cls, port):
-        return cls("count", port)
-
-    @classmethod
-    def threshold(cls, port, above):
-        return cls("threshold", port, above=above)
-
-    @classmethod
-    def cumulative_sum(cls, port, *, reset=None):
-        return cls("cumulative_sum", port, reset=reset)
-
-    @classmethod
-    def integral(cls, port, *, per, reset=None, max_gap=None):
-        return cls("integral", port, per=per, reset=reset, max_gap=max_gap)
-
-    def to_dict(self):
-        spec = {"kind": self.kind, "port": self.port}
-        if self.kind == "mean":
-            spec["per_stream"] = self.per_stream
-        if self.kind == "threshold":
-            spec["above"] = self.above
-        if self.kind == "integral":
-            spec["per_ns"] = duration_ns(self.per, "per")
-        if self.reset is not None:
-            reset = self.reset.to_dict()
-            spec["reset"] = {"width_ns": reset["width_ns"], "origin_ns": reset["origin_ns"]}
-        if self.max_gap is not None:
-            spec["max_gap_ns"] = duration_ns(self.max_gap, "max_gap")
         return spec

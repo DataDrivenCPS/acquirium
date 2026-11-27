@@ -20,8 +20,7 @@ from threading import RLock
 from typing import Any, Mapping, Sequence
 from typing import Literal as TypeLiteral
 
-from acquirium.app_spec import FixedBucket, Native, Pointwise, PythonFunction, Rolling, duration, duration_ns
-from acquirium.functions import WINDOW_BUILTINS
+from acquirium.app_spec import FixedBucket, Pointwise, PythonFunction, Rolling, duration, duration_ns
 from escapement import Receipt
 from rdflib import Graph, Literal, RDF, RDFS, URIRef
 
@@ -176,38 +175,6 @@ def _selection_dict(selection):
 
 
 @dataclass(frozen=True)
-class Parameter:
-    """A native function argument taken from each group's ``parameters``,
-    e.g. ``aq.Native.threshold("alarm", above=aq.Parameter("limit"))``."""
-
-    name: str
-
-
-def _function_dict(function):
-    if isinstance(function, (PythonFunction, Native)):
-        function = function.to_dict()
-    return {
-        key: {"parameter": value.name} if isinstance(value, Parameter) else value
-        for key, value in dict(function).items()
-    }
-
-
-def _bind_parameters(function, values, app, group):
-    """The function with each ``{"parameter": name}`` argument replaced by the group's value."""
-    bound = {}
-    for key, value in function.items():
-        if isinstance(value, Mapping) and set(value) == {"parameter"}:
-            if value["parameter"] not in values:
-                raise ValueError(
-                    f"app {app!r} group {group} has no parameter {value['parameter']!r} "
-                    f"for its function's {key!r}"
-                )
-            value = values[value["parameter"]]
-        bound[key] = value
-    return bound
-
-
-@dataclass(frozen=True)
 class Output:
     unit: str | None = None
     quantity_kind: str | None = None
@@ -255,7 +222,7 @@ class App:
     # feed the same input. The function's frame labels rows with the name.
     inputs: Mapping[str, Selection | Sequence[Selection]]
     outputs: Mapping[str, Output | ReplacementOutput]
-    function: PythonFunction | Native | Mapping[str, Any]
+    function: PythonFunction | Mapping[str, Any]
     window: Pointwise | FixedBucket | Rolling = field(default_factory=Pointwise)
     freshness: TypeLiteral["synchronous", "asynchronous"] = "synchronous"
 
@@ -272,7 +239,11 @@ class App:
             raise ValueError("only pointwise, fixed-bucket and rolling windows are supported")
         if self.freshness not in ("synchronous", "asynchronous"):
             raise ValueError("app freshness must be 'synchronous' or 'asynchronous'")
-        function = _function_dict(self.function)
+        function = self.function.to_dict() if isinstance(self.function, PythonFunction) else dict(self.function)
+        if function.get("kind") != "python":
+            raise ValueError(f"app {self.name!r} requires a PythonFunction. Redeploy built-in apps before upgrading.")
+        if function.get("batch") and function.get("sequential"):
+            raise ValueError("a Python function can be batch or sequential")
         items = _input_items(self.inputs)
         if any(not key for key in self.outputs):
             raise ValueError("output port names must be nonempty")
@@ -315,18 +286,18 @@ class App:
                     _json(dict(values))
                 except (TypeError, ValueError) as error:
                     raise ValueError("parameter values must be JSON") from error
-        if function.get("kind") == "python":
-            sizes = [value for key, value in self.window.to_dict().items() if key.endswith("_ns")]
-            sizes.extend(duration_ns(selection.as_of, "as_of") for _, selection in items
-                         if selection.as_of is not None)
-            if any(type(value) is int and value % 1000 for value in sizes):
-                raise ValueError("Python soft sensor windows and as-of ages must have microsecond precision")
+        window = self.window.to_dict()
+        sizes = [value for key, value in window.items() if key.endswith("_ns")]
+        sizes.extend(duration_ns(selection.as_of, "as_of") for _, selection in items
+                     if selection.as_of is not None)
+        if any(value % 1000 for value in sizes):
+            raise ValueError("Python soft sensor windows and as-of ages must have microsecond precision")
         data = dict(
             name=self.name,
             inputs=[{"input": name, **_selection_dict(selection)} for name, selection in items],
             outputs=outputs,
             function=function,
-            window=self.window.to_dict(),
+            window=window,
         )
         # Keep existing synchronous declarations and plans in their stored form.
         if self.freshness != "synchronous":
@@ -467,18 +438,6 @@ def _window_and_roles(declaration):
         }
         roles[item["input"]] = {"reach": reach, "driving": age is None, "reads": "bound"}
     return window, roles
-
-
-_RATE_PORT = "__acquirium_rate"
-
-
-def _ports(declaration):
-    ports = set(declaration["outputs"])
-    if declaration["function"]["kind"] == "integral":
-        if _RATE_PORT in ports:
-            raise ValueError(f"output port {_RATE_PORT!r} is reserved for integration")
-        ports.add(_RATE_PORT)
-    return sorted(ports)
 
 
 def _plan_id(plan):
@@ -638,8 +597,6 @@ class Apps:
                     raise ValueError(
                         f"app {name!r} parameter 'group' is reserved for the group key {group!r}"
                     )
-                # Refuse a group missing a parameter the function names.
-                _bind_parameters(declaration["function"], group_parameters, name, group)
                 plan["instances"].append({
                     "template": name, "key": group,
                     "outputs": {port: output_reference(name, group, port) for port in sorted(app.outputs)},
@@ -687,8 +644,6 @@ class Apps:
             for port, spec in apps[name].outputs.items():
                 ref = instance["outputs"][port]
                 _output_metadata(metadata[name], name, group, port, ref, spec, resolved.get(ref))
-            if declarations[name]["function"]["kind"] == "integral":
-                instance["outputs"][_RATE_PORT] = output_reference(name, group, _RATE_PORT)
         report = {
             name: {
                 "matches": matches[name],
@@ -774,11 +729,8 @@ class Apps:
 
     def _function(self, declaration, previous):
         function = declaration["function"]
-        kind = function["kind"]
-        ports = _ports(declaration)
+        ports = sorted(declaration["outputs"])
         batch = function.get("batch", False)
-        if batch and function.get("sequential"):
-            raise ValueError("a Python function can be batch or sequential")
         replaced = sorted(replacements.claimed_inputs(declaration))
         window = declaration["window"]
         if previous is not None:
@@ -788,41 +740,20 @@ class Apps:
                     and all(old[field] == declaration[field] for field in ("outputs", "window"))):
                 return previous["definition"]["function"], []
 
-        artifacts = []
-        if kind == "python":
-            source = self._source(function)
-            artifacts.append(("", source))
-            adapter = "_epoch_batch_function" if batch else "_epoch_function"
-            code = (
-                f"from acquirium.functions import {adapter} as __acquirium_adapt\n"
-                f"__file__ = {function['path']!r}\n"
-                f"exec(compile({source!r}, __file__, 'exec'), globals())\n"
-                f"__acquirium_calculate = __acquirium_adapt(globals()[{function['entrypoint']!r}], "
-                f"{window!r}, {ports!r}, {replaced!r})\n"
-            )
-        else:
-            if kind not in WINDOW_BUILTINS | {"integral", "cumulative_sum"}:
-                raise ValueError(f"unknown calculation {kind!r}")
-            if function.get("port") not in declaration["outputs"]:
-                raise ValueError("the built-in calculation must name a declared output port")
-            if kind == "integral" and (
-                window["kind"] != "pointwise" or type(function.get("per_ns")) is not int
-                or function["per_ns"] <= 0
-            ):
-                raise ValueError("integral requires a pointwise window and a positive per_ns")
-            batch = kind in WINDOW_BUILTINS
-            adapter = "_builtin_batch_function" if batch else "_builtin_function"
-            code = (
-                f"from acquirium.functions import {adapter}\n"
-                f"__acquirium_calculate = {adapter}({function!r}, {ports!r})\n"
-            )
-        code = code.encode()
+        source = self._source(function)
+        adapter = "_epoch_batch_function" if batch else "_epoch_function"
+        code = (
+            f"from acquirium.functions import {adapter} as __acquirium_adapt\n"
+            f"__file__ = {function['path']!r}\n"
+            f"exec(compile({source!r}, __file__, 'exec'), globals())\n"
+            f"__acquirium_calculate = __acquirium_adapt(globals()[{function['entrypoint']!r}], "
+            f"{window!r}, {ports!r}, {replaced!r})\n"
+        ).encode()
         digest = sha256(code).hexdigest()
-        artifacts.append(("aq_app_", code))
         return {
             "module": f"aq_app_{digest}", "name": "__acquirium_calculate",
             "digest": digest, "mode": "vectorized" if batch else "per_window",
-        }, artifacts
+        }, [("", source), ("aq_app_", code)]
 
     def _candidate(self, declarations):
         if not declarations:
@@ -851,9 +782,8 @@ class Apps:
             function, artifacts = self._function(declaration, old.get(name))
             modules.extend(artifacts)
             window, roles = _window_and_roles(declaration)
-            ports = _ports(declaration)
-            spec = declaration["function"]
-            if spec.get("sequential") or spec["kind"] in {"integral", "cumulative_sum"}:
+            ports = sorted(declaration["outputs"])
+            if declaration["function"].get("sequential"):
                 previous_role = "__acquirium_previous"
                 while previous_role in roles:
                     previous_role += "_"
@@ -1078,7 +1008,7 @@ class Apps:
                 operator = {
                     "id": _operator_id(name, group), "inputs": inputs.get((name, group), []),
                     "outputs": outputs, "parameters": instance["parameters"],
-                    "function": _bind_parameters(definition["function"], instance["parameters"], name, group),
+                    "function": definition["function"],
                     "window": definition["window"],
                 }
                 if as_of:

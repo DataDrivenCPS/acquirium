@@ -102,7 +102,7 @@ def declarations(*, threshold=27.0, module=None):
             },
             outputs={"alarm": output},
             # Passes the hottest temperature through while it is above the threshold.
-            function=aq.Native.threshold("alarm", above=aq.Parameter("threshold")),
+            function=aq.PythonFunction.from_file(module, "high_temperature"),
         ),
     ]
 

@@ -3,8 +3,6 @@
 import pandas as pd
 import polars as pl
 
-from acquirium.functions import emit
-
 
 def clean(frame: pd.DataFrame, context):
     """One clean turbidity value per minute, from the raw readings around it."""
@@ -30,10 +28,10 @@ def alarm(frame: pl.DataFrame, context):
     t = pd.Timestamp(context["output_time"])
     # Report only at minutes that have a clean value.
     if frame.filter(pl.col("time") == t).is_empty():
-        return {"alarm": emit(context, None)}
+        return {"alarm": None}
 
     limit = context["parameters"]["limit_ntu"]
     minutes = context["parameters"]["sustained_minutes"]
     recent = frame.filter(pl.col("time") > t + pd.Timedelta(f"-{minutes}m"))
     sustained = recent.height == minutes and recent["value"].min() > limit
-    return {"alarm": emit(context, 1 if sustained else 0)}
+    return {"alarm": 1 if sustained else 0}

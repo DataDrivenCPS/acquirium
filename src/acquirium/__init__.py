@@ -2,8 +2,8 @@
 # acquirium.functions skip the client stack (~0.25 s per cold worker).
 from acquirium.Client.acquirium import Acquirium
 from acquirium.runtime import init, shutdown
-from acquirium.apps import App, Selection, Output, ReplacementOutput, Parameter
-from acquirium.app_spec import FixedBucket, Native, Pointwise, PythonFunction, Rolling
+from acquirium.apps import App, Selection, Output, ReplacementOutput
+from acquirium.app_spec import FixedBucket, Pointwise, PythonFunction, Rolling
 from acquirium.debug import console
 from acquirium.Client.streams import Stream, StreamInterval
 from acquirium.actors import Actor, GraphChange, InputChange, TimerFired, Transition
