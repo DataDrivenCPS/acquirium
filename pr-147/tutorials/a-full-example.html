@@ -66,7 +66,7 @@
     <link rel="icon" href="../_static/logo-notext.png"/>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Acquirium at a glance" href="acquirium-at-a-glance.html" />
+    <link rel="next" title="Build your first soft sensor" href="advanced/first-app.html" />
     <link rel="prev" title="4 - Inserting a Plant Model" href="inserting-plant-model.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
@@ -230,11 +230,11 @@
 <li class="toctree-l2"><a class="reference internal" href="inserting-metadata.html">3 - Inserting Metadata</a></li>
 <li class="toctree-l2"><a class="reference internal" href="inserting-plant-model.html">4 - Inserting a Plant Model</a></li>
 <li class="toctree-l2 current active"><a class="current reference internal" href="#">5 - A Full Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="advanced/first-app.html">Build your first soft sensor</a></li>
+<li class="toctree-l2"><a class="reference internal" href="turbidity.html">Build a turbidity alarm pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="acquirium-at-a-glance.html">Acquirium at a glance</a></li>
-<li class="toctree-l2"><a class="reference internal" href="turbidity.html">Turbidity alarm pipeline</a></li>
 <li class="toctree-l2 has-children"><a class="reference internal" href="advanced/_index.html">Advanced topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l3"><a class="reference internal" href="advanced/writing-a-driver.html">Writing a driver</a></li>
-<li class="toctree-l3"><a class="reference internal" href="advanced/first-app.html">Declaring and deploying apps</a></li>
 <li class="toctree-l3"><a class="reference internal" href="advanced/experiments.html">Running experiments</a></li>
 </ul>
 </details></li>
@@ -245,11 +245,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../how-to/debug-an-empty-query.html">Debug an empty or unexpected query result</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../how-to/query-cookbook.html">Query cookbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../how-to/access-a-shared-server.html">Access data on a shared server</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../how-to/write-soft-sensors.html">Soft sensor calculations</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../how-to/chain-cleaning-apps.html">Data cleaning with multiple apps</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../how-to/clean-data-with-multiple-outputs.html">Data cleaning with multiple outputs</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../how-to/parameterize-soft-sensors.html">Soft sensor parameters</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../how-to/soft-sensor-examples.html">Soft sensor examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/write-soft-sensors.html">Write a soft sensor</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../how-to/consume-streaming-changes.html">Streaming change feed</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../how-to/check-deploy-apps.html">App deployment and recovery</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../how-to/record-a-whole-model.html">Record a whole model</a></li>
@@ -889,7 +885,7 @@ With <code class="docutils literal notranslate"><span class="pre">direction=</sp
 <p>From here, there are three advanced features of Acquirium:</p>
 <ul class="simple">
 <li><p><a class="reference internal" href="advanced/writing-a-driver.html"><span class="std std-doc">Writing a driver</span></a>: set up a driver to continuously insert data.</p></li>
-<li><p><a class="reference internal" href="advanced/first-app.html"><span class="std std-doc">Your first app</span></a>: create soft sensors or compute derived streams from the existing ones.</p></li>
+<li><p><a class="reference internal" href="advanced/first-app.html"><span class="std std-doc">Build your first soft sensor</span></a> with a live threshold detector, or <a class="reference external" href="https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/advanced_apps.py" rel="noreferer noopener" target="_blank">derive a power stream for each pump in this plant</a>.</p></li>
 <li><p><a class="reference internal" href="advanced/experiments.html"><span class="std std-doc">Running experiments</span></a>: record the inputs and results of simulations and tests in Acquirium.</p></li>
 </ul>
 <p>Every method used in this tutorial is described in the <a class="reference internal" href="../reference/_index.html"><span class="std std-doc">reference</span></a>.</p>
@@ -936,11 +932,11 @@ With <code class="docutils literal notranslate"><span class="pre">direction=</sp
       </div>
     </a>
     <a class="right-next"
-       href="acquirium-at-a-glance.html"
+       href="advanced/first-app.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Acquirium at a glance</p>
+        <p class="prev-next-title">Build your first soft sensor</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>

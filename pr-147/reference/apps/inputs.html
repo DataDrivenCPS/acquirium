@@ -230,11 +230,11 @@
 <li class="toctree-l2"><a class="reference internal" href="../../tutorials/inserting-metadata.html">3 - Inserting Metadata</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../tutorials/inserting-plant-model.html">4 - Inserting a Plant Model</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../tutorials/a-full-example.html">5 - A Full Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/advanced/first-app.html">Build your first soft sensor</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/turbidity.html">Build a turbidity alarm pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../tutorials/acquirium-at-a-glance.html">Acquirium at a glance</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../tutorials/turbidity.html">Turbidity alarm pipeline</a></li>
 <li class="toctree-l2 has-children"><a class="reference internal" href="../../tutorials/advanced/_index.html">Advanced topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/writing-a-driver.html">Writing a driver</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/first-app.html">Declaring and deploying apps</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/experiments.html">Running experiments</a></li>
 </ul>
 </details></li>
@@ -245,11 +245,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/debug-an-empty-query.html">Debug an empty or unexpected query result</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/query-cookbook.html">Query cookbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/access-a-shared-server.html">Access data on a shared server</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../how-to/write-soft-sensors.html">Soft sensor calculations</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../how-to/chain-cleaning-apps.html">Data cleaning with multiple apps</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../how-to/clean-data-with-multiple-outputs.html">Data cleaning with multiple outputs</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../how-to/parameterize-soft-sensors.html">Soft sensor parameters</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../how-to/soft-sensor-examples.html">Soft sensor examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/write-soft-sensors.html">Write a soft sensor</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/consume-streaming-changes.html">Streaming change feed</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/check-deploy-apps.html">App deployment and recovery</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/record-a-whole-model.html">Record a whole model</a></li>
@@ -571,26 +567,32 @@ a <code class="docutils literal notranslate"><span class="pre">gain</span></code
     <span class="o">.</span><span class="n">context</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"probe"</span><span class="p">)</span>
 <span class="p">)</span>
 
-<span class="n">calibration</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">App</span><span class="p">(</span>
+</pre></div>
+</div>
+<p>Save this as <code class="docutils literal notranslate"><span class="pre">gain_average.py</span></code> to publish one gain per pointwise window:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">gain_average</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">"gain"</span><span class="p">:</span> <span class="n">frame</span><span class="p">[</span><span class="s2">"value"</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()}</span>
+</pre></div>
+</div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">calibration</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">App</span><span class="p">(</span>
     <span class="n">name</span><span class="o">=</span><span class="s2">"calibration"</span><span class="p">,</span>
     <span class="n">inputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"gain"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Selection</span><span class="o">.</span><span class="n">from_query</span><span class="p">(</span><span class="n">gains</span><span class="p">,</span> <span class="n">measurement</span><span class="o">=</span><span class="s2">"gain"</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="s2">"probe"</span><span class="p">)},</span>
     <span class="n">outputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"gain"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Output</span><span class="p">()},</span>
-    <span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">Native</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="s2">"gain"</span><span class="p">),</span>
+    <span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">PythonFunction</span><span class="o">.</span><span class="n">from_file</span><span class="p">(</span><span class="s2">"gain_average.py"</span><span class="p">,</span> <span class="s2">"gain_average"</span><span class="p">),</span>
 <span class="p">)</span>
 </pre></div>
 </div>
 <p>Save the calculation below as <code class="docutils literal notranslate"><span class="pre">calibrate.py</span></code>. The input frame labels each
-row with its input name. <code class="docutils literal notranslate"><span class="pre">emit</span></code> returns a result at the current output time.</p>
+row with its input name. Acquirium timestamps the returned scalar at the
+current output time.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">polars</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pl</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">acquirium.functions</span><span class="w"> </span><span class="kn">import</span> <span class="n">emit</span>
-
 
 <span class="k">def</span><span class="w"> </span><span class="nf">calibrate</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
     <span class="n">reading</span> <span class="o">=</span> <span class="n">frame</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">"input"</span><span class="p">)</span> <span class="o">==</span> <span class="s2">"reading"</span><span class="p">)[</span><span class="s2">"value"</span><span class="p">]</span><span class="o">.</span><span class="n">drop_nulls</span><span class="p">()</span>
     <span class="n">gain</span> <span class="o">=</span> <span class="n">frame</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">"input"</span><span class="p">)</span> <span class="o">==</span> <span class="s2">"gain"</span><span class="p">)[</span><span class="s2">"value"</span><span class="p">]</span><span class="o">.</span><span class="n">drop_nulls</span><span class="p">()</span>
     <span class="k">if</span> <span class="n">reading</span><span class="o">.</span><span class="n">is_empty</span><span class="p">()</span> <span class="ow">or</span> <span class="n">gain</span><span class="o">.</span><span class="n">is_empty</span><span class="p">():</span>
-        <span class="k">return</span> <span class="p">{</span><span class="s2">"corrected"</span><span class="p">:</span> <span class="n">emit</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="kc">None</span><span class="p">)}</span>
-    <span class="k">return</span> <span class="p">{</span><span class="s2">"corrected"</span><span class="p">:</span> <span class="n">emit</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="n">reading</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="o">*</span> <span class="n">gain</span><span class="o">.</span><span class="n">item</span><span class="p">())}</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">"corrected"</span><span class="p">:</span> <span class="kc">None</span><span class="p">}</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">"corrected"</span><span class="p">:</span> <span class="n">reading</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="o">*</span> <span class="n">gain</span><span class="o">.</span><span class="n">item</span><span class="p">()}</span>
 </pre></div>
 </div>
 <p>The <code class="docutils literal notranslate"><span class="pre">calibrated</span></code> app runs at each raw reading’s timestamp. It binds the

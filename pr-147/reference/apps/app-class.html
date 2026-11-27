@@ -230,11 +230,11 @@
 <li class="toctree-l2"><a class="reference internal" href="../../tutorials/inserting-metadata.html">3 - Inserting Metadata</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../tutorials/inserting-plant-model.html">4 - Inserting a Plant Model</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../tutorials/a-full-example.html">5 - A Full Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/advanced/first-app.html">Build your first soft sensor</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/turbidity.html">Build a turbidity alarm pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../tutorials/acquirium-at-a-glance.html">Acquirium at a glance</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../tutorials/turbidity.html">Turbidity alarm pipeline</a></li>
 <li class="toctree-l2 has-children"><a class="reference internal" href="../../tutorials/advanced/_index.html">Advanced topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/writing-a-driver.html">Writing a driver</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/first-app.html">Declaring and deploying apps</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/experiments.html">Running experiments</a></li>
 </ul>
 </details></li>
@@ -245,11 +245,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/debug-an-empty-query.html">Debug an empty or unexpected query result</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/query-cookbook.html">Query cookbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/access-a-shared-server.html">Access data on a shared server</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../how-to/write-soft-sensors.html">Soft sensor calculations</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../how-to/chain-cleaning-apps.html">Data cleaning with multiple apps</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../how-to/clean-data-with-multiple-outputs.html">Data cleaning with multiple outputs</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../how-to/parameterize-soft-sensors.html">Soft sensor parameters</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../how-to/soft-sensor-examples.html">Soft sensor examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/write-soft-sensors.html">Write a soft sensor</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/consume-streaming-changes.html">Streaming change feed</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/check-deploy-apps.html">App deployment and recovery</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/record-a-whole-model.html">Record a whole model</a></li>
@@ -531,10 +527,6 @@
             <nav aria-label="Page">
                 <ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#windows">Windows</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#built-in-functions">Built-in functions</a><ul class="nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#totals-and-integrals">Totals and integrals</a></li>
-</ul>
-</li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#python-functions">Python functions</a><ul class="nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#dataframe-type">Dataframe type</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#inputs-and-outputs">Inputs and outputs</a></li>
@@ -574,35 +566,6 @@ both endpoints. A correction repairs every window that reads the changed time.
 Empty spans produce no results. Overlapping windows reread their shared history.</p>
 <p>Apps do not choose arbitrary output timestamps or run on a wall-clock schedule.</p>
 </section>
-<section id="built-in-functions">
-<h2>Built-in functions<a class="headerlink" href="#built-in-functions" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">aq.Native.mean(port,</span> <span class="pre">per_stream=False)</span></code>, <code class="docutils literal notranslate"><span class="pre">sum</span></code>, <code class="docutils literal notranslate"><span class="pre">min</span></code>, <code class="docutils literal notranslate"><span class="pre">max</span></code>, and <code class="docutils literal notranslate"><span class="pre">count</span></code> reduce
-all input rows in each window to one numeric result. An empty window produces
-no row. The default mean weights observations equally.</p>
-<p><code class="docutils literal notranslate"><span class="pre">aq.Native.threshold(port,</span> <span class="pre">above)</span></code> passes through a window’s single input value
-when it is greater than <code class="docutils literal notranslate"><span class="pre">above</span></code>; otherwise it produces no row. It does not emit
-zeros and ones. Acquirium supplies these calculations to the Python workers.</p>
-<p>Use <code class="docutils literal notranslate"><span class="pre">aq.Parameter(&quot;limit&quot;)</span></code> in place of a function argument to resolve it from
-each group’s parameters, for example:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">Native</span><span class="o">.</span><span class="n">threshold</span><span class="p">(</span><span class="s2">"alarm"</span><span class="p">,</span> <span class="n">above</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="s2">"limit"</span><span class="p">))</span>
-</pre></div>
-</div>
-<p>Deployment fails when a group lacks the required parameter. For a complete
-average-and-threshold example, see <a class="reference internal" href="../../how-to/write-soft-sensors.html"><span class="std std-doc">Soft sensor calculations</span></a>.</p>
-<section id="totals-and-integrals">
-<h3>Totals and integrals<a class="headerlink" href="#totals-and-integrals" title="Link to this heading">#</a></h3>
-<p><code class="docutils literal notranslate"><span class="pre">aq.Native.cumulative_sum(port,</span> <span class="pre">reset=None)</span></code> adds each window’s sum to the
-previous total. <code class="docutils literal notranslate"><span class="pre">aq.Native.integral(port,</span> <span class="pre">per,</span> <span class="pre">reset=None,</span> <span class="pre">max_gap=None)</span></code>
-integrates one reading per pointwise timestamp. For a flow measured per hour,
-pass <code class="docutils literal notranslate"><span class="pre">per=pd.Timedelta(&quot;1h&quot;)</span></code> to obtain a volume.</p>
-<p><code class="docutils literal notranslate"><span class="pre">reset=aq.FixedBucket(width)</span></code> restarts a total at each bucket boundary.
-Corrections repair later totals until the results stop changing. Every repaired
-window counts toward the engine’s limits per instance.</p>
-<p>An integral assigns a step across a boundary to the period in which it ends.
-A step longer than <code class="docutils literal notranslate"><span class="pre">max_gap</span></code> adds nothing. Integrals require the default
-<code class="docutils literal notranslate"><span class="pre">Pointwise()</span></code> window and one reading per timestamp.</p>
-</section>
-</section>
 <section id="python-functions">
 <h2>Python functions<a class="headerlink" href="#python-functions" title="Link to this heading">#</a></h2>
 <p><code class="docutils literal notranslate"><span class="pre">PythonFunction.from_file(path,</span> <span class="pre">entrypoint,</span> <span class="pre">batch=False,</span> <span class="pre">sequential=False)</span></code> pins
@@ -628,9 +591,10 @@ and timestamp columns retain Arrow storage and nulls. Numeric nulls appear as
 timestamps remain Python datetimes. pandas operations may allocate new buffers
 or convert individual columns; Arrow-backed input does not guarantee that
 every pandas operation is zero-copy.</p>
-<p>During a calculation, <code class="docutils literal notranslate"><span class="pre">emit</span></code>, <code class="docutils literal notranslate"><span class="pre">empty</span></code>, and <code class="docutils literal notranslate"><span class="pre">previous_outputs</span></code>
-use the selected library. pandas missing scalar values passed to <code class="docutils literal notranslate"><span class="pre">emit</span></code> produce
-an empty result. <code class="docutils literal notranslate"><span class="pre">emit_windows</span></code> accepts either library and returns that same
+<p>During a calculation, <code class="docutils literal notranslate"><span class="pre">empty</span></code> and <code class="docutils literal notranslate"><span class="pre">previous_outputs</span></code> use the selected
+library. A returned pandas missing scalar, such as <code class="docutils literal notranslate"><span class="pre">pd.NA</span></code>, clears the port
+like <code class="docutils literal notranslate"><span class="pre">None</span></code>.
+<code class="docutils literal notranslate"><span class="pre">emit_windows</span></code> accepts either library and returns that same
 kind of dataframe. Outside a calculation, helpers default to Polars.</p>
 <p>An app may return pandas or Polars dataframes, including different types on
 different output ports. Return timestamps in a <code class="docutils literal notranslate"><span class="pre">time</span></code> column; use
@@ -652,8 +616,8 @@ timestamp; <code class="docutils literal notranslate"><span class="pre">window_s
 holds the group key and configured parameter values, and <code class="docutils literal notranslate"><span class="pre">operator</span></code> holds its declaration,
 including <code class="docutils literal notranslate"><span class="pre">operator[&quot;window&quot;]</span></code>.</p>
 <p><code class="docutils literal notranslate"><span class="pre">context[&quot;operator&quot;][&quot;outputs&quot;]</span></code> maps each declared output name to its full
-stream URI for the current group. The function returns dataframes under those
-output names; Acquirium routes them to the corresponding URIs.</p>
+stream URI for the current group. Acquirium routes the function’s results to
+those streams by output name.</p>
 <p>Context timestamps are timezone-aware Python datetimes. Function timestamps
 and window declarations must align to microseconds; finer values are rejected
 without rounding. All context window bounds are half-open: start included,
@@ -667,14 +631,21 @@ datetimes, with <code class="docutils literal notranslate"><span class="pre">Non
 retain the engine’s integer representation.</p>
 <p>For <code class="docutils literal notranslate"><span class="pre">Pointwise()</span></code>, <code class="docutils literal notranslate"><span class="pre">output_time</span></code> is the input timestamp. For <code class="docutils literal notranslate"><span class="pre">Rolling()</span></code>, it is
 the output’s grid point, and the frame can contain samples before or after
-that point, as allowed by the declared window. <code class="docutils literal notranslate"><span class="pre">emit(context,</span> <span class="pre">value)</span></code> uses
-<code class="docutils literal notranslate"><span class="pre">output_time</span></code> as the result’s timestamp.</p>
+that point, as allowed by the declared window.</p>
 <p>Context also lists the declared inputs, including those with no readings. Each
 input’s <code class="docutils literal notranslate"><span class="pre">span_start</span></code> and <code class="docutils literal notranslate"><span class="pre">span_end</span></code> describe the part of the window it
 covers, as a half-open span.</p>
-<p>Return a mapping with every declared port. Each port’s frame has these columns
-in order. The types below are Polars types; pandas frames use the equivalent
-Arrow types or compatible numeric and timezone-aware datetime types.</p>
+<p>Return a mapping keyed by output port. A per-window function can return a
+number or string at <code class="docutils literal notranslate"><span class="pre">context[&quot;output_time&quot;]</span></code>. Return <code class="docutils literal notranslate"><span class="pre">None</span></code> or omit a port to
+clear its result for that window.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">mean</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">"mean"</span><span class="p">:</span> <span class="n">frame</span><span class="p">[</span><span class="s2">"value"</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()}</span>
+</pre></div>
+</div>
+<p>Return a dataframe when the result needs multiple rows or explicit timestamps.
+Batch functions always return dataframes. The types below are Polars types.
+Pandas frames use equivalent Arrow types or compatible numeric and
+timezone-aware datetime types.</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
 <tr class="row-odd"><th class="head"><p>Column</p></th>
@@ -694,14 +665,9 @@ Arrow types or compatible numeric and timezone-aware datetime types.</p>
 </tbody>
 </table>
 </div>
-<p>Numeric results set <code class="docutils literal notranslate"><span class="pre">value</span></code> and leave <code class="docutils literal notranslate"><span class="pre">text</span></code> null; numeric functions may also
-omit the <code class="docutils literal notranslate"><span class="pre">text</span></code> column. Use finite numbers.
-<code class="docutils literal notranslate"><span class="pre">acquirium.functions.emit(context,</span> <span class="pre">value)</span></code>
-returns a one-row dataframe at <code class="docutils literal notranslate"><span class="pre">context[&quot;output_time&quot;]</span></code>; a <code class="docutils literal notranslate"><span class="pre">None</span></code> value produces
-an empty dataframe. The helper constructs the function’s return value.
-Acquirium stores the results after the function returns.
-<code class="docutils literal notranslate"><span class="pre">empty()</span></code> also builds an empty frame. An empty result removes the previous
-result for that window. Return the complete result, including unchanged rows.</p>
+<p>Numeric results set <code class="docutils literal notranslate"><span class="pre">value</span></code> and may omit <code class="docutils literal notranslate"><span class="pre">text</span></code>. Use finite numbers.
+<code class="docutils literal notranslate"><span class="pre">acquirium.functions.empty()</span></code> builds an empty frame. Return the complete
+result for the window, including unchanged rows.</p>
 <p>Functions use only their declared inputs and frozen context. Do not query the
 live graph, fetch undeclared history, or depend on wall-clock time. Results must
 be independent of process lifetime and invocation order; mutable globals are
@@ -738,7 +704,10 @@ needed by a later window on an output port.</p>
 continues until state and outputs stop changing.
 <code class="docutils literal notranslate"><span class="pre">batch=True</span></code> does not apply to sequential functions. The
 <a class="reference external" href="https://github.com/DataDrivenCPS/acquirium/tree/main/examples/membrane_monitoring" rel="noreferer noopener" target="_blank">membrane-monitoring example</a>
-uses this interface for drift detection and parameter estimation.</p>
+uses this interface for drift detection and parameter estimation.
+The <a class="reference external" href="https://github.com/DataDrivenCPS/acquirium/blob/main/examples/soft_sensors/transforms.py" rel="noreferer noopener" target="_blank">daily flow totalizer</a>
+stores the previous rate on a second port and uses it to integrate the next
+interval. It restarts the carried volume at each UTC day boundary.</p>
 </section>
 <section id="as-of-inputs">
 <h3>As-of inputs<a class="headerlink" href="#as-of-inputs" title="Link to this heading">#</a></h3>
@@ -821,10 +790,6 @@ recalculates history.</p>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#windows">Windows</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#built-in-functions">Built-in functions</a><ul class="nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#totals-and-integrals">Totals and integrals</a></li>
-</ul>
-</li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#python-functions">Python functions</a><ul class="nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#dataframe-type">Dataframe type</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#inputs-and-outputs">Inputs and outputs</a></li>

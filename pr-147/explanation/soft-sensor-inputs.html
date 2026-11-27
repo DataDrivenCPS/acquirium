@@ -230,11 +230,11 @@
 <li class="toctree-l2"><a class="reference internal" href="../tutorials/inserting-metadata.html">3 - Inserting Metadata</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tutorials/inserting-plant-model.html">4 - Inserting a Plant Model</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tutorials/a-full-example.html">5 - A Full Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/advanced/first-app.html">Build your first soft sensor</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/turbidity.html">Build a turbidity alarm pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tutorials/acquirium-at-a-glance.html">Acquirium at a glance</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../tutorials/turbidity.html">Turbidity alarm pipeline</a></li>
 <li class="toctree-l2 has-children"><a class="reference internal" href="../tutorials/advanced/_index.html">Advanced topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/writing-a-driver.html">Writing a driver</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/first-app.html">Declaring and deploying apps</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/experiments.html">Running experiments</a></li>
 </ul>
 </details></li>
@@ -245,11 +245,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../how-to/debug-an-empty-query.html">Debug an empty or unexpected query result</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../how-to/query-cookbook.html">Query cookbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../how-to/access-a-shared-server.html">Access data on a shared server</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../how-to/write-soft-sensors.html">Soft sensor calculations</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../how-to/chain-cleaning-apps.html">Data cleaning with multiple apps</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../how-to/clean-data-with-multiple-outputs.html">Data cleaning with multiple outputs</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../how-to/parameterize-soft-sensors.html">Soft sensor parameters</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../how-to/soft-sensor-examples.html">Soft sensor examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/write-soft-sensors.html">Write a soft sensor</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../how-to/consume-streaming-changes.html">Streaming change feed</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../how-to/check-deploy-apps.html">App deployment and recovery</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../how-to/record-a-whole-model.html">Record a whole model</a></li>
@@ -648,28 +644,30 @@ groups A1 and A2 under tank A. It groups B1 and B2 under tank B.</p>
 <h3>Python function<a class="headerlink" href="#python-function" title="Link to this heading">#</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">frame</span></code> is a Polars dataframe containing the readings for one group and time
 window. <code class="docutils literal notranslate"><span class="pre">context</span></code> is a dictionary describing that group and window, including
-the timestamp for the result. <code class="docutils literal notranslate"><span class="pre">emit(context,</span> <span class="pre">value)</span></code> returns a dataframe
-containing one result at that timestamp.</p>
+the timestamp for the result. A scalar returned for a port becomes a reading
+at that timestamp.</p>
 <p>The function computes the mean and peak of <code class="docutils literal notranslate"><span class="pre">frame[&quot;value&quot;]</span></code>.
 Save it as <code class="docutils literal notranslate"><span class="pre">temperature_functions.py</span></code>:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">acquirium.functions</span><span class="w"> </span><span class="kn">import</span> <span class="n">emit</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span>
+<span class="k">def</span><span class="w"> </span><span class="nf">mean</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">"mean"</span><span class="p">:</span> <span class="n">frame</span><span class="p">[</span><span class="s2">"value"</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()}</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">summarize</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
     <span class="c1"># Ignore missing values.</span>
     <span class="n">values</span> <span class="o">=</span> <span class="n">frame</span><span class="p">[</span><span class="s2">"value"</span><span class="p">]</span><span class="o">.</span><span class="n">drop_nulls</span><span class="p">()</span>
     <span class="k">return</span> <span class="p">{</span>
-        <span class="s2">"mean"</span><span class="p">:</span> <span class="n">emit</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="n">values</span><span class="o">.</span><span class="n">mean</span><span class="p">()),</span>
-        <span class="s2">"peak"</span><span class="p">:</span> <span class="n">emit</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="n">values</span><span class="o">.</span><span class="n">max</span><span class="p">()),</span>
+        <span class="s2">"mean"</span><span class="p">:</span> <span class="n">values</span><span class="o">.</span><span class="n">mean</span><span class="p">(),</span>
+        <span class="s2">"peak"</span><span class="p">:</span> <span class="n">values</span><span class="o">.</span><span class="n">max</span><span class="p">(),</span>
     <span class="p">}</span>
 </pre></div>
 </div>
 </section>
 <section id="app-declaration">
 <h3>App declaration<a class="headerlink" href="#app-declaration" title="Link to this heading">#</a></h3>
-<p>Register the function as an app. Use a connected <code class="docutils literal notranslate"><span class="pre">client</span></code> with the probes and
-tank metadata registered; the <a class="reference internal" href="../how-to/soft-sensor-examples.html"><span class="std std-doc">worked examples</span></a>
-provide the setup steps.</p>
+<p>Register the function as an app. Use a connected <code class="docutils literal notranslate"><span class="pre">client</span></code> with probes and
+tank metadata registered. The <a class="reference external" href="https://github.com/DataDrivenCPS/acquirium/tree/main/examples/soft_sensors" rel="noreferer noopener" target="_blank">temperature summaries example</a>
+shows how to register both.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">acquirium</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
 
@@ -688,9 +686,8 @@ provide the setup steps.</p>
 </pre></div>
 </div>
 <p>The app declares its outputs in <code class="docutils literal notranslate"><span class="pre">outputs</span></code>. Here it declares <code class="docutils literal notranslate"><span class="pre">mean</span></code> and <code class="docutils literal notranslate"><span class="pre">peak</span></code>;
-these names are its output ports. The function must return a dataframe for
-each declared name. Acquirium creates
-a <code class="docutils literal notranslate"><span class="pre">mean</span></code> stream and a <code class="docutils literal notranslate"><span class="pre">peak</span></code> stream for each tank.</p>
+these names are its output ports. The function returns values under those
+names. Acquirium creates a <code class="docutils literal notranslate"><span class="pre">mean</span></code> stream and a <code class="docutils literal notranslate"><span class="pre">peak</span></code> stream for each tank.</p>
 <p><code class="docutils literal notranslate"><span class="pre">group=&quot;tank&quot;</span></code> puts A1 and A2 together, and B1 and B2 together.</p>
 <p><code class="docutils literal notranslate"><span class="pre">FixedBucket(MINUTE)</span></code> divides each group’s data into non-overlapping minutes:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>                         10:00                  10:01                  10:02
@@ -874,7 +871,7 @@ at 10:01:00 belongs to the next bucket.</p>
 <h3>Output replacement<a class="headerlink" href="#output-replacement" title="Link to this heading">#</a></h3>
 <p>Acquirium calls <code class="docutils literal notranslate"><span class="pre">summarize(frame,</span> <span class="pre">context)</span></code>. The function calculates a mean
 of 23 and a peak of 26 from <code class="docutils literal notranslate"><span class="pre">[20,</span> <span class="pre">22,</span> <span class="pre">24,</span> <span class="pre">26]</span></code>.</p>
-<p><code class="docutils literal notranslate"><span class="pre">emit</span></code> creates one output row for each result. Its timestamp comes from
+<p>Acquirium creates one reading per scalar result at
 <code class="docutils literal notranslate"><span class="pre">context[&quot;output_time&quot;]</span></code>, which is 10:00:00 for this bucket.</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>inputs for tank A                  results for tank A
 
@@ -936,7 +933,7 @@ Python datetimes. Both have microsecond precision.</p>
 <td><p>Sample timestamp supplied when the reading was inserted.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">context[&quot;output_time&quot;]</span></code></p></td>
-<td><p>Output timestamp used by <code class="docutils literal notranslate"><span class="pre">emit(context,</span> <span class="pre">value)</span></code>.</p></td>
+<td><p>Timestamp assigned to scalar outputs.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">context[&quot;window_start&quot;]</span></code></p></td>
 <td><p>Start of the time window used to select input readings.</p></td>
@@ -1063,14 +1060,13 @@ B2 ─► its call ─► B2 mean = 35
     <span class="n">name</span><span class="o">=</span><span class="s2">"probe-means"</span><span class="p">,</span>
     <span class="n">inputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Selection</span><span class="p">(</span><span class="n">selection_query</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="s2">"stream"</span><span class="p">)},</span>
     <span class="n">outputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"mean"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Output</span><span class="p">()},</span>
-    <span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">Native</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="s2">"mean"</span><span class="p">),</span>
+    <span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">PythonFunction</span><span class="o">.</span><span class="n">from_file</span><span class="p">(</span><span class="s2">"temperature_functions.py"</span><span class="p">,</span> <span class="s2">"mean"</span><span class="p">),</span>
     <span class="n">window</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">FixedBucket</span><span class="p">(</span><span class="n">MINUTE</span><span class="p">),</span>
 <span class="p">)</span>
 </pre></div>
 </div>
 <p>The group ID is the input stream itself. A1’s frame has just its two rows,
-<code class="docutils literal notranslate"><span class="pre">[20,</span> <span class="pre">22]</span></code>; the other probes’ readings go to separate calls. This example uses
-a built-in mean, which computes the same result without calling Python.</p>
+<code class="docutils literal notranslate"><span class="pre">[20,</span> <span class="pre">22]</span></code>. The other probes’ readings go to separate calls.</p>
 </section>
 <section id="one-to-many-mean-and-peak-per-probe">
 <h3>One-to-many: mean and peak per probe<a class="headerlink" href="#one-to-many-mean-and-peak-per-probe" title="Link to this heading">#</a></h3>
@@ -1106,7 +1102,7 @@ B2 ─┘
     <span class="n">name</span><span class="o">=</span><span class="s2">"overall-temperature"</span><span class="p">,</span>
     <span class="n">inputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Selection</span><span class="p">(</span><span class="n">selection_query</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="kc">None</span><span class="p">)},</span>
     <span class="n">outputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"mean"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Output</span><span class="p">()},</span>
-    <span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">Native</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="s2">"mean"</span><span class="p">),</span>
+    <span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">PythonFunction</span><span class="o">.</span><span class="n">from_file</span><span class="p">(</span><span class="s2">"temperature_functions.py"</span><span class="p">,</span> <span class="s2">"mean"</span><span class="p">),</span>
     <span class="n">window</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">FixedBucket</span><span class="p">(</span><span class="n">MINUTE</span><span class="p">),</span>
 <span class="p">)</span>
 </pre></div>
@@ -1185,8 +1181,8 @@ used by overlapping windows appears once for each window it contributes to.
 The extra <code class="docutils literal notranslate"><span class="pre">output_time</span></code> column tells you which result that copy is for; its
 <code class="docutils literal notranslate"><span class="pre">time</span></code> still records the sample’s own time. For a sequential function,
 earlier output timestamps remain distinct from the current output timestamp.</p>
-<p>For runnable calculations, continue with the
-<a class="reference internal" href="../how-to/soft-sensor-examples.html"><span class="std std-doc">soft sensor examples</span></a>. For every frame
+<p>For runnable calculations, continue with
+<a class="reference internal" href="../how-to/write-soft-sensors.html"><span class="std std-doc">Write a soft sensor</span></a>. For every frame
 column and option, see the <a class="reference internal" href="../reference/apps/app-class.html#python-functions"><span class="std std-ref">app reference</span></a>.
 <a class="reference internal" href="apps.html"><span class="std std-doc">Derived stream updates</span></a> explains what happens when an old
 reading, a group membership, or a function changes.</p>

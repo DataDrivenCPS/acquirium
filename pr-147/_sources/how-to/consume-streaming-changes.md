@@ -10,7 +10,7 @@ Instead, Acquirium keeps a feed of every committed change, source and derived
 alike, and a consumer reads it page by page, remembering where it got to.
 
 This guide builds a consumer that posts to a webhook whenever the `high-mean`
-alarm from [calculating a derived stream](write-soft-sensors.md) is raised or
+alarm from [Write a soft sensor](write-soft-sensors.md#chain-apps) is raised or
 cleared. The finished program is
 [`examples/streaming/alarm_webhook.py`](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/streaming/alarm_webhook.py).
 
@@ -51,7 +51,7 @@ nothing on another.
 
 Changes are published in *epochs*, and one epoch holds a source change together
 with everything it caused. Here is one epoch from the sine-wave server, with the
-rolling `wave-spread` deployed, and with stream names, times and values
+rolling spread app deployed, and with stream names, times and values
 shortened:
 
 ```text

@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Turbidity alarm pipeline &#8212; Acquirium Documentation</title>
+    <title>Build a turbidity alarm pipeline &#8212; Acquirium Documentation</title>
   
   
   
@@ -66,8 +66,8 @@
     <link rel="icon" href="../_static/logo-notext.png"/>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Advanced topics" href="advanced/_index.html" />
-    <link rel="prev" title="Acquirium at a glance" href="acquirium-at-a-glance.html" />
+    <link rel="next" title="Acquirium at a glance" href="acquirium-at-a-glance.html" />
+    <link rel="prev" title="Build your first soft sensor" href="advanced/first-app.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   <meta name="docsearch:version" content="" />
@@ -230,11 +230,11 @@
 <li class="toctree-l2"><a class="reference internal" href="inserting-metadata.html">3 - Inserting Metadata</a></li>
 <li class="toctree-l2"><a class="reference internal" href="inserting-plant-model.html">4 - Inserting a Plant Model</a></li>
 <li class="toctree-l2"><a class="reference internal" href="a-full-example.html">5 - A Full Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="advanced/first-app.html">Build your first soft sensor</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">Build a turbidity alarm pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="acquirium-at-a-glance.html">Acquirium at a glance</a></li>
-<li class="toctree-l2 current active"><a class="current reference internal" href="#">Turbidity alarm pipeline</a></li>
 <li class="toctree-l2 has-children"><a class="reference internal" href="advanced/_index.html">Advanced topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l3"><a class="reference internal" href="advanced/writing-a-driver.html">Writing a driver</a></li>
-<li class="toctree-l3"><a class="reference internal" href="advanced/first-app.html">Declaring and deploying apps</a></li>
 <li class="toctree-l3"><a class="reference internal" href="advanced/experiments.html">Running experiments</a></li>
 </ul>
 </details></li>
@@ -245,11 +245,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../how-to/debug-an-empty-query.html">Debug an empty or unexpected query result</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../how-to/query-cookbook.html">Query cookbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../how-to/access-a-shared-server.html">Access data on a shared server</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../how-to/write-soft-sensors.html">Soft sensor calculations</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../how-to/chain-cleaning-apps.html">Data cleaning with multiple apps</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../how-to/clean-data-with-multiple-outputs.html">Data cleaning with multiple outputs</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../how-to/parameterize-soft-sensors.html">Soft sensor parameters</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../how-to/soft-sensor-examples.html">Soft sensor examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/write-soft-sensors.html">Write a soft sensor</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../how-to/consume-streaming-changes.html">Streaming change feed</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../how-to/check-deploy-apps.html">App deployment and recovery</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../how-to/record-a-whole-model.html">Record a whole model</a></li>
@@ -520,7 +516,7 @@
               
 
 <div id="jb-print-docs-body" class="onlyprint">
-    <h1>Turbidity alarm pipeline</h1>
+    <h1>Build a turbidity alarm pipeline</h1>
     <!-- Table of contents -->
     <div id="print-main-content">
         <div id="jb-print-toc">
@@ -530,8 +526,9 @@
             </div>
             <nav aria-label="Page">
                 <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#declare-the-data-flow">Declare the data flow</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#deploy-the-cleaner">Deploy the cleaner</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#cleaning-steps">Cleaning steps</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#deploy-the-alarm">Deploy the alarm</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#sustained-turbidity-threshold">Sustained turbidity threshold</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#read-the-results">Read the results</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#late-readings-and-alarm-recalculation">Late readings and alarm recalculation</a></li>
@@ -546,14 +543,16 @@
 <div id="searchbox"></div>
                 <article class="bd-article">
                   
-  <section id="turbidity-alarm-pipeline">
-<h1>Turbidity alarm pipeline<a class="headerlink" href="#turbidity-alarm-pipeline" title="Link to this heading">#</a></h1>
-<p>Turbidity measures how cloudy water is, in nephelometric turbidity units (NTU).
-This example cleans analyser readings and raises an alarm when the cleaned
-values stay above a limit. Each arrow shows which stream the next app reads.</p>
+  <section id="build-a-turbidity-alarm-pipeline">
+<h1>Build a turbidity alarm pipeline<a class="headerlink" href="#build-a-turbidity-alarm-pipeline" title="Link to this heading">#</a></h1>
+<p>This pipeline cleans turbidity readings and raises an alarm when they stay
+above a limit. Turbidity measures how cloudy water is, in nephelometric
+turbidity units (NTU).</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Analyser readings → Clean turbidity → Sustained alarm
 </pre></div>
 </div>
+<p>For a single calculation with a few sample readings, start with
+<a class="reference internal" href="advanced/first-app.html"><span class="std std-doc">Build your first soft sensor</span></a>.</p>
 <p>From the repository root, run the example on a temporary server.</p>
 <div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>run<span class="w"> </span>--locked<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>examples.turbidity.run
 </pre></div>
@@ -561,82 +560,46 @@ values stay above a limit. Each arrow shows which stream the next app reads.</p>
 <p>The script loads a small plant model with three filters and a combined outlet.
 Each location sends two readings per minute for 25 minutes. Filter 3 has a high
 period, a fault code, a missing minute, and a spike. <a class="reference download internal" download="" href="../_downloads/3085e62095cf5b755c4d0dbf16dcd4b6/turbidity-readings.svg"><span class="xref download myst">Plot of the sample readings</span></a></p>
-<section id="declare-the-data-flow">
-<h2>Declare the data flow<a class="headerlink" href="#declare-the-data-flow" title="Link to this heading">#</a></h2>
-<p>The query finds turbidity measurements and their locations. Each app uses
-<code class="docutils literal notranslate"><span class="pre">group=&quot;location&quot;</span></code> to run one calculation per location with its own parameters.
-Both <code class="docutils literal notranslate"><span class="pre">Rolling</span></code> windows produce one result per minute.</p>
-<p>The cleaner uses <code class="docutils literal notranslate"><span class="pre">ReplacementOutput()</span></code> to make its result the default reading
-of the analyser’s measurement. The alarm uses the same measurement query, so
-it receives the cleaned values. <code class="docutils literal notranslate"><span class="pre">Output(on_group=True)</span></code> attaches the alarm to
-the location so it can be found by a query for that location.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="sd">"""The turbidity tutorial's two apps: a cleaner and a sustained alarm."""</span>
-
-<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
-
-<span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
-
-<span class="kn">import</span><span class="w"> </span><span class="nn">acquirium</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">declarations</span><span class="p">(</span><span class="n">client</span><span class="p">):</span>
-    <span class="n">calculations</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)</span><span class="o">.</span><span class="n">with_name</span><span class="p">(</span><span class="s2">"calculations.py"</span><span class="p">)</span>
-    <span class="n">turbidity</span> <span class="o">=</span> <span class="p">(</span>
-        <span class="n">client</span><span class="o">.</span><span class="n">query</span><span class="p">()</span>
-        <span class="o">.</span><span class="n">measurement</span><span class="p">(</span>
-            <span class="n">alias</span><span class="o">=</span><span class="s2">"turbidity"</span><span class="p">,</span>
-            <span class="n">quantity_kind</span><span class="o">=</span><span class="s2">"http://qudt.org/vocab/quantitykind/Turbidity"</span><span class="p">,</span>
-        <span class="p">)</span>
-        <span class="o">.</span><span class="n">context</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"location"</span><span class="p">)</span>
-    <span class="p">)</span>
-    <span class="n">clean</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">App</span><span class="p">(</span>
-        <span class="n">name</span><span class="o">=</span><span class="s2">"turbidity-clean"</span><span class="p">,</span>
-        <span class="n">inputs</span><span class="o">=</span><span class="p">{</span>
-            <span class="s2">"raw"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Selection</span><span class="o">.</span><span class="n">from_query</span><span class="p">(</span>
-                <span class="n">turbidity</span><span class="p">,</span>
-                <span class="n">measurement</span><span class="o">=</span><span class="s2">"turbidity"</span><span class="p">,</span>
-                <span class="n">group</span><span class="o">=</span><span class="s2">"location"</span><span class="p">,</span>
-                <span class="c1"># A reading this far from the local median counts as a spike.</span>
-                <span class="n">parameters</span><span class="o">=</span><span class="p">{</span>
-                    <span class="s2">"urn:turbidity:filter-1"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"threshold"</span><span class="p">:</span> <span class="mf">1.0</span><span class="p">},</span>
-                    <span class="s2">"urn:turbidity:filter-2"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"threshold"</span><span class="p">:</span> <span class="mf">1.0</span><span class="p">},</span>
-                    <span class="s2">"urn:turbidity:filter-3"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"threshold"</span><span class="p">:</span> <span class="mf">1.0</span><span class="p">},</span>
-                    <span class="s2">"urn:turbidity:combined"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"threshold"</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">},</span>
-                <span class="p">},</span>
-            <span class="p">),</span>
-        <span class="p">},</span>
-        <span class="c1"># The clean stream replaces the analyser readings it is calculated from.</span>
-        <span class="n">outputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"turbidity"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">ReplacementOutput</span><span class="p">()},</span>
-        <span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">PythonFunction</span><span class="o">.</span><span class="n">from_file</span><span class="p">(</span><span class="n">calculations</span><span class="p">,</span> <span class="s2">"clean"</span><span class="p">),</span>
-        <span class="n">window</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">Rolling</span><span class="p">(</span><span class="n">lookback</span><span class="o">=</span><span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">(</span><span class="s2">"5m"</span><span class="p">),</span> <span class="n">step</span><span class="o">=</span><span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">(</span><span class="s2">"1m"</span><span class="p">),</span> <span class="n">lookahead</span><span class="o">=</span><span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">(</span><span class="s2">"5m"</span><span class="p">)),</span>
-    <span class="p">)</span>
-    <span class="c1"># The same query. The clean stream is now each measurement's final stage,</span>
-    <span class="c1"># so the alarm reads it rather than the analyser readings.</span>
-    <span class="n">alarm</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">App</span><span class="p">(</span>
-        <span class="n">name</span><span class="o">=</span><span class="s2">"turbidity-alarm"</span><span class="p">,</span>
-        <span class="n">inputs</span><span class="o">=</span><span class="p">{</span>
-            <span class="s2">"turbidity"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Selection</span><span class="o">.</span><span class="n">from_query</span><span class="p">(</span>
-                <span class="n">turbidity</span><span class="p">,</span>
-                <span class="n">measurement</span><span class="o">=</span><span class="s2">"turbidity"</span><span class="p">,</span>
-                <span class="n">group</span><span class="o">=</span><span class="s2">"location"</span><span class="p">,</span>
-                <span class="n">parameters</span><span class="o">=</span><span class="p">{</span>
-                    <span class="s2">"urn:turbidity:filter-1"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"limit_ntu"</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">,</span> <span class="s2">"sustained_minutes"</span><span class="p">:</span> <span class="mi">15</span><span class="p">},</span>
-                    <span class="s2">"urn:turbidity:filter-2"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"limit_ntu"</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">,</span> <span class="s2">"sustained_minutes"</span><span class="p">:</span> <span class="mi">15</span><span class="p">},</span>
-                    <span class="s2">"urn:turbidity:filter-3"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"limit_ntu"</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">,</span> <span class="s2">"sustained_minutes"</span><span class="p">:</span> <span class="mi">15</span><span class="p">},</span>
-                    <span class="s2">"urn:turbidity:combined"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"limit_ntu"</span><span class="p">:</span> <span class="mf">0.3</span><span class="p">,</span> <span class="s2">"sustained_minutes"</span><span class="p">:</span> <span class="mi">5</span><span class="p">},</span>
-                <span class="p">},</span>
-            <span class="p">),</span>
-        <span class="p">},</span>
-        <span class="n">outputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"alarm"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Output</span><span class="p">(</span><span class="n">on_group</span><span class="o">=</span><span class="kc">True</span><span class="p">)},</span>
-        <span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">PythonFunction</span><span class="o">.</span><span class="n">from_file</span><span class="p">(</span><span class="n">calculations</span><span class="p">,</span> <span class="s2">"alarm"</span><span class="p">),</span>
-        <span class="n">window</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">Rolling</span><span class="p">(</span><span class="n">lookback</span><span class="o">=</span><span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">(</span><span class="s2">"15m"</span><span class="p">),</span> <span class="n">step</span><span class="o">=</span><span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">(</span><span class="s2">"1m"</span><span class="p">)),</span>
-    <span class="p">)</span>
-    <span class="k">return</span> <span class="p">[</span><span class="n">clean</span><span class="p">,</span> <span class="n">alarm</span><span class="p">]</span>
-</pre></div>
-</div>
-<p>Deploy both apps after registering the plant model and streams.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">clean_app</span><span class="p">,</span> <span class="n">alarm_app</span> <span class="o">=</span> <span class="n">declarations</span><span class="p">(</span><span class="n">client</span><span class="p">)</span>
+<section id="deploy-the-cleaner">
+<h2>Deploy the cleaner<a class="headerlink" href="#deploy-the-cleaner" title="Link to this heading">#</a></h2>
+<p>After registering the plant, the script selects turbidity measurements and
+groups them by location. Each location has a maximum distance from the local
+median for rejecting spikes. The rolling window steps once per minute.
+<code class="docutils literal notranslate"><span class="pre">ReplacementOutput()</span></code> makes the cleaned values the default for each analyser.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">calculations</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)</span><span class="o">.</span><span class="n">with_name</span><span class="p">(</span><span class="s2">"calculations.py"</span><span class="p">)</span>
+<span class="c1"># Find the turbidity measurements and their plant locations.</span>
+<span class="n">turbidity</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">client</span><span class="o">.</span><span class="n">query</span><span class="p">()</span>
+    <span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"turbidity"</span><span class="p">,</span> <span class="n">quantity_kind</span><span class="o">=</span><span class="n">TURBIDITY</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">context</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"location"</span><span class="p">)</span>
+<span class="p">)</span>
+<span class="n">clean_app</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">App</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"turbidity-clean"</span><span class="p">,</span>
+    <span class="n">inputs</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">"raw"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Selection</span><span class="o">.</span><span class="n">from_query</span><span class="p">(</span>
+            <span class="n">turbidity</span><span class="p">,</span>
+            <span class="n">measurement</span><span class="o">=</span><span class="s2">"turbidity"</span><span class="p">,</span>
+            <span class="n">group</span><span class="o">=</span><span class="s2">"location"</span><span class="p">,</span>
+            <span class="c1"># Set the largest acceptable deviation from the local median.</span>
+            <span class="n">parameters</span><span class="o">=</span><span class="p">{</span>
+                <span class="s2">"urn:turbidity:filter-1"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"threshold"</span><span class="p">:</span> <span class="mf">1.0</span><span class="p">},</span>
+                <span class="s2">"urn:turbidity:filter-2"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"threshold"</span><span class="p">:</span> <span class="mf">1.0</span><span class="p">},</span>
+                <span class="s2">"urn:turbidity:filter-3"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"threshold"</span><span class="p">:</span> <span class="mf">1.0</span><span class="p">},</span>
+                <span class="s2">"urn:turbidity:combined"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"threshold"</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">},</span>
+            <span class="p">},</span>
+        <span class="p">),</span>
+    <span class="p">},</span>
+    <span class="c1"># Make cleaned values the default for the analyser measurement.</span>
+    <span class="n">outputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"turbidity"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">ReplacementOutput</span><span class="p">()},</span>
+    <span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">PythonFunction</span><span class="o">.</span><span class="n">from_file</span><span class="p">(</span><span class="n">calculations</span><span class="p">,</span> <span class="s2">"clean"</span><span class="p">),</span>
+    <span class="c1"># Clean each minute using readings on either side.</span>
+    <span class="n">window</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">Rolling</span><span class="p">(</span>
+        <span class="n">lookback</span><span class="o">=</span><span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">(</span><span class="s2">"5m"</span><span class="p">),</span>
+        <span class="n">step</span><span class="o">=</span><span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">(</span><span class="s2">"1m"</span><span class="p">),</span>
+        <span class="n">lookahead</span><span class="o">=</span><span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">(</span><span class="s2">"5m"</span><span class="p">),</span>
+    <span class="p">),</span>
+<span class="p">)</span>
 <span class="n">client</span><span class="o">.</span><span class="n">deploy_app</span><span class="p">(</span><span class="n">clean_app</span><span class="p">)</span>
-<span class="n">client</span><span class="o">.</span><span class="n">deploy_app</span><span class="p">(</span><span class="n">alarm_app</span><span class="p">)</span>
 </pre></div>
 </div>
 </section>
@@ -667,63 +630,71 @@ gaps between valid minutes. The app publishes the result for its output minute.<
 </pre></div>
 </div>
 </section>
+<section id="deploy-the-alarm">
+<h2>Deploy the alarm<a class="headerlink" href="#deploy-the-alarm" title="Link to this heading">#</a></h2>
+<p>The alarm uses the same measurement query, which now selects the cleaned
+values. Its settings give each location a limit and duration.
+<code class="docutils literal notranslate"><span class="pre">Output(on_group=True)</span></code> attaches the result to the location so you can query
+for a filter’s alarm.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># The same query now reads the cleaner's output.</span>
+<span class="n">alarm_app</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">App</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"turbidity-alarm"</span><span class="p">,</span>
+    <span class="n">inputs</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">"turbidity"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Selection</span><span class="o">.</span><span class="n">from_query</span><span class="p">(</span>
+            <span class="n">turbidity</span><span class="p">,</span>
+            <span class="n">measurement</span><span class="o">=</span><span class="s2">"turbidity"</span><span class="p">,</span>
+            <span class="n">group</span><span class="o">=</span><span class="s2">"location"</span><span class="p">,</span>
+            <span class="n">parameters</span><span class="o">=</span><span class="p">{</span>
+                <span class="s2">"urn:turbidity:filter-1"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"limit_ntu"</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">,</span> <span class="s2">"sustained_minutes"</span><span class="p">:</span> <span class="mi">15</span><span class="p">},</span>
+                <span class="s2">"urn:turbidity:filter-2"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"limit_ntu"</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">,</span> <span class="s2">"sustained_minutes"</span><span class="p">:</span> <span class="mi">15</span><span class="p">},</span>
+                <span class="s2">"urn:turbidity:filter-3"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"limit_ntu"</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">,</span> <span class="s2">"sustained_minutes"</span><span class="p">:</span> <span class="mi">15</span><span class="p">},</span>
+                <span class="c1"># The combined outlet uses a lower limit and shorter duration.</span>
+                <span class="s2">"urn:turbidity:combined"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"limit_ntu"</span><span class="p">:</span> <span class="mf">0.3</span><span class="p">,</span> <span class="s2">"sustained_minutes"</span><span class="p">:</span> <span class="mi">5</span><span class="p">},</span>
+            <span class="p">},</span>
+        <span class="p">),</span>
+    <span class="p">},</span>
+    <span class="c1"># Attach the alarm to its plant location for queries.</span>
+    <span class="n">outputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"alarm"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Output</span><span class="p">(</span><span class="n">on_group</span><span class="o">=</span><span class="kc">True</span><span class="p">)},</span>
+    <span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">PythonFunction</span><span class="o">.</span><span class="n">from_file</span><span class="p">(</span><span class="n">calculations</span><span class="p">,</span> <span class="s2">"alarm"</span><span class="p">),</span>
+    <span class="c1"># Read enough history for the longest configured duration.</span>
+    <span class="n">window</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">Rolling</span><span class="p">(</span><span class="n">lookback</span><span class="o">=</span><span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">(</span><span class="s2">"15m"</span><span class="p">),</span> <span class="n">step</span><span class="o">=</span><span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">(</span><span class="s2">"1m"</span><span class="p">)),</span>
+<span class="p">)</span>
+<span class="n">client</span><span class="o">.</span><span class="n">deploy_app</span><span class="p">(</span><span class="n">alarm_app</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
 <section id="sustained-turbidity-threshold">
 <h2>Sustained turbidity threshold<a class="headerlink" href="#sustained-turbidity-threshold" title="Link to this heading">#</a></h2>
 <p>The alarm receives a Polars dataframe (<code class="docutils literal notranslate"><span class="pre">pl.DataFrame</span></code>) of cleaned readings.
 <code class="docutils literal notranslate"><span class="pre">context[&quot;output_time&quot;]</span></code> is the minute being checked. For Filter 3 the alarm
-requires 15 consecutive one-minute values above 0.5 NTU. <code class="docutils literal notranslate"><span class="pre">emit</span></code> stamps the
-result at the output time. A <code class="docutils literal notranslate"><span class="pre">1</span></code> means the alarm is on and a <code class="docutils literal notranslate"><span class="pre">0</span></code> means it is off.</p>
+requires 15 consecutive one-minute values above 0.5 NTU. Acquirium stamps the
+returned number at the output time. A <code class="docutils literal notranslate"><span class="pre">1</span></code> means the alarm is on and a <code class="docutils literal notranslate"><span class="pre">0</span></code> means it is off.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">alarm</span><span class="p">(</span><span class="n">frame</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">"""1 when clean turbidity stayed above the limit for the whole duration."""</span>
     <span class="n">t</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timestamp</span><span class="p">(</span><span class="n">context</span><span class="p">[</span><span class="s2">"output_time"</span><span class="p">])</span>
     <span class="c1"># Report only at minutes that have a clean value.</span>
     <span class="k">if</span> <span class="n">frame</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">"time"</span><span class="p">)</span> <span class="o">==</span> <span class="n">t</span><span class="p">)</span><span class="o">.</span><span class="n">is_empty</span><span class="p">():</span>
-        <span class="k">return</span> <span class="p">{</span><span class="s2">"alarm"</span><span class="p">:</span> <span class="n">emit</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="kc">None</span><span class="p">)}</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">"alarm"</span><span class="p">:</span> <span class="kc">None</span><span class="p">}</span>
 
     <span class="n">limit</span> <span class="o">=</span> <span class="n">context</span><span class="p">[</span><span class="s2">"parameters"</span><span class="p">][</span><span class="s2">"limit_ntu"</span><span class="p">]</span>
     <span class="n">minutes</span> <span class="o">=</span> <span class="n">context</span><span class="p">[</span><span class="s2">"parameters"</span><span class="p">][</span><span class="s2">"sustained_minutes"</span><span class="p">]</span>
     <span class="n">recent</span> <span class="o">=</span> <span class="n">frame</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">"time"</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">t</span> <span class="o">+</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">(</span><span class="sa">f</span><span class="s2">"-</span><span class="si">{</span><span class="n">minutes</span><span class="si">}</span><span class="s2">m"</span><span class="p">))</span>
     <span class="n">sustained</span> <span class="o">=</span> <span class="n">recent</span><span class="o">.</span><span class="n">height</span> <span class="o">==</span> <span class="n">minutes</span> <span class="ow">and</span> <span class="n">recent</span><span class="p">[</span><span class="s2">"value"</span><span class="p">]</span><span class="o">.</span><span class="n">min</span><span class="p">()</span> <span class="o">&gt;</span> <span class="n">limit</span>
-    <span class="k">return</span> <span class="p">{</span><span class="s2">"alarm"</span><span class="p">:</span> <span class="n">emit</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="mi">1</span> <span class="k">if</span> <span class="n">sustained</span> <span class="k">else</span> <span class="mi">0</span><span class="p">)}</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">"alarm"</span><span class="p">:</span> <span class="mi">1</span> <span class="k">if</span> <span class="n">sustained</span> <span class="k">else</span> <span class="mi">0</span><span class="p">}</span>
 </pre></div>
 </div>
 </section>
 <section id="read-the-results">
 <h2>Read the results<a class="headerlink" href="#read-the-results" title="Link to this heading">#</a></h2>
-<p>Once the sample readings publish, a normal read of the Filter 3 analyser
-returns the clean values. Use <code class="docutils literal notranslate"><span class="pre">view=&quot;raw&quot;</span></code> to inspect the original readings
-on the same stream.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">analyser</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span><span class="n">source</span><span class="o">=</span><span class="s2">"turbidity-analysers"</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"filter-3"</span><span class="p">)</span>
-<span class="n">clean</span> <span class="o">=</span> <span class="n">analyser</span><span class="o">.</span><span class="n">dataframe</span><span class="p">()</span>
-<span class="n">raw</span> <span class="o">=</span> <span class="n">analyser</span><span class="o">.</span><span class="n">dataframe</span><span class="p">(</span><span class="n">view</span><span class="o">=</span><span class="s2">"raw"</span><span class="p">,</span> <span class="n">value_mode</span><span class="o">=</span><span class="s2">"coalesce"</span><span class="p">)</span>
-</pre></div>
-</div>
-<p>The script finds the alarm by location and app name. <code class="docutils literal notranslate"><span class="pre">stream_info()</span></code> identifies
-the output stream so the script can also read it at an earlier version of the
-data.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">alarm_uri</span> <span class="o">=</span> <span class="p">(</span>
-    <span class="n">client</span><span class="o">.</span><span class="n">query</span><span class="p">()</span>
-    <span class="o">.</span><span class="n">entity</span><span class="p">(</span><span class="n">uri</span><span class="o">=</span><span class="s2">"urn:turbidity:filter-3"</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">app</span><span class="o">=</span><span class="n">alarm_app</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">data</span><span class="p">()</span>
-    <span class="o">.</span><span class="n">stream_info</span><span class="p">()[</span><span class="s2">"stream_uri"</span><span class="p">]</span>
-    <span class="o">.</span><span class="n">item</span><span class="p">()</span>
-<span class="p">)</span>
-<span class="n">alarm</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span><span class="n">uri</span><span class="o">=</span><span class="n">alarm_uri</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Alarm minutes before the late readings: </span><span class="si">{</span><span class="n">alarm</span><span class="o">.</span><span class="n">dataframe</span><span class="p">()[</span><span class="s1">'value'</span><span class="p">]</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-</pre></div>
-</div>
-<p>Filter 3 stays above the limit from 00:02 through 00:20. The cleaner fills the
-gap at 00:10, so the alarm is on for five minutes, from 00:16 through 00:20.</p>
+<p>Once both apps are deployed, the script inserts the sample readings.
+Filter 3 stays above the limit from 00:02 through 00:20. The cleaner fills the
+gap at 00:10, so the alarm is on for five minutes, from 00:16 through 00:20.
+To inspect the original analyser samples alongside the cleaned values, see
+<a class="reference internal" href="../reference/apps/outputs.html#replacement-outputs"><span class="std std-ref">reading replacement outputs</span></a>.</p>
 </section>
 <section id="late-readings-and-alarm-recalculation">
 <h2>Late readings and alarm recalculation<a class="headerlink" href="#late-readings-and-alarm-recalculation" title="Link to this heading">#</a></h2>
-<p>The missing 00:10 readings arrive late and show a dip below the limit. The
-clean value changes from 0.80 to 0.20 NTU, splitting the high period into two
-shorter runs. Acquirium recalculates the affected minutes and the alarm clears.</p>
-<p>An <strong>epoch</strong> identifies a published version of the data. The script saved
-<code class="docutils literal notranslate"><span class="pre">first_epoch</span></code> from the original insert. Reading at that epoch still shows
-the five alarm minutes, while the current alarm shows zero.</p>
+<p>The script inserts two late readings for the gap at 00:10.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># The missing readings show a brief dip below the alarm limit.</span>
 <span class="n">missing_minute</span> <span class="o">=</span> <span class="n">START</span> <span class="o">+</span> <span class="mi">10</span> <span class="o">*</span> <span class="n">MINUTE</span>
 <span class="n">receipt</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">insert_timeseries</span><span class="p">(</span><span class="n">SOURCE</span><span class="p">,</span> <span class="s2">"filter-3"</span><span class="p">,</span> <span class="p">[</span>
@@ -731,15 +702,23 @@ the five alarm minutes, while the current alarm shows zero.</p>
     <span class="p">(</span><span class="n">missing_minute</span> <span class="o">+</span> <span class="n">MINUTE</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span> <span class="mf">0.25</span><span class="p">),</span>
 <span class="p">])[</span><span class="s2">"receipts"</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>
 <span class="n">client</span><span class="o">.</span><span class="n">wait</span><span class="p">(</span><span class="n">receipt</span><span class="p">)</span>
-
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Alarm minutes after the late readings: </span><span class="si">{</span><span class="n">alarm</span><span class="o">.</span><span class="n">dataframe</span><span class="p">()[</span><span class="s1">'value'</span><span class="p">]</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-<span class="n">earlier</span> <span class="o">=</span> <span class="n">alarm</span><span class="o">.</span><span class="n">dataframe</span><span class="p">(</span><span class="n">epoch</span><span class="o">=</span><span class="n">first_epoch</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Alarm minutes in the original snapshot: </span><span class="si">{</span><span class="n">earlier</span><span class="p">[</span><span class="s1">'value'</span><span class="p">]</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>The clean value changes from 0.80 to 0.20 NTU, splitting the high period into
+two runs that are too short to trigger the alarm. An <strong>epoch</strong> identifies a
+published version of the data. Reading the alarm with <code class="docutils literal notranslate"><span class="pre">epoch=first_epoch</span></code>
+shows its state before the late readings.</p>
+<p>The demo prints:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Alarm minutes before the late readings: 5
+Alarm minutes after the late readings: 0
+Alarm minutes in the original snapshot: 5
 </pre></div>
 </div>
 <p>For an alarm that checks on a wall-clock schedule, see the <a class="reference internal" href="../explanation/soft-sensor-actors.html#standalone-turbidity-alarm"><span class="std std-ref">standalone timer
 actor</span></a>. To
-send notifications from stored alarm changes, see the <a class="reference internal" href="../how-to/consume-streaming-changes.html"><span class="std std-doc">change feed guide</span></a>.</p>
+send notifications from stored alarm changes, see the <a class="reference internal" href="../how-to/consume-streaming-changes.html"><span class="std std-doc">change feed guide</span></a>.
+To choose windows, outputs, and settings for your own pipeline, see
+<a class="reference internal" href="../how-to/write-soft-sensors.html"><span class="std std-doc">Write a soft sensor</span></a>.</p>
 </section>
 </section>
 
@@ -774,20 +753,20 @@ send notifications from stored alarm changes, see the <a class="reference intern
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="acquirium-at-a-glance.html"
+       href="advanced/first-app.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Acquirium at a glance</p>
+        <p class="prev-next-title">Build your first soft sensor</p>
       </div>
     </a>
     <a class="right-next"
-       href="advanced/_index.html"
+       href="acquirium-at-a-glance.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Advanced topics</p>
+        <p class="prev-next-title">Acquirium at a glance</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -809,8 +788,9 @@ send notifications from stored alarm changes, see the <a class="reference intern
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#declare-the-data-flow">Declare the data flow</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#deploy-the-cleaner">Deploy the cleaner</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#cleaning-steps">Cleaning steps</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#deploy-the-alarm">Deploy the alarm</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#sustained-turbidity-threshold">Sustained turbidity threshold</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#read-the-results">Read the results</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#late-readings-and-alarm-recalculation">Late readings and alarm recalculation</a></li>

@@ -79,30 +79,32 @@ groups A1 and A2 under tank A. It groups B1 and B2 under tank B.
 
 `frame` is a Polars dataframe containing the readings for one group and time
 window. `context` is a dictionary describing that group and window, including
-the timestamp for the result. `emit(context, value)` returns a dataframe
-containing one result at that timestamp.
+the timestamp for the result. A scalar returned for a port becomes a reading
+at that timestamp.
 
 The function computes the mean and peak of `frame["value"]`.
 Save it as `temperature_functions.py`:
 
 ```python
-from acquirium.functions import emit
+
+def mean(frame, context):
+    return {"mean": frame["value"].mean()}
 
 
 def summarize(frame, context):
     # Ignore missing values.
     values = frame["value"].drop_nulls()
     return {
-        "mean": emit(context, values.mean()),
-        "peak": emit(context, values.max()),
+        "mean": values.mean(),
+        "peak": values.max(),
     }
 ```
 
 ### App declaration
 
-Register the function as an app. Use a connected `client` with the probes and
-tank metadata registered; the [worked examples](../how-to/soft-sensor-examples.md)
-provide the setup steps.
+Register the function as an app. Use a connected `client` with probes and
+tank metadata registered. The [temperature summaries example](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/soft_sensors)
+shows how to register both.
 
 ```python
 import acquirium as aq
@@ -123,9 +125,8 @@ client.deploy_app(by_tank)
 ```
 
 The app declares its outputs in `outputs`. Here it declares `mean` and `peak`;
-these names are its output ports. The function must return a dataframe for
-each declared name. Acquirium creates
-a `mean` stream and a `peak` stream for each tank.
+these names are its output ports. The function returns values under those
+names. Acquirium creates a `mean` stream and a `peak` stream for each tank.
 
 `group="tank"` puts A1 and A2 together, and B1 and B2 together.
 
@@ -278,7 +279,7 @@ at 10:01:00 belongs to the next bucket.
 Acquirium calls `summarize(frame, context)`. The function calculates a mean
 of 23 and a peak of 26 from `[20, 22, 24, 26]`.
 
-`emit` creates one output row for each result. Its timestamp comes from
+Acquirium creates one reading per scalar result at
 `context["output_time"]`, which is 10:00:00 for this bucket.
 
 ```text
@@ -315,7 +316,7 @@ Python datetimes. Both have microsecond precision.
 | Field | Meaning |
 | --- | --- |
 | Input dataframe `time` | Sample timestamp supplied when the reading was inserted. |
-| `context["output_time"]` | Output timestamp used by `emit(context, value)`. |
+| `context["output_time"]` | Timestamp assigned to scalar outputs. |
 | `context["window_start"]` | Start of the time window used to select input readings. |
 | `context["window_end"]` | Exclusive end of that time window. |
 | Query dataframe `time` | Stored timestamp of each reading: the sample timestamp for raw data or the output timestamp for derived data. |
@@ -401,14 +402,13 @@ per_probe = aq.App(
     name="probe-means",
     inputs={"temperature": aq.Selection(selection_query, group="stream")},
     outputs={"mean": aq.Output()},
-    function=aq.Native.mean("mean"),
+    function=aq.PythonFunction.from_file("temperature_functions.py", "mean"),
     window=aq.FixedBucket(MINUTE),
 )
 ```
 
 The group ID is the input stream itself. A1's frame has just its two rows,
-`[20, 22]`; the other probes' readings go to separate calls. This example uses
-a built-in mean, which computes the same result without calling Python.
+`[20, 22]`. The other probes' readings go to separate calls.
 
 ### One-to-many: mean and peak per probe
 
@@ -448,7 +448,7 @@ overall = aq.App(
     name="overall-temperature",
     inputs={"temperature": aq.Selection(selection_query, group=None)},
     outputs={"mean": aq.Output()},
-    function=aq.Native.mean("mean"),
+    function=aq.PythonFunction.from_file("temperature_functions.py", "mean"),
     window=aq.FixedBucket(MINUTE),
 )
 ```
@@ -516,8 +516,8 @@ The extra `output_time` column tells you which result that copy is for; its
 `time` still records the sample's own time. For a sequential function,
 earlier output timestamps remain distinct from the current output timestamp.
 
-For runnable calculations, continue with the
-[soft sensor examples](../how-to/soft-sensor-examples.md). For every frame
+For runnable calculations, continue with
+[Write a soft sensor](../how-to/write-soft-sensors.md). For every frame
 column and option, see the [app reference](../reference/apps/app-class.md#python-functions).
 [Derived stream updates](apps.md) explains what happens when an old
 reading, a group membership, or a function changes.

@@ -230,11 +230,11 @@
 <li class="toctree-l2"><a class="reference internal" href="../tutorials/inserting-metadata.html">3 - Inserting Metadata</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tutorials/inserting-plant-model.html">4 - Inserting a Plant Model</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tutorials/a-full-example.html">5 - A Full Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/advanced/first-app.html">Build your first soft sensor</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/turbidity.html">Build a turbidity alarm pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tutorials/acquirium-at-a-glance.html">Acquirium at a glance</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../tutorials/turbidity.html">Turbidity alarm pipeline</a></li>
 <li class="toctree-l2 has-children"><a class="reference internal" href="../tutorials/advanced/_index.html">Advanced topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/writing-a-driver.html">Writing a driver</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/first-app.html">Declaring and deploying apps</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/experiments.html">Running experiments</a></li>
 </ul>
 </details></li>
@@ -245,11 +245,7 @@
 <li class="toctree-l2"><a class="reference internal" href="debug-an-empty-query.html">Debug an empty or unexpected query result</a></li>
 <li class="toctree-l2"><a class="reference internal" href="query-cookbook.html">Query cookbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="access-a-shared-server.html">Access data on a shared server</a></li>
-<li class="toctree-l2"><a class="reference internal" href="write-soft-sensors.html">Soft sensor calculations</a></li>
-<li class="toctree-l2"><a class="reference internal" href="chain-cleaning-apps.html">Data cleaning with multiple apps</a></li>
-<li class="toctree-l2"><a class="reference internal" href="clean-data-with-multiple-outputs.html">Data cleaning with multiple outputs</a></li>
-<li class="toctree-l2"><a class="reference internal" href="parameterize-soft-sensors.html">Soft sensor parameters</a></li>
-<li class="toctree-l2"><a class="reference internal" href="soft-sensor-examples.html">Soft sensor examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="write-soft-sensors.html">Write a soft sensor</a></li>
 <li class="toctree-l2"><a class="reference internal" href="consume-streaming-changes.html">Streaming change feed</a></li>
 <li class="toctree-l2 current active"><a class="current reference internal" href="#">App deployment and recovery</a></li>
 <li class="toctree-l2"><a class="reference internal" href="record-a-whole-model.html">Record a whole model</a></li>
@@ -551,38 +547,38 @@
 <p>Deploying an app can mean recomputing months of history. This guide shows how to see what a
 deployment will do before you make it, how to check on an app afterwards, how
 to change its code, and how to recover when a calculation fails. The examples
-continue from <a class="reference internal" href="write-soft-sensors.html"><span class="std std-doc">calculating a derived stream</span></a>, on the
+continue from <a class="reference internal" href="write-soft-sensors.html#choose-inputs-and-windows"><span class="std std-ref">Write a soft sensor</span></a>, on the
 sine-wave server.</p>
 <section id="deployment-preview">
 <h2>Deployment preview<a class="headerlink" href="#deployment-preview" title="Link to this heading">#</a></h2>
-<p>Before switching <code class="docutils literal notranslate"><span class="pre">wave-spread</span></code> from ten-second buckets to a rolling window, ask
-what the change would do:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">preview</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">deploy_app</span><span class="p">(</span><span class="n">app</span><span class="p">,</span> <span class="n">dry_run</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-<span class="n">preview</span><span class="p">[</span><span class="s2">"app"</span><span class="p">][</span><span class="s2">"apps"</span><span class="p">]</span>
+<p>Before switching <code class="docutils literal notranslate"><span class="pre">wave-mean</span></code> from fixed buckets to a rolling window, preview
+how much history the change would recompute.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">replace</span>
+
+<span class="n">rolling_mean</span> <span class="o">=</span> <span class="n">replace</span><span class="p">(</span>
+    <span class="n">mean</span><span class="p">,</span>
+    <span class="n">window</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">Rolling</span><span class="p">(</span><span class="n">lookback</span><span class="o">=</span><span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">(</span><span class="s2">"4s"</span><span class="p">),</span> <span class="n">step</span><span class="o">=</span><span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">(</span><span class="s2">"2s"</span><span class="p">)),</span>
+<span class="p">)</span>
+<span class="n">preview</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">deploy_app</span><span class="p">(</span><span class="n">rolling_mean</span><span class="p">,</span> <span class="n">dry_run</span><span class="o">=</span><span class="kc">True</span><span class="p">)[</span><span class="s2">"app"</span><span class="p">]</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">preview</span><span class="p">[</span><span class="s2">"instances"</span><span class="p">])</span>
 </pre></div>
 </div>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>{'wave-spread': {'operators': 1, 'groups': 23, 'input_rows': 78,
-                 'cleared_rows': 5, 'changes': {'redefined': 1},
-                 'downstream': False}}
-</pre></div>
-</div>
-<p>Nothing has changed yet. The preview says the app would be <em>redefined</em>, which
-means its results are thrown away and recomputed: 23 windows to calculate, from
-78 stored readings, replacing the 5 bucket results it has now. No other app
-reads its output, so nothing <code class="docutils literal notranslate"><span class="pre">downstream</span></code> is affected. On a real plant, the
-same numbers tell a change to one filter’s settings apart from a rebuild of a
-year of history.</p>
+<p>The preview lists the affected app groups and estimates the input rows
+and stored results involved. If you deployed <code class="docutils literal notranslate"><span class="pre">high-mean</span></code>, the preview flags
+that its inputs may change. The counts depend on how much data the driver has
+produced. See the <a class="reference internal" href="../reference/apps/deploying.html"><span class="std std-doc">deployment reference</span></a>
+for the preview fields.</p>
 <p>The preview does not run your function, so it cannot tell you whether the
 function works. Try the function on a small frame first, as the
 <a class="reference internal" href="write-soft-sensors.html#python-functions"><span class="std std-ref">calculation guide</span></a> does.</p>
-<p>Check <code class="docutils literal notranslate"><span class="pre">preview[&quot;app&quot;][&quot;warnings&quot;]</span></code> as well. A selection that matches no streams
+<p>Check <code class="docutils literal notranslate"><span class="pre">preview[&quot;warnings&quot;]</span></code> as well. A selection that matches no streams
 is allowed, because the driver may not have registered them yet, but more often
 it means the query is narrower than you meant.</p>
 </section>
 <section id="deployment-and-status">
 <h2>Deployment and status<a class="headerlink" href="#deployment-and-status" title="Link to this heading">#</a></h2>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">client</span><span class="o">.</span><span class="n">deploy_app</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>
-<span class="n">state</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">inspect_app</span><span class="p">(</span><span class="s2">"wave-spread"</span><span class="p">)[</span><span class="s2">"app"</span><span class="p">]</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">client</span><span class="o">.</span><span class="n">deploy_app</span><span class="p">(</span><span class="n">rolling_mean</span><span class="p">)</span>
+<span class="n">state</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">inspect_app</span><span class="p">(</span><span class="s2">"wave-mean"</span><span class="p">)[</span><span class="s2">"app"</span><span class="p">]</span>
 <span class="n">state</span><span class="p">[</span><span class="s2">"status"</span><span class="p">],</span> <span class="n">state</span><span class="p">[</span><span class="s2">"error"</span><span class="p">],</span> <span class="n">state</span><span class="p">[</span><span class="s2">"warnings"</span><span class="p">]</span>
 </pre></div>
 </div>
@@ -592,13 +588,11 @@ it means the query is narrower than you meant.</p>
 <p><code class="docutils literal notranslate"><span class="pre">state[&quot;operators&quot;]</span></code> lists what is running: for each group, its input streams
 and the stream each output is written to. Deploying one app leaves the others
 in place.</p>
-<p>The same steps work from the command line, given a file with a function that
-takes <code class="docutils literal notranslate"><span class="pre">(client,</span> <span class="pre">parameters)</span></code> and returns the <code class="docutils literal notranslate"><span class="pre">App</span></code>:</p>
-<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>acquirium<span class="w"> </span>app<span class="w"> </span>deploy<span class="w"> </span>examples/transformation/threshold_app.py:high_wave<span class="w"> </span>--dry-run
-acquirium<span class="w"> </span>app<span class="w"> </span>deploy<span class="w"> </span>examples/transformation/threshold_app.py:high_wave
-acquirium<span class="w"> </span>app<span class="w"> </span>inspect<span class="w"> </span>high-wave<span class="w"> </span>--json
+<p>You can also inspect the deployed app from the command line.</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>acquirium<span class="w"> </span>app<span class="w"> </span>inspect<span class="w"> </span>wave-mean<span class="w"> </span>--json
 </pre></div>
 </div>
+<p>See <a class="reference internal" href="../reference/apps/cli.html"><span class="std std-doc">App commands</span></a> for CLI deployment from a file.</p>
 </section>
 <section id="calculation-updates">
 <h2>Calculation updates<a class="headerlink" href="#calculation-updates" title="Link to this heading">#</a></h2>
@@ -614,11 +608,8 @@ the same version, even if its source path changes.</p>
 <h2>Recovery from a failed calculation<a class="headerlink" href="#recovery-from-a-failed-calculation" title="Link to this heading">#</a></h2>
 <p>Here is a function with a bug, saved as <code class="docutils literal notranslate"><span class="pre">ratio.py</span></code>. It divides by each
 reading, and the sine wave passes through zero:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">acquirium.functions</span><span class="w"> </span><span class="kn">import</span> <span class="n">emit</span>
-
-
-<span class="k">def</span><span class="w"> </span><span class="nf">ratio</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
-    <span class="k">return</span> <span class="p">{</span><span class="s2">"ratio"</span><span class="p">:</span> <span class="n">emit</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="mi">1</span> <span class="o">/</span> <span class="n">frame</span><span class="p">[</span><span class="s2">"value"</span><span class="p">][</span><span class="mi">0</span><span class="p">])}</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">ratio</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">"ratio"</span><span class="p">:</span> <span class="mi">1</span> <span class="o">/</span> <span class="n">frame</span><span class="p">[</span><span class="s2">"value"</span><span class="p">][</span><span class="mi">0</span><span class="p">]}</span>
 </pre></div>
 </div>
 <p>Deploy it:</p>
@@ -642,9 +633,9 @@ reports why:</p>
 </div>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>execution failed: Python function failed: Traceback (most recent call last):
   ...
-  File "/tmp/.tmpVdTlNB/function.py", line 5, in ratio
-    return {"ratio": emit(context, 1 / frame["value"][0])}
-                                   ~~^~~~~~~~~~~~~~~~~~~
+  File "/tmp/.tmpVdTlNB/function.py", line 2, in ratio
+    return {"ratio": 1 / frame["value"][0]}
+                     ~~^~~~~~~~~~~~~~~~~~~
 ZeroDivisionError: float division by zero
 </pre></div>
 </div>
@@ -656,14 +647,11 @@ ZeroDivisionError: float division by zero
 that the write was committed; check app status to see whether a calculation is
 current.</p>
 <p>To recover, edit <code class="docutils literal notranslate"><span class="pre">ratio.py</span></code>:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">acquirium.functions</span><span class="w"> </span><span class="kn">import</span> <span class="n">emit</span>
-
-
-<span class="k">def</span><span class="w"> </span><span class="nf">ratio</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">ratio</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
     <span class="n">value</span> <span class="o">=</span> <span class="n">frame</span><span class="p">[</span><span class="s2">"value"</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>
     <span class="k">if</span> <span class="nb">abs</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mf">1e-9</span><span class="p">:</span>
-        <span class="k">return</span> <span class="p">{</span><span class="s2">"ratio"</span><span class="p">:</span> <span class="n">emit</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="kc">None</span><span class="p">)}</span>
-    <span class="k">return</span> <span class="p">{</span><span class="s2">"ratio"</span><span class="p">:</span> <span class="n">emit</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="mi">1</span> <span class="o">/</span> <span class="n">value</span><span class="p">)}</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">"ratio"</span><span class="p">:</span> <span class="kc">None</span><span class="p">}</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">"ratio"</span><span class="p">:</span> <span class="mi">1</span> <span class="o">/</span> <span class="n">value</span><span class="p">}</span>
 </pre></div>
 </div>
 <p>Rebuild the declaration and deploy it:</p>

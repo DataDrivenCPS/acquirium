@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Declaring and deploying apps &#8212; Acquirium Documentation</title>
+    <title>Build your first soft sensor &#8212; Acquirium Documentation</title>
   
   
   
@@ -66,8 +66,8 @@
     <link rel="icon" href="../../_static/logo-notext.png"/>
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
-    <link rel="next" title="Running experiments" href="experiments.html" />
-    <link rel="prev" title="Writing a driver" href="writing-a-driver.html" />
+    <link rel="next" title="Build a turbidity alarm pipeline" href="../turbidity.html" />
+    <link rel="prev" title="5 - A Full Example" href="../a-full-example.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   <meta name="docsearch:version" content="" />
@@ -230,11 +230,11 @@
 <li class="toctree-l2"><a class="reference internal" href="../inserting-metadata.html">3 - Inserting Metadata</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../inserting-plant-model.html">4 - Inserting a Plant Model</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../a-full-example.html">5 - A Full Example</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">Build your first soft sensor</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../turbidity.html">Build a turbidity alarm pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../acquirium-at-a-glance.html">Acquirium at a glance</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../turbidity.html">Turbidity alarm pipeline</a></li>
-<li class="toctree-l2 current active has-children"><a class="reference internal" href="_index.html">Advanced topics</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2 has-children"><a class="reference internal" href="_index.html">Advanced topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l3"><a class="reference internal" href="writing-a-driver.html">Writing a driver</a></li>
-<li class="toctree-l3 current active"><a class="current reference internal" href="#">Declaring and deploying apps</a></li>
 <li class="toctree-l3"><a class="reference internal" href="experiments.html">Running experiments</a></li>
 </ul>
 </details></li>
@@ -245,11 +245,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/debug-an-empty-query.html">Debug an empty or unexpected query result</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/query-cookbook.html">Query cookbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/access-a-shared-server.html">Access data on a shared server</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../how-to/write-soft-sensors.html">Soft sensor calculations</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../how-to/chain-cleaning-apps.html">Data cleaning with multiple apps</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../how-to/clean-data-with-multiple-outputs.html">Data cleaning with multiple outputs</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../how-to/parameterize-soft-sensors.html">Soft sensor parameters</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../how-to/soft-sensor-examples.html">Soft sensor examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/write-soft-sensors.html">Write a soft sensor</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/consume-streaming-changes.html">Streaming change feed</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/check-deploy-apps.html">App deployment and recovery</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/record-a-whole-model.html">Record a whole model</a></li>
@@ -520,7 +516,7 @@
               
 
 <div id="jb-print-docs-body" class="onlyprint">
-    <h1>Declaring and deploying apps</h1>
+    <h1>Build your first soft sensor</h1>
     <!-- Table of contents -->
     <div id="print-main-content">
         <div id="jb-print-toc">
@@ -530,8 +526,12 @@
             </div>
             <nav aria-label="Page">
                 <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#declare-the-calculation">Declare the calculation</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#preview-and-deploy">Preview and deploy</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#start-the-server">Start the server</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#read-the-input-signal">Read the input signal</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#define-the-threshold">Define the threshold</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#connect-the-calculation-to-the-stream">Connect the calculation to the stream</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#deploy-and-read-the-output">Deploy and read the output</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#next-steps">Next steps</a></li>
 </ul>
             </nav>
         </div>
@@ -543,75 +543,121 @@
 <div id="searchbox"></div>
                 <article class="bd-article">
                   
-  <section id="declaring-and-deploying-apps">
-<h1>Declaring and deploying apps<a class="headerlink" href="#declaring-and-deploying-apps" title="Link to this heading">#</a></h1>
-<p>An app calculates streams from existing readings. This tutorial adds power in kilowatts to each pump in the <a class="reference internal" href="../a-full-example.html"><span class="std std-doc">full example</span></a>. Run that tutorial first and use the same data folder.</p>
-<p>The <a class="reference external" href="https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/advanced_apps.py" rel="noreferer noopener" target="_blank">example script</a> and <a class="reference external" href="https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/advanced_apps.ipynb" rel="noreferer noopener" target="_blank">notebook</a> use the declaration in <a class="reference external" href="https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/plant_apps.py" rel="noreferer noopener" target="_blank">plant_apps.py</a>.</p>
-<section id="declare-the-calculation">
-<h2>Declare the calculation<a class="headerlink" href="#declare-the-calculation" title="Link to this heading">#</a></h2>
-<p>The query finds each pump’s power measurement. <code class="docutils literal notranslate"><span class="pre">Selection.from_query</span></code> binds the matching stream for each pump to the named input <code class="docutils literal notranslate"><span class="pre">power</span></code>. The selection skips the app’s own outputs so that redeploying keeps the same inputs. The <code class="docutils literal notranslate"><span class="pre">Pointwise</span></code> window runs the function for each affected timestamp. The function emits one output in kilowatts for each input value.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="sd">"""Declaration for the pump power example."""</span>
+  <section id="build-your-first-soft-sensor">
+<h1>Build your first soft sensor<a class="headerlink" href="#build-your-first-soft-sensor" title="Link to this heading">#</a></h1>
+<p>A soft sensor uses existing readings to calculate a new stream. Here you’ll
+build a threshold detector that records a sine-wave reading whenever it
+exceeds 0.5. The driver generates the input, a Python function checks each
+reading, and an app declaration connects the two.</p>
+<p>You’ll need a checkout of the <a class="reference external" href="https://github.com/DataDrivenCPS/acquirium" rel="noreferer noopener" target="_blank">Acquirium repository</a>
+and uv. Run the commands from the repository root.</p>
+<section id="start-the-server">
+<h2>Start the server<a class="headerlink" href="#start-the-server" title="Link to this heading">#</a></h2>
+<p>In the first terminal, start Acquirium with the example configuration.</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>run<span class="w"> </span>--locked<span class="w"> </span>acquirium<span class="w"> </span>server<span class="w"> </span>--config<span class="w"> </span>examples/transformation/acquirium.toml
+</pre></div>
+</div>
+<p>The configuration starts the sine-wave driver in <code class="docutils literal notranslate"><span class="pre">examples/transformation/publish.py</span></code>.
+Wait for <code class="docutils literal notranslate"><span class="pre">Started</span> <span class="pre">config</span> <span class="pre">driver</span> <span class="pre">'SineWaveDriver'</span></code> in the server log. The
+driver writes one reading per second. Leave the server running while you work.</p>
+</section>
+<section id="read-the-input-signal">
+<h2>Read the input signal<a class="headerlink" href="#read-the-input-signal" title="Link to this heading">#</a></h2>
+<p>In a second terminal, run <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">run</span> <span class="pre">--locked</span> <span class="pre">python</span></code> and connect to the server.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">acquirium</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
-
-<span class="kn">import</span><span class="w"> </span><span class="nn">acquirium</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
-
-
-<span class="k">def</span><span class="w"> </span><span class="nf">pump_power_kw</span><span class="p">(</span><span class="n">acq</span><span class="p">):</span>
-    <span class="n">query</span> <span class="o">=</span> <span class="n">acq</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">entity</span><span class="p">(</span><span class="s2">"pump"</span><span class="p">,</span> <span class="n">alias</span><span class="o">=</span><span class="s2">"pump"</span><span class="p">)</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"power"</span><span class="p">,</span> <span class="n">quantity_kind</span><span class="o">=</span><span class="s2">"power"</span><span class="p">)</span>
-    <span class="k">return</span> <span class="n">aq</span><span class="o">.</span><span class="n">App</span><span class="p">(</span>
-        <span class="n">name</span><span class="o">=</span><span class="s2">"pump-power-kw"</span><span class="p">,</span>
-        <span class="n">inputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"power"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Selection</span><span class="o">.</span><span class="n">from_query</span><span class="p">(</span>
-            <span class="n">query</span><span class="p">,</span> <span class="n">measurement</span><span class="o">=</span><span class="s2">"power"</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="s2">"pump"</span><span class="p">,</span> <span class="n">exclude_app</span><span class="o">=</span><span class="s2">"pump-power-kw"</span><span class="p">,</span>
-        <span class="p">)},</span>
-        <span class="n">outputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"power"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Output</span><span class="p">(</span>
-            <span class="n">unit</span><span class="o">=</span><span class="s2">"http://qudt.org/vocab/unit/KiloW"</span><span class="p">,</span>
-            <span class="n">quantity_kind</span><span class="o">=</span><span class="s2">"http://qudt.org/vocab/quantitykind/Power"</span><span class="p">,</span>
-            <span class="n">on_group</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-        <span class="p">)},</span>
-        <span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">PythonFunction</span><span class="o">.</span><span class="n">from_file</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="vm">__file__</span><span class="p">),</span> <span class="s2">"watts_to_kilowatts"</span><span class="p">),</span>
-        <span class="n">window</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">Pointwise</span><span class="p">(),</span>
-    <span class="p">)</span>
-
-
-<span class="k">def</span><span class="w"> </span><span class="nf">watts_to_kilowatts</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
-    <span class="kn">from</span><span class="w"> </span><span class="nn">acquirium.functions</span><span class="w"> </span><span class="kn">import</span> <span class="n">emit</span><span class="p">,</span> <span class="n">empty</span>
-
-    <span class="k">if</span> <span class="n">frame</span><span class="o">.</span><span class="n">is_empty</span><span class="p">():</span>
-        <span class="k">return</span> <span class="p">{</span><span class="s2">"power"</span><span class="p">:</span> <span class="n">empty</span><span class="p">()}</span>
-    <span class="k">return</span> <span class="p">{</span><span class="s2">"power"</span><span class="p">:</span> <span class="n">emit</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="n">frame</span><span class="p">[</span><span class="s2">"value"</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span> <span class="o">/</span> <span class="mi">1000</span><span class="p">)}</span>
+<span class="n">client</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">Acquirium</span><span class="p">(</span><span class="n">server_url</span><span class="o">=</span><span class="s2">"127.0.0.1"</span><span class="p">,</span> <span class="n">server_port</span><span class="o">=</span><span class="mi">8000</span><span class="p">)</span>
+<span class="n">wave</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"wave"</span><span class="p">,</span> <span class="n">uri</span><span class="o">=</span><span class="s2">"urn:example:sine-wave"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">wave</span><span class="o">.</span><span class="n">dataframe</span><span class="p">()</span><span class="o">.</span><span class="n">tail</span><span class="p">(</span><span class="mi">8</span><span class="p">))</span>
+</pre></div>
+</div>
+<p>Once the driver has collected eight readings, you should see the signal rise
+above 0.5 and fall again. If the table has fewer rows, wait a few seconds
+and run the last two lines again. The timestamps below are from one run.</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (8, 2)
+┌────────────────────────────────┬─────────────────────┐
+│ time                           ┆ wave__ns1:sine-wave │
+│ ---                            ┆ ---                 │
+│ datetime[ns, UTC]              ┆ f64                 │
+╞════════════════════════════════╪═════════════════════╡
+│ 2026-11-27 22:37:46.337206 UTC ┆ 0.0                 │
+│ 2026-11-27 22:37:47.365859 UTC ┆ 0.707107            │
+│ 2026-11-27 22:37:48.385850 UTC ┆ 1.0                 │
+│ 2026-11-27 22:37:49.409411 UTC ┆ 0.707107            │
+│ 2026-11-27 22:37:50.432213 UTC ┆ 1.2246e-16          │
+│ 2026-11-27 22:37:51.453819 UTC ┆ -0.707107           │
+│ 2026-11-27 22:37:52.477383 UTC ┆ -1.0                │
+│ 2026-11-27 22:37:53.497894 UTC ┆ -0.707107           │
+└────────────────────────────────┴─────────────────────┘
 </pre></div>
 </div>
 </section>
-<section id="preview-and-deploy">
-<h2>Preview and deploy<a class="headerlink" href="#preview-and-deploy" title="Link to this heading">#</a></h2>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">acquirium</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">plant_apps</span><span class="w"> </span><span class="kn">import</span> <span class="n">pump_power_kw</span>
-
-<span class="n">acq</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">init</span><span class="p">()</span>
-<span class="n">app</span> <span class="o">=</span> <span class="n">pump_power_kw</span><span class="p">(</span><span class="n">acq</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="n">acq</span><span class="o">.</span><span class="n">deploy_app</span><span class="p">(</span><span class="n">app</span><span class="p">,</span> <span class="n">dry_run</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span>
-<span class="nb">print</span><span class="p">(</span><span class="n">acq</span><span class="o">.</span><span class="n">deploy_app</span><span class="p">(</span><span class="n">app</span><span class="p">))</span>
+<section id="define-the-threshold">
+<h2>Define the threshold<a class="headerlink" href="#define-the-threshold" title="Link to this heading">#</a></h2>
+<p>Open <code class="docutils literal notranslate"><span class="pre">examples/transformation/sine_threshold.py</span></code>. This file contains the
+calculation the server will run.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">threshold</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+    <span class="n">value</span> <span class="o">=</span> <span class="n">frame</span><span class="p">[</span><span class="s2">"value"</span><span class="p">]</span><span class="o">.</span><span class="n">drop_nulls</span><span class="p">()</span><span class="o">.</span><span class="n">first</span><span class="p">()</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">"high"</span><span class="p">:</span> <span class="n">value</span> <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">value</span> <span class="o">&gt;</span> <span class="mf">0.5</span> <span class="k">else</span> <span class="kc">None</span><span class="p">}</span>
 </pre></div>
 </div>
-<p>The preview estimates the work before activation. Deployment computes existing history and keeps the outputs current as readings arrive or are corrected.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">readings</span> <span class="o">=</span> <span class="n">acq</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">entity</span><span class="p">(</span><span class="s2">"pump"</span><span class="p">,</span> <span class="n">alias</span><span class="o">=</span><span class="s2">"pump"</span><span class="p">)</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">app</span><span class="o">=</span><span class="s2">"pump-power-kw"</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="n">readings</span><span class="o">.</span><span class="n">dataframe</span><span class="p">(</span><span class="n">shape</span><span class="o">=</span><span class="s2">"narrow"</span><span class="p">,</span> <span class="n">limit</span><span class="o">=</span><span class="mi">3</span><span class="p">))</span>
-
-<span class="n">acq</span><span class="o">.</span><span class="n">insert_timeseries</span><span class="p">(</span>
-    <span class="n">source_id</span><span class="o">=</span><span class="s2">"csv-data"</span><span class="p">,</span>
-    <span class="n">stream_name</span><span class="o">=</span><span class="s2">"P1-mechanical-power"</span><span class="p">,</span>
-    <span class="n">rows</span><span class="o">=</span><span class="p">[(</span><span class="s2">"2026-01-01"</span><span class="p">,</span> <span class="mf">1_200_000.0</span><span class="p">)],</span>
+<p>The <code class="docutils literal notranslate"><span class="pre">value</span></code> column contains the numeric reading. The function returns that
+reading on the <code class="docutils literal notranslate"><span class="pre">high</span></code> output port when it exceeds 0.5. Returning <code class="docutils literal notranslate"><span class="pre">None</span></code>
+leaves the output empty at that timestamp.</p>
+</section>
+<section id="connect-the-calculation-to-the-stream">
+<h2>Connect the calculation to the stream<a class="headerlink" href="#connect-the-calculation-to-the-stream" title="Link to this heading">#</a></h2>
+<p>In the same Python session, declare the app using the <code class="docutils literal notranslate"><span class="pre">wave</span></code> query you
+just ran.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">app</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">App</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"high-wave"</span><span class="p">,</span>
+    <span class="n">inputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"wave"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Selection</span><span class="o">.</span><span class="n">from_query</span><span class="p">(</span><span class="n">wave</span><span class="p">,</span> <span class="n">measurement</span><span class="o">=</span><span class="s2">"wave"</span><span class="p">)},</span>
+    <span class="n">outputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"high"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Output</span><span class="p">()},</span>
+    <span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">PythonFunction</span><span class="o">.</span><span class="n">from_file</span><span class="p">(</span>
+        <span class="s2">"examples/transformation/sine_threshold.py"</span><span class="p">,</span> <span class="s2">"threshold"</span>
+    <span class="p">),</span>
+    <span class="n">window</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">Pointwise</span><span class="p">(),</span>
 <span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="n">readings</span><span class="o">.</span><span class="n">dataframe</span><span class="p">(</span><span class="n">shape</span><span class="o">=</span><span class="s2">"narrow"</span><span class="p">,</span> <span class="n">start</span><span class="o">=</span><span class="s2">"2026-01-01"</span><span class="p">))</span>
 </pre></div>
 </div>
-<p>The new reading produces 1,200 kW. A correction at the same timestamp will update the output. To deploy a changed calculation, rebuild the declaration from the edited file and call <code class="docutils literal notranslate"><span class="pre">deploy_app</span></code> again.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">acq</span><span class="o">.</span><span class="n">remove_app</span><span class="p">(</span><span class="n">app</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
-<span class="n">aq</span><span class="o">.</span><span class="n">shutdown</span><span class="p">()</span>
+<p><code class="docutils literal notranslate"><span class="pre">Selection.from_query</span></code> selects the same sine-wave measurement you read earlier.
+<code class="docutils literal notranslate"><span class="pre">PythonFunction.from_file</span></code> points to the calculation in the separate file.
+The <code class="docutils literal notranslate"><span class="pre">high</span></code> port matches the function’s return key. <code class="docutils literal notranslate"><span class="pre">Pointwise()</span></code> runs the
+function at each input timestamp and publishes any result at that same time.</p>
+</section>
+<section id="deploy-and-read-the-output">
+<h2>Deploy and read the output<a class="headerlink" href="#deploy-and-read-the-output" title="Link to this heading">#</a></h2>
+<p>Deploy the app and query the new stream by app name.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">client</span><span class="o">.</span><span class="n">deploy_app</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>
+
+<span class="n">high</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"high"</span><span class="p">,</span> <span class="n">app</span><span class="o">=</span><span class="n">app</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">high</span><span class="o">.</span><span class="n">dataframe</span><span class="p">()</span><span class="o">.</span><span class="n">tail</span><span class="p">(</span><span class="mi">4</span><span class="p">))</span>
 </pre></div>
 </div>
-<p>See the <a class="reference internal" href="../../reference/apps/_index.html"><span class="std std-doc">app reference</span></a> for window and output options and <a class="reference internal" href="../../how-to/check-deploy-apps.html"><span class="std std-doc">deploying and inspecting apps</span></a> for recovery steps.</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (3, 2)
+┌────────────────────────────────┬──────────────────────┐
+│ time                           ┆ high__high-wave high │
+│ ---                            ┆ ---                  │
+│ datetime[ns, UTC]              ┆ f64                  │
+╞════════════════════════════════╪══════════════════════╡
+│ 2026-11-27 22:37:47.365859 UTC ┆ 0.707107             │
+│ 2026-11-27 22:37:48.385850 UTC ┆ 1.0                  │
+│ 2026-11-27 22:37:49.409411 UTC ┆ 0.707107             │
+└────────────────────────────────┴──────────────────────┘
+</pre></div>
+</div>
+<p>Compare the timestamps with the input table. The three readings above 0.5
+appear at their original times. Deployment checks the readings already stored,
+and the server keeps evaluating new readings after you exit Python. Run the
+last Python line again a few seconds later to see new results. When you’re
+finished, stop the server with Ctrl-C in the first terminal.</p>
+</section>
+<section id="next-steps">
+<h2>Next steps<a class="headerlink" href="#next-steps" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p><a class="reference internal" href="../turbidity.html"><span class="std std-doc">Build a turbidity alarm pipeline</span></a> to clean readings and detect when they stay above a threshold.</p></li>
+<li><p><a class="reference internal" href="../../how-to/write-soft-sensors.html"><span class="std std-doc">Write a soft sensor</span></a> to use this server to calculate a windowed mean and chain another detector.</p></li>
+</ul>
 </section>
 </section>
 
@@ -646,20 +692,20 @@
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="writing-a-driver.html"
+       href="../a-full-example.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Writing a driver</p>
+        <p class="prev-next-title">5 - A Full Example</p>
       </div>
     </a>
     <a class="right-next"
-       href="experiments.html"
+       href="../turbidity.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Running experiments</p>
+        <p class="prev-next-title">Build a turbidity alarm pipeline</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -681,8 +727,12 @@
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#declare-the-calculation">Declare the calculation</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#preview-and-deploy">Preview and deploy</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#start-the-server">Start the server</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#read-the-input-signal">Read the input signal</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#define-the-threshold">Define the threshold</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#connect-the-calculation-to-the-stream">Connect the calculation to the stream</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#deploy-and-read-the-output">Deploy and read the output</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#next-steps">Next steps</a></li>
 </ul>
   </nav></div>
 

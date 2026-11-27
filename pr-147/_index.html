@@ -231,11 +231,11 @@
 <li class="toctree-l2"><a class="reference internal" href="tutorials/inserting-metadata.html">3 - Inserting Metadata</a></li>
 <li class="toctree-l2"><a class="reference internal" href="tutorials/inserting-plant-model.html">4 - Inserting a Plant Model</a></li>
 <li class="toctree-l2"><a class="reference internal" href="tutorials/a-full-example.html">5 - A Full Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/advanced/first-app.html">Build your first soft sensor</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tutorials/turbidity.html">Build a turbidity alarm pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="tutorials/acquirium-at-a-glance.html">Acquirium at a glance</a></li>
-<li class="toctree-l2"><a class="reference internal" href="tutorials/turbidity.html">Turbidity alarm pipeline</a></li>
 <li class="toctree-l2 has-children"><a class="reference internal" href="tutorials/advanced/_index.html">Advanced topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l3"><a class="reference internal" href="tutorials/advanced/writing-a-driver.html">Writing a driver</a></li>
-<li class="toctree-l3"><a class="reference internal" href="tutorials/advanced/first-app.html">Declaring and deploying apps</a></li>
 <li class="toctree-l3"><a class="reference internal" href="tutorials/advanced/experiments.html">Running experiments</a></li>
 </ul>
 </details></li>
@@ -246,11 +246,7 @@
 <li class="toctree-l2"><a class="reference internal" href="how-to/debug-an-empty-query.html">Debug an empty or unexpected query result</a></li>
 <li class="toctree-l2"><a class="reference internal" href="how-to/query-cookbook.html">Query cookbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="how-to/access-a-shared-server.html">Access data on a shared server</a></li>
-<li class="toctree-l2"><a class="reference internal" href="how-to/write-soft-sensors.html">Soft sensor calculations</a></li>
-<li class="toctree-l2"><a class="reference internal" href="how-to/chain-cleaning-apps.html">Data cleaning with multiple apps</a></li>
-<li class="toctree-l2"><a class="reference internal" href="how-to/clean-data-with-multiple-outputs.html">Data cleaning with multiple outputs</a></li>
-<li class="toctree-l2"><a class="reference internal" href="how-to/parameterize-soft-sensors.html">Soft sensor parameters</a></li>
-<li class="toctree-l2"><a class="reference internal" href="how-to/soft-sensor-examples.html">Soft sensor examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="how-to/write-soft-sensors.html">Write a soft sensor</a></li>
 <li class="toctree-l2"><a class="reference internal" href="how-to/consume-streaming-changes.html">Streaming change feed</a></li>
 <li class="toctree-l2"><a class="reference internal" href="how-to/check-deploy-apps.html">App deployment and recovery</a></li>
 <li class="toctree-l2"><a class="reference internal" href="how-to/record-a-whole-model.html">Record a whole model</a></li>
@@ -531,6 +527,7 @@
             </div>
             <nav aria-label="Page">
                 <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#soft-sensors">Soft sensors</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#get-help-and-contribute">Get help and contribute</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#about-this-documentation">About this documentation</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#citation">Citation</a></li>
@@ -559,6 +556,14 @@ external data sources.</p>
 <p>New to Acquirium?</p>
 </div>
 <p class="sd-text-center"><a class="sd-sphinx-override sd-btn sd-text-wrap sd-btn-primary sd-shadow-sm sd-fs-4 sd-px-5 sd-py-3 sd-mb-5 reference internal" href="getting-started.html"><span class="doc">Get started</span></a></p>
+<section id="soft-sensors">
+<h2>Soft sensors<a class="headerlink" href="#soft-sensors" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p><a class="reference internal" href="tutorials/advanced/first-app.html"><span class="std std-doc">Build your first soft sensor</span></a> by detecting high readings on a live signal.</p></li>
+<li><p><a class="reference internal" href="tutorials/turbidity.html"><span class="std std-doc">Build a turbidity alarm pipeline</span></a> that cleans data and recalculates alarms when readings arrive late.</p></li>
+<li><p><a class="reference internal" href="how-to/write-soft-sensors.html"><span class="std std-doc">Write a soft sensor</span></a> using your own streams, windows, and parameters.</p></li>
+</ul>
+</section>
 <section id="get-help-and-contribute">
 <h2>Get help and contribute<a class="headerlink" href="#get-help-and-contribute" title="Link to this heading">#</a></h2>
 <ol class="arabic simple">
@@ -655,6 +660,7 @@ Applications in Water Treatment Systems</a>
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#soft-sensors">Soft sensors</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#get-help-and-contribute">Get help and contribute</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#about-this-documentation">About this documentation</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#citation">Citation</a></li>

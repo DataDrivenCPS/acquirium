@@ -230,11 +230,11 @@
 <li class="toctree-l2"><a class="reference internal" href="../tutorials/inserting-metadata.html">3 - Inserting Metadata</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tutorials/inserting-plant-model.html">4 - Inserting a Plant Model</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tutorials/a-full-example.html">5 - A Full Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/advanced/first-app.html">Build your first soft sensor</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/turbidity.html">Build a turbidity alarm pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tutorials/acquirium-at-a-glance.html">Acquirium at a glance</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../tutorials/turbidity.html">Turbidity alarm pipeline</a></li>
 <li class="toctree-l2 has-children"><a class="reference internal" href="../tutorials/advanced/_index.html">Advanced topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/writing-a-driver.html">Writing a driver</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/first-app.html">Declaring and deploying apps</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/experiments.html">Running experiments</a></li>
 </ul>
 </details></li>
@@ -245,11 +245,7 @@
 <li class="toctree-l2"><a class="reference internal" href="debug-an-empty-query.html">Debug an empty or unexpected query result</a></li>
 <li class="toctree-l2"><a class="reference internal" href="query-cookbook.html">Query cookbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="access-a-shared-server.html">Access data on a shared server</a></li>
-<li class="toctree-l2"><a class="reference internal" href="write-soft-sensors.html">Soft sensor calculations</a></li>
-<li class="toctree-l2"><a class="reference internal" href="chain-cleaning-apps.html">Data cleaning with multiple apps</a></li>
-<li class="toctree-l2"><a class="reference internal" href="clean-data-with-multiple-outputs.html">Data cleaning with multiple outputs</a></li>
-<li class="toctree-l2"><a class="reference internal" href="parameterize-soft-sensors.html">Soft sensor parameters</a></li>
-<li class="toctree-l2"><a class="reference internal" href="soft-sensor-examples.html">Soft sensor examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="write-soft-sensors.html">Write a soft sensor</a></li>
 <li class="toctree-l2"><a class="reference internal" href="consume-streaming-changes.html">Streaming change feed</a></li>
 <li class="toctree-l2"><a class="reference internal" href="check-deploy-apps.html">App deployment and recovery</a></li>
 <li class="toctree-l2"><a class="reference internal" href="record-a-whole-model.html">Record a whole model</a></li>
@@ -532,7 +528,7 @@
                 <ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#querying">Querying</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#shared-servers">Shared servers</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#apps">Apps</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#soft-sensors-and-apps">Soft sensors and apps</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experiments">Experiments</a></li>
 </ul>
             </nav>
@@ -563,11 +559,11 @@ The guides assume that you followed the <a class="reference internal" href="../t
 <li><p><a class="reference internal" href="access-a-shared-server.html"><span class="std std-doc">Access data on a shared server</span></a>: connect with an address and an access token, and read data from a server that someone else runs.</p></li>
 </ul>
 </section>
-<section id="apps">
-<h2>Apps<a class="headerlink" href="#apps" title="Link to this heading">#</a></h2>
+<section id="soft-sensors-and-apps">
+<h2>Soft sensors and apps<a class="headerlink" href="#soft-sensors-and-apps" title="Link to this heading">#</a></h2>
 <ul class="simple">
-<li><p><a class="reference internal" href="write-soft-sensors.html"><span class="std std-doc">Calculate derived streams</span></a>: apps with several inputs, parameters, and apps that read other apps.</p></li>
-<li><p><a class="reference internal" href="check-deploy-apps.html"><span class="std std-doc">Check, deploy, and repair an app</span></a>: read a check result, deploy, repair a failed app, apply a code change to old data, and remove an app.</p></li>
+<li><p><a class="reference internal" href="write-soft-sensors.html"><span class="std std-doc">Write a soft sensor</span></a> by choosing inputs, windows, outputs, and per-group settings.</p></li>
+<li><p><a class="reference internal" href="check-deploy-apps.html"><span class="std std-doc">Check, deploy, and repair an app</span></a> to preview changes, inspect status, and recover a failed calculation.</p></li>
 </ul>
 </section>
 <section id="experiments">
@@ -650,7 +646,7 @@ The guides assume that you followed the <a class="reference internal" href="../t
     <ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#querying">Querying</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#shared-servers">Shared servers</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#apps">Apps</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#soft-sensors-and-apps">Soft sensors and apps</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experiments">Experiments</a></li>
 </ul>
   </nav></div>

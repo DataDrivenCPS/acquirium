@@ -67,7 +67,7 @@
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
     <link rel="next" title="App deployment and recovery" href="check-deploy-apps.html" />
-    <link rel="prev" title="Soft sensor examples" href="soft-sensor-examples.html" />
+    <link rel="prev" title="Write a soft sensor" href="write-soft-sensors.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   <meta name="docsearch:version" content="" />
@@ -230,11 +230,11 @@
 <li class="toctree-l2"><a class="reference internal" href="../tutorials/inserting-metadata.html">3 - Inserting Metadata</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tutorials/inserting-plant-model.html">4 - Inserting a Plant Model</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tutorials/a-full-example.html">5 - A Full Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/advanced/first-app.html">Build your first soft sensor</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/turbidity.html">Build a turbidity alarm pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tutorials/acquirium-at-a-glance.html">Acquirium at a glance</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../tutorials/turbidity.html">Turbidity alarm pipeline</a></li>
 <li class="toctree-l2 has-children"><a class="reference internal" href="../tutorials/advanced/_index.html">Advanced topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/writing-a-driver.html">Writing a driver</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/first-app.html">Declaring and deploying apps</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/experiments.html">Running experiments</a></li>
 </ul>
 </details></li>
@@ -245,11 +245,7 @@
 <li class="toctree-l2"><a class="reference internal" href="debug-an-empty-query.html">Debug an empty or unexpected query result</a></li>
 <li class="toctree-l2"><a class="reference internal" href="query-cookbook.html">Query cookbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="access-a-shared-server.html">Access data on a shared server</a></li>
-<li class="toctree-l2"><a class="reference internal" href="write-soft-sensors.html">Soft sensor calculations</a></li>
-<li class="toctree-l2"><a class="reference internal" href="chain-cleaning-apps.html">Data cleaning with multiple apps</a></li>
-<li class="toctree-l2"><a class="reference internal" href="clean-data-with-multiple-outputs.html">Data cleaning with multiple outputs</a></li>
-<li class="toctree-l2"><a class="reference internal" href="parameterize-soft-sensors.html">Soft sensor parameters</a></li>
-<li class="toctree-l2"><a class="reference internal" href="soft-sensor-examples.html">Soft sensor examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="write-soft-sensors.html">Write a soft sensor</a></li>
 <li class="toctree-l2 current active"><a class="current reference internal" href="#">Streaming change feed</a></li>
 <li class="toctree-l2"><a class="reference internal" href="check-deploy-apps.html">App deployment and recovery</a></li>
 <li class="toctree-l2"><a class="reference internal" href="record-a-whole-model.html">Record a whole model</a></li>
@@ -556,7 +552,7 @@ corrections and deletions, and would keep re-reading what has not changed.
 Instead, Acquirium keeps a feed of every committed change, source and derived
 alike, and a consumer reads it page by page, remembering where it got to.</p>
 <p>This guide builds a consumer that posts to a webhook whenever the <code class="docutils literal notranslate"><span class="pre">high-mean</span></code>
-alarm from <a class="reference internal" href="write-soft-sensors.html"><span class="std std-doc">calculating a derived stream</span></a> is raised or
+alarm from <a class="reference internal" href="write-soft-sensors.html#chain-apps"><span class="std std-ref">Write a soft sensor</span></a> is raised or
 cleared. The finished program is
 <a class="reference external" href="https://github.com/DataDrivenCPS/acquirium/tree/main/examples/streaming/alarm_webhook.py" rel="noreferer noopener" target="_blank"><code class="docutils literal notranslate"><span class="pre">examples/streaming/alarm_webhook.py</span></code></a>.</p>
 <section id="change-pages-and-cursors">
@@ -592,7 +588,7 @@ nothing on another.</p>
 <h2>Epoch contents<a class="headerlink" href="#epoch-contents" title="Link to this heading">#</a></h2>
 <p>Changes are published in <em>epochs</em>, and one epoch holds a source change together
 with everything it caused. Here is one epoch from the sine-wave server, with the
-rolling <code class="docutils literal notranslate"><span class="pre">wave-spread</span></code> deployed, and with stream names, times and values
+rolling spread app deployed, and with stream names, times and values
 shortened:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>epoch  ordinal  weight  stream  time         value
    44        0      +1  wave    17:10:52.58  0.0
@@ -758,12 +754,12 @@ How writes are acknowledged and published is described in
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="soft-sensor-examples.html"
+       href="write-soft-sensors.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Soft sensor examples</p>
+        <p class="prev-next-title">Write a soft sensor</p>
       </div>
     </a>
     <a class="right-next"

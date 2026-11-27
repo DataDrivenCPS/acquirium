@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Soft sensor calculations &#8212; Acquirium Documentation</title>
+    <title>Write a soft sensor &#8212; Acquirium Documentation</title>
   
   
   
@@ -66,7 +66,7 @@
     <link rel="icon" href="../_static/logo-notext.png"/>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Data cleaning with multiple apps" href="chain-cleaning-apps.html" />
+    <link rel="next" title="Streaming change feed" href="consume-streaming-changes.html" />
     <link rel="prev" title="Access data on a shared server" href="access-a-shared-server.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
@@ -230,11 +230,11 @@
 <li class="toctree-l2"><a class="reference internal" href="../tutorials/inserting-metadata.html">3 - Inserting Metadata</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tutorials/inserting-plant-model.html">4 - Inserting a Plant Model</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tutorials/a-full-example.html">5 - A Full Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/advanced/first-app.html">Build your first soft sensor</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/turbidity.html">Build a turbidity alarm pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tutorials/acquirium-at-a-glance.html">Acquirium at a glance</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../tutorials/turbidity.html">Turbidity alarm pipeline</a></li>
 <li class="toctree-l2 has-children"><a class="reference internal" href="../tutorials/advanced/_index.html">Advanced topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/writing-a-driver.html">Writing a driver</a></li>
-<li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/first-app.html">Declaring and deploying apps</a></li>
 <li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/experiments.html">Running experiments</a></li>
 </ul>
 </details></li>
@@ -245,11 +245,7 @@
 <li class="toctree-l2"><a class="reference internal" href="debug-an-empty-query.html">Debug an empty or unexpected query result</a></li>
 <li class="toctree-l2"><a class="reference internal" href="query-cookbook.html">Query cookbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="access-a-shared-server.html">Access data on a shared server</a></li>
-<li class="toctree-l2 current active"><a class="current reference internal" href="#">Soft sensor calculations</a></li>
-<li class="toctree-l2"><a class="reference internal" href="chain-cleaning-apps.html">Data cleaning with multiple apps</a></li>
-<li class="toctree-l2"><a class="reference internal" href="clean-data-with-multiple-outputs.html">Data cleaning with multiple outputs</a></li>
-<li class="toctree-l2"><a class="reference internal" href="parameterize-soft-sensors.html">Soft sensor parameters</a></li>
-<li class="toctree-l2"><a class="reference internal" href="soft-sensor-examples.html">Soft sensor examples</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">Write a soft sensor</a></li>
 <li class="toctree-l2"><a class="reference internal" href="consume-streaming-changes.html">Streaming change feed</a></li>
 <li class="toctree-l2"><a class="reference internal" href="check-deploy-apps.html">App deployment and recovery</a></li>
 <li class="toctree-l2"><a class="reference internal" href="record-a-whole-model.html">Record a whole model</a></li>
@@ -520,7 +516,7 @@
               
 
 <div id="jb-print-docs-body" class="onlyprint">
-    <h1>Soft sensor calculations</h1>
+    <h1>Write a soft sensor</h1>
     <!-- Table of contents -->
     <div id="print-main-content">
         <div id="jb-print-toc">
@@ -530,14 +526,12 @@
             </div>
             <nav aria-label="Page">
                 <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#built-in-mean-function">Built-in mean function</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#app-output-selection">App output selection</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#python-functions">Python functions</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#window-types">Window types</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#sequential-functions">Sequential functions</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#batch-functions">Batch functions</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#group-parameters">Group parameters</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#related-examples-and-references">Related examples and references</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#choose-inputs-and-windows">Choose inputs and windows</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#chain-apps">Chain apps</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#publish-multiple-outputs">Publish multiple outputs</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#set-parameters-by-group">Set parameters by group</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#use-previous-results-or-batch-windows">Use previous results or batch windows</a></li>
 </ul>
             </nav>
         </div>
@@ -549,326 +543,166 @@
 <div id="searchbox"></div>
                 <article class="bd-article">
                   
-  <section id="soft-sensor-calculations">
-<h1>Soft sensor calculations<a class="headerlink" href="#soft-sensor-calculations" title="Link to this heading">#</a></h1>
-<p>An app keeps one stream computed from others: an average, an alarm, an estimate
-of something no sensor measures. This guide starts with the calculations
-Acquirium has built in, then moves to functions of your own, and covers the
-choices you make along the way: the window, state carried between results,
-speed, and settings that differ between groups.</p>
-<p>It uses the sine-wave server from <a class="reference internal" href="../tutorials/advanced/first-app.html"><span class="std std-doc">Soft sensor app</span></a>.
-Start it if it is not running, and connect:</p>
+  <section id="write-a-soft-sensor">
+<h1>Write a soft sensor<a class="headerlink" href="#write-a-soft-sensor" title="Link to this heading">#</a></h1>
+<p>Use an Acquirium app to keep a derived stream up to date as source data
+arrives or is corrected. The example below calculates a four-second mean
+and publishes an alarm when the mean exceeds a limit. Adapt its input
+selection, window, and outputs to your own streams.</p>
+<p>If you haven’t deployed an app before, start with <a class="reference internal" href="../tutorials/advanced/first-app.html"><span class="std std-doc">Build your first soft
+sensor</span></a>.</p>
+<section id="python-functions">
+<h2>Python functions<a class="headerlink" href="#python-functions" title="Link to this heading">#</a></h2>
+<p>Save this as <code class="docutils literal notranslate"><span class="pre">wave_calculations.py</span></code>. Each function returns a mapping from
+output port to result.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">bucket_mean</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">"mean"</span><span class="p">:</span> <span class="n">frame</span><span class="p">[</span><span class="s2">"value"</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">high_mean</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+    <span class="n">value</span> <span class="o">=</span> <span class="n">frame</span><span class="p">[</span><span class="s2">"value"</span><span class="p">]</span><span class="o">.</span><span class="n">drop_nulls</span><span class="p">()</span><span class="o">.</span><span class="n">first</span><span class="p">()</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">"alarm"</span><span class="p">:</span> <span class="n">value</span> <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">value</span> <span class="o">&gt;</span> <span class="mf">0.5</span> <span class="k">else</span> <span class="kc">None</span><span class="p">}</span>
+</pre></div>
+</div>
+<p>A scalar is stamped at <code class="docutils literal notranslate"><span class="pre">context[&quot;output_time&quot;]</span></code>, the timestamp chosen by the
+window. The input frame’s <code class="docutils literal notranslate"><span class="pre">time</span></code> column holds the original UTC sample
+timestamps. Returning <code class="docutils literal notranslate"><span class="pre">None</span></code> clears the result for that port and timestamp.</p>
+<p>Functions receive Polars by default. Annotate the first parameter with
+<code class="docutils literal notranslate"><span class="pre">pd.DataFrame</span></code> for Arrow-backed pandas. Test a calculation on a small frame
+before deploying it.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">polars</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pl</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">wave_calculations</span><span class="w"> </span><span class="kn">import</span> <span class="n">bucket_mean</span>
+
+<span class="k">assert</span> <span class="n">bucket_mean</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span><span class="s2">"value"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">]}),</span> <span class="p">{})</span> <span class="o">==</span> <span class="p">{</span><span class="s2">"mean"</span><span class="p">:</span> <span class="mf">0.5</span><span class="p">}</span>
+</pre></div>
+</div>
+<p>The server copies the calculation file when you deploy. Put helpers in that
+file or install them as packages on the server. See the
+<a class="reference internal" href="../reference/apps/app-class.html#python-functions"><span class="std std-ref">function reference</span></a> for
+frame columns, context fields, and dataframe returns.</p>
+</section>
+<section id="choose-inputs-and-windows">
+<h2>Choose inputs and windows<a class="headerlink" href="#choose-inputs-and-windows" title="Link to this heading">#</a></h2>
+<p>To run the examples, <a class="reference internal" href="../tutorials/advanced/first-app.html#start-the-server"><span class="std std-ref">start the sine-wave server</span></a>
+from the repository root.</p>
+<p>In another terminal, start a Python session in the directory containing
+<code class="docutils literal notranslate"><span class="pre">wave_calculations.py</span></code>. Connect to the server, select an input, and deploy.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+
 <span class="kn">import</span><span class="w"> </span><span class="nn">acquirium</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
 
 <span class="n">client</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">Acquirium</span><span class="p">(</span><span class="n">server_url</span><span class="o">=</span><span class="s2">"127.0.0.1"</span><span class="p">,</span> <span class="n">server_port</span><span class="o">=</span><span class="mi">8000</span><span class="p">)</span>
 <span class="n">wave</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"wave"</span><span class="p">,</span> <span class="n">uri</span><span class="o">=</span><span class="s2">"urn:example:sine-wave"</span><span class="p">)</span>
-</pre></div>
-</div>
-<section id="built-in-mean-function">
-<h2>Built-in mean function<a class="headerlink" href="#built-in-mean-function" title="Link to this heading">#</a></h2>
-<p>Averages, sums, minimums, maximums, counts and thresholds need no Python. The
-engine computes them itself, which is faster and leaves no calculation file to
-keep track of:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">mean</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">App</span><span class="p">(</span>
+<span class="n">calculations</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"wave_calculations.py"</span><span class="p">)</span><span class="o">.</span><span class="n">resolve</span><span class="p">()</span>
+<span class="n">mean</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">App</span><span class="p">(</span>
     <span class="n">name</span><span class="o">=</span><span class="s2">"wave-mean"</span><span class="p">,</span>
     <span class="n">inputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"wave"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Selection</span><span class="o">.</span><span class="n">from_query</span><span class="p">(</span><span class="n">wave</span><span class="p">,</span> <span class="n">measurement</span><span class="o">=</span><span class="s2">"wave"</span><span class="p">)},</span>
     <span class="n">outputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"mean"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Output</span><span class="p">()},</span>
-    <span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">Native</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="s2">"mean"</span><span class="p">),</span>
+    <span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">PythonFunction</span><span class="o">.</span><span class="n">from_file</span><span class="p">(</span><span class="n">calculations</span><span class="p">,</span> <span class="s2">"bucket_mean"</span><span class="p">),</span>
     <span class="n">window</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">FixedBucket</span><span class="p">(</span><span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">(</span><span class="s2">"4s"</span><span class="p">)),</span>
 <span class="p">)</span>
 <span class="n">client</span><span class="o">.</span><span class="n">deploy_app</span><span class="p">(</span><span class="n">mean</span><span class="p">)</span>
-<span class="n">client</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"mean"</span><span class="p">,</span> <span class="n">app</span><span class="o">=</span><span class="s2">"wave-mean"</span><span class="p">)</span><span class="o">.</span><span class="n">dataframe</span><span class="p">()</span><span class="o">.</span><span class="n">head</span><span class="p">(</span><span class="mi">6</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">client</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"mean"</span><span class="p">,</span> <span class="n">app</span><span class="o">=</span><span class="n">mean</span><span class="o">.</span><span class="n">name</span><span class="p">)</span><span class="o">.</span><span class="n">dataframe</span><span class="p">()</span><span class="o">.</span><span class="n">tail</span><span class="p">())</span>
 </pre></div>
 </div>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (6, 2)
-┌─────────────────────────┬───────────┐
-│ time                    ┆ mean      │
-│ ---                     ┆ ---       │
-│ datetime[ns, UTC]       ┆ f64       │
-╞═════════════════════════╪═══════════╡
-│ 2026-11-10 17:10:08 UTC ┆ 0.0       │
-│ 2026-11-10 17:10:12 UTC ┆ 0.603553  │
-│ 2026-11-10 17:10:16 UTC ┆ -0.603553 │
-│ 2026-11-10 17:10:20 UTC ┆ 0.603553  │
-│ 2026-11-10 17:10:24 UTC ┆ -0.603553 │
-│ 2026-11-10 17:10:28 UTC ┆ 0.603553  │
-└─────────────────────────┴───────────┘
-</pre></div>
+<p>The default grouping gives each matched stream its own calculation. Use
+<code class="docutils literal notranslate"><span class="pre">group</span></code> with an entity alias to calculate one result per entity, such as one
+average per tank. For several named inputs or a calibration value that should
+be carried forward, see <a class="reference internal" href="../reference/apps/inputs.html"><span class="std std-doc">app inputs</span></a>.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Use case</p></th>
+<th class="head"><p>Window</p></th>
+<th class="head"><p>Result timestamp</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Convert or check each reading</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">aq.Pointwise()</span></code></p></td>
+<td><p>The sample timestamp</p></td>
+</tr>
+<tr class="row-odd"><td><p>Summarize regular intervals</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">aq.FixedBucket(pd.Timedelta(&quot;4s&quot;))</span></code></p></td>
+<td><p>The start of each bucket</p></td>
+</tr>
+<tr class="row-even"><td><p>Calculate a moving statistic</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">aq.Rolling(lookback=pd.Timedelta(&quot;4s&quot;),</span> <span class="pre">step=pd.Timedelta(&quot;2s&quot;))</span></code></p></td>
+<td><p>Each point on the configured time grid</p></td>
+</tr>
+</tbody>
+</table>
 </div>
-<p>Four seconds is half a cycle of the wave, so the averages alternate between the
-top half and the bottom half. Each result is stamped at the start of its bucket.
-It appears as soon as the bucket has a reading, and updates as more arrive,
-without waiting for the bucket to end. The first bucket here caught only the
-wave’s first reading, which was zero.</p>
-<p>Each stream the query matches gets its own mean. In a plant, the same app over a
-query for every turbidity sensor would give one averaged stream per sensor.</p>
+<p>Fixed buckets update as readings arrive. A rolling window can include
+<code class="docutils literal notranslate"><span class="pre">lookahead</span></code> when a result needs later samples, as it does for interpolation.
+A correction revisits each window that reads the affected sample.</p>
 </section>
-<section id="app-output-selection">
-<h2>App output selection<a class="headerlink" href="#app-output-selection" title="Link to this heading">#</a></h2>
-<p>A second app can read the first one’s output:</p>
+<section id="chain-apps">
+<h2>Chain apps<a class="headerlink" href="#chain-apps" title="Link to this heading">#</a></h2>
+<p>Use <code class="docutils literal notranslate"><span class="pre">Selection.outputs_of(app,</span> <span class="pre">port)</span></code> to reuse one calculation’s result in
+another. Deploy the upstream app first. Its output groups carry through to the
+downstream app.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">high</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">App</span><span class="p">(</span>
     <span class="n">name</span><span class="o">=</span><span class="s2">"high-mean"</span><span class="p">,</span>
     <span class="n">inputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"mean"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Selection</span><span class="o">.</span><span class="n">outputs_of</span><span class="p">(</span><span class="n">mean</span><span class="p">,</span> <span class="s2">"mean"</span><span class="p">)},</span>
     <span class="n">outputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"alarm"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Output</span><span class="p">()},</span>
-    <span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">Native</span><span class="o">.</span><span class="n">threshold</span><span class="p">(</span><span class="s2">"alarm"</span><span class="p">,</span> <span class="n">above</span><span class="o">=</span><span class="mf">0.5</span><span class="p">),</span>
-<span class="p">)</span>
-<span class="n">client</span><span class="o">.</span><span class="n">deploy_app</span><span class="p">(</span><span class="n">high</span><span class="p">)</span>
-<span class="n">client</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"alarm"</span><span class="p">,</span> <span class="n">app</span><span class="o">=</span><span class="s2">"high-mean"</span><span class="p">)</span><span class="o">.</span><span class="n">dataframe</span><span class="p">()</span><span class="o">.</span><span class="n">head</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
-</pre></div>
-</div>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (3, 2)
-┌─────────────────────────┬──────────┐
-│ time                    ┆ alarm    │
-│ ---                     ┆ ---      │
-│ datetime[ns, UTC]       ┆ f64      │
-╞═════════════════════════╪══════════╡
-│ 2026-11-10 17:10:12 UTC ┆ 0.603553 │
-│ 2026-11-10 17:10:20 UTC ┆ 0.603553 │
-│ 2026-11-10 17:10:28 UTC ┆ 0.603553 │
-└─────────────────────────┴──────────┘
-</pre></div>
-</div>
-<p>The threshold passes an average through when it is above 0.5, and writes
-nothing otherwise, so only the top halves of the wave remain. When an average
-changes, because a late reading arrived in its bucket, the threshold follows.</p>
-<p><code class="docutils literal notranslate"><span class="pre">aq.Native.cumulative_sum</span></code> and <code class="docutils literal notranslate"><span class="pre">aq.Native.integral</span></code> keep running totals, such
-as the volume pumped from a flow rate. The
-<a class="reference internal" href="../reference/apps/app-class.html#built-in-functions"><span class="std std-ref">app reference</span></a> lists every built-in
-function.</p>
-</section>
-<section id="python-functions">
-<h2>Python functions<a class="headerlink" href="#python-functions" title="Link to this heading">#</a></h2>
-<p>When no built-in fits, an app can call a Python function. We will compute the
-wave’s <em>spread</em>: the gap between its highest and lowest reading over a stretch
-of time. Save this as <code class="docutils literal notranslate"><span class="pre">spread.py</span></code> in the directory you are working in:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">acquirium.functions</span><span class="w"> </span><span class="kn">import</span> <span class="n">emit</span>
-
-
-<span class="k">def</span><span class="w"> </span><span class="nf">spread</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
-    <span class="c1"># Ignore missing values before finding the range within this window.</span>
-    <span class="n">values</span> <span class="o">=</span> <span class="n">frame</span><span class="p">[</span><span class="s2">"value"</span><span class="p">]</span><span class="o">.</span><span class="n">drop_nulls</span><span class="p">()</span>
-    <span class="k">if</span> <span class="n">values</span><span class="o">.</span><span class="n">is_empty</span><span class="p">():</span>
-        <span class="n">value</span> <span class="o">=</span> <span class="kc">None</span>
-    <span class="k">else</span><span class="p">:</span>
-        <span class="n">value</span> <span class="o">=</span> <span class="n">values</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">-</span> <span class="n">values</span><span class="o">.</span><span class="n">min</span><span class="p">()</span>
-    <span class="c1"># emit() uses this window's output timestamp; None clears any old result.</span>
-    <span class="k">return</span> <span class="p">{</span><span class="s2">"spread"</span><span class="p">:</span> <span class="n">emit</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="n">value</span><span class="p">)}</span>
-</pre></div>
-</div>
-<p>As in <a class="reference internal" href="../tutorials/advanced/first-app.html#declare-the-calculation"><span class="std std-ref">your first app</span></a>, the
-function receives readings in <code class="docutils literal notranslate"><span class="pre">frame</span></code> and returns one result for each output.
-<code class="docutils literal notranslate"><span class="pre">emit()</span></code> stamps the value at the timestamp in <code class="docutils literal notranslate"><span class="pre">context</span></code>. Given <code class="docutils literal notranslate"><span class="pre">None</span></code>, it writes
-nothing, and clears anything written at that timestamp before.</p>
-<p>The input column <code class="docutils literal notranslate"><span class="pre">time</span></code> holds each sample’s timestamp as a UTC datetime.
-The context’s
-<code class="docutils literal notranslate"><span class="pre">output_time</span></code> is the output timestamp chosen by the window. For a fixed bucket,
-that is its start; for a rolling window, it is the grid point being calculated.
-Neither field describes when the server received the data. This spread
-function only needs the values, so it leaves timestamp handling to <code class="docutils literal notranslate"><span class="pre">emit</span></code>.</p>
-<p>An unannotated function receives Polars. Annotate its first parameter with
-<code class="docutils literal notranslate"><span class="pre">pd.DataFrame</span></code> to receive Arrow-backed pandas 2.x, or <code class="docutils literal notranslate"><span class="pre">pl.DataFrame</span></code> to select
-Polars explicitly. The function still takes <code class="docutils literal notranslate"><span class="pre">(frame,</span> <span class="pre">context)</span></code> and returns a
-dataframe for each output. See the <a class="reference internal" href="../reference/apps/app-class.html#dataframe-type"><span class="std std-ref">dataframe type reference</span></a>
-and the <a class="reference internal" href="../tutorials/turbidity.html#cleaning-steps"><span class="std std-ref">pandas cleaning example</span></a>.</p>
-<p>Because it is an ordinary function, you can try it before deploying anything:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">polars</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pl</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">spread</span><span class="w"> </span><span class="kn">import</span> <span class="n">spread</span>
-
-<span class="n">context</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"output_time"</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timestamp</span><span class="p">(</span><span class="s2">"2026-01-01T00:00:00Z"</span><span class="p">)}</span>
-<span class="n">spread</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span><span class="s2">"value"</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="o">-</span><span class="mf">1.0</span><span class="p">]}),</span> <span class="n">context</span><span class="p">)[</span><span class="s2">"spread"</span><span class="p">][</span><span class="s2">"value"</span><span class="p">]</span>
-</pre></div>
-</div>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (1,)
-Series: 'value' [f64]
-[
-	2.0
-]
-</pre></div>
-</div>
-<p>The server copies the file and runs it on its own. Anything the function uses
-must be in this file or in a package installed on the server; a helper module
-next to it is not available.</p>
-<p>Deploy it over ten-second buckets:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">app</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">App</span><span class="p">(</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">"wave-spread"</span><span class="p">,</span>
-    <span class="n">inputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"wave"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Selection</span><span class="o">.</span><span class="n">from_query</span><span class="p">(</span><span class="n">wave</span><span class="p">,</span> <span class="n">measurement</span><span class="o">=</span><span class="s2">"wave"</span><span class="p">)},</span>
-    <span class="n">outputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"spread"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Output</span><span class="p">()},</span>
-    <span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">PythonFunction</span><span class="o">.</span><span class="n">from_file</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="s2">"spread.py"</span><span class="p">),</span> <span class="s2">"spread"</span><span class="p">),</span>
-    <span class="n">window</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">FixedBucket</span><span class="p">(</span><span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">(</span><span class="s2">"10s"</span><span class="p">)),</span>
-<span class="p">)</span>
-<span class="n">client</span><span class="o">.</span><span class="n">deploy_app</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>
-
-<span class="n">spreads</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"spread"</span><span class="p">,</span> <span class="n">app</span><span class="o">=</span><span class="s2">"wave-spread"</span><span class="p">)</span>
-<span class="n">spreads</span><span class="o">.</span><span class="n">dataframe</span><span class="p">()</span>
-</pre></div>
-</div>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (5, 2)
-┌─────────────────────────┬────────┐
-│ time                    ┆ spread │
-│ ---                     ┆ ---    │
-│ datetime[ns, UTC]       ┆ f64    │
-╞═════════════════════════╪════════╡
-│ 2026-11-10 17:10:10 UTC ┆ 2.0    │
-│ 2026-11-10 17:10:20 UTC ┆ 2.0    │
-│ 2026-11-10 17:10:30 UTC ┆ 2.0    │
-│ 2026-11-10 17:10:40 UTC ┆ 2.0    │
-│ 2026-11-10 17:10:50 UTC ┆ 0.0    │
-└─────────────────────────┴────────┘
-</pre></div>
-</div>
-<p>The window cuts the wave into ten-second buckets and calls the function once
-for each. A bucket holds a whole cycle, from −1 up to 1 and back, so its spread
-is 2. The last bucket has only just started: it holds one reading so far, so its
-spread is 0, and it will grow as the bucket fills.</p>
-</section>
-<section id="window-types">
-<h2>Window types<a class="headerlink" href="#window-types" title="Link to this heading">#</a></h2>
-<p>The window decides which readings each call sees. Replace the fixed bucket with
-a rolling window that looks back four seconds, every two seconds:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">app</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">App</span><span class="p">(</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">"wave-spread"</span><span class="p">,</span>
-    <span class="n">inputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"wave"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Selection</span><span class="o">.</span><span class="n">from_query</span><span class="p">(</span><span class="n">wave</span><span class="p">,</span> <span class="n">measurement</span><span class="o">=</span><span class="s2">"wave"</span><span class="p">)},</span>
-    <span class="n">outputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"spread"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Output</span><span class="p">()},</span>
-    <span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">PythonFunction</span><span class="o">.</span><span class="n">from_file</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="s2">"spread.py"</span><span class="p">),</span> <span class="s2">"spread"</span><span class="p">),</span>
-    <span class="n">window</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">Rolling</span><span class="p">(</span>
-        <span class="n">lookback</span><span class="o">=</span><span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">(</span><span class="s2">"4s"</span><span class="p">),</span>
-        <span class="n">step</span><span class="o">=</span><span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">(</span><span class="s2">"2s"</span><span class="p">),</span>
-    <span class="p">),</span>
-<span class="p">)</span>
-<span class="n">client</span><span class="o">.</span><span class="n">deploy_app</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>
-<span class="n">spreads</span><span class="o">.</span><span class="n">dataframe</span><span class="p">()</span><span class="o">.</span><span class="n">tail</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span>
-</pre></div>
-</div>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (4, 2)
-┌─────────────────────────┬──────────┐
-│ time                    ┆ spread   │
-│ ---                     ┆ ---      │
-│ datetime[ns, UTC]       ┆ f64      │
-╞═════════════════════════╪══════════╡
-│ 2026-11-10 17:10:46 UTC ┆ 1.707107 │
-│ 2026-11-10 17:10:48 UTC ┆ 1.0      │
-│ 2026-11-10 17:10:50 UTC ┆ 1.707107 │
-│ 2026-11-10 17:10:52 UTC ┆ 1.0      │
-└─────────────────────────┴──────────┘
-</pre></div>
-</div>
-<p>Four seconds is half a cycle, so the spread now rises and falls with the wave.
-The function is the same; only the window changed, and Acquirium recomputed the
-stored history to match.</p>
-<p>There are three windows to choose from. <code class="docutils literal notranslate"><span class="pre">Pointwise()</span></code> calls the function once
-for each timestamp, which suits conversions and checks on single readings.
-<code class="docutils literal notranslate"><span class="pre">FixedBucket</span></code> gives regular summaries, a value per minute or per hour.
-<code class="docutils literal notranslate"><span class="pre">Rolling</span></code> gives a trailing view at every step; add <code class="docutils literal notranslate"><span class="pre">lookahead</span></code> when a result
-needs readings from both sides, as gap filling does. A wider window costs more:
-each result reads more history, and a late or corrected reading revisits every
-window that covers it.</p>
-</section>
-<section id="sequential-functions">
-<h2>Sequential functions<a class="headerlink" href="#sequential-functions" title="Link to this heading">#</a></h2>
-<p>Some calculations need their own previous result, such as a filter or a running
-estimate. Save this smoothing filter as <code class="docutils literal notranslate"><span class="pre">smooth.py</span></code>:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">acquirium.functions</span><span class="w"> </span><span class="kn">import</span> <span class="n">emit</span><span class="p">,</span> <span class="n">previous_value</span>
-
-
-<span class="k">def</span><span class="w"> </span><span class="nf">smooth</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
-    <span class="n">reading</span> <span class="o">=</span> <span class="n">frame</span><span class="p">[</span><span class="s2">"value"</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>
-    <span class="c1"># Start at the first reading; later calls use the preceding output.</span>
-    <span class="n">earlier</span> <span class="o">=</span> <span class="n">previous_value</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="s2">"smooth"</span><span class="p">,</span> <span class="n">reading</span><span class="p">)</span>
-    <span class="k">return</span> <span class="p">{</span><span class="s2">"smooth"</span><span class="p">:</span> <span class="n">emit</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="mf">0.8</span> <span class="o">*</span> <span class="n">earlier</span> <span class="o">+</span> <span class="mf">0.2</span> <span class="o">*</span> <span class="n">reading</span><span class="p">)}</span>
-</pre></div>
-</div>
-<p>and deploy it with <code class="docutils literal notranslate"><span class="pre">sequential=True</span></code>:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">smoother</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">App</span><span class="p">(</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">"wave-smooth"</span><span class="p">,</span>
-    <span class="n">inputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"wave"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Selection</span><span class="o">.</span><span class="n">from_query</span><span class="p">(</span><span class="n">wave</span><span class="p">,</span> <span class="n">measurement</span><span class="o">=</span><span class="s2">"wave"</span><span class="p">)},</span>
-    <span class="n">outputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"smooth"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Output</span><span class="p">()},</span>
-    <span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">PythonFunction</span><span class="o">.</span><span class="n">from_file</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="s2">"smooth.py"</span><span class="p">),</span> <span class="s2">"smooth"</span><span class="p">,</span> <span class="n">sequential</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
+    <span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">PythonFunction</span><span class="o">.</span><span class="n">from_file</span><span class="p">(</span><span class="n">calculations</span><span class="p">,</span> <span class="s2">"high_mean"</span><span class="p">),</span>
     <span class="n">window</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">Pointwise</span><span class="p">(),</span>
 <span class="p">)</span>
-<span class="n">client</span><span class="o">.</span><span class="n">deploy_app</span><span class="p">(</span><span class="n">smoother</span><span class="p">)</span>
+<span class="n">client</span><span class="o">.</span><span class="n">deploy_app</span><span class="p">(</span><span class="n">high</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">client</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"alarm"</span><span class="p">,</span> <span class="n">app</span><span class="o">=</span><span class="n">high</span><span class="o">.</span><span class="n">name</span><span class="p">)</span><span class="o">.</span><span class="n">dataframe</span><span class="p">()</span><span class="o">.</span><span class="n">tail</span><span class="p">())</span>
 </pre></div>
 </div>
-<p>Put the two side by side:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">smooth</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"smooth"</span><span class="p">,</span> <span class="n">app</span><span class="o">=</span><span class="s2">"wave-smooth"</span><span class="p">)</span>
-<span class="n">wave</span><span class="o">.</span><span class="n">dataframe</span><span class="p">()</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">smooth</span><span class="o">.</span><span class="n">dataframe</span><span class="p">(),</span> <span class="n">on</span><span class="o">=</span><span class="s2">"time"</span><span class="p">)</span><span class="o">.</span><span class="n">head</span><span class="p">(</span><span class="mi">7</span><span class="p">)</span>
-</pre></div>
-</div>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (7, 3)
-┌────────────────────────────────┬────────────┬───────────┐
-│ time                           ┆ wave       ┆ smooth    │
-│ ---                            ┆ ---        ┆ ---       │
-│ datetime[ns, UTC]              ┆ f64        ┆ f64       │
-╞════════════════════════════════╪════════════╪═══════════╡
-│ 2026-11-10 17:10:10.909771 UTC ┆ 0.0        ┆ 0.0       │
-│ 2026-11-10 17:10:12.082770 UTC ┆ 0.707107   ┆ 0.141421  │
-│ 2026-11-10 17:10:13.114759 UTC ┆ 1.0        ┆ 0.313137  │
-│ 2026-11-10 17:10:14.139910 UTC ┆ 0.707107   ┆ 0.391931  │
-│ 2026-11-10 17:10:15.161927 UTC ┆ 1.2246e-16 ┆ 0.313545  │
-│ 2026-11-10 17:10:16.190043 UTC ┆ -0.707107  ┆ 0.109414  │
-│ 2026-11-10 17:10:17.242986 UTC ┆ -1.0       ┆ -0.112468 │
-└────────────────────────────────┴────────────┴───────────┘
-</pre></div>
-</div>
-<p>The smoothed wave follows the original, lagging behind it and never reaching
-its peaks, because each result is four parts the previous result to one part
-the new reading.</p>
-<p><code class="docutils literal notranslate"><span class="pre">sequential=True</span></code> runs the windows in time order and hands each call the
-previous window’s results. <code class="docutils literal notranslate"><span class="pre">previous_value</span></code> reads one of them, or returns the
-default for the very first reading. The outputs are the only state that
-carries over. A global variable would not work: when an old reading is
-corrected, Acquirium reruns from that point forward, and a variable would hold
-whatever the last call happened to leave in it.</p>
+<p>The alarm stores the mean only where it exceeds 0.5. When a correction takes
+the mean below the threshold, Acquirium retracts that alarm row. To act on
+those changes, use the <a class="reference internal" href="consume-streaming-changes.html"><span class="std std-doc">streaming change feed</span></a>.</p>
+<p>For a cleaning stage that becomes the default value for an existing
+measurement, use <a class="reference internal" href="../reference/apps/outputs.html#replacement-outputs"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">ReplacementOutput</span></code></span></a>.
+Read with <code class="docutils literal notranslate"><span class="pre">view=&quot;raw&quot;</span></code> to see the originals. The <a class="reference internal" href="../tutorials/turbidity.html"><span class="std std-doc">turbidity pipeline
+tutorial</span></a> walks through cleaning, interpolation,
+and a sustained alarm.</p>
 </section>
-<section id="batch-functions">
-<h2>Batch functions<a class="headerlink" href="#batch-functions" title="Link to this heading">#</a></h2>
-<p>By default the function is called once per window. That is fine for a live
-stream, but a backfill or a correction can touch thousands of windows at once,
-and then the cost of each call dominates. With <code class="docutils literal notranslate"><span class="pre">batch=True</span></code>, one call receives
-every affected window together, with an <code class="docutils literal notranslate"><span class="pre">output_time</span></code> column saying which window
-each reading belongs to:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">polars</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pl</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">acquirium.functions</span><span class="w"> </span><span class="kn">import</span> <span class="n">emit_windows</span>
-
-
-<span class="k">def</span><span class="w"> </span><span class="nf">spread</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
-    <span class="c1"># A batch contains several windows; calculate each window's range separately.</span>
-    <span class="n">spreads</span> <span class="o">=</span> <span class="n">frame</span><span class="o">.</span><span class="n">group_by</span><span class="p">(</span><span class="s2">"output_time"</span><span class="p">)</span><span class="o">.</span><span class="n">agg</span><span class="p">(</span>
-        <span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">"value"</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">-</span> <span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">"value"</span><span class="p">)</span><span class="o">.</span><span class="n">min</span><span class="p">())</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">"value"</span><span class="p">)</span>
-    <span class="p">)</span>
-    <span class="k">return</span> <span class="p">{</span><span class="s2">"spread"</span><span class="p">:</span> <span class="n">emit_windows</span><span class="p">(</span><span class="n">spreads</span><span class="p">)}</span>
+<section id="publish-multiple-outputs">
+<h2>Publish multiple outputs<a class="headerlink" href="#publish-multiple-outputs" title="Link to this heading">#</a></h2>
+<p>When several results share the same inputs and window, declare a port for each
+one. For example, declare <code class="docutils literal notranslate"><span class="pre">outputs={&quot;mean&quot;:</span> <span class="pre">aq.Output(label=&quot;Mean</span> <span class="pre">signal&quot;),</span> <span class="pre">&quot;peak&quot;:</span> <span class="pre">aq.Output(label=&quot;Peak</span> <span class="pre">signal&quot;)}</span></code> and return both keys from the function.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">summarize</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+    <span class="n">values</span> <span class="o">=</span> <span class="n">frame</span><span class="p">[</span><span class="s2">"value"</span><span class="p">]</span><span class="o">.</span><span class="n">drop_nulls</span><span class="p">()</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">"mean"</span><span class="p">:</span> <span class="n">values</span><span class="o">.</span><span class="n">mean</span><span class="p">(),</span> <span class="s2">"peak"</span><span class="p">:</span> <span class="n">values</span><span class="o">.</span><span class="n">max</span><span class="p">()}</span>
 </pre></div>
 </div>
-<p>Save this version as <code class="docutils literal notranslate"><span class="pre">spread_batch.py</span></code> and pass
-<code class="docutils literal notranslate"><span class="pre">aq.PythonFunction.from_file(Path(&quot;spread_batch.py&quot;),</span> <span class="pre">&quot;spread&quot;,</span> <span class="pre">batch=True)</span></code>.
-The results are the same. The
-<a class="reference external" href="https://github.com/DataDrivenCPS/acquirium/tree/main/examples/bulk_ingest" rel="noreferer noopener" target="_blank">bulk-ingest example</a>
-runs a chain of apps both ways on a month of plant data: 7.6 seconds in batch
-against 47 seconds one window at a time.</p>
+<p>Use the app name and output label to select one port in a measurement query,
+or <code class="docutils literal notranslate"><span class="pre">Selection.outputs_of(summary_app,</span> <span class="pre">&quot;peak&quot;)</span></code> to feed the named port to
+another app. The <a class="reference external" href="https://github.com/DataDrivenCPS/acquirium/tree/main/examples/bulk_ingest" rel="noreferer noopener" target="_blank">bulk-ingest example</a>
+chains a gap filler and publishes mean, maximum, and reporting count together.</p>
 </section>
-<section id="group-parameters">
-<h2>Group parameters<a class="headerlink" href="#group-parameters" title="Link to this heading">#</a></h2>
-<p>When one app serves several groups, such as one per filter, each group can have
-its own settings without a copy of the calculation. The selection’s
-<code class="docutils literal notranslate"><span class="pre">parameters</span></code> gives each group its values. A built-in calculation refers to one
-with <code class="docutils literal notranslate"><span class="pre">aq.Parameter</span></code>, as in <code class="docutils literal notranslate"><span class="pre">aq.Native.threshold(&quot;alarm&quot;,</span> <span class="pre">above=aq.Parameter(&quot;limit&quot;))</span></code>,
-and a Python function reads it from <code class="docutils literal notranslate"><span class="pre">context[&quot;parameters&quot;]</span></code>. The
-<a class="reference internal" href="../tutorials/turbidity.html#sustained-turbidity-threshold"><span class="std std-ref">turbidity tutorial</span></a>
-uses this to give each filter its own limit and alarm duration, and changing one
-filter’s value recomputes only that filter’s history.</p>
+<section id="set-parameters-by-group">
+<h2>Set parameters by group<a class="headerlink" href="#set-parameters-by-group" title="Link to this heading">#</a></h2>
+<p>Pass a mapping of group IDs to settings as <code class="docutils literal notranslate"><span class="pre">parameters=</span></code> on a selection.
+The function reads those settings from <code class="docutils literal notranslate"><span class="pre">context[&quot;parameters&quot;]</span></code>. In the
+<a class="reference internal" href="../tutorials/turbidity.html#sustained-turbidity-threshold"><span class="std std-ref">turbidity alarm</span></a>, the
+combined outlet uses a limit of 0.3 NTU for five minutes, while Filter 3 uses
+0.5 NTU for fifteen minutes. Both use the same Python function.</p>
+<p>Use the exact group IDs from the selection. Groups omitted from the mapping
+are skipped with a deployment warning. Updating a group’s parameters and
+redeploying recalculates its stored history. See the
+<a class="reference internal" href="../reference/apps/outputs.html#group-parameters"><span class="std std-ref">group parameter reference</span></a>
+for the mapping syntax and grouping rules.</p>
 </section>
-<section id="related-examples-and-references">
-<h2>Related examples and references<a class="headerlink" href="#related-examples-and-references" title="Link to this heading">#</a></h2>
-<p>For complete examples with small input and output tables, see
-<a class="reference internal" href="chain-cleaning-apps.html"><span class="std std-doc">Data cleaning with multiple apps</span></a>,
-<a class="reference internal" href="clean-data-with-multiple-outputs.html"><span class="std std-doc">Data cleaning with multiple outputs</span></a>, and
-<a class="reference internal" href="parameterize-soft-sensors.html"><span class="std std-doc">Soft sensor parameters</span></a>.</p>
-<p>To see what a change will recompute before you make it, to update a
-function’s code, or to recover from a function that fails, see
-<a class="reference internal" href="check-deploy-apps.html"><span class="std std-doc">App deployment and recovery</span></a>. The
-<a class="reference internal" href="../reference/apps/app-class.html#python-functions"><span class="std std-ref">app reference</span></a> describes every column
-of the frame and every field of the context.</p>
+<section id="use-previous-results-or-batch-windows">
+<h2>Use previous results or batch windows<a class="headerlink" href="#use-previous-results-or-batch-windows" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p>For a smoother or running total, set <code class="docutils literal notranslate"><span class="pre">sequential=True</span></code> on
+<code class="docutils literal notranslate"><span class="pre">PythonFunction.from_file</span></code>. Use <code class="docutils literal notranslate"><span class="pre">previous_value(context,</span> <span class="pre">port,</span> <span class="pre">default)</span></code> to
+read a prior output. See <a class="reference internal" href="../reference/apps/app-class.html#sequential-functions"><span class="std std-ref">sequential functions</span></a>.</p></li>
+<li><p>For a large backfill, set <code class="docutils literal notranslate"><span class="pre">batch=True</span></code> and group the input by <code class="docutils literal notranslate"><span class="pre">output_time</span></code>.
+Use <code class="docutils literal notranslate"><span class="pre">emit_windows</span></code> to return results for those times. See
+<a class="reference internal" href="../reference/apps/app-class.html#batch-functions"><span class="std std-ref">batch functions</span></a> for a mean
+that processes multiple windows in one call.</p></li>
+</ul>
+<p>To preview a change, inspect deployment, or recover a failed app, see
+<a class="reference internal" href="check-deploy-apps.html"><span class="std std-doc">App deployment and recovery</span></a>. For diagrams of grouping
+and timestamps, see <a class="reference internal" href="../explanation/soft-sensor-inputs.html"><span class="std std-doc">Soft sensor inputs</span></a>.</p>
 </section>
 </section>
 
@@ -912,11 +746,11 @@ of the frame and every field of the context.</p>
       </div>
     </a>
     <a class="right-next"
-       href="chain-cleaning-apps.html"
+       href="consume-streaming-changes.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Data cleaning with multiple apps</p>
+        <p class="prev-next-title">Streaming change feed</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -938,14 +772,12 @@ of the frame and every field of the context.</p>
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#built-in-mean-function">Built-in mean function</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#app-output-selection">App output selection</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#python-functions">Python functions</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#window-types">Window types</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#sequential-functions">Sequential functions</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#batch-functions">Batch functions</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#group-parameters">Group parameters</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#related-examples-and-references">Related examples and references</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#choose-inputs-and-windows">Choose inputs and windows</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#chain-apps">Chain apps</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#publish-multiple-outputs">Publish multiple outputs</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#set-parameters-by-group">Set parameters by group</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#use-previous-results-or-batch-windows">Use previous results or batch windows</a></li>
 </ul>
   </nav></div>
 

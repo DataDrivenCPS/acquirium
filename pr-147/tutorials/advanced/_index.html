@@ -67,7 +67,7 @@
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
     <link rel="next" title="Writing a driver" href="writing-a-driver.html" />
-    <link rel="prev" title="Turbidity alarm pipeline" href="../turbidity.html" />
+    <link rel="prev" title="Acquirium at a glance" href="../acquirium-at-a-glance.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   <meta name="docsearch:version" content="" />
@@ -226,11 +226,11 @@
 <li class="toctree-l2"><a class="reference internal" href="../inserting-metadata.html">3 - Inserting Metadata</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../inserting-plant-model.html">4 - Inserting a Plant Model</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../a-full-example.html">5 - A Full Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="first-app.html">Build your first soft sensor</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../turbidity.html">Build a turbidity alarm pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../acquirium-at-a-glance.html">Acquirium at a glance</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../turbidity.html">Turbidity alarm pipeline</a></li>
 <li class="toctree-l2 current active has-children"><a class="current reference internal" href="#">Advanced topics</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l3"><a class="reference internal" href="writing-a-driver.html">Writing a driver</a></li>
-<li class="toctree-l3"><a class="reference internal" href="first-app.html">Declaring and deploying apps</a></li>
 <li class="toctree-l3"><a class="reference internal" href="experiments.html">Running experiments</a></li>
 </ul>
 </details></li>
@@ -241,11 +241,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/debug-an-empty-query.html">Debug an empty or unexpected query result</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/query-cookbook.html">Query cookbook</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/access-a-shared-server.html">Access data on a shared server</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../how-to/write-soft-sensors.html">Soft sensor calculations</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../how-to/chain-cleaning-apps.html">Data cleaning with multiple apps</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../how-to/clean-data-with-multiple-outputs.html">Data cleaning with multiple outputs</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../how-to/parameterize-soft-sensors.html">Soft sensor parameters</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../how-to/soft-sensor-examples.html">Soft sensor examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/write-soft-sensors.html">Write a soft sensor</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/consume-streaming-changes.html">Streaming change feed</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/check-deploy-apps.html">App deployment and recovery</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../how-to/record-a-whole-model.html">Record a whole model</a></li>
@@ -534,7 +530,6 @@
 Each one is independent of the others.</p>
 <ul class="simple">
 <li><p><a class="reference internal" href="writing-a-driver.html"><span class="std std-doc">Writing a driver</span></a>: keep the data flowing in, instead of importing a file by hand.</p></li>
-<li><p><a class="reference internal" href="first-app.html"><span class="std std-doc">Your first app</span></a>: calculate new streams from the existing ones, and keep them up to date.</p></li>
 <li><p><a class="reference internal" href="experiments.html"><span class="std std-doc">Running experiments</span></a>: record the inputs and results of simulations and tests next to the plant data.</p></li>
 </ul>
 <div class="toctree-wrapper compound">
@@ -572,12 +567,12 @@ Each one is independent of the others.</p>
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="../turbidity.html"
+       href="../acquirium-at-a-glance.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Turbidity alarm pipeline</p>
+        <p class="prev-next-title">Acquirium at a glance</p>
       </div>
     </a>
     <a class="right-next"

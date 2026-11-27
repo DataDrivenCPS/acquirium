@@ -31,28 +31,37 @@ gains = (
     .context(alias="probe")
 )
 
+```
+
+Save this as `gain_average.py` to publish one gain per pointwise window:
+
+```python
+def gain_average(frame, context):
+    return {"gain": frame["value"].mean()}
+```
+
+```python
 calibration = aq.App(
     name="calibration",
     inputs={"gain": aq.Selection.from_query(gains, measurement="gain", group="probe")},
     outputs={"gain": aq.Output()},
-    function=aq.Native.mean("gain"),
+    function=aq.PythonFunction.from_file("gain_average.py", "gain_average"),
 )
 ```
 
 Save the calculation below as `calibrate.py`. The input frame labels each
-row with its input name. `emit` returns a result at the current output time.
+row with its input name. Acquirium timestamps the returned scalar at the
+current output time.
 
 ```python
 import polars as pl
-from acquirium.functions import emit
-
 
 def calibrate(frame, context):
     reading = frame.filter(pl.col("input") == "reading")["value"].drop_nulls()
     gain = frame.filter(pl.col("input") == "gain")["value"].drop_nulls()
     if reading.is_empty() or gain.is_empty():
-        return {"corrected": emit(context, None)}
-    return {"corrected": emit(context, reading.item() * gain.item())}
+        return {"corrected": None}
+    return {"corrected": reading.item() * gain.item()}
 ```
 
 The `calibrated` app runs at each raw reading's timestamp. It binds the
