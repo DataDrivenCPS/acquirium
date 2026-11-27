@@ -23,7 +23,7 @@ The pages are grouped by what you are working with.
 | [Command line](server/cli.md) | the `acquirium` command and every subcommand |
 | [Server configuration](server/configuration.md) | every key of `acquirium.toml` |
 | [HTTP API](server/http-api.md) | the HTTP endpoints of the server |
-| [Storage migrations](server/storage-migrations.md) | how stored data is upgraded |
+| [Storage upgrades and backups](server/storage-migrations.md) | move to Escapement or back up and restore an existing deployment |
 
 ## Terms
 

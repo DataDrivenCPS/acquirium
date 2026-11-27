@@ -138,7 +138,7 @@ The server does these in order:
 
 In our runs a server with `exact_only = true` answered requests about 45 seconds after the command on a new data folder, and about 15 seconds on later starts.
 
-Note that a stream node in the graph with a wrong `stream_uri` makes the third step fail, and the server does not start (see [The stream lifecycle](stream-lifecycle.md#registration-and-the-streams-table)).
+Note that a stream node in the graph with a wrong `stream_uri` makes the third step fail, and the server does not start (see [Registration and storage](stream-lifecycle.md#registration-and-storage)).
 
 ## Next
 

@@ -60,11 +60,11 @@ The [app reference](docs/reference/apps/_index.md) covers the interface options.
 ## Documentation and tests
 
 Start with [the documentation index](docs/_index.md),
-[semantic queries](docs/tutorials/querying.md), and
-[the HTTP API](docs/reference/http-api.md).
-To record experiments, see [your first experiment](docs/tutorials/first-experiment.py),
+[semantic queries](docs/tutorials/querying-data.md), and
+[the HTTP API](docs/reference/server/http-api.md).
+To record experiments, see [Running experiments](docs/tutorials/advanced/experiments.md),
 [Experiment recording](docs/how-to/record-experiments.md), and the
-[experiment reference](docs/reference/experiments.md).
+[experiment reference](docs/reference/experiments/_index.md).
 
 ```sh
 uv run pytest

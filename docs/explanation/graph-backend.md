@@ -104,7 +104,7 @@ Every write increases the version of the stored graphs and starts a rebuild of t
 
 - Only one rebuild runs at a time. Writes that arrive during a rebuild are covered by one more rebuild after it.
 - A query that arrives during a rebuild reads the last complete query graph. It never sees a half-built one.
-- `insert_graph()`, `register_streams()` and `sparql_update()` return after the rebuild, because the server reads the streams from the new query graph (see [The stream lifecycle](stream-lifecycle.md#registration-and-the-streams-table)). A query that follows one of these calls sees the change.
+- `insert_graph()`, `register_streams()` and `sparql_update()` return after the rebuild, because the server reads the streams from the new query graph (see [Registration and storage](stream-lifecycle.md#registration-and-storage)). A query that follows one of these calls sees the change.
 
 `graph_status()` shows the two versions:
 
