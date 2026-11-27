@@ -1,0 +1,1040 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Query cookbook &#8212; Acquirium Documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
+    <link rel="stylesheet" type="text/css" href="../_static/togglebutton.css?v=9c3e77be" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/mystnb.11b39860a7a0cbfd473a3ad8a317855267ff0bd372690045ca344a6b62be495e.css" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinx-thebe.css?v=4fa983c6" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=5b658e50" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../_static/scripts/fontawesome.js?digest=55c26ed414f5f8a31ebb"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb" />
+
+    <script src="../_static/documentation_options.js?v=9eb32ce0"></script>
+    <script src="../_static/doctools.js?v=9a2dae69"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=f281be69"></script>
+    <script src="../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../_static/togglebutton.js?v=b8b12719"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script src="../_static/design-tabs.js?v=f930bc37"></script>
+    <script>const THEBE_JS_URL = "https://unpkg.com/thebe@0.8.2/lib/index.js"; const thebe_selector = ".thebe,.cell"; const thebe_selector_input = "pre"; const thebe_selector_output = ".output, .cell_output"</script>
+    <script async="async" src="../_static/sphinx-thebe.js?v=c100c467"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>const THEBE_JS_URL = "https://unpkg.com/thebe@0.8.2/lib/index.js"; const thebe_selector = ".thebe,.cell"; const thebe_selector_input = "pre"; const thebe_selector_output = ".output, .cell_output"</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'how-to/query-cookbook';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="icon" href="../_static/logo-notext.png"/>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Access data on a shared server" href="access-a-shared-server.html" />
+    <link rel="prev" title="Debug an empty or unexpected query result" href="debug-an-empty-query.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../_static/searchtools.js"></script>
+    <script src="../_static/language_data.js"></script>
+    <script src="../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search this book..."
+         aria-label="Search this book..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../_index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/logo.png" class="logo__image only-light" alt="Acquirium Documentation - Home"/>
+    <img src="../_static/logo.png" class="logo__image only-dark pst-js-only" alt="Acquirium Documentation - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        
+        <ul class="nav bd-sidenav bd-sidenav__home-link">
+            <li class="toctree-l1">
+                <a class="reference internal" href="../_index.html">
+                    Acquirium documentation
+                </a>
+            </li>
+        </ul>
+        <ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../getting-started.html">Getting started</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../tutorials/_index.html">Tutorials</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/fundamentals.html">0 - Fundamentals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/inserting-data.html">1 - Inserting Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/querying-data.html">2 - Querying Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/inserting-metadata.html">3 - Inserting Metadata</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/inserting-plant-model.html">4 - Inserting a Plant Model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/a-full-example.html">5 - A Full Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/acquirium-at-a-glance.html">Acquirium at a glance</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/turbidity.html">Turbidity alarm pipeline</a></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../tutorials/advanced/_index.html">Advanced topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/writing-a-driver.html">Writing a driver</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/first-app.html">Declaring and deploying apps</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/experiments.html">Running experiments</a></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="_index.html">How-to guides</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="explore-a-model.html">Explore a plant model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="debug-an-empty-query.html">Debug an empty or unexpected query result</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">Query cookbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="access-a-shared-server.html">Access data on a shared server</a></li>
+<li class="toctree-l2"><a class="reference internal" href="write-soft-sensors.html">Soft sensor calculations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="chain-cleaning-apps.html">Data cleaning with multiple apps</a></li>
+<li class="toctree-l2"><a class="reference internal" href="clean-data-with-multiple-outputs.html">Data cleaning with multiple outputs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="parameterize-soft-sensors.html">Soft sensor parameters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="soft-sensor-examples.html">Soft sensor examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="consume-streaming-changes.html">Streaming change feed</a></li>
+<li class="toctree-l2"><a class="reference internal" href="check-deploy-apps.html">App deployment and recovery</a></li>
+<li class="toctree-l2"><a class="reference internal" href="record-a-whole-model.html">Record a whole model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="record-experiments.html">Record experiments</a></li>
+<li class="toctree-l2"><a class="reference internal" href="compare-experiment-runs.html">Compare experiment runs</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../reference/_index.html">Reference</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/client/_index.html">Client</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/starting.html">Starting and stopping</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/streams.html">Streams</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/timeseries.html">Time series</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/graph.html">Graph</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/metadata.html">Metadata</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/querying.html">Querying</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/logs.html">Logs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/apps.html">Apps and engine status</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/query/_index.html">Query</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/building.html">Building a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/filtering.html">Filtering</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/columns.html">Columns</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/facets.html">Options and facets</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/reading.html">Reading results</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/data-object.html">DataObject: values</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/data-object-info.html">DataObject: streams and statistics</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/inspecting.html">Inspecting a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/writing.html">Writing from a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/traversal.html">Traversal settings</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/drivers/_index.html">Drivers</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/base-classes.html">Base classes</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/hooks.html">Hooks</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/helpers.html">Helpers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/state.html">Persistent state</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/configuration.html">Configuration</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/built-in-drivers.html">Built-in drivers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/tabular-helpers.html">Tabular helpers</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/apps/_index.html">Apps</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/apps/app-class.html">App declarations, windows, and functions</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/apps/inputs.html">App inputs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/apps/outputs.html">App outputs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/apps/deploying.html">Deploying apps</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/apps/cli.html">App commands</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/actors.html">Actors</a></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/experiments/_index.html">Experiments</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/studies-and-runs.html">Studies and runs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/declaring-variables.html">Declaring variables</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/recording.html">Recording values</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/annotations.html">Stream annotations</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/selecting-runs.html">Selecting and comparing runs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/reading.html">Reading recorded data</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/model-adapters.html">Model adapters</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/codecs-and-values.html">Codecs and values</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/server/_index.html">Server</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/server/cli.html">Command line</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/server/configuration.html">Server configuration</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/server/http-api.html">HTTP API</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/server/storage-migrations.html">Storage upgrades and recovery</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/glossary.html">Glossary</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../explanation/_index.html">Explanation</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/query-model.html">The query model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/values.html">Values</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/units.html">Units</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/drivers.html">Drivers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/apps.html">Derived stream updates</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/soft-sensor-actors.html">Soft sensor actors</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/stream-lifecycle.html">The stream lifecycle</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/experiments.html">How experiments work</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/text-resolution.html">Text matcher</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/escapement-core.html">Escapement core</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/soft-sensor-inputs.html">Soft sensor inputs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/server-internals.html">Server internals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../explanation/graph-backend.html">The graph store</a></li>
+</ul>
+</details></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-source-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Source repositories">
+    <i class="fab fa-github"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="https://github.com/DataDrivenCPS/acquirium" target="_blank"
+   class="btn btn-sm btn-source-repository-button dropdown-item"
+   title="Source repository"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+<span class="btn__text-container">Repository</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/DataDrivenCPS/acquirium/issues/new?title=Issue%20on%20page%20%2Fhow-to/query-cookbook.html&body=Your%20issue%20content%20here." target="_blank"
+   class="btn btn-sm btn-source-issues-button dropdown-item"
+   title="Open an issue"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-lightbulb"></i>
+  </span>
+<span class="btn__text-container">Open issue</span>
+</a>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+
+
+<div class="dropdown dropdown-download-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Download this page">
+    <i class="fas fa-download"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="../_sources/how-to/query-cookbook.md" target="_blank"
+   class="btn btn-sm btn-download-source-button dropdown-item"
+   title="Download source file"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file"></i>
+  </span>
+<span class="btn__text-container">.md</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li>
+<button onclick="window.print()"
+  class="btn btn-sm btn-download-pdf-button dropdown-item"
+  title="Print to PDF"
+  data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file-pdf"></i>
+  </span>
+<span class="btn__text-container">.pdf</span>
+</button>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button pst-navbar-icon"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>Query cookbook</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#which-pumps-does-the-plant-have">Which pumps does the plant have?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-is-measured-on-the-high-pressure-pump">What is measured on the high-pressure pump?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-much-power-did-the-pumps-draw-on-the-first-hours-of-july-in-kilowatts">How much power did the pumps draw on the first hours of July, in kilowatts?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-was-the-average-pump-power-on-each-day-of-a-week">What was the average pump power on each day of a week?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-are-the-latest-pressures-at-the-reverse-osmosis-membrane-in-bar">What are the latest pressures at the reverse osmosis membrane, in bar?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-is-the-pressure-drop-across-the-reverse-osmosis-membrane">What is the pressure drop across the reverse osmosis membrane?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-is-the-recovery-of-the-reverse-osmosis-membrane">What is the recovery of the reverse osmosis membrane?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-salty-is-the-product-water-compared-to-the-seawater">How salty is the product water compared to the seawater?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-was-the-feed-temperature-of-the-reverse-osmosis-membrane-in-celsius">What was the feed temperature of the reverse osmosis membrane, in Celsius?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#which-chemicals-are-dosed-and-where">Which chemicals are dosed, and where?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#which-pumps-feed-the-reverse-osmosis-membrane">Which pumps feed the reverse osmosis membrane?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#which-tank-comes-after-each-pump">Which tank comes after each pump?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-is-measured-right-after-the-cartridge-filter">What is measured right after the cartridge filter?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#which-pressure-streams-are-on-a-pump">Which pressure streams are on a pump?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#where-does-the-data-of-a-stream-come-from">Where does the data of a stream come from?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#moving-on">Moving on</a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="query-cookbook">
+<h1>Query cookbook<a class="headerlink" href="#query-cookbook" title="Link to this heading">#</a></h1>
+<p>In this article we’ll list queries for common questions about a plant.
+Each question has one query and its output.</p>
+<p>The examples use the seawater desalination plant of <a class="reference internal" href="../tutorials/a-full-example.html"><span class="std std-doc">5 - A Full Example</span></a>.
+Run that example first, in the same folder.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">polars</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pl</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">acquirium</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">acquirium.Client.explore</span><span class="w"> </span><span class="kn">import</span> <span class="n">Not</span>
+
+<span class="n">acq</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">init</span><span class="p">()</span>
+</pre></div>
+</div>
+<section id="which-pumps-does-the-plant-have">
+<h2>Which pumps does the plant have?<a class="headerlink" href="#which-pumps-does-the-plant-have" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">acq</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">entity</span><span class="p">(</span><span class="s2">"pump"</span><span class="p">)</span><span class="o">.</span><span class="n">include</span><span class="p">(</span><span class="s2">"label"</span><span class="p">)</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (3, 2)
+┌────────────┬─────────────────────────┐
+│ pump       ┆ pump.label              │
+│ ---        ┆ ---                     │
+│ str        ┆ str                     │
+╞════════════╪═════════════════════════╡
+│ wbs:intake ┆ Seawater Onshore Intake │
+│ wbs:P2     ┆ Booster Pump P2         │
+│ wbs:P1     ┆ High-pressure Pump P1   │
+└────────────┴─────────────────────────┘
+</pre></div>
+</div>
+</section>
+<section id="what-is-measured-on-the-high-pressure-pump">
+<h2>What is measured on the high-pressure pump?<a class="headerlink" href="#what-is-measured-on-the-high-pressure-pump" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">entity(uri=...)</span></code> selects one piece of equipment, and <code class="docutils literal notranslate"><span class="pre">measurement()</span></code> adds its streams.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">p1</span> <span class="o">=</span> <span class="n">acq</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">entity</span><span class="p">(</span><span class="n">uri</span><span class="o">=</span><span class="s2">"wbs:P1"</span><span class="p">,</span> <span class="n">alias</span><span class="o">=</span><span class="s2">"p1"</span><span class="p">)</span>
+<span class="n">p1</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"m"</span><span class="p">)</span><span class="o">.</span><span class="n">include</span><span class="p">(</span><span class="s2">"quantity_kind"</span><span class="p">,</span> <span class="s2">"unit"</span><span class="p">)</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (3, 5)
+┌────────┬─────────────────────────┬─────────────────────┬─────────────────────────┬───────────────┐
+│ p1     ┆ m                       ┆ m.label             ┆ m.quantity_kind         ┆ m.unit        │
+│ ---    ┆ ---                     ┆ ---                 ┆ ---                     ┆ ---           │
+│ str    ┆ str                     ┆ str                 ┆ str                     ┆ str           │
+╞════════╪═════════════════════════╪═════════════════════╪═════════════════════════╪═══════════════╡
+│ wbs:P1 ┆ wbs:P1-efficiency       ┆ P1 efficiency       ┆ quantitykind:Efficiency ┆ unit:UNITLESS │
+│ wbs:P1 ┆ wbs:P1-mechanical-power ┆ P1 mechanical power ┆ quantitykind:Power      ┆ unit:W        │
+│ wbs:P1 ┆ wbs:P1-out-pressure-pa  ┆ P1 out pressure pa  ┆ quantitykind:Pressure   ┆ unit:PA       │
+└────────┴─────────────────────────┴─────────────────────┴─────────────────────────┴───────────────┘
+</pre></div>
+</div>
+</section>
+<section id="how-much-power-did-the-pumps-draw-on-the-first-hours-of-july-in-kilowatts">
+<h2>How much power did the pumps draw on the first hours of July, in kilowatts?<a class="headerlink" href="#how-much-power-did-the-pumps-draw-on-the-first-hours-of-july-in-kilowatts" title="Link to this heading">#</a></h2>
+<p>The streams are stored in watts.
+<code class="docutils literal notranslate"><span class="pre">convert_to()</span></code> converts the values when they are read.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">power</span> <span class="o">=</span> <span class="n">acq</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">entity</span><span class="p">(</span><span class="s2">"pump"</span><span class="p">)</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"power"</span><span class="p">,</span> <span class="n">quantity_kind</span><span class="o">=</span><span class="s2">"power"</span><span class="p">)</span>
+<span class="n">power</span><span class="o">.</span><span class="n">data</span><span class="p">()</span><span class="o">.</span><span class="n">convert_to</span><span class="p">(</span><span class="s2">"kW"</span><span class="p">)</span><span class="o">.</span><span class="n">dataframe</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="s2">"2025-07-01"</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s2">"2025-07-01T03:00:00"</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (4, 3)
+┌─────────────────────────┬────────────────────────────┬────────────────────────────┐
+│ time                    ┆ power__P1 mechanical power ┆ power__P2 mechanical power │
+│ ---                     ┆ ---                        ┆ ---                        │
+│ datetime[μs, UTC]       ┆ f64                        ┆ f64                        │
+╞═════════════════════════╪════════════════════════════╪════════════════════════════╡
+│ 2025-07-01 00:00:00 UTC ┆ 1065.809783                ┆ 108.456097                 │
+│ 2025-07-01 01:00:00 UTC ┆ 1091.32405                 ┆ 116.73533                  │
+│ 2025-07-01 02:00:00 UTC ┆ 1029.535151                ┆ 96.421121                  │
+│ 2025-07-01 03:00:00 UTC ┆ 1042.124925                ┆ 103.118663                 │
+└─────────────────────────┴────────────────────────────┴────────────────────────────┘
+</pre></div>
+</div>
+</section>
+<section id="what-was-the-average-pump-power-on-each-day-of-a-week">
+<h2>What was the average pump power on each day of a week?<a class="headerlink" href="#what-was-the-average-pump-power-on-each-day-of-a-week" title="Link to this heading">#</a></h2>
+<p>The result of <code class="docutils literal notranslate"><span class="pre">dataframe()</span></code> is a polars dataframe, so the daily average is one polars step.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">df</span> <span class="o">=</span> <span class="n">power</span><span class="o">.</span><span class="n">data</span><span class="p">()</span><span class="o">.</span><span class="n">convert_to</span><span class="p">(</span><span class="s2">"kW"</span><span class="p">)</span><span class="o">.</span><span class="n">dataframe</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="s2">"2025-07-01"</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s2">"2025-07-07T23:00:00"</span><span class="p">)</span>
+<span class="n">df</span><span class="o">.</span><span class="n">group_by_dynamic</span><span class="p">(</span><span class="s2">"time"</span><span class="p">,</span> <span class="n">every</span><span class="o">=</span><span class="s2">"1d"</span><span class="p">)</span><span class="o">.</span><span class="n">agg</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">all</span><span class="p">()</span><span class="o">.</span><span class="n">exclude</span><span class="p">(</span><span class="s2">"time"</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (7, 3)
+┌─────────────────────────┬────────────────────────────┬────────────────────────────┐
+│ time                    ┆ power__P1 mechanical power ┆ power__P2 mechanical power │
+│ ---                     ┆ ---                        ┆ ---                        │
+│ datetime[μs, UTC]       ┆ f64                        ┆ f64                        │
+╞═════════════════════════╪════════════════════════════╪════════════════════════════╡
+│ 2025-07-01 00:00:00 UTC ┆ 1091.299082                ┆ 124.34938                  │
+│ 2025-07-02 00:00:00 UTC ┆ 1096.988257                ┆ 124.845055                 │
+│ 2025-07-03 00:00:00 UTC ┆ 1098.484659                ┆ 125.641056                 │
+│ 2025-07-04 00:00:00 UTC ┆ 1091.334641                ┆ 124.788923                 │
+│ 2025-07-05 00:00:00 UTC ┆ 1094.654196                ┆ 123.808746                 │
+│ 2025-07-06 00:00:00 UTC ┆ 1092.088617                ┆ 123.005782                 │
+│ 2025-07-07 00:00:00 UTC ┆ 1096.54999                 ┆ 126.38584                  │
+└─────────────────────────┴────────────────────────────┴────────────────────────────┘
+</pre></div>
+</div>
+</section>
+<section id="what-are-the-latest-pressures-at-the-reverse-osmosis-membrane-in-bar">
+<h2>What are the latest pressures at the reverse osmosis membrane, in bar?<a class="headerlink" href="#what-are-the-latest-pressures-at-the-reverse-osmosis-membrane-in-bar" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">latest()</span></code> returns the newest reading of each stream.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ro</span> <span class="o">=</span> <span class="n">acq</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">entity</span><span class="p">(</span><span class="n">uri</span><span class="o">=</span><span class="s2">"wbs:RO"</span><span class="p">,</span> <span class="n">alias</span><span class="o">=</span><span class="s2">"ro"</span><span class="p">)</span>
+<span class="n">ro</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"p"</span><span class="p">,</span> <span class="n">quantity_kind</span><span class="o">=</span><span class="s2">"pressure"</span><span class="p">)</span><span class="o">.</span><span class="n">data</span><span class="p">()</span><span class="o">.</span><span class="n">convert_to</span><span class="p">(</span><span class="s2">"bar"</span><span class="p">)</span><span class="o">.</span><span class="n">latest</span><span class="p">()</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (3, 4)
+┌────────────┬─────────────────────────────────┬─────────────────────────┬───────────┐
+│ data_alias ┆ property_uri                    ┆ time                    ┆ value     │
+│ ---        ┆ ---                             ┆ ---                     ┆ ---       │
+│ str        ┆ str                             ┆ datetime[μs, UTC]       ┆ f64       │
+╞════════════╪═════════════════════════════════╪═════════════════════════╪═══════════╡
+│ p          ┆ urn:swro/RO-in-pressure-pa      ┆ 2025-12-31 23:00:00 UTC ┆ 70.0      │
+│ p          ┆ urn:swro/RO-out-pressure-pa     ┆ 2025-12-31 23:00:00 UTC ┆ 1.01325   │
+│ p          ┆ urn:swro/RO-out-retentate-pres… ┆ 2025-12-31 23:00:00 UTC ┆ 67.871345 │
+└────────────┴─────────────────────────────────┴─────────────────────────┴───────────┘
+</pre></div>
+</div>
+</section>
+<section id="what-is-the-pressure-drop-across-the-reverse-osmosis-membrane">
+<h2>What is the pressure drop across the reverse osmosis membrane?<a class="headerlink" href="#what-is-the-pressure-drop-across-the-reverse-osmosis-membrane" title="Link to this heading">#</a></h2>
+<p>The drop is the inlet pressure minus the retentate pressure.
+Both streams are in the same query, so they are two columns of one table.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">df</span> <span class="o">=</span> <span class="n">ro</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"p"</span><span class="p">,</span> <span class="n">quantity_kind</span><span class="o">=</span><span class="s2">"pressure"</span><span class="p">)</span><span class="o">.</span><span class="n">data</span><span class="p">()</span><span class="o">.</span><span class="n">convert_to</span><span class="p">(</span><span class="s2">"bar"</span><span class="p">)</span><span class="o">.</span><span class="n">dataframe</span><span class="p">(</span><span class="n">limit</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+<span class="n">df</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="s2">"time"</span><span class="p">,</span> <span class="n">drop</span><span class="o">=</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">"p__RO in pressure pa"</span><span class="p">)</span> <span class="o">-</span> <span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">"p__RO out retentate pressure pa"</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (3, 2)
+┌─────────────────────────┬──────────┐
+│ time                    ┆ drop     │
+│ ---                     ┆ ---      │
+│ datetime[μs, UTC]       ┆ f64      │
+╞═════════════════════════╪══════════╡
+│ 2025-01-01 00:00:00 UTC ┆ 2.169838 │
+│ 2025-01-01 01:00:00 UTC ┆ 2.103855 │
+│ 2025-01-01 02:00:00 UTC ┆ 2.026713 │
+└─────────────────────────┴──────────┘
+</pre></div>
+</div>
+</section>
+<section id="what-is-the-recovery-of-the-reverse-osmosis-membrane">
+<h2>What is the recovery of the reverse osmosis membrane?<a class="headerlink" href="#what-is-the-recovery-of-the-reverse-osmosis-membrane" title="Link to this heading">#</a></h2>
+<p>Recovery is the permeate flow divided by the feed flow.
+The membrane has mass flow streams for water and for dissolved solids.
+<code class="docutils literal notranslate"><span class="pre">Not</span></code> leaves out the streams of dissolved solids.
+The stream <code class="docutils literal notranslate"><span class="pre">RO</span> <span class="pre">out</span> <span class="pre">flow</span> <span class="pre">mass</span> <span class="pre">water</span></code> is the permeate, and <code class="docutils literal notranslate"><span class="pre">RO</span> <span class="pre">in</span> <span class="pre">flow</span> <span class="pre">mass</span> <span class="pre">water</span></code> is the feed.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">flow</span> <span class="o">=</span> <span class="n">ro</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"flow"</span><span class="p">,</span> <span class="n">quantity_kind</span><span class="o">=</span><span class="s2">"mass flow rate"</span><span class="p">,</span> <span class="n">substance</span><span class="o">=</span><span class="n">Not</span><span class="p">(</span><span class="s2">"dissolved solids"</span><span class="p">))</span>
+<span class="n">df</span> <span class="o">=</span> <span class="n">flow</span><span class="o">.</span><span class="n">dataframe</span><span class="p">(</span><span class="n">limit</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+<span class="n">df</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="s2">"time"</span><span class="p">,</span> <span class="n">recovery</span><span class="o">=</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">"flow__RO out flow mass water"</span><span class="p">)</span> <span class="o">/</span> <span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">"flow__RO in flow mass water"</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (3, 2)
+┌─────────────────────────┬──────────┐
+│ time                    ┆ recovery │
+│ ---                     ┆ ---      │
+│ datetime[μs, UTC]       ┆ f64      │
+╞═════════════════════════╪══════════╡
+│ 2025-01-01 00:00:00 UTC ┆ 0.476323 │
+│ 2025-01-01 01:00:00 UTC ┆ 0.48358  │
+│ 2025-01-01 02:00:00 UTC ┆ 0.486428 │
+└─────────────────────────┴──────────┘
+</pre></div>
+</div>
+</section>
+<section id="how-salty-is-the-product-water-compared-to-the-seawater">
+<h2>How salty is the product water compared to the seawater?<a class="headerlink" href="#how-salty-is-the-product-water-compared-to-the-seawater" title="Link to this heading">#</a></h2>
+<p>This question is about streams, not about one piece of equipment, so the query starts from <code class="docutils literal notranslate"><span class="pre">measurement()</span></code>.
+<code class="docutils literal notranslate"><span class="pre">include(&quot;medium&quot;)</span></code> shows which stream is the seawater and which is the product water.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tds</span> <span class="o">=</span> <span class="n">acq</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"tds"</span><span class="p">,</span> <span class="n">substance</span><span class="o">=</span><span class="s2">"dissolved solids"</span><span class="p">,</span> <span class="n">quantity_kind</span><span class="o">=</span><span class="s2">"mass concentration"</span><span class="p">)</span>
+<span class="n">tds</span><span class="o">.</span><span class="n">include</span><span class="p">(</span><span class="s2">"medium"</span><span class="p">)</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="s2">"tds"</span><span class="p">,</span> <span class="s2">"tds.medium"</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (2, 2)
+┌─────────────────────────────────┬───────────────────────┐
+│ tds                             ┆ tds.medium            │
+│ ---                             ┆ ---                   │
+│ str                             ┆ str                   │
+╞═════════════════════════════════╪═══════════════════════╡
+│ wbs:storage-tank-3-out-tds-con… ┆ watr:Water-Freshwater │
+│ wbs:intake-in-tds-concentratio… ┆ watr:Water-Seawater   │
+└─────────────────────────────────┴───────────────────────┘
+</pre></div>
+</div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tds</span><span class="o">.</span><span class="n">dataframe</span><span class="p">(</span><span class="n">limit</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (3, 3)
+┌─────────────────────────┬─────────────────────────────────┬─────────────────────────────────┐
+│ time                    ┆ tds__intake in tds concentrati… ┆ tds__storage tank 3 out tds co… │
+│ ---                     ┆ ---                             ┆ ---                             │
+│ datetime[μs, UTC]       ┆ f64                             ┆ f64                             │
+╞═════════════════════════╪═════════════════════════════════╪═════════════════════════════════╡
+│ 2025-01-01 00:00:00 UTC ┆ 33.428505                       ┆ 0.217005                        │
+│ 2025-01-01 01:00:00 UTC ┆ 33.303636                       ┆ 0.218916                        │
+│ 2025-01-01 02:00:00 UTC ┆ 33.484903                       ┆ 0.223305                        │
+└─────────────────────────┴─────────────────────────────────┴─────────────────────────────────┘
+</pre></div>
+</div>
+</section>
+<section id="what-was-the-feed-temperature-of-the-reverse-osmosis-membrane-in-celsius">
+<h2>What was the feed temperature of the reverse osmosis membrane, in Celsius?<a class="headerlink" href="#what-was-the-feed-temperature-of-the-reverse-osmosis-membrane-in-celsius" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ro</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"t"</span><span class="p">,</span> <span class="n">quantity_kind</span><span class="o">=</span><span class="s2">"temperature"</span><span class="p">)</span><span class="o">.</span><span class="n">data</span><span class="p">()</span><span class="o">.</span><span class="n">convert_to</span><span class="p">(</span><span class="s2">"degC"</span><span class="p">)</span><span class="o">.</span><span class="n">dataframe</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="s2">"2025-07-01"</span><span class="p">,</span> <span class="n">limit</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (3, 2)
+┌─────────────────────────┬────────────────────────┐
+│ time                    ┆ t__RO in temperature k │
+│ ---                     ┆ ---                    │
+│ datetime[μs, UTC]       ┆ f64                    │
+╞═════════════════════════╪════════════════════════╡
+│ 2025-07-01 00:00:00 UTC ┆ 30.691354              │
+│ 2025-07-01 01:00:00 UTC ┆ 30.703025              │
+│ 2025-07-01 02:00:00 UTC ┆ 30.959595              │
+└─────────────────────────┴────────────────────────┘
+</pre></div>
+</div>
+</section>
+<section id="which-chemicals-are-dosed-and-where">
+<h2>Which chemicals are dosed, and where?<a class="headerlink" href="#which-chemicals-are-dosed-and-where" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">dose</span> <span class="o">=</span> <span class="n">acq</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">entity</span><span class="p">(</span><span class="s2">"reactor"</span><span class="p">)</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"dose"</span><span class="p">)</span><span class="o">.</span><span class="n">include</span><span class="p">(</span><span class="s2">"substance"</span><span class="p">,</span> <span class="s2">"unit"</span><span class="p">)</span>
+<span class="n">dose</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="s2">"reactor"</span><span class="p">,</span> <span class="s2">"dose.substance"</span><span class="p">,</span> <span class="s2">"dose.unit"</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (3, 3)
+┌──────────────────────────────┬─────────────────────────────────┬────────────────────┐
+│ reactor                      ┆ dose.substance                  ┆ dose.unit          │
+│ ---                          ┆ ---                             ┆ ---                │
+│ str                          ┆ str                             ┆ str                │
+╞══════════════════════════════╪═════════════════════════════════╪════════════════════╡
+│ wbs:lime-addition            ┆ watr:pHAdjuster-Lime            ┆ unit:MilliGM-PER-L │
+│ wbs:anti-scalant-addition    ┆ watr:WastewaterTreatmentChemic… ┆ unit:MilliGM-PER-L │
+│ wbs:ferric-chloride-addition ┆ watr:Coagulant-FerricChloride   ┆ unit:MilliGM-PER-L │
+└──────────────────────────────┴─────────────────────────────────┴────────────────────┘
+</pre></div>
+</div>
+</section>
+<section id="which-pumps-feed-the-reverse-osmosis-membrane">
+<h2>Which pumps feed the reverse osmosis membrane?<a class="headerlink" href="#which-pumps-feed-the-reverse-osmosis-membrane" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">related()</span></code> with <code class="docutils literal notranslate"><span class="pre">direction=&quot;upstream&quot;</span></code> follows the connections of the plant against the flow.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ro</span><span class="o">.</span><span class="n">related</span><span class="p">(</span><span class="s2">"pump"</span><span class="p">,</span> <span class="n">direction</span><span class="o">=</span><span class="s2">"upstream"</span><span class="p">)</span><span class="o">.</span><span class="n">include</span><span class="p">(</span><span class="s2">"label"</span><span class="p">)</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (2, 3)
+┌────────┬────────┬───────────────────────┐
+│ ro     ┆ pump   ┆ pump.label            │
+│ ---    ┆ ---    ┆ ---                   │
+│ str    ┆ str    ┆ str                   │
+╞════════╪════════╪═══════════════════════╡
+│ wbs:RO ┆ wbs:P2 ┆ Booster Pump P2       │
+│ wbs:RO ┆ wbs:P1 ┆ High-pressure Pump P1 │
+└────────┴────────┴───────────────────────┘
+</pre></div>
+</div>
+<p><strong>Note:</strong> <code class="docutils literal notranslate"><span class="pre">related()</span></code> looks at most three steps away by default.
+<code class="docutils literal notranslate"><span class="pre">max_depth=0</span></code> removes the limit, and then the intake pump is listed as well.</p>
+</section>
+<section id="which-tank-comes-after-each-pump">
+<h2>Which tank comes after each pump?<a class="headerlink" href="#which-tank-comes-after-each-pump" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">pumps</span> <span class="o">=</span> <span class="n">acq</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">entity</span><span class="p">(</span><span class="s2">"pump"</span><span class="p">)</span>
+<span class="n">pumps</span><span class="o">.</span><span class="n">related</span><span class="p">(</span><span class="s2">"tank"</span><span class="p">,</span> <span class="n">direction</span><span class="o">=</span><span class="s2">"downstream"</span><span class="p">,</span> <span class="n">max_depth</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">nearest</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">include</span><span class="p">(</span><span class="s2">"label"</span><span class="p">)</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (3, 3)
+┌────────────┬────────────────────┬────────────────┐
+│ pump       ┆ tank               ┆ tank.label     │
+│ ---        ┆ ---                ┆ ---            │
+│ str        ┆ str                ┆ str            │
+╞════════════╪════════════════════╪════════════════╡
+│ wbs:P1     ┆ wbs:storage-tank-2 ┆ Storage Tank 2 │
+│ wbs:P2     ┆ wbs:storage-tank-2 ┆ Storage Tank 2 │
+│ wbs:intake ┆ wbs:storage-tank-1 ┆ Storage Tank 1 │
+└────────────┴────────────────────┴────────────────┘
+</pre></div>
+</div>
+</section>
+<section id="what-is-measured-right-after-the-cartridge-filter">
+<h2>What is measured right after the cartridge filter?<a class="headerlink" href="#what-is-measured-right-after-the-cartridge-filter" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">measurement()</span></code> with <code class="docutils literal notranslate"><span class="pre">direction=&quot;downstream&quot;</span></code> selects the first streams along the flow.
+The column <code class="docutils literal notranslate"><span class="pre">cf_downstream_entity</span></code> is the place where they were found, here the pipe that leaves the filter.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">cf</span> <span class="o">=</span> <span class="n">acq</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">entity</span><span class="p">(</span><span class="n">uri</span><span class="o">=</span><span class="s2">"wbs:cartridge-filtration"</span><span class="p">,</span> <span class="n">alias</span><span class="o">=</span><span class="s2">"cf"</span><span class="p">)</span>
+<span class="n">after</span> <span class="o">=</span> <span class="n">cf</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"after"</span><span class="p">,</span> <span class="n">direction</span><span class="o">=</span><span class="s2">"downstream"</span><span class="p">)</span><span class="o">.</span><span class="n">include</span><span class="p">(</span><span class="s2">"quantity_kind"</span><span class="p">)</span>
+<span class="n">after</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="s2">"cf_downstream_entity"</span><span class="p">,</span> <span class="s2">"after.label"</span><span class="p">,</span> <span class="s2">"after.quantity_kind"</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (4, 3)
+┌─────────────────────────────────┬─────────────────────────────────┬───────────────────────────┐
+│ cf_downstream_entity            ┆ after.label                     ┆ after.quantity_kind       │
+│ ---                             ┆ ---                             ┆ ---                       │
+│ str                             ┆ str                             ┆ str                       │
+╞═════════════════════════════════╪═════════════════════════════════╪═══════════════════════════╡
+│ wbs:conn-cartridge-filtration-… ┆ conn cartridge filtration to S… ┆ quantitykind:Pressure     │
+│ wbs:conn-cartridge-filtration-… ┆ conn cartridge filtration to S… ┆ quantitykind:Temperature  │
+│ wbs:conn-cartridge-filtration-… ┆ conn cartridge filtration to S… ┆ quantitykind:MassFlowRate │
+│ wbs:conn-cartridge-filtration-… ┆ conn cartridge filtration to S… ┆ quantitykind:MassFlowRate │
+└─────────────────────────────────┴─────────────────────────────────┴───────────────────────────┘
+</pre></div>
+</div>
+</section>
+<section id="which-pressure-streams-are-on-a-pump">
+<h2>Which pressure streams are on a pump?<a class="headerlink" href="#which-pressure-streams-are-on-a-pump" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">context()</span></code> adds the equipment a stream belongs to.
+With a class, only the streams on equipment of that class are kept.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">pressure</span> <span class="o">=</span> <span class="n">acq</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"p"</span><span class="p">,</span> <span class="n">quantity_kind</span><span class="o">=</span><span class="s2">"pressure"</span><span class="p">)</span>
+<span class="n">pressure</span><span class="o">.</span><span class="n">context</span><span class="p">(</span><span class="s2">"pump"</span><span class="p">,</span> <span class="n">alias</span><span class="o">=</span><span class="s2">"pump"</span><span class="p">)</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (1, 3)
+┌────────────────────────┬────────────────────┬────────┐
+│ p                      ┆ p.label            ┆ pump   │
+│ ---                    ┆ ---                ┆ ---    │
+│ str                    ┆ str                ┆ str    │
+╞════════════════════════╪════════════════════╪════════╡
+│ wbs:P1-out-pressure-pa ┆ P1 out pressure pa ┆ wbs:P1 │
+└────────────────────────┴────────────────────┴────────┘
+</pre></div>
+</div>
+</section>
+<section id="where-does-the-data-of-a-stream-come-from">
+<h2>Where does the data of a stream come from?<a class="headerlink" href="#where-does-the-data-of-a-stream-come-from" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">stream_info()</span></code> lists the <code class="docutils literal notranslate"><span class="pre">source_id</span></code> and the <code class="docutils literal notranslate"><span class="pre">stream_name</span></code> of each selected stream.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">power</span><span class="o">.</span><span class="n">data</span><span class="p">()</span><span class="o">.</span><span class="n">stream_info</span><span class="p">()</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="s2">"property_uri"</span><span class="p">,</span> <span class="s2">"source_id"</span><span class="p">,</span> <span class="s2">"stream_name"</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (2, 3)
+┌──────────────────────────────┬───────────┬─────────────────────┐
+│ property_uri                 ┆ source_id ┆ stream_name         │
+│ ---                          ┆ ---       ┆ ---                 │
+│ str                          ┆ str       ┆ str                 │
+╞══════════════════════════════╪═══════════╪═════════════════════╡
+│ urn:swro/P1-mechanical-power ┆ csv-data  ┆ P1-mechanical-power │
+│ urn:swro/P2-mechanical-power ┆ csv-data  ┆ P2-mechanical-power │
+└──────────────────────────────┴───────────┴─────────────────────┘
+</pre></div>
+</div>
+</section>
+<section id="moving-on">
+<h2>Moving on<a class="headerlink" href="#moving-on" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p><a class="reference internal" href="explore-a-model.html"><span class="std std-doc">Explore a plant model</span></a>: find the classes and values to use in a query.</p></li>
+<li><p><a class="reference internal" href="debug-an-empty-query.html"><span class="std std-doc">Debug an empty or unexpected query result</span></a>: what to check when a query selects nothing.</p></li>
+<li><p><a class="reference internal" href="../reference/query/_index.html"><span class="std std-doc">Query reference</span></a>: every method, with all parameters.</p></li>
+</ul>
+</section>
+</section>
+
+    <script type="text/x-thebe-config">
+    {
+        requestKernel: true,
+        binderOptions: {
+            repo: "binder-examples/jupyter-stacks-datascience",
+            ref: "master",
+        },
+        codeMirrorConfig: {
+            theme: "abcdef",
+            mode: "python"
+        },
+        kernelOptions: {
+            name: "python3",
+            path: "./how-to"
+        },
+        predefinedOutput: true
+    }
+    </script>
+    <script>kernelName = 'python3'</script>
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="debug-an-empty-query.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Debug an empty or unexpected query result</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="access-a-shared-server.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Access data on a shared server</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#which-pumps-does-the-plant-have">Which pumps does the plant have?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-is-measured-on-the-high-pressure-pump">What is measured on the high-pressure pump?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-much-power-did-the-pumps-draw-on-the-first-hours-of-july-in-kilowatts">How much power did the pumps draw on the first hours of July, in kilowatts?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-was-the-average-pump-power-on-each-day-of-a-week">What was the average pump power on each day of a week?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-are-the-latest-pressures-at-the-reverse-osmosis-membrane-in-bar">What are the latest pressures at the reverse osmosis membrane, in bar?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-is-the-pressure-drop-across-the-reverse-osmosis-membrane">What is the pressure drop across the reverse osmosis membrane?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-is-the-recovery-of-the-reverse-osmosis-membrane">What is the recovery of the reverse osmosis membrane?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-salty-is-the-product-water-compared-to-the-seawater">How salty is the product water compared to the seawater?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-was-the-feed-temperature-of-the-reverse-osmosis-membrane-in-celsius">What was the feed temperature of the reverse osmosis membrane, in Celsius?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#which-chemicals-are-dosed-and-where">Which chemicals are dosed, and where?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#which-pumps-feed-the-reverse-osmosis-membrane">Which pumps feed the reverse osmosis membrane?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#which-tank-comes-after-each-pump">Which tank comes after each pump?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-is-measured-right-after-the-cartridge-filter">What is measured right after the cartridge filter?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#which-pressure-streams-are-on-a-pump">Which pressure streams are on a pump?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#where-does-the-data-of-a-stream-come-from">Where does the data of a stream come from?</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#moving-on">Moving on</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By NAWI Project Team
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2023.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>

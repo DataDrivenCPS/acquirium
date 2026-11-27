@@ -1,0 +1,113 @@
+---
+title: Glossary
+---
+
+This is a reference for the vocabulary of the other guides.
+
+## RDF terms
+
+| term | meaning | example |
+|---|---|---|
+| URI | the full, globally unique name of a thing; every class, predicate, entity, property and unit has one | `urn:swro/RO`, `http://qudt.org/vocab/unit/PSI` |
+| CURIE | a compact URI, written `prefix:local` | `wbs:RO` is `urn:swro/` + `RO` |
+| free text | a plain phrase the server resolves to a URI, against one vocabulary (its *kind*: class, predicate, substance, process, role, unit or quantity kind) | `"ro membrane"` resolves to `watr:ReverseOsmosisMembrane` |
+| literal | a plain value in a triple rather than a name for something; matched verbatim, never resolved | `"SCADA"`, `42.0` |
+| prefix | the short name standing in for a namespace | `wbs` |
+| namespace | the URI a prefix expands to | `urn:swro/` |
+| triple | one statement: subject, predicate, object | `wbs:RO s223:hasConnectionPoint wbs:RO-in` |
+| predicate | the middle of a triple; the kind of edge | `s223:hasConnectionPoint` |
+| class | a category a node belongs to, via `rdf:type` | `watr:ReverseOsmosisMembrane` |
+| instance | one actual thing of a class | `wbs:RO` |
+| ontology | the shared vocabulary the model is written in | s223, NAWI water, QUDT |
+| model | the RDF description of one plant | `src/acquirium/examples/seawater_ro/model.ttl` |
+| Turtle | the text format RDF is written in (`.ttl` files, graph inserts) | `model.ttl` |
+| SPARQL | the query language for RDF graphs; every `Query` compiles to it | `q.to_sparql()` |
+
+## Plant model
+
+| term | meaning | example |
+|---|---|---|
+| entity | a thing in the plant: equipment, a system, a connection point | `wbs:RO`, `wbs:RO-in` |
+| property | a node representing one measured or computed quantity (`s223:Property`); older versions called it a point | `wbs:P1-out-pressure` |
+| connection point | the inlet or outlet of a piece of equipment; most properties hang off one | `wbs:RO-in` |
+| reference node | the RDF node linking a property to its stream, through `ref:hasExternalReference` | `urn:acquirium#399ce39c-...` |
+| label | a property's display name (`rdfs:label`), shown in place of its CURIE in results | `"P1 outlet pressure"` |
+| placeholder property | the property minted for a stream registered without a `property_uri`, labelled with its `stream_name` | `<stream_uri>__point` |
+| stream | the timeseries behind a property | the rows stored under that reference node |
+| source | the owner of a set of streams and of its own graph | a driver, an app, `plant` |
+| deployment graph | the inferred union of every source's data, which queries run against | — |
+| dependencies | the resolved ontology and shape triples queried alongside it | `include_dependencies=True` |
+| medium | what flows at a connection point, or what a property is measured in | `watr:Water-Brine` |
+| substance | the constituent a measurement is about | `watr:Constituent-Salt` |
+| quantity kind | what a measurement measures, in QUDT's vocabulary | `quantitykind:MassConcentration` |
+| process | the treatment process an entity performs | `watr:Process-ReverseOsmosis` |
+| unit | the QUDT unit a measurement carries | `unit:MilliGM-PER-L` |
+
+### Stream identifiers
+
+A stream carries three identifiers, and the third is computed from the first
+two. Older versions called the last two `ref_name` and `ref_uri`; the client
+still accepts those names and warns that they are deprecated. `point_uri` is
+accepted as another name for `property_uri`.
+
+| identifier | meaning | example |
+|---|---|---|
+| `source_id` | who writes the stream | `watertap-seawater-ro` |
+| `stream_name` | which series, unique within that source | `P1-out-pressure` |
+| `stream_uri` | the canonical URI of the stream | `urn:acquirium#399ce39c-e18d-5ad5-bd5c-9c9d053fe04d` |
+
+## Querying
+
+| term | meaning | example |
+|---|---|---|
+| query | a description of what you are looking for, built by chaining verbs | `acq.query().entity("pump")` |
+| verb | one step in that chain | `entity()`, `related()`, `measurement()` |
+| pattern | the whole shape the server matches against the plant | a pump, a tank near it, the pressures on both |
+| node | one position in the pattern | the pump position |
+| entity node | a node holding equipment, systems or connection points | `entity("pump")` |
+| data node | a node holding measurements | `measurement()` |
+| alias | the name of a node, used as its column name and as its handle in `frm=`, `target=` and `of=` | `entity("pump", alias="p1")` |
+| attribute | a property of a node the interface exposes by name instead of by predicate | `unit`, `medium`, `substance`, `quantity_kind`, `process`, `type`, `cp_type`, `enumeration_kind`, `data_source`, `app`, `label` |
+| user attribute | an attribute written with `insert_metadata()`, named by its key or its dotted path into a nested value; a predicate under `urn:acquirium:attr#` | `last_cleaned`, `product_info.year`, `tags` |
+| attribute expression | a comparison on an `acq.attr` path, or a combination of comparisons with `&`, `\|`, `~`, passed to `where()` | `acq.attr.product_info.year >= 2015` |
+| metadata graph | the reserved `metadata` source graph that `insert_metadata()` writes to; pruned of triples about nodes that no other graph mentions | `urn:acquirium:graph:data:source:metadata` |
+| pointer | the node the chain is currently on, which is what a bare `where()` or `measurement()` applies to | moved by `refocus()` |
+| hidden predicate | an edge that generic traversal never follows, because it describes a node rather than connects the plant | `rdf:type`, `s223:hasProperty`, `s223:hasConnectionPoint`, `s223:cnx` |
+| `max_depth` | how many hops a traversal may take | `related("tank", max_depth=1)` |
+| `nearest` | keep only the closest match per source instead of every match in range; along a direction, the first place (own connection points, pipe, entity with its connection points, ...) holding a match | `related("pump", nearest=False)` |
+
+## Data
+
+| term | meaning | example |
+|---|---|---|
+| observation | one reading: a timestamp and a value on one stream | `(2026-08-08 05:51:47, 7e6)` |
+| `value_kind` | whether a stream is numeric or text; declared at registration or inferred from its first numeric value | `"numeric"` |
+| `value_mode` | which of the two value columns a read returns | `"default"`, `"numeric"`, `"text"`, `"coalesce"` |
+| `cast_value` | a client-side cast applied after the values arrive | `"float"`, `"int"`, `"str"`, `None` |
+| wide | one column per property, aligned on the timestamp | `time, m__wbs:RO-in-pressure, ...` |
+| narrow | one row per reading, with its property in its own column | `data_alias, property_id, time, value_numeric, ...` |
+
+## Experiments
+
+| term | meaning | example |
+|---|---|---|
+| Study | reusable declarations of inputs, outputs, and logs | `acq.study.define("operating-scenarios")` |
+| Experiment | one execution of a Study, with metadata and lifecycle state | `study.start(metadata={"scenario": "baseline"})` |
+| experiment variable | a named recording handle with a role, value type, and metadata | `study.output("cost").scalar(unit="USD")` |
+| experiment observation | one saved value, event, artifact, or stream reference, ordered within its run | `cost.record(12.5)` |
+| stream annotation | an association between a run and an existing stream's time interval | `experiment.annotate_stream(stream_uri, start=t0)` |
+
+Experiment metadata uses the shared attribute registry and `.where()` syntax.
+See the [experiment reference](experiments/_index.md) for the interface and read formats.
+
+## Acquirium components
+
+| term | meaning | example |
+|---|---|---|
+| driver | a class the server runs on a schedule to ingest data | `PollingIngestDriver` |
+| tick | one scheduled run of a driver | `interval = 10.0` |
+| app | a declaration: inputs selected from the graph, a function and a window; Escapement runs it | `aq.App` |
+| input name | the key of one of an app's inputs; the function's frame labels each row with it in the `input` column, and `ReplacementOutput(of=...)` names an input by it | `inputs={"raw": selection}` |
+| replacement output | an output that continues the measurement an input selects, so reads and consumers of that measurement find it | `aq.ReplacementOutput()` |
+| graph store | the embedded Oxigraph store holding the model and the ontologies | `data_dir/.oxigraph` |
+| engine store | where Escapement keeps observations, derived values and history | DuckDB file (default) or `postgres://` URL |

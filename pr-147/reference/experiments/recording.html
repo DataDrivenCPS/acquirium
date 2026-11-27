@@ -1,0 +1,990 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Recording values &#8212; Acquirium Documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
+    <link rel="stylesheet" type="text/css" href="../../_static/togglebutton.css?v=9c3e77be" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/mystnb.11b39860a7a0cbfd473a3ad8a317855267ff0bd372690045ca344a6b62be495e.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-thebe.css?v=4fa983c6" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/custom.css?v=5b658e50" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=55c26ed414f5f8a31ebb"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb" />
+
+    <script src="../../_static/documentation_options.js?v=9eb32ce0"></script>
+    <script src="../../_static/doctools.js?v=9a2dae69"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../_static/togglebutton.js?v=b8b12719"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>const THEBE_JS_URL = "https://unpkg.com/thebe@0.8.2/lib/index.js"; const thebe_selector = ".thebe,.cell"; const thebe_selector_input = "pre"; const thebe_selector_output = ".output, .cell_output"</script>
+    <script async="async" src="../../_static/sphinx-thebe.js?v=c100c467"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>const THEBE_JS_URL = "https://unpkg.com/thebe@0.8.2/lib/index.js"; const thebe_selector = ".thebe,.cell"; const thebe_selector_input = "pre"; const thebe_selector_output = ".output, .cell_output"</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'reference/experiments/recording';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="icon" href="../../_static/logo-notext.png"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Stream annotations" href="annotations.html" />
+    <link rel="prev" title="Declaring variables" href="declaring-variables.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search this book..."
+         aria-label="Search this book..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../_index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/logo.png" class="logo__image only-light" alt="Acquirium Documentation - Home"/>
+    <img src="../../_static/logo.png" class="logo__image only-dark pst-js-only" alt="Acquirium Documentation - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        
+        <ul class="nav bd-sidenav bd-sidenav__home-link">
+            <li class="toctree-l1">
+                <a class="reference internal" href="../../_index.html">
+                    Acquirium documentation
+                </a>
+            </li>
+        </ul>
+        <ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../getting-started.html">Getting started</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../tutorials/_index.html">Tutorials</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/fundamentals.html">0 - Fundamentals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/inserting-data.html">1 - Inserting Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/querying-data.html">2 - Querying Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/inserting-metadata.html">3 - Inserting Metadata</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/inserting-plant-model.html">4 - Inserting a Plant Model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/a-full-example.html">5 - A Full Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/acquirium-at-a-glance.html">Acquirium at a glance</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/turbidity.html">Turbidity alarm pipeline</a></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../tutorials/advanced/_index.html">Advanced topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/writing-a-driver.html">Writing a driver</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/first-app.html">Declaring and deploying apps</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/experiments.html">Running experiments</a></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../how-to/_index.html">How-to guides</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/explore-a-model.html">Explore a plant model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/debug-an-empty-query.html">Debug an empty or unexpected query result</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/query-cookbook.html">Query cookbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/access-a-shared-server.html">Access data on a shared server</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/write-soft-sensors.html">Soft sensor calculations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/chain-cleaning-apps.html">Data cleaning with multiple apps</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/clean-data-with-multiple-outputs.html">Data cleaning with multiple outputs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/parameterize-soft-sensors.html">Soft sensor parameters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/soft-sensor-examples.html">Soft sensor examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/consume-streaming-changes.html">Streaming change feed</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/check-deploy-apps.html">App deployment and recovery</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/record-a-whole-model.html">Record a whole model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/record-experiments.html">Record experiments</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/compare-experiment-runs.html">Compare experiment runs</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="../_index.html">Reference</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2 has-children"><a class="reference internal" href="../client/_index.html">Client</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../client/starting.html">Starting and stopping</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/streams.html">Streams</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/timeseries.html">Time series</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/graph.html">Graph</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/metadata.html">Metadata</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/querying.html">Querying</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/logs.html">Logs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/apps.html">Apps and engine status</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../query/_index.html">Query</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../query/building.html">Building a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/filtering.html">Filtering</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/columns.html">Columns</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/facets.html">Options and facets</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/reading.html">Reading results</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/data-object.html">DataObject: values</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/data-object-info.html">DataObject: streams and statistics</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/inspecting.html">Inspecting a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/writing.html">Writing from a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/traversal.html">Traversal settings</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../drivers/_index.html">Drivers</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/base-classes.html">Base classes</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/hooks.html">Hooks</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/helpers.html">Helpers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/state.html">Persistent state</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/configuration.html">Configuration</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/built-in-drivers.html">Built-in drivers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/tabular-helpers.html">Tabular helpers</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../apps/_index.html">Apps</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../apps/app-class.html">App declarations, windows, and functions</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../apps/inputs.html">App inputs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../apps/outputs.html">App outputs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../apps/deploying.html">Deploying apps</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../apps/cli.html">App commands</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2"><a class="reference internal" href="../actors.html">Actors</a></li>
+<li class="toctree-l2 current active has-children"><a class="reference internal" href="_index.html">Experiments</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l3"><a class="reference internal" href="studies-and-runs.html">Studies and runs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="declaring-variables.html">Declaring variables</a></li>
+<li class="toctree-l3 current active"><a class="current reference internal" href="#">Recording values</a></li>
+<li class="toctree-l3"><a class="reference internal" href="annotations.html">Stream annotations</a></li>
+<li class="toctree-l3"><a class="reference internal" href="selecting-runs.html">Selecting and comparing runs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="reading.html">Reading recorded data</a></li>
+<li class="toctree-l3"><a class="reference internal" href="model-adapters.html">Model adapters</a></li>
+<li class="toctree-l3"><a class="reference internal" href="codecs-and-values.html">Codecs and values</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../server/_index.html">Server</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../server/cli.html">Command line</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../server/configuration.html">Server configuration</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../server/http-api.html">HTTP API</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../server/storage-migrations.html">Storage upgrades and recovery</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2"><a class="reference internal" href="../glossary.html">Glossary</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../explanation/_index.html">Explanation</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/query-model.html">The query model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/values.html">Values</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/units.html">Units</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/drivers.html">Drivers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/apps.html">Derived stream updates</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/soft-sensor-actors.html">Soft sensor actors</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/stream-lifecycle.html">The stream lifecycle</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/experiments.html">How experiments work</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/text-resolution.html">Text matcher</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/escapement-core.html">Escapement core</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/soft-sensor-inputs.html">Soft sensor inputs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/server-internals.html">Server internals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/graph-backend.html">The graph store</a></li>
+</ul>
+</details></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-source-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Source repositories">
+    <i class="fab fa-github"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="https://github.com/DataDrivenCPS/acquirium" target="_blank"
+   class="btn btn-sm btn-source-repository-button dropdown-item"
+   title="Source repository"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+<span class="btn__text-container">Repository</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/DataDrivenCPS/acquirium/issues/new?title=Issue%20on%20page%20%2Freference/experiments/recording.html&body=Your%20issue%20content%20here." target="_blank"
+   class="btn btn-sm btn-source-issues-button dropdown-item"
+   title="Open an issue"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-lightbulb"></i>
+  </span>
+<span class="btn__text-container">Open issue</span>
+</a>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+
+
+<div class="dropdown dropdown-download-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Download this page">
+    <i class="fas fa-download"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="../../_sources/reference/experiments/recording.md" target="_blank"
+   class="btn btn-sm btn-download-source-button dropdown-item"
+   title="Download source file"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file"></i>
+  </span>
+<span class="btn__text-container">.md</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li>
+<button onclick="window.print()"
+  class="btn btn-sm btn-download-pdf-button dropdown-item"
+  title="Print to PDF"
+  data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file-pdf"></i>
+  </span>
+<span class="btn__text-container">.pdf</span>
+</button>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button pst-navbar-icon"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>Recording values</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experimentvariable-record"><code class="docutils literal notranslate"><span class="pre">ExperimentVariable.record</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experimentvariable-set"><code class="docutils literal notranslate"><span class="pre">ExperimentVariable.set</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experimentvariable-append"><code class="docutils literal notranslate"><span class="pre">ExperimentVariable.append</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experimentvariable-attach"><code class="docutils literal notranslate"><span class="pre">ExperimentVariable.attach</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experimentvariable-add"><code class="docutils literal notranslate"><span class="pre">ExperimentVariable.add</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experiment-output"><code class="docutils literal notranslate"><span class="pre">Experiment.output</span></code></a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="recording-values">
+<h1>Recording values<a class="headerlink" href="#recording-values" title="Link to this heading">#</a></h1>
+<p>Values are recorded through the variables of a study and go to the study’s active run. Each call adds one observation to the run. Earlier observations are never changed. This page covers <code class="docutils literal notranslate"><span class="pre">record()</span></code>, the kind-specific methods behind it, and assignment through <code class="docutils literal notranslate"><span class="pre">run.output</span></code>.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Item</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><a class="reference internal" href="#experimentvariable-record"><code class="docutils literal notranslate"><span class="pre">ExperimentVariable.record</span></code></a></p></td>
+<td><p>Record a value of any kind</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#experimentvariable-set"><code class="docutils literal notranslate"><span class="pre">ExperimentVariable.set</span></code></a></p></td>
+<td><p>Record a scalar, text, JSON or log value</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#experimentvariable-append"><code class="docutils literal notranslate"><span class="pre">ExperimentVariable.append</span></code></a></p></td>
+<td><p>Record a log event</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#experimentvariable-attach"><code class="docutils literal notranslate"><span class="pre">ExperimentVariable.attach</span></code></a></p></td>
+<td><p>Record a file</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#experimentvariable-add"><code class="docutils literal notranslate"><span class="pre">ExperimentVariable.add</span></code></a></p></td>
+<td><p>Record time-series rows</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#experiment-output"><code class="docutils literal notranslate"><span class="pre">Experiment.output</span></code></a></p></td>
+<td><p>Record outputs by label on a run</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The examples continue from this setup:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">acquirium</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">polars</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pl</span>
+
+<span class="n">acq</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">init</span><span class="p">()</span>
+<span class="n">study</span> <span class="o">=</span> <span class="n">acq</span><span class="o">.</span><span class="n">study</span><span class="o">.</span><span class="n">define</span><span class="p">(</span><span class="s2">"pump tuning"</span><span class="p">)</span>
+<span class="n">speed</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"speed"</span><span class="p">)</span><span class="o">.</span><span class="n">scalar</span><span class="p">(</span><span class="n">unit</span><span class="o">=</span><span class="s2">"Hz"</span><span class="p">)</span>
+<span class="n">configuration</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"configuration"</span><span class="p">)</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
+<span class="n">report</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"report"</span><span class="p">)</span><span class="o">.</span><span class="n">file</span><span class="p">(</span><span class="n">media_type</span><span class="o">=</span><span class="s2">"text/plain"</span><span class="p">)</span>
+<span class="n">cost</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="s2">"cost"</span><span class="p">)</span><span class="o">.</span><span class="n">scalar</span><span class="p">(</span><span class="n">unit</span><span class="o">=</span><span class="s2">"USD"</span><span class="p">)</span>
+<span class="n">power</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="s2">"power"</span><span class="p">)</span><span class="o">.</span><span class="n">timeseries</span><span class="p">(</span><span class="n">unit</span><span class="o">=</span><span class="s2">"kW"</span><span class="p">)</span>
+<span class="n">flow</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="s2">"flow"</span><span class="p">)</span><span class="o">.</span><span class="n">timeseries</span><span class="p">(</span><span class="n">keys</span><span class="o">=</span><span class="p">(</span><span class="s2">"pump"</span><span class="p">,))</span>
+<span class="n">schedule</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="s2">"schedule"</span><span class="p">)</span><span class="o">.</span><span class="n">table</span><span class="p">()</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="s2">"model"</span><span class="p">)</span><span class="o">.</span><span class="n">object</span><span class="p">(</span><span class="n">codec</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">PickleCodec</span><span class="p">)</span>
+<span class="n">events</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="s2">"solver events"</span><span class="p">)</span>
+
+<span class="n">run</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">start</span><span class="p">({</span><span class="s2">"scenario"</span><span class="p">:</span> <span class="s2">"baseline"</span><span class="p">})</span>
+</pre></div>
+</div>
+<section id="experimentvariable-record">
+<h2><code class="docutils literal notranslate"><span class="pre">ExperimentVariable.record</span></code><a class="headerlink" href="#experimentvariable-record" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ExperimentVariable</span><span class="o">.</span><span class="n">record</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">occurred_at</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Records one value in the active run. The kind of the variable decides what <code class="docutils literal notranslate"><span class="pre">value</span></code> must be and what is returned.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Kind</p></th>
+<th class="head"><p><code class="docutils literal notranslate"><span class="pre">value</span></code></p></th>
+<th class="head"><p>Returns</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">scalar</span></code></p></td>
+<td><p>A finite number or a boolean</p></td>
+<td><p>A receipt <code class="docutils literal notranslate"><span class="pre">dict</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">text</span></code></p></td>
+<td><p>A string</p></td>
+<td><p>A receipt <code class="docutils literal notranslate"><span class="pre">dict</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">json</span></code>, <code class="docutils literal notranslate"><span class="pre">log</span></code></p></td>
+<td><p>Any JSON value</p></td>
+<td><p>A receipt <code class="docutils literal notranslate"><span class="pre">dict</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">file</span></code></p></td>
+<td><p>A path to a file</p></td>
+<td><p>A file <code class="docutils literal notranslate"><span class="pre">dict</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">table</span></code></p></td>
+<td><p>A Polars, pandas or Arrow table</p></td>
+<td><p>A file <code class="docutils literal notranslate"><span class="pre">dict</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">object</span></code></p></td>
+<td><p>Any object the variable’s codec can save</p></td>
+<td><p>A file <code class="docutils literal notranslate"><span class="pre">dict</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">timeseries</span></code></p></td>
+<td><p>Rows of time and value</p></td>
+<td><p>The run’s <a class="reference internal" href="../client/streams.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">Stream</span></code></span></a>, or <code class="docutils literal notranslate"><span class="pre">None</span></code> when there are no rows</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">timeseries</span></code> with keys</p></td>
+<td><p>A <code class="docutils literal notranslate"><span class="pre">dict</span></code> from key tuples to rows</p></td>
+<td><p>A <code class="docutils literal notranslate"><span class="pre">dict</span></code> from key tuples to <code class="docutils literal notranslate"><span class="pre">Stream</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">timeseries</span></code></p></td>
+<td><p>A stream interval from <code class="docutils literal notranslate"><span class="pre">stream.between(start,</span> <span class="pre">end)</span></code></p></td>
+<td><p>A receipt <code class="docutils literal notranslate"><span class="pre">dict</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>A receipt has <code class="docutils literal notranslate"><span class="pre">sequence</span></code> (the position of the observation in the run) and <code class="docutils literal notranslate"><span class="pre">recorded_at</span></code> (the server time, as an ISO 8601 string). A file <code class="docutils literal notranslate"><span class="pre">dict</span></code> has <code class="docutils literal notranslate"><span class="pre">digest</span></code> (the SHA-256 of the bytes), <code class="docutils literal notranslate"><span class="pre">filename</span></code> and <code class="docutils literal notranslate"><span class="pre">byte_length</span></code>.</p>
+<p>Time-series rows are <code class="docutils literal notranslate"><span class="pre">(time,</span> <span class="pre">value)</span></code> pairs, or a Polars or Arrow table with a <code class="docutils literal notranslate"><span class="pre">time</span></code> (or <code class="docutils literal notranslate"><span class="pre">ts</span></code>) column and a <code class="docutils literal notranslate"><span class="pre">value</span></code> (or <code class="docutils literal notranslate"><span class="pre">value_numeric</span></code>) column. A table with a time column and one other column also works. Times are <code class="docutils literal notranslate"><span class="pre">datetime</span></code> objects or ISO 8601 strings. A time without a timezone is read as UTC.</p>
+<p>Recording a stream interval stores only the stream and the time range, not the samples. Later reads return the samples the stream holds at that moment. To store a fixed copy, record <code class="docutils literal notranslate"><span class="pre">interval.dataframe()</span></code>.</p>
+<p><strong>Parameters</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">value</span></code>: the value to record, as in the table above.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">occurred_at</span></code> (<code class="docutils literal notranslate"><span class="pre">datetime</span> <span class="pre">|</span> <span class="pre">str</span> <span class="pre">|</span> <span class="pre">None</span></code>, default <code class="docutils literal notranslate"><span class="pre">None</span></code>): when the value occurred, for scalar, text, JSON and log variables. A string must be ISO 8601. It is saved next to the server’s <code class="docutils literal notranslate"><span class="pre">recorded_at</span></code> time.</p></li>
+</ul>
+<p><strong>Returns</strong></p>
+<p>See the table above.</p>
+<p><strong>Raises</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">RuntimeError</span></code>: when the study has no active run.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TypeError</span></code>: when the value does not fit the kind, when <code class="docutils literal notranslate"><span class="pre">occurred_at</span></code> is given for a file, table, object or time-series variable, when a stream is recorded without a time range, or when a stream is recorded to a variable that is not a time series.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ValueError</span></code>: when a number is NaN or infinite, when a time-series row has a value that is not a number, or when a table of rows has no time or value column.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">FileNotFoundError</span></code>: when the path of a file variable does not exist.</p></li>
+</ul>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">speed</span><span class="o">.</span><span class="n">record</span><span class="p">(</span><span class="mi">45</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">configuration</span><span class="o">.</span><span class="n">record</span><span class="p">({</span><span class="s2">"mode"</span><span class="p">:</span> <span class="s2">"auto"</span><span class="p">,</span> <span class="s2">"limits"</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]}))</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">events</span><span class="o">.</span><span class="n">record</span><span class="p">({</span><span class="s2">"iteration"</span><span class="p">:</span> <span class="mi">1</span><span class="p">},</span> <span class="n">occurred_at</span><span class="o">=</span><span class="s2">"2026-01-01T00:00:00"</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>{'sequence': 1, 'recorded_at': '2026-11-18T00:54:37.849563+00:00'}
+{'sequence': 3, 'recorded_at': '2026-11-18T00:54:37.895799+00:00'}
+{'sequence': 5, 'recorded_at': '2026-11-18T00:54:37.951673+00:00'}
+</pre></div>
+</div>
+<p>Files, tables and objects:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">report</span><span class="o">.</span><span class="n">record</span><span class="p">(</span><span class="s2">"report.txt"</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">schedule</span><span class="o">.</span><span class="n">record</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span><span class="s2">"hour"</span><span class="p">:</span> <span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">],</span> <span class="s2">"on"</span><span class="p">:</span> <span class="p">[</span><span class="kc">True</span><span class="p">,</span> <span class="kc">False</span><span class="p">]})))</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">record</span><span class="p">({</span><span class="s2">"weights"</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]}))</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>{'digest': '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824', 'filename': 'report.txt', 'byte_length': 5}
+{'digest': 'f1d93070eadc81006496e7d823878823b483035e70332c2d085167626f4bd6d7', 'filename': 'schedule.parquet', 'byte_length': 744}
+{'digest': 'b2327a1a3eafcb64769f0401dc13c846c1eb769fbde8640484e4d76f9f29d3a7', 'filename': 'model.pkl', 'byte_length': 35}
+</pre></div>
+</div>
+<p>Time series:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">rows</span> <span class="o">=</span> <span class="p">[(</span><span class="s2">"2026-01-01T00:00:00Z"</span><span class="p">,</span> <span class="mf">5.0</span><span class="p">),</span> <span class="p">(</span><span class="s2">"2026-01-01T00:01:00Z"</span><span class="p">,</span> <span class="mf">5.5</span><span class="p">)]</span>
+
+<span class="n">stream</span> <span class="o">=</span> <span class="n">power</span><span class="o">.</span><span class="n">record</span><span class="p">(</span><span class="n">rows</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">stream</span><span class="o">.</span><span class="n">dataframe</span><span class="p">())</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">flow</span><span class="o">.</span><span class="n">record</span><span class="p">({(</span><span class="s2">"p1"</span><span class="p">,):</span> <span class="n">rows</span><span class="p">,</span> <span class="p">(</span><span class="s2">"p2"</span><span class="p">,):</span> <span class="n">rows</span><span class="p">}))</span>
+
+<span class="c1"># record a reference to an existing stream range, without copying samples</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">power</span><span class="o">.</span><span class="n">record</span><span class="p">(</span><span class="n">stream</span><span class="o">.</span><span class="n">between</span><span class="p">(</span><span class="s2">"2026-01-01T00:00:00Z"</span><span class="p">,</span> <span class="s2">"2026-01-01T00:01:00Z"</span><span class="p">)))</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (2, 2)
+┌─────────────────────────┬───────┐
+│ time                    ┆ value │
+│ ---                     ┆ ---   │
+│ datetime[μs, UTC]       ┆ f64   │
+╞═════════════════════════╪═══════╡
+│ 2026-01-01 00:00:00 UTC ┆ 5.0   │
+│ 2026-01-01 00:01:00 UTC ┆ 5.5   │
+└─────────────────────────┴───────┘
+{('p1',): &lt;Stream urn:acquirium#5c642073-dc63-573c-af77-d8b5641ee69a&gt;, ('p2',): &lt;Stream urn:acquirium#ec8859da-76b4-5a79-b2a0-6ef36297c877&gt;}
+{'sequence': 12, 'recorded_at': '2026-11-18T00:54:39.877042+00:00'}
+</pre></div>
+</div>
+<p>A value of the wrong kind is rejected before anything is sent:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">cost</span><span class="o">.</span><span class="n">record</span><span class="p">(</span><span class="s2">"high"</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>TypeError: 'cost' is a scalar and records a finite number or boolean, not 'high'
+</pre></div>
+</div>
+</section>
+<section id="experimentvariable-set">
+<h2><code class="docutils literal notranslate"><span class="pre">ExperimentVariable.set</span></code><a class="headerlink" href="#experimentvariable-set" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ExperimentVariable</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">occurred_at</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Records a value for a scalar, text, JSON or log variable. <code class="docutils literal notranslate"><span class="pre">record()</span></code> calls this method for those kinds.</p>
+<p><strong>Parameters</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">value</span></code>: a finite number or boolean for a scalar, a string for text, any JSON value for JSON and log variables. Values are converted to JSON first. See <a class="reference internal" href="codecs-and-values.html#value-conversion"><span class="std std-ref">value conversion</span></a>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">occurred_at</span></code> (<code class="docutils literal notranslate"><span class="pre">datetime</span> <span class="pre">|</span> <span class="pre">str</span> <span class="pre">|</span> <span class="pre">None</span></code>, default <code class="docutils literal notranslate"><span class="pre">None</span></code>): when the value occurred.</p></li>
+</ul>
+<p><strong>Returns</strong></p>
+<p>A receipt <code class="docutils literal notranslate"><span class="pre">dict</span></code> with <code class="docutils literal notranslate"><span class="pre">sequence</span></code> and <code class="docutils literal notranslate"><span class="pre">recorded_at</span></code>.</p>
+<p><strong>Raises</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">RuntimeError</span></code>: when the study has no active run.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TypeError</span></code>: when the value does not fit the kind, or the variable is a file, table, object or time series.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ValueError</span></code>: when a number is NaN or infinite.</p></li>
+</ul>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">cost</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="mf">12.5</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>{'sequence': 2, 'recorded_at': '2026-11-18T00:54:37.872968+00:00'}
+</pre></div>
+</div>
+</section>
+<section id="experimentvariable-append">
+<h2><code class="docutils literal notranslate"><span class="pre">ExperimentVariable.append</span></code><a class="headerlink" href="#experimentvariable-append" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ExperimentVariable</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">occurred_at</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Records one event. It does the same as <a class="reference internal" href="#experimentvariable-set"><code class="docutils literal notranslate"><span class="pre">set</span></code></a> and reads better for log variables.</p>
+<p><strong>Parameters</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">value</span></code>: the event, as any JSON value.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">occurred_at</span></code> (<code class="docutils literal notranslate"><span class="pre">datetime</span> <span class="pre">|</span> <span class="pre">str</span> <span class="pre">|</span> <span class="pre">None</span></code>, default <code class="docutils literal notranslate"><span class="pre">None</span></code>): when the event occurred.</p></li>
+</ul>
+<p><strong>Returns</strong></p>
+<p>A receipt <code class="docutils literal notranslate"><span class="pre">dict</span></code> with <code class="docutils literal notranslate"><span class="pre">sequence</span></code> and <code class="docutils literal notranslate"><span class="pre">recorded_at</span></code>.</p>
+<p><strong>Raises</strong></p>
+<p>The same errors as <a class="reference internal" href="#experimentvariable-set"><code class="docutils literal notranslate"><span class="pre">set</span></code></a>.</p>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">events</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"started"</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>{'sequence': 2, 'recorded_at': '2026-11-18T00:58:35.600242+00:00'}
+</pre></div>
+</div>
+</section>
+<section id="experimentvariable-attach">
+<h2><code class="docutils literal notranslate"><span class="pre">ExperimentVariable.attach</span></code><a class="headerlink" href="#experimentvariable-attach" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ExperimentVariable</span><span class="o">.</span><span class="n">attach</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Copies a file into the run. Note that <code class="docutils literal notranslate"><span class="pre">attach()</span></code> does not send the <code class="docutils literal notranslate"><span class="pre">media_type</span></code> declared on the variable. Use <code class="docutils literal notranslate"><span class="pre">record(path)</span></code> to save the declared type with the file.</p>
+<p><strong>Parameters</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">path</span></code> (<code class="docutils literal notranslate"><span class="pre">str</span> <span class="pre">|</span> <span class="pre">Path</span></code>): the file to copy.</p></li>
+</ul>
+<p><strong>Returns</strong></p>
+<p>A <code class="docutils literal notranslate"><span class="pre">dict</span></code> with <code class="docutils literal notranslate"><span class="pre">digest</span></code>, <code class="docutils literal notranslate"><span class="pre">filename</span></code> and <code class="docutils literal notranslate"><span class="pre">byte_length</span></code>. Files with identical bytes are stored once and keep the name they first arrived with.</p>
+<p><strong>Raises</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">RuntimeError</span></code>: when the study has no active run.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">FileNotFoundError</span></code>: when the path does not exist.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">requests.HTTPError</span></code> (400): when the variable is not a file, table or object variable.</p></li>
+</ul>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">report</span><span class="o">.</span><span class="n">attach</span><span class="p">(</span><span class="s2">"r.txt"</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>{'digest': '8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4', 'filename': 'r.txt', 'byte_length': 2}
+</pre></div>
+</div>
+</section>
+<section id="experimentvariable-add">
+<h2><code class="docutils literal notranslate"><span class="pre">ExperimentVariable.add</span></code><a class="headerlink" href="#experimentvariable-add" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ExperimentVariable</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">rows</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Writes time-series rows to the run’s stream for this variable. <code class="docutils literal notranslate"><span class="pre">record()</span></code> calls this method for rows. Calling it again in the same run adds to the same stream and records another observation that covers the new rows.</p>
+<p><strong>Parameters</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">rows</span></code>: <code class="docutils literal notranslate"><span class="pre">(time,</span> <span class="pre">value)</span></code> pairs, or a Polars or Arrow table with time and value columns. For a keyed variable, a <code class="docutils literal notranslate"><span class="pre">dict</span></code> from key tuples to rows. Every value must be a number.</p></li>
+</ul>
+<p><strong>Returns</strong></p>
+<p>The run’s <a class="reference internal" href="../client/streams.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">Stream</span></code></span></a> for this variable, or <code class="docutils literal notranslate"><span class="pre">None</span></code> when <code class="docutils literal notranslate"><span class="pre">rows</span></code> is empty. For a keyed variable, a <code class="docutils literal notranslate"><span class="pre">dict</span></code> from key tuples to <code class="docutils literal notranslate"><span class="pre">Stream</span></code>.</p>
+<p><strong>Raises</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">RuntimeError</span></code>: when the study has no active run.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TypeError</span></code>: when the variable is not a time series, when <code class="docutils literal notranslate"><span class="pre">rows</span></code> is a stream interval (use <code class="docutils literal notranslate"><span class="pre">record()</span></code> for that), or when a keyed variable is not given a <code class="docutils literal notranslate"><span class="pre">dict</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ValueError</span></code>: when a value is not a number, when a table has no time or value column, when the rows come from several streams, or when a key does not have one entry per key name.</p></li>
+</ul>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span>
+
+<span class="n">stream</span> <span class="o">=</span> <span class="n">power</span><span class="o">.</span><span class="n">add</span><span class="p">([(</span><span class="n">datetime</span><span class="p">(</span><span class="mi">2026</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">minute</span><span class="p">),</span> <span class="nb">float</span><span class="p">(</span><span class="n">minute</span><span class="p">))</span> <span class="k">for</span> <span class="n">minute</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">5</span><span class="p">)])</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">repr</span><span class="p">(</span><span class="n">stream</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>&lt;Stream urn:acquirium#6132b366-843f-5142-9337-2c3da2674983&gt;
+</pre></div>
+</div>
+</section>
+<section id="experiment-output">
+<h2><code class="docutils literal notranslate"><span class="pre">Experiment.output</span></code><a class="headerlink" href="#experiment-output" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">run</span><span class="o">.</span><span class="n">output</span><span class="p">[</span><span class="n">label</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+</pre></div>
+</div>
+<p>Records an output on this run by label. If no output has this label yet, a variable is declared from the value: a string declares a text variable, a number or boolean declares a scalar without a unit, and any other JSON value declares a JSON variable. Declare files, tables, objects and time series yourself before assigning to them.</p>
+<p>Reading <code class="docutils literal notranslate"><span class="pre">run.output[label]</span></code> returns the variable, not the value recorded in the run. The mapping iterates over the output labels of the study.</p>
+<p><strong>Parameters</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">label</span></code> (<code class="docutils literal notranslate"><span class="pre">str</span></code>): the output label.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">value</span></code>: the value to record, as for <a class="reference internal" href="#experimentvariable-record"><code class="docutils literal notranslate"><span class="pre">record</span></code></a>.</p></li>
+</ul>
+<p><strong>Returns</strong></p>
+<p>Assignment returns nothing. Reading returns an <a class="reference internal" href="declaring-variables.html#experimentvariable"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">ExperimentVariable</span></code></span></a>.</p>
+<p><strong>Raises</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">RuntimeError</span></code>: when this run is not the active run of its study.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TypeError</span></code>: when the label is new and the value cannot be converted to JSON.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">KeyError</span></code>: when reading a label that is not declared.</p></li>
+</ul>
+<p>A <code class="docutils literal notranslate"><span class="pre">UserWarning</span></code> is emitted when the assignment declares a new variable.</p>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">run</span><span class="o">.</span><span class="n">output</span><span class="p">[</span><span class="s2">"cost"</span><span class="p">]</span> <span class="o">=</span> <span class="mf">13.0</span>
+<span class="n">run</span><span class="o">.</span><span class="n">output</span><span class="p">[</span><span class="s2">"verdict"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"ok"</span>
+<span class="n">run</span><span class="o">.</span><span class="n">output</span><span class="p">[</span><span class="s2">"flags"</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"converged"</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">run</span><span class="o">.</span><span class="n">output</span><span class="p">[</span><span class="s2">"verdict"</span><span class="p">],</span> <span class="n">run</span><span class="o">.</span><span class="n">output</span><span class="p">[</span><span class="s2">"flags"</span><span class="p">])</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>&lt;ExperimentVariable output 'verdict' text&gt; &lt;ExperimentVariable output 'flags' json&gt;
+</pre></div>
+</div>
+</section>
+</section>
+
+    <script type="text/x-thebe-config">
+    {
+        requestKernel: true,
+        binderOptions: {
+            repo: "binder-examples/jupyter-stacks-datascience",
+            ref: "master",
+        },
+        codeMirrorConfig: {
+            theme: "abcdef",
+            mode: "python"
+        },
+        kernelOptions: {
+            name: "python3",
+            path: "./reference/experiments"
+        },
+        predefinedOutput: true
+    }
+    </script>
+    <script>kernelName = 'python3'</script>
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="declaring-variables.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Declaring variables</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="annotations.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Stream annotations</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experimentvariable-record"><code class="docutils literal notranslate"><span class="pre">ExperimentVariable.record</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experimentvariable-set"><code class="docutils literal notranslate"><span class="pre">ExperimentVariable.set</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experimentvariable-append"><code class="docutils literal notranslate"><span class="pre">ExperimentVariable.append</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experimentvariable-attach"><code class="docutils literal notranslate"><span class="pre">ExperimentVariable.attach</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experimentvariable-add"><code class="docutils literal notranslate"><span class="pre">ExperimentVariable.add</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experiment-output"><code class="docutils literal notranslate"><span class="pre">Experiment.output</span></code></a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By NAWI Project Team
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2023.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>

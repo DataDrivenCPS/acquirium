@@ -1,0 +1,974 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Writing a driver &#8212; Acquirium Documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
+    <link rel="stylesheet" type="text/css" href="../../_static/togglebutton.css?v=9c3e77be" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/mystnb.11b39860a7a0cbfd473a3ad8a317855267ff0bd372690045ca344a6b62be495e.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-thebe.css?v=4fa983c6" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/custom.css?v=5b658e50" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=55c26ed414f5f8a31ebb"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb" />
+
+    <script src="../../_static/documentation_options.js?v=9eb32ce0"></script>
+    <script src="../../_static/doctools.js?v=9a2dae69"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../_static/togglebutton.js?v=b8b12719"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>const THEBE_JS_URL = "https://unpkg.com/thebe@0.8.2/lib/index.js"; const thebe_selector = ".thebe,.cell"; const thebe_selector_input = "pre"; const thebe_selector_output = ".output, .cell_output"</script>
+    <script async="async" src="../../_static/sphinx-thebe.js?v=c100c467"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>const THEBE_JS_URL = "https://unpkg.com/thebe@0.8.2/lib/index.js"; const thebe_selector = ".thebe,.cell"; const thebe_selector_input = "pre"; const thebe_selector_output = ".output, .cell_output"</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'tutorials/advanced/writing-a-driver';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="icon" href="../../_static/logo-notext.png"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Declaring and deploying apps" href="first-app.html" />
+    <link rel="prev" title="Advanced topics" href="_index.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search this book..."
+         aria-label="Search this book..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../_index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/logo.png" class="logo__image only-light" alt="Acquirium Documentation - Home"/>
+    <img src="../../_static/logo.png" class="logo__image only-dark pst-js-only" alt="Acquirium Documentation - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        
+        <ul class="nav bd-sidenav bd-sidenav__home-link">
+            <li class="toctree-l1">
+                <a class="reference internal" href="../../_index.html">
+                    Acquirium documentation
+                </a>
+            </li>
+        </ul>
+        <ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../getting-started.html">Getting started</a></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="../_index.html">Tutorials</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="../fundamentals.html">0 - Fundamentals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../inserting-data.html">1 - Inserting Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../querying-data.html">2 - Querying Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../inserting-metadata.html">3 - Inserting Metadata</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../inserting-plant-model.html">4 - Inserting a Plant Model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../a-full-example.html">5 - A Full Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../acquirium-at-a-glance.html">Acquirium at a glance</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../turbidity.html">Turbidity alarm pipeline</a></li>
+<li class="toctree-l2 current active has-children"><a class="reference internal" href="_index.html">Advanced topics</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l3 current active"><a class="current reference internal" href="#">Writing a driver</a></li>
+<li class="toctree-l3"><a class="reference internal" href="first-app.html">Declaring and deploying apps</a></li>
+<li class="toctree-l3"><a class="reference internal" href="experiments.html">Running experiments</a></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../how-to/_index.html">How-to guides</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/explore-a-model.html">Explore a plant model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/debug-an-empty-query.html">Debug an empty or unexpected query result</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/query-cookbook.html">Query cookbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/access-a-shared-server.html">Access data on a shared server</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/write-soft-sensors.html">Soft sensor calculations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/chain-cleaning-apps.html">Data cleaning with multiple apps</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/clean-data-with-multiple-outputs.html">Data cleaning with multiple outputs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/parameterize-soft-sensors.html">Soft sensor parameters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/soft-sensor-examples.html">Soft sensor examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/consume-streaming-changes.html">Streaming change feed</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/check-deploy-apps.html">App deployment and recovery</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/record-a-whole-model.html">Record a whole model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/record-experiments.html">Record experiments</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/compare-experiment-runs.html">Compare experiment runs</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../reference/_index.html">Reference</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../reference/client/_index.html">Client</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/client/starting.html">Starting and stopping</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/client/streams.html">Streams</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/client/timeseries.html">Time series</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/client/graph.html">Graph</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/client/metadata.html">Metadata</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/client/querying.html">Querying</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/client/logs.html">Logs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/client/apps.html">Apps and engine status</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../reference/query/_index.html">Query</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/query/building.html">Building a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/query/filtering.html">Filtering</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/query/columns.html">Columns</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/query/facets.html">Options and facets</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/query/reading.html">Reading results</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/query/data-object.html">DataObject: values</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/query/data-object-info.html">DataObject: streams and statistics</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/query/inspecting.html">Inspecting a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/query/writing.html">Writing from a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/query/traversal.html">Traversal settings</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../reference/drivers/_index.html">Drivers</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/drivers/base-classes.html">Base classes</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/drivers/hooks.html">Hooks</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/drivers/helpers.html">Helpers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/drivers/state.html">Persistent state</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/drivers/configuration.html">Configuration</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/drivers/built-in-drivers.html">Built-in drivers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/drivers/tabular-helpers.html">Tabular helpers</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../reference/apps/_index.html">Apps</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/apps/app-class.html">App declarations, windows, and functions</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/apps/inputs.html">App inputs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/apps/outputs.html">App outputs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/apps/deploying.html">Deploying apps</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/apps/cli.html">App commands</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2"><a class="reference internal" href="../../reference/actors.html">Actors</a></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../reference/experiments/_index.html">Experiments</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/experiments/studies-and-runs.html">Studies and runs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/experiments/declaring-variables.html">Declaring variables</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/experiments/recording.html">Recording values</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/experiments/annotations.html">Stream annotations</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/experiments/selecting-runs.html">Selecting and comparing runs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/experiments/reading.html">Reading recorded data</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/experiments/model-adapters.html">Model adapters</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/experiments/codecs-and-values.html">Codecs and values</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../reference/server/_index.html">Server</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/server/cli.html">Command line</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/server/configuration.html">Server configuration</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/server/http-api.html">HTTP API</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../reference/server/storage-migrations.html">Storage upgrades and recovery</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2"><a class="reference internal" href="../../reference/glossary.html">Glossary</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../explanation/_index.html">Explanation</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/query-model.html">The query model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/values.html">Values</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/units.html">Units</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/drivers.html">Drivers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/apps.html">Derived stream updates</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/soft-sensor-actors.html">Soft sensor actors</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/stream-lifecycle.html">The stream lifecycle</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/experiments.html">How experiments work</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/text-resolution.html">Text matcher</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/escapement-core.html">Escapement core</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/soft-sensor-inputs.html">Soft sensor inputs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/server-internals.html">Server internals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/graph-backend.html">The graph store</a></li>
+</ul>
+</details></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-source-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Source repositories">
+    <i class="fab fa-github"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="https://github.com/DataDrivenCPS/acquirium" target="_blank"
+   class="btn btn-sm btn-source-repository-button dropdown-item"
+   title="Source repository"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+<span class="btn__text-container">Repository</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/DataDrivenCPS/acquirium/issues/new?title=Issue%20on%20page%20%2Ftutorials/advanced/writing-a-driver.html&body=Your%20issue%20content%20here." target="_blank"
+   class="btn btn-sm btn-source-issues-button dropdown-item"
+   title="Open an issue"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-lightbulb"></i>
+  </span>
+<span class="btn__text-container">Open issue</span>
+</a>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+
+
+<div class="dropdown dropdown-download-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Download this page">
+    <i class="fas fa-download"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="../../_sources/tutorials/advanced/writing-a-driver.md" target="_blank"
+   class="btn btn-sm btn-download-source-button dropdown-item"
+   title="Download source file"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file"></i>
+  </span>
+<span class="btn__text-container">.md</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li>
+<button onclick="window.print()"
+  class="btn btn-sm btn-download-pdf-button dropdown-item"
+  title="Print to PDF"
+  data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file-pdf"></i>
+  </span>
+<span class="btn__text-container">.pdf</span>
+</button>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button pst-navbar-icon"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>Writing a driver</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-a-driver-does">What a driver does</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#a-server-that-keeps-running">A server that keeps running</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#starting-without-code-the-csv-driver">Starting without code: the CSV driver</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#writing-your-own">Writing your own</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#declaring-the-streams">Declaring the streams</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#reading-the-source">Reading the source</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#starting-the-driver">Starting the driver</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#connecting-to-the-plant-model">Connecting to the plant model</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#running-and-checking-a-driver">Running and checking a driver</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#next">Next</a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="writing-a-driver">
+<h1>Writing a driver<a class="headerlink" href="#writing-a-driver" title="Link to this heading">#</a></h1>
+<p>In the tutorial, the data was inserted by a script that you run by hand.
+In this article we’ll describe drivers, which do the same work continuously: a driver reads a source, registers its streams and inserts the data.</p>
+<p>This page is useful if you have a source that keeps producing data, such as a folder of files, a PLC, an MQTT broker or an API.</p>
+<p>The config files, the drivers and the scripts of this page are available in <a class="reference external" href="https://github.com/DataDrivenCPS/acquirium/tree/main/examples/documentation/driver" rel="noreferer noopener" target="_blank">examples/documentation/driver</a>.</p>
+<section id="what-a-driver-does">
+<h2>What a driver does<a class="headerlink" href="#what-a-driver-does" title="Link to this heading">#</a></h2>
+<p>A driver does the three things you did by hand in <a class="reference internal" href="../inserting-data.html"><span class="std std-doc">1 - Inserting Data</span></a>:</p>
+<ul class="simple">
+<li><p>it has a <code class="docutils literal notranslate"><span class="pre">source_id</span></code>,</p></li>
+<li><p>it registers its streams,</p></li>
+<li><p>it inserts their data.</p></li>
+</ul>
+<p>A driver runs inside the server, and the server calls it on a fixed interval.
+It also remembers where it stopped, so a restart continues from there.</p>
+</section>
+<section id="a-server-that-keeps-running">
+<h2>A server that keeps running<a class="headerlink" href="#a-server-that-keeps-running" title="Link to this heading">#</a></h2>
+<p>So far <code class="docutils literal notranslate"><span class="pre">aq.init()</span></code> started a server that stops with your script.
+A driver needs a server that keeps running, which is started with the <code class="docutils literal notranslate"><span class="pre">acquirium</span> <span class="pre">server</span></code> command.</p>
+<p>The server reads its settings from a file named <code class="docutils literal notranslate"><span class="pre">acquirium.toml</span></code>.
+Create it in an empty folder:</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[server]</span>
+<span class="n">host</span><span class="w">       </span><span class="o">=</span><span class="w"> </span><span class="s2">"127.0.0.1"</span>
+<span class="n">port</span><span class="w">       </span><span class="o">=</span><span class="w"> </span><span class="mi">8000</span>
+<span class="n">exact_only</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+</pre></div>
+</div>
+<p>Then start the server in the command line, from the same folder:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>acquirium<span class="w"> </span>server
+</pre></div>
+</div>
+<p>The command keeps running until you stop it with Ctrl+C.
+Scripts connect to this server with its address:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">acquirium</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+
+<span class="n">acq</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="n">address</span><span class="o">=</span><span class="s2">"http://127.0.0.1:8000"</span><span class="p">)</span>
+<span class="o">...</span>
+<span class="n">aq</span><span class="o">.</span><span class="n">shutdown</span><span class="p">()</span>       <span class="c1"># disconnects, the server keeps running</span>
+</pre></div>
+</div>
+</section>
+<section id="starting-without-code-the-csv-driver">
+<h2>Starting without code: the CSV driver<a class="headerlink" href="#starting-without-code-the-csv-driver" title="Link to this heading">#</a></h2>
+<p>Acquirium ships with a driver that reads the CSV files of a folder.
+We’ll use it on the data of <a class="reference internal" href="../a-full-example.html"><span class="std std-doc">5 - A Full Example</span></a>.</p>
+<p>Stop the server, and create the example files in the same folder:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>acquirium<span class="w"> </span>example<span class="w"> </span>init
+</pre></div>
+</div>
+<p>Then add the driver to <code class="docutils literal notranslate"><span class="pre">acquirium.toml</span></code>:</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[[drivers]]</span>
+<span class="n">spec</span><span class="w">      </span><span class="o">=</span><span class="w"> </span><span class="s2">"acquirium.Drivers.BuiltInDrivers.csv_ingest:CSVIngestDriver"</span>
+<span class="n">source_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"csv-data"</span>
+<span class="n">watch_dir</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"example"</span>
+<span class="n">glob</span><span class="w">      </span><span class="o">=</span><span class="w"> </span><span class="s2">"*.csv"</span>
+<span class="n">format</span><span class="w">    </span><span class="o">=</span><span class="w"> </span><span class="s2">"wide"</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">spec</span></code> names the driver class.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">source_id</span></code> is the <code class="docutils literal notranslate"><span class="pre">source_id</span></code> of every stream the driver registers.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">watch_dir</span></code> and <code class="docutils literal notranslate"><span class="pre">glob</span></code> select the files to read.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">format</span></code> is <code class="docutils literal notranslate"><span class="pre">&quot;wide&quot;</span></code> when there is one column per stream, which is the case for <code class="docutils literal notranslate"><span class="pre">data.csv</span></code>.</p></li>
+</ul>
+<p>Start the server again.
+The driver reads the file, registers one stream per column and inserts the data:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">q</span> <span class="o">=</span> <span class="n">acq</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">measurement</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">q</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Query
+  data: measurement
+32 matches, first 5:
+┌─────────────────────────────────┬─────────────────────────────────┐
+│ data                            ┆ data.label                      │
+│ ---                             ┆ ---                             │
+│ str                             ┆ str                             │
+╞═════════════════════════════════╪═════════════════════════════════╡
+│ acq:c81d82c6-46f8-5396-a488-c7… ┆ intake-in-flow-rate-m3s         │
+│ acq:40701b11-c32d-5b45-98aa-21… ┆ P2-mechanical-power             │
+│ acq:0a4ab90c-af5c-5fb6-aff2-69… ┆ conn-cartridge-filtration-to-S… │
+│ acq:22b1bf04-14cc-5a84-a947-f7… ┆ conn-cartridge-filtration-to-S… │
+│ acq:5d7ecdb5-062f-5af3-afbe-96… ┆ RO-in-flow-mass-water           │
+└─────────────────────────────────┴─────────────────────────────────┘
+</pre></div>
+</div>
+<p>The driver keeps watching the folder.
+When a row is added to the file, or a new file appears, the new rows are inserted within a few seconds.
+Rows that were already read are not read again.</p>
+</section>
+<section id="writing-your-own">
+<h2>Writing your own<a class="headerlink" href="#writing-your-own" title="Link to this heading">#</a></h2>
+<p>A driver is a Python class.
+Pick the base class by how your source behaves:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">PollingIngestDriver</span></code>: you ask the source for its values every few seconds.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">EventIngestDriver</span></code>: the source pushes values to you.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">FileIngestDriver</span></code>: files appear in a folder.</p></li>
+</ul>
+<p>Below is a complete polling driver for a tank sensor.
+Save it as <code class="docutils literal notranslate"><span class="pre">tank_driver.py</span></code>, next to <code class="docutils literal notranslate"><span class="pre">acquirium.toml</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">acquirium</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TankDriver</span><span class="p">(</span><span class="n">aq</span><span class="o">.</span><span class="n">PollingIngestDriver</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">setup</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">source_id</span> <span class="o">=</span> <span class="s2">"tank"</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">declare</span><span class="p">(</span><span class="s2">"level"</span><span class="p">,</span> <span class="n">unit</span><span class="o">=</span><span class="s2">"m"</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"Tank level"</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">declare</span><span class="p">(</span><span class="s2">"state"</span><span class="p">,</span> <span class="n">value_kind</span><span class="o">=</span><span class="s2">"text"</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">level</span> <span class="o">=</span> <span class="mf">2.0</span> <span class="o">+</span> <span class="n">random</span><span class="o">.</span><span class="n">random</span><span class="p">()</span>        <span class="c1"># ask your sensor here</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">"level"</span><span class="p">,</span> <span class="n">level</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">"state"</span><span class="p">,</span> <span class="s2">"high"</span> <span class="k">if</span> <span class="n">level</span> <span class="o">&gt;</span> <span class="mf">2.8</span> <span class="k">else</span> <span class="s2">"normal"</span><span class="p">)</span>
+</pre></div>
+</div>
+<section id="declaring-the-streams">
+<h3>Declaring the streams<a class="headerlink" href="#declaring-the-streams" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">setup()</span></code> runs once, when the driver starts.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">self.source_id</span></code> is the <code class="docutils literal notranslate"><span class="pre">source_id</span></code> of the driver.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">declare()</span></code> describes one stream. It takes the same keys as <code class="docutils literal notranslate"><span class="pre">register_streams()</span></code>: <code class="docutils literal notranslate"><span class="pre">unit</span></code>, <code class="docutils literal notranslate"><span class="pre">quantity_kind</span></code>, <code class="docutils literal notranslate"><span class="pre">medium</span></code>, <code class="docutils literal notranslate"><span class="pre">substance</span></code>, <code class="docutils literal notranslate"><span class="pre">label</span></code> and <code class="docutils literal notranslate"><span class="pre">property_uri</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">value_kind</span></code> is optional, as in the tutorial.</p></li>
+</ul>
+<p>The declared streams are registered by the driver before the first insert.</p>
+<p><strong>Note:</strong> Every stream has to be declared. Adding a value to a stream that was not declared raises an error:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>UndeclaredStreamError: observation stream ('tank', 'nope') was not declared
+</pre></div>
+</div>
+</section>
+<section id="reading-the-source">
+<h3>Reading the source<a class="headerlink" href="#reading-the-source" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">read()</span></code> runs on every interval.
+<code class="docutils literal notranslate"><span class="pre">add()</span></code> takes the <code class="docutils literal notranslate"><span class="pre">stream_name</span></code> and the value.
+The time of the value is the current time, unless you pass one as the third argument.</p>
+<p>The values are collected and inserted together at the end of each interval.</p>
+<p>If your source gives you a table instead of single values, <code class="docutils literal notranslate"><span class="pre">to_observations()</span></code> turns a dataframe into rows a driver can insert (see the <a class="reference internal" href="../../reference/drivers/tabular-helpers.html"><span class="std std-doc">driver reference</span></a>).</p>
+</section>
+<section id="starting-the-driver">
+<h3>Starting the driver<a class="headerlink" href="#starting-the-driver" title="Link to this heading">#</a></h3>
+<p>Add the driver to a config file.
+We’ll use a new file named <code class="docutils literal notranslate"><span class="pre">tank.toml</span></code>:</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[[drivers]]</span>
+<span class="n">spec</span><span class="w">     </span><span class="o">=</span><span class="w"> </span><span class="s2">"tank_driver.py:TankDriver"</span>
+<span class="n">interval</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">5.0</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">interval</span></code> is the number of seconds between two reads.</p>
+<p><code class="docutils literal notranslate"><span class="pre">acquirium</span> <span class="pre">driver</span> <span class="pre">start</span></code> starts the drivers of a file on the running server:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>acquirium<span class="w"> </span>driver<span class="w"> </span>start<span class="w"> </span>tank.toml
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Started driver 'TankDriver' (tank_driver.py:TankDriver, interval=5.0s)
+</pre></div>
+</div>
+<p>A few seconds later the data is there:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tank</span> <span class="o">=</span> <span class="n">acq</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">measurement</span><span class="p">()</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">label</span><span class="o">=</span><span class="s2">"Tank level"</span><span class="p">)</span>
+<span class="n">tank</span><span class="o">.</span><span class="n">dataframe</span><span class="p">()</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (4, 2)
+┌────────────────────────────────┬──────────────────┐
+│ time                           ┆ data__Tank level │
+│ ---                            ┆ ---              │
+│ datetime[μs, UTC]              ┆ f64              │
+╞════════════════════════════════╪══════════════════╡
+│ 2026-11-18 05:23:41.333397 UTC ┆ 2.111449         │
+│ 2026-11-18 05:23:47.340374 UTC ┆ 2.390963         │
+│ 2026-11-18 05:23:52.396076 UTC ┆ 2.636132         │
+│ 2026-11-18 05:23:57.452671 UTC ┆ 2.439858         │
+└────────────────────────────────┴──────────────────┘
+</pre></div>
+</div>
+<p><strong>Note:</strong> A driver listed in <code class="docutils literal notranslate"><span class="pre">acquirium.toml</span></code> starts together with the server. <code class="docutils literal notranslate"><span class="pre">acquirium</span> <span class="pre">driver</span> <span class="pre">start</span></code> is for adding one while the server is running.</p>
+</section>
+</section>
+<section id="connecting-to-the-plant-model">
+<h2>Connecting to the plant model<a class="headerlink" href="#connecting-to-the-plant-model" title="Link to this heading">#</a></h2>
+<p>A driver can also insert the plant model, and connect its streams to it.
+The streams are connected the same way as in step 4 of the full example: with <code class="docutils literal notranslate"><span class="pre">property_uri</span></code>.</p>
+<p>The driver needs to know which property each stream belongs to.
+We’ll use the mapping of <a class="reference internal" href="../a-full-example.html#connect-the-streams-to-the-model"><span class="std std-ref">5 - A Full Example</span></a>, kept in a file.
+Download <a class="reference external" href="https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/driver/mapping.json" rel="noreferer noopener" target="_blank">mapping.json</a> and save it next to <code class="docutils literal notranslate"><span class="pre">acquirium.toml</span></code>.
+It has one entry per stream:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>{
+  "intake-in-flow-rate-m3s": "wbs:intake-in-flow-rate-m3s",
+  "intake-in-tds-concentration": "wbs:intake-in-tds-concentration",
+  ...
+}
+</pre></div>
+</div>
+<p>The driver below is the CSV driver with two additions.
+Save it as <code class="docutils literal notranslate"><span class="pre">plant_driver.py</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">acquirium</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">PlantCSV</span><span class="p">(</span><span class="n">aq</span><span class="o">.</span><span class="n">CSVIngestDriver</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">setup</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="n">setup</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">insert_graph_file</span><span class="p">(</span><span class="s2">"example/model.ttl"</span><span class="p">)</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">"mapping.json"</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">mapping</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">declare_stream</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">stream_name</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">declare</span><span class="p">(</span><span class="n">stream_name</span><span class="p">,</span> <span class="n">property_uri</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">mapping</span><span class="p">[</span><span class="n">stream_name</span><span class="p">])</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">setup()</span></code> inserts the model and reads the mapping when the driver starts. <code class="docutils literal notranslate"><span class="pre">super().setup()</span></code> keeps the setup of the CSV driver, which reads the config.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">insert_graph_file()</span></code> of a driver writes with the <code class="docutils literal notranslate"><span class="pre">source_id</span></code> of the driver, so it takes no <code class="docutils literal notranslate"><span class="pre">source_id</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">declare_stream()</span></code> is called by the CSV driver for every column it finds. It declares the stream with the property from the mapping.</p></li>
+</ul>
+<p>Stop the CSV driver, which this one replaces:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>acquirium<span class="w"> </span>driver<span class="w"> </span>stop<span class="w"> </span>--name<span class="w"> </span>CSVIngestDriver
+</pre></div>
+</div>
+<p>Then start the new driver from a file named <code class="docutils literal notranslate"><span class="pre">plant.toml</span></code>.
+It has the same keys as before, with the new <code class="docutils literal notranslate"><span class="pre">spec</span></code>:</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[[drivers]]</span>
+<span class="n">spec</span><span class="w">      </span><span class="o">=</span><span class="w"> </span><span class="s2">"plant_driver.py:PlantCSV"</span>
+<span class="n">source_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"csv-data"</span>
+<span class="n">watch_dir</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"example"</span>
+<span class="n">glob</span><span class="w">      </span><span class="o">=</span><span class="w"> </span><span class="s2">"*.csv"</span>
+<span class="n">format</span><span class="w">    </span><span class="o">=</span><span class="w"> </span><span class="s2">"wide"</span>
+</pre></div>
+</div>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>acquirium<span class="w"> </span>driver<span class="w"> </span>start<span class="w"> </span>plant.toml
+</pre></div>
+</div>
+<p>The streams are now connected to the model, and can be found through the equipment:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">acq</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">entity</span><span class="p">(</span><span class="s2">"pump"</span><span class="p">)</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">quantity_kind</span><span class="o">=</span><span class="s2">"power"</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Query
+  pump: entity, Pump
+  pump_data: measurement, of pump, quantity_kind=Power
+2 matches:
+┌────────┬─────────────────────────┬─────────────────────┐
+│ pump   ┆ pump_data               ┆ pump_data.label     │
+│ ---    ┆ ---                     ┆ ---                 │
+│ str    ┆ str                     ┆ str                 │
+╞════════╪═════════════════════════╪═════════════════════╡
+│ wbs:P2 ┆ wbs:P2-mechanical-power ┆ P2 mechanical power │
+│ wbs:P1 ┆ wbs:P1-mechanical-power ┆ P1 mechanical power │
+└────────┴─────────────────────────┴─────────────────────┘
+</pre></div>
+</div>
+<p>If your source reports a unit that is different from the model, pass it to <code class="docutils literal notranslate"><span class="pre">declare()</span></code> as well.
+It is accepted when it can be converted to the unit of the model.</p>
+</section>
+<section id="running-and-checking-a-driver">
+<h2>Running and checking a driver<a class="headerlink" href="#running-and-checking-a-driver" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">acquirium</span> <span class="pre">driver</span> <span class="pre">list</span></code> shows the drivers of the server:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>acquirium<span class="w"> </span>driver<span class="w"> </span>list
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>TankDriver  running   interval=5.0s  started=2026-11-18T05:23:41.331341+00:00  spec=tank_driver.py:TankDriver
+PlantCSV    running   interval=10.0s  started=2026-11-18T05:24:27.770709+00:00  spec=plant_driver.py:PlantCSV
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">acquirium</span> <span class="pre">driver</span> <span class="pre">stop</span></code> stops one of them, by the name shown in the list:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>acquirium<span class="w"> </span>driver<span class="w"> </span>stop<span class="w"> </span>--name<span class="w"> </span>TankDriver
+</pre></div>
+</div>
+<p>When no data arrives, check these in order:</p>
+<ul class="simple">
+<li><p>Is the driver in <code class="docutils literal notranslate"><span class="pre">acquirium</span> <span class="pre">driver</span> <span class="pre">list</span></code>, and is it <code class="docutils literal notranslate"><span class="pre">running</span></code>? A driver whose <code class="docutils literal notranslate"><span class="pre">setup()</span></code> fails is not listed.</p></li>
+<li><p>The terminal of the server. An error in <code class="docutils literal notranslate"><span class="pre">read()</span></code> is printed there, and the driver tries again on the next interval.</p></li>
+<li><p>A query on the label or the <code class="docutils literal notranslate"><span class="pre">stream_name</span></code> you expect, to see if the stream was registered.</p></li>
+</ul>
+</section>
+<section id="next">
+<h2>Next<a class="headerlink" href="#next" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p>The <a class="reference internal" href="../../reference/drivers/_index.html"><span class="std std-doc">driver reference</span></a> describes every base class, method and config key, and the other built-in drivers.</p></li>
+<li><p><a class="reference internal" href="../../explanation/drivers.html"><span class="std std-doc">How drivers work</span></a> explains what happens inside the server.</p></li>
+</ul>
+</section>
+</section>
+
+    <script type="text/x-thebe-config">
+    {
+        requestKernel: true,
+        binderOptions: {
+            repo: "binder-examples/jupyter-stacks-datascience",
+            ref: "master",
+        },
+        codeMirrorConfig: {
+            theme: "abcdef",
+            mode: "python"
+        },
+        kernelOptions: {
+            name: "python3",
+            path: "./tutorials/advanced"
+        },
+        predefinedOutput: true
+    }
+    </script>
+    <script>kernelName = 'python3'</script>
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="_index.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Advanced topics</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="first-app.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Declaring and deploying apps</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-a-driver-does">What a driver does</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#a-server-that-keeps-running">A server that keeps running</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#starting-without-code-the-csv-driver">Starting without code: the CSV driver</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#writing-your-own">Writing your own</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#declaring-the-streams">Declaring the streams</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#reading-the-source">Reading the source</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#starting-the-driver">Starting the driver</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#connecting-to-the-plant-model">Connecting to the plant model</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#running-and-checking-a-driver">Running and checking a driver</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#next">Next</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By NAWI Project Team
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2023.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>

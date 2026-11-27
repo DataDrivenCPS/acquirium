@@ -1,0 +1,1207 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Studies and runs &#8212; Acquirium Documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
+    <link rel="stylesheet" type="text/css" href="../../_static/togglebutton.css?v=9c3e77be" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/mystnb.11b39860a7a0cbfd473a3ad8a317855267ff0bd372690045ca344a6b62be495e.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-thebe.css?v=4fa983c6" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/custom.css?v=5b658e50" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=55c26ed414f5f8a31ebb"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb" />
+
+    <script src="../../_static/documentation_options.js?v=9eb32ce0"></script>
+    <script src="../../_static/doctools.js?v=9a2dae69"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../_static/togglebutton.js?v=b8b12719"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>const THEBE_JS_URL = "https://unpkg.com/thebe@0.8.2/lib/index.js"; const thebe_selector = ".thebe,.cell"; const thebe_selector_input = "pre"; const thebe_selector_output = ".output, .cell_output"</script>
+    <script async="async" src="../../_static/sphinx-thebe.js?v=c100c467"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>const THEBE_JS_URL = "https://unpkg.com/thebe@0.8.2/lib/index.js"; const thebe_selector = ".thebe,.cell"; const thebe_selector_input = "pre"; const thebe_selector_output = ".output, .cell_output"</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'reference/experiments/studies-and-runs';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="icon" href="../../_static/logo-notext.png"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Declaring variables" href="declaring-variables.html" />
+    <link rel="prev" title="Experiments" href="_index.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search this book..."
+         aria-label="Search this book..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../_index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/logo.png" class="logo__image only-light" alt="Acquirium Documentation - Home"/>
+    <img src="../../_static/logo.png" class="logo__image only-dark pst-js-only" alt="Acquirium Documentation - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        
+        <ul class="nav bd-sidenav bd-sidenav__home-link">
+            <li class="toctree-l1">
+                <a class="reference internal" href="../../_index.html">
+                    Acquirium documentation
+                </a>
+            </li>
+        </ul>
+        <ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../getting-started.html">Getting started</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../tutorials/_index.html">Tutorials</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/fundamentals.html">0 - Fundamentals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/inserting-data.html">1 - Inserting Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/querying-data.html">2 - Querying Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/inserting-metadata.html">3 - Inserting Metadata</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/inserting-plant-model.html">4 - Inserting a Plant Model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/a-full-example.html">5 - A Full Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/acquirium-at-a-glance.html">Acquirium at a glance</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/turbidity.html">Turbidity alarm pipeline</a></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../tutorials/advanced/_index.html">Advanced topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/writing-a-driver.html">Writing a driver</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/first-app.html">Declaring and deploying apps</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/experiments.html">Running experiments</a></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../how-to/_index.html">How-to guides</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/explore-a-model.html">Explore a plant model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/debug-an-empty-query.html">Debug an empty or unexpected query result</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/query-cookbook.html">Query cookbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/access-a-shared-server.html">Access data on a shared server</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/write-soft-sensors.html">Soft sensor calculations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/chain-cleaning-apps.html">Data cleaning with multiple apps</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/clean-data-with-multiple-outputs.html">Data cleaning with multiple outputs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/parameterize-soft-sensors.html">Soft sensor parameters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/soft-sensor-examples.html">Soft sensor examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/consume-streaming-changes.html">Streaming change feed</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/check-deploy-apps.html">App deployment and recovery</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/record-a-whole-model.html">Record a whole model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/record-experiments.html">Record experiments</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/compare-experiment-runs.html">Compare experiment runs</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="../_index.html">Reference</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2 has-children"><a class="reference internal" href="../client/_index.html">Client</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../client/starting.html">Starting and stopping</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/streams.html">Streams</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/timeseries.html">Time series</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/graph.html">Graph</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/metadata.html">Metadata</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/querying.html">Querying</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/logs.html">Logs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/apps.html">Apps and engine status</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../query/_index.html">Query</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../query/building.html">Building a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/filtering.html">Filtering</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/columns.html">Columns</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/facets.html">Options and facets</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/reading.html">Reading results</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/data-object.html">DataObject: values</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/data-object-info.html">DataObject: streams and statistics</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/inspecting.html">Inspecting a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/writing.html">Writing from a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/traversal.html">Traversal settings</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../drivers/_index.html">Drivers</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/base-classes.html">Base classes</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/hooks.html">Hooks</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/helpers.html">Helpers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/state.html">Persistent state</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/configuration.html">Configuration</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/built-in-drivers.html">Built-in drivers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/tabular-helpers.html">Tabular helpers</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../apps/_index.html">Apps</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../apps/app-class.html">App declarations, windows, and functions</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../apps/inputs.html">App inputs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../apps/outputs.html">App outputs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../apps/deploying.html">Deploying apps</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../apps/cli.html">App commands</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2"><a class="reference internal" href="../actors.html">Actors</a></li>
+<li class="toctree-l2 current active has-children"><a class="reference internal" href="_index.html">Experiments</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l3 current active"><a class="current reference internal" href="#">Studies and runs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="declaring-variables.html">Declaring variables</a></li>
+<li class="toctree-l3"><a class="reference internal" href="recording.html">Recording values</a></li>
+<li class="toctree-l3"><a class="reference internal" href="annotations.html">Stream annotations</a></li>
+<li class="toctree-l3"><a class="reference internal" href="selecting-runs.html">Selecting and comparing runs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="reading.html">Reading recorded data</a></li>
+<li class="toctree-l3"><a class="reference internal" href="model-adapters.html">Model adapters</a></li>
+<li class="toctree-l3"><a class="reference internal" href="codecs-and-values.html">Codecs and values</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../server/_index.html">Server</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../server/cli.html">Command line</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../server/configuration.html">Server configuration</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../server/http-api.html">HTTP API</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../server/storage-migrations.html">Storage upgrades and recovery</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2"><a class="reference internal" href="../glossary.html">Glossary</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../explanation/_index.html">Explanation</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/query-model.html">The query model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/values.html">Values</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/units.html">Units</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/drivers.html">Drivers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/apps.html">Derived stream updates</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/soft-sensor-actors.html">Soft sensor actors</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/stream-lifecycle.html">The stream lifecycle</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/experiments.html">How experiments work</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/text-resolution.html">Text matcher</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/escapement-core.html">Escapement core</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/soft-sensor-inputs.html">Soft sensor inputs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/server-internals.html">Server internals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/graph-backend.html">The graph store</a></li>
+</ul>
+</details></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-source-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Source repositories">
+    <i class="fab fa-github"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="https://github.com/DataDrivenCPS/acquirium" target="_blank"
+   class="btn btn-sm btn-source-repository-button dropdown-item"
+   title="Source repository"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+<span class="btn__text-container">Repository</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/DataDrivenCPS/acquirium/issues/new?title=Issue%20on%20page%20%2Freference/experiments/studies-and-runs.html&body=Your%20issue%20content%20here." target="_blank"
+   class="btn btn-sm btn-source-issues-button dropdown-item"
+   title="Open an issue"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-lightbulb"></i>
+  </span>
+<span class="btn__text-container">Open issue</span>
+</a>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+
+
+<div class="dropdown dropdown-download-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Download this page">
+    <i class="fas fa-download"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="../../_sources/reference/experiments/studies-and-runs.md" target="_blank"
+   class="btn btn-sm btn-download-source-button dropdown-item"
+   title="Download source file"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file"></i>
+  </span>
+<span class="btn__text-container">.md</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li>
+<button onclick="window.print()"
+  class="btn btn-sm btn-download-pdf-button dropdown-item"
+  title="Print to PDF"
+  data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file-pdf"></i>
+  </span>
+<span class="btn__text-container">.pdf</span>
+</button>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button pst-navbar-icon"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>Studies and runs</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#acq-study-define"><code class="docutils literal notranslate"><span class="pre">acq.study.define</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#acq-study-get"><code class="docutils literal notranslate"><span class="pre">acq.study.get</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#acq-study-all"><code class="docutils literal notranslate"><span class="pre">acq.study.all</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#acq-study-usage"><code class="docutils literal notranslate"><span class="pre">acq.study.usage</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#acq-study-clear"><code class="docutils literal notranslate"><span class="pre">acq.study.clear</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#study"><code class="docutils literal notranslate"><span class="pre">Study</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#study-start"><code class="docutils literal notranslate"><span class="pre">Study.start</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#study-resume"><code class="docutils literal notranslate"><span class="pre">Study.resume</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#study-usage"><code class="docutils literal notranslate"><span class="pre">Study.usage</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#study-delete"><code class="docutils literal notranslate"><span class="pre">Study.delete</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experiment"><code class="docutils literal notranslate"><span class="pre">Experiment</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experiment-finish"><code class="docutils literal notranslate"><span class="pre">Experiment.finish</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experiment-fail"><code class="docutils literal notranslate"><span class="pre">Experiment.fail</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experiment-as-dict"><code class="docutils literal notranslate"><span class="pre">Experiment.as_dict</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experiment-delete"><code class="docutils literal notranslate"><span class="pre">Experiment.delete</span></code></a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="studies-and-runs">
+<h1>Studies and runs<a class="headerlink" href="#studies-and-runs" title="Link to this heading">#</a></h1>
+<p>A study holds variable declarations under a name. A run is one execution of a study, and every recorded value belongs to a run. This page covers creating and reopening studies, starting and ending runs, deleting them and measuring what they store.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Item</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><a class="reference internal" href="#acq-study-define"><code class="docutils literal notranslate"><span class="pre">acq.study.define</span></code></a></p></td>
+<td><p>Create a study, or reopen the one with that name</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#acq-study-get"><code class="docutils literal notranslate"><span class="pre">acq.study.get</span></code></a></p></td>
+<td><p>Reopen a saved study by name or ID</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#acq-study-all"><code class="docutils literal notranslate"><span class="pre">acq.study.all</span></code></a></p></td>
+<td><p>List every study</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#acq-study-usage"><code class="docutils literal notranslate"><span class="pre">acq.study.usage</span></code></a></p></td>
+<td><p>Count and size what all studies store</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#acq-study-clear"><code class="docutils literal notranslate"><span class="pre">acq.study.clear</span></code></a></p></td>
+<td><p>Delete every study and run</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#study"><code class="docutils literal notranslate"><span class="pre">Study</span></code></a></p></td>
+<td><p>Attributes of a study</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#study-start"><code class="docutils literal notranslate"><span class="pre">Study.start</span></code></a></p></td>
+<td><p>Start a run</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#study-resume"><code class="docutils literal notranslate"><span class="pre">Study.resume</span></code></a></p></td>
+<td><p>Continue a run that is still running</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#study-usage"><code class="docutils literal notranslate"><span class="pre">Study.usage</span></code></a></p></td>
+<td><p>Count and size what one study stores</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#study-delete"><code class="docutils literal notranslate"><span class="pre">Study.delete</span></code></a></p></td>
+<td><p>Delete a study with its declarations and runs</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#experiment"><code class="docutils literal notranslate"><span class="pre">Experiment</span></code></a></p></td>
+<td><p>Attributes of a run</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#experiment-finish"><code class="docutils literal notranslate"><span class="pre">Experiment.finish</span></code></a></p></td>
+<td><p>Mark a run as succeeded</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#experiment-fail"><code class="docutils literal notranslate"><span class="pre">Experiment.fail</span></code></a></p></td>
+<td><p>Mark a run as failed and save the error</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#experiment-as-dict"><code class="docutils literal notranslate"><span class="pre">Experiment.as_dict</span></code></a></p></td>
+<td><p>Return the run as a dictionary</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#experiment-delete"><code class="docutils literal notranslate"><span class="pre">Experiment.delete</span></code></a></p></td>
+<td><p>Delete a finished run and what it recorded</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The examples on this page continue from this setup:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">acquirium</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+
+<span class="n">acq</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">init</span><span class="p">()</span>
+<span class="n">study</span> <span class="o">=</span> <span class="n">acq</span><span class="o">.</span><span class="n">study</span><span class="o">.</span><span class="n">define</span><span class="p">(</span><span class="s2">"pump tuning"</span><span class="p">)</span>
+</pre></div>
+</div>
+<section id="acq-study-define">
+<h2><code class="docutils literal notranslate"><span class="pre">acq.study.define</span></code><a class="headerlink" href="#acq-study-define" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">acq</span><span class="o">.</span><span class="n">study</span><span class="o">.</span><span class="n">define</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Creates a study. If a study with this name already exists, it is reopened with its saved declarations. Note that calling <code class="docutils literal notranslate"><span class="pre">define()</span></code> at the top of a script is safe to repeat.</p>
+<p><strong>Parameters</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">name</span></code> (<code class="docutils literal notranslate"><span class="pre">str</span></code>): the study name. It must contain at least one character that is not whitespace.</p></li>
+</ul>
+<p><strong>Returns</strong></p>
+<p>A <a class="reference internal" href="#study"><code class="docutils literal notranslate"><span class="pre">Study</span></code></a>.</p>
+<p><strong>Raises</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">requests.HTTPError</span></code> (400): when <code class="docutils literal notranslate"><span class="pre">name</span></code> is empty or only whitespace.</p></li>
+</ul>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">study</span> <span class="o">=</span> <span class="n">acq</span><span class="o">.</span><span class="n">study</span><span class="o">.</span><span class="n">define</span><span class="p">(</span><span class="s2">"pump tuning"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">study</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>&lt;Study 'pump tuning': 0 inputs, 0 outputs, 0 logs&gt;
+</pre></div>
+</div>
+</section>
+<section id="acq-study-get">
+<h2><code class="docutils literal notranslate"><span class="pre">acq.study.get</span></code><a class="headerlink" href="#acq-study-get" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">acq</span><span class="o">.</span><span class="n">study</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name_or_id</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Reopens a saved study. Unlike <code class="docutils literal notranslate"><span class="pre">define()</span></code>, it does not create one.</p>
+<p><strong>Parameters</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">name_or_id</span></code> (<code class="docutils literal notranslate"><span class="pre">str</span></code>): the study name or its <code class="docutils literal notranslate"><span class="pre">study_id</span></code>.</p></li>
+</ul>
+<p><strong>Returns</strong></p>
+<p>A <a class="reference internal" href="#study"><code class="docutils literal notranslate"><span class="pre">Study</span></code></a>.</p>
+<p><strong>Raises</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">requests.HTTPError</span></code> (404): when no study has this name or ID.</p></li>
+</ul>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">same</span> <span class="o">=</span> <span class="n">acq</span><span class="o">.</span><span class="n">study</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"pump tuning"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">same</span><span class="o">.</span><span class="n">study_id</span> <span class="o">==</span> <span class="n">study</span><span class="o">.</span><span class="n">study_id</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>True
+</pre></div>
+</div>
+</section>
+<section id="acq-study-all">
+<h2><code class="docutils literal notranslate"><span class="pre">acq.study.all</span></code><a class="headerlink" href="#acq-study-all" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">acq</span><span class="o">.</span><span class="n">study</span><span class="o">.</span><span class="n">all</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>Lists every study on the server, oldest first.</p>
+<p><strong>Returns</strong></p>
+<p><code class="docutils literal notranslate"><span class="pre">list[Study]</span></code>.</p>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">acq</span><span class="o">.</span><span class="n">study</span><span class="o">.</span><span class="n">define</span><span class="p">(</span><span class="s2">"b"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">acq</span><span class="o">.</span><span class="n">study</span><span class="o">.</span><span class="n">all</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>[&lt;Study 'pump tuning': 1 input, 2 outputs, 0 logs&gt;, &lt;Study 'b': 0 inputs, 0 outputs, 0 logs&gt;]
+</pre></div>
+</div>
+</section>
+<section id="acq-study-usage">
+<h2><code class="docutils literal notranslate"><span class="pre">acq.study.usage</span></code><a class="headerlink" href="#acq-study-usage" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">acq</span><span class="o">.</span><span class="n">study</span><span class="o">.</span><span class="n">usage</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>Counts what all studies store and estimates its size. A file used by several runs is counted once.</p>
+<p><strong>Returns</strong></p>
+<p>A <code class="docutils literal notranslate"><span class="pre">dict</span></code> with these keys:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Key</p></th>
+<th class="head"><p>Meaning</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">studies</span></code>, <code class="docutils literal notranslate"><span class="pre">variables</span></code>, <code class="docutils literal notranslate"><span class="pre">runs</span></code></p></td>
+<td><p>Number of studies, declared variables and runs</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">observations</span></code></p></td>
+<td><p>Number of recorded values</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">annotations</span></code></p></td>
+<td><p>Number of stream annotations</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">samples</span></code></p></td>
+<td><p>Number of time-series samples stored by runs</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">files</span></code></p></td>
+<td><p>Number of stored files, tables and objects</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">sample_bytes</span></code></p></td>
+<td><p>Estimated size of the samples</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">file_bytes</span></code></p></td>
+<td><p>Exact size of the stored files</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">ledger_bytes</span></code></p></td>
+<td><p>Estimated size of the study, run and observation records</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">total_bytes</span></code></p></td>
+<td><p>Sum of the three sizes</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Note that the estimates describe the stored values, not the compressed size of the database.</p>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">acq</span><span class="o">.</span><span class="n">study</span><span class="o">.</span><span class="n">usage</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>{'studies': 1, 'variables': 3, 'runs': 3, 'observations': 9, 'annotations': 0, 'samples': 6, 'files': 0, 'sample_bytes': 96, 'file_bytes': 0, 'ledger_bytes': 1983, 'total_bytes': 2079}
+</pre></div>
+</div>
+</section>
+<section id="acq-study-clear">
+<h2><code class="docutils literal notranslate"><span class="pre">acq.study.clear</span></code><a class="headerlink" href="#acq-study-clear" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">acq</span><span class="o">.</span><span class="n">study</span><span class="o">.</span><span class="n">clear</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">confirm</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Deletes every study, declaration and run, with the samples and files the runs stored. Other streams, their metadata and the plant model are not touched.</p>
+<p><strong>Parameters</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">confirm</span></code> (<code class="docutils literal notranslate"><span class="pre">bool</span></code>, default <code class="docutils literal notranslate"><span class="pre">False</span></code>): must be <code class="docutils literal notranslate"><span class="pre">True</span></code>. This guards against deleting everything by accident.</p></li>
+</ul>
+<p><strong>Returns</strong></p>
+<p>A <code class="docutils literal notranslate"><span class="pre">dict</span></code> with the number of <code class="docutils literal notranslate"><span class="pre">studies</span></code>, <code class="docutils literal notranslate"><span class="pre">variables</span></code>, <code class="docutils literal notranslate"><span class="pre">runs</span></code>, <code class="docutils literal notranslate"><span class="pre">observations</span></code>, <code class="docutils literal notranslate"><span class="pre">annotations</span></code>, <code class="docutils literal notranslate"><span class="pre">samples</span></code> and <code class="docutils literal notranslate"><span class="pre">files</span></code> removed.</p>
+<p><strong>Raises</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">ValueError</span></code>: when <code class="docutils literal notranslate"><span class="pre">confirm</span></code> is not <code class="docutils literal notranslate"><span class="pre">True</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">requests.HTTPError</span></code> (409): when any run is still running. Nothing is deleted.</p></li>
+</ul>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">acq</span><span class="o">.</span><span class="n">study</span><span class="o">.</span><span class="n">clear</span><span class="p">(</span><span class="n">confirm</span><span class="o">=</span><span class="kc">True</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>{'studies': 1, 'variables': 0, 'runs': 0, 'observations': 0, 'annotations': 0, 'samples': 0, 'files': 0}
+</pre></div>
+</div>
+</section>
+<section id="study">
+<h2><code class="docutils literal notranslate"><span class="pre">Study</span></code><a class="headerlink" href="#study" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">study</span> <span class="o">=</span> <span class="n">acq</span><span class="o">.</span><span class="n">study</span><span class="o">.</span><span class="n">define</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>A study object. Create it with <a class="reference internal" href="#acq-study-define"><code class="docutils literal notranslate"><span class="pre">acq.study.define</span></code></a> or <a class="reference internal" href="#acq-study-get"><code class="docutils literal notranslate"><span class="pre">acq.study.get</span></code></a>, not directly. One study object has at most one active run at a time.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Attribute</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Meaning</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">name</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">str</span></code></p></td>
+<td><p>The study name</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">study_id</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">str</span></code></p></td>
+<td><p>The study ID</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">uri</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">str</span></code></p></td>
+<td><p>The URI of the study in the metadata graph</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">created_at</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">datetime</span></code></p></td>
+<td><p>When the study was created, in UTC</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">input</span></code>, <code class="docutils literal notranslate"><span class="pre">output</span></code>, <code class="docutils literal notranslate"><span class="pre">log</span></code></p></td>
+<td><p>collection</p></td>
+<td><p>Declare and look up variables by role. See <a class="reference internal" href="declaring-variables.html"><span class="std std-doc">Declaring variables</span></a></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">variables</span></code></p></td>
+<td><p>catalog</p></td>
+<td><p>Every declared variable. See <a class="reference internal" href="declaring-variables.html#study-variables"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">Study.variables</span></code></span></a></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">experiments</span></code></p></td>
+<td><p>collection</p></td>
+<td><p>The runs of the study. See <a class="reference internal" href="selecting-runs.html"><span class="std std-doc">Selecting and comparing runs</span></a></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Printing a study shows the number of declared variables and the active run. It does not contact the server.</p>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">study</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">study</span><span class="o">.</span><span class="n">uri</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>pump tuning urn:acquirium:experiment:study/3a924e5c-db1f-4891-ab94-c7dcf36f946b
+</pre></div>
+</div>
+</section>
+<section id="study-start">
+<h2><code class="docutils literal notranslate"><span class="pre">Study.start</span></code><a class="headerlink" href="#study-start" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">Study</span><span class="o">.</span><span class="n">start</span><span class="p">(</span><span class="n">metadata</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Starts a run and makes it the active run of this study object. Values recorded through the study’s variables go to the active run.</p>
+<p><strong>Parameters</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">metadata</span></code> (<code class="docutils literal notranslate"><span class="pre">dict</span> <span class="pre">|</span> <span class="pre">None</span></code>, default <code class="docutils literal notranslate"><span class="pre">None</span></code>): fields that describe this run, such as a scenario name or settings. Values must be convertible to JSON (see <a class="reference internal" href="codecs-and-values.html#value-conversion"><span class="std std-ref">value conversion</span></a>). Keys use letters, digits, underscores and hyphens, and start with a letter or underscore. A top-level value of <code class="docutils literal notranslate"><span class="pre">None</span></code>, <code class="docutils literal notranslate"><span class="pre">[]</span></code> or <code class="docutils literal notranslate"><span class="pre">{}</span></code> is dropped.</p></li>
+</ul>
+<p><strong>Returns</strong></p>
+<p>An <a class="reference internal" href="#experiment"><code class="docutils literal notranslate"><span class="pre">Experiment</span></code></a> with status <code class="docutils literal notranslate"><span class="pre">&quot;running&quot;</span></code>.</p>
+<p><strong>Raises</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">RuntimeError</span></code>: when this study object already has an active run.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">requests.HTTPError</span></code> (400): when a metadata key is not valid, or is one of the reserved keys <code class="docutils literal notranslate"><span class="pre">study_id</span></code>, <code class="docutils literal notranslate"><span class="pre">run_id</span></code>, <code class="docutils literal notranslate"><span class="pre">variable_id</span></code>, <code class="docutils literal notranslate"><span class="pre">annotation_id</span></code>, <code class="docutils literal notranslate"><span class="pre">role</span></code>, <code class="docutils literal notranslate"><span class="pre">kind</span></code>, <code class="docutils literal notranslate"><span class="pre">status</span></code>, <code class="docutils literal notranslate"><span class="pre">created_at</span></code>, <code class="docutils literal notranslate"><span class="pre">started_at</span></code>, <code class="docutils literal notranslate"><span class="pre">finished_at</span></code>, <code class="docutils literal notranslate"><span class="pre">range_start</span></code>, <code class="docutils literal notranslate"><span class="pre">range_end</span></code>, <code class="docutils literal notranslate"><span class="pre">stream_uri</span></code>, <code class="docutils literal notranslate"><span class="pre">label</span></code>. Names with a fixed meaning in the plant model, such as <code class="docutils literal notranslate"><span class="pre">unit</span></code> and <code class="docutils literal notranslate"><span class="pre">entity</span></code>, are also rejected. Put such fields inside a nested object, for example <code class="docutils literal notranslate"><span class="pre">{&quot;context&quot;:</span> <span class="pre">{&quot;unit&quot;:</span> <span class="pre">&quot;kW&quot;}}</span></code>.</p></li>
+</ul>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">run</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">start</span><span class="p">({</span><span class="s2">"scenario"</span><span class="p">:</span> <span class="s2">"baseline"</span><span class="p">,</span> <span class="s2">"settings"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"flow"</span><span class="p">:</span> <span class="mi">12</span><span class="p">}})</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">run</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>&lt;Experiment d0f5b988-53a7-4062-9417-88a623318346 running {'scenario': 'baseline', 'settings': {'flow': 12}}&gt;
+</pre></div>
+</div>
+</section>
+<section id="study-resume">
+<h2><code class="docutils literal notranslate"><span class="pre">Study.resume</span></code><a class="headerlink" href="#study-resume" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">Study</span><span class="o">.</span><span class="n">resume</span><span class="p">(</span><span class="n">run_id</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Makes a saved run that is still running the active run of this study object. This is useful for continuing a run from another script or session.</p>
+<p><strong>Parameters</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">run_id</span></code> (<code class="docutils literal notranslate"><span class="pre">str</span></code>): the ID of a running run of this study.</p></li>
+</ul>
+<p><strong>Returns</strong></p>
+<p>An <a class="reference internal" href="#experiment"><code class="docutils literal notranslate"><span class="pre">Experiment</span></code></a>.</p>
+<p><strong>Raises</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">RuntimeError</span></code>: when this study object already has an active run.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ValueError</span></code>: when the run belongs to another study, or has already finished or failed.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">requests.HTTPError</span></code> (404): when no run has this ID.</p></li>
+</ul>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">run_id</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">start</span><span class="p">({</span><span class="s2">"scenario"</span><span class="p">:</span> <span class="s2">"baseline"</span><span class="p">})</span><span class="o">.</span><span class="n">run_id</span>
+
+<span class="c1"># later, in another session</span>
+<span class="n">study</span> <span class="o">=</span> <span class="n">acq</span><span class="o">.</span><span class="n">study</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"pump tuning"</span><span class="p">)</span>
+<span class="n">run</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">resume</span><span class="p">(</span><span class="n">run_id</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">run</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>&lt;Experiment 9229d5f6-6c7b-4f64-b51d-148a1b89e320 running {'scenario': 'baseline'}&gt;
+</pre></div>
+</div>
+</section>
+<section id="study-usage">
+<h2><code class="docutils literal notranslate"><span class="pre">Study.usage</span></code><a class="headerlink" href="#study-usage" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">Study</span><span class="o">.</span><span class="n">usage</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>Counts what this study stores and estimates its size.</p>
+<p><strong>Returns</strong></p>
+<p>A <code class="docutils literal notranslate"><span class="pre">dict</span></code> with the keys described under <a class="reference internal" href="#acq-study-usage"><code class="docutils literal notranslate"><span class="pre">acq.study.usage</span></code></a>.</p>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">study</span><span class="o">.</span><span class="n">usage</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>{'studies': 1, 'variables': 3, 'runs': 3, 'observations': 9, 'annotations': 0, 'samples': 6, 'files': 0, 'sample_bytes': 96, 'file_bytes': 0, 'ledger_bytes': 1983, 'total_bytes': 2079}
+</pre></div>
+</div>
+</section>
+<section id="study-delete">
+<h2><code class="docutils literal notranslate"><span class="pre">Study.delete</span></code><a class="headerlink" href="#study-delete" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">Study</span><span class="o">.</span><span class="n">delete</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>Deletes the study, its declarations and every run, with the samples and files the runs stored.</p>
+<p><strong>Returns</strong></p>
+<p>A <code class="docutils literal notranslate"><span class="pre">dict</span></code> with the number of <code class="docutils literal notranslate"><span class="pre">studies</span></code>, <code class="docutils literal notranslate"><span class="pre">variables</span></code>, <code class="docutils literal notranslate"><span class="pre">runs</span></code>, <code class="docutils literal notranslate"><span class="pre">observations</span></code>, <code class="docutils literal notranslate"><span class="pre">annotations</span></code>, <code class="docutils literal notranslate"><span class="pre">samples</span></code> and <code class="docutils literal notranslate"><span class="pre">files</span></code> removed.</p>
+<p><strong>Raises</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">requests.HTTPError</span></code> (409): when a run of the study is still running. Nothing is deleted.</p></li>
+</ul>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">study</span><span class="o">.</span><span class="n">delete</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>{'studies': 1, 'variables': 3, 'runs': 3, 'observations': 6, 'annotations': 0, 'samples': 4, 'files': 0}
+</pre></div>
+</div>
+</section>
+<section id="experiment">
+<h2><code class="docutils literal notranslate"><span class="pre">Experiment</span></code><a class="headerlink" href="#experiment" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">run</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">start</span><span class="p">(</span><span class="n">metadata</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>One run of a study. Get it from <a class="reference internal" href="#study-start"><code class="docutils literal notranslate"><span class="pre">Study.start</span></code></a>, <a class="reference internal" href="#study-resume"><code class="docutils literal notranslate"><span class="pre">Study.resume</span></code></a> or <a class="reference internal" href="selecting-runs.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">study.experiments</span></code></span></a>.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Attribute</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Meaning</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">run_id</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">str</span></code></p></td>
+<td><p>The run ID</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">experiment_id</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">str</span></code></p></td>
+<td><p>The same value as <code class="docutils literal notranslate"><span class="pre">run_id</span></code>. Result tables use this name</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">uri</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">str</span></code></p></td>
+<td><p>The URI of the run in the metadata graph</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">study</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Study</span></code></p></td>
+<td><p>The study the run belongs to</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">status</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">str</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">&quot;running&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;succeeded&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;failed&quot;</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">metadata</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">dict</span></code></p></td>
+<td><p>The metadata given to <code class="docutils literal notranslate"><span class="pre">start()</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">started_at</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">datetime</span></code></p></td>
+<td><p>When the run started, in UTC</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">finished_at</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">datetime</span> <span class="pre">|</span> <span class="pre">None</span></code></p></td>
+<td><p>When the run ended, or <code class="docutils literal notranslate"><span class="pre">None</span></code> while it is running</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">error</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">dict</span> <span class="pre">|</span> <span class="pre">None</span></code></p></td>
+<td><p>The saved error of a failed run, with keys <code class="docutils literal notranslate"><span class="pre">type</span></code> and <code class="docutils literal notranslate"><span class="pre">message</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">output</span></code></p></td>
+<td><p>mapping</p></td>
+<td><p>Record outputs by label. See <a class="reference internal" href="recording.html#experiment-output"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">Experiment.output</span></code></span></a></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>A run also reads its recorded values with <a class="reference internal" href="reading.html#experiment-observations"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">Experiment.observations</span></code></span></a> and marks stream intervals with <a class="reference internal" href="annotations.html#experiment-annotate-stream"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">Experiment.annotate_stream</span></code></span></a>.</p>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">run</span><span class="o">.</span><span class="n">status</span><span class="p">,</span> <span class="n">run</span><span class="o">.</span><span class="n">metadata</span><span class="p">,</span> <span class="n">run</span><span class="o">.</span><span class="n">finished_at</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>running {'scenario': 'baseline', 'settings': {'flow': 12}} None
+</pre></div>
+</div>
+</section>
+<section id="experiment-finish">
+<h2><code class="docutils literal notranslate"><span class="pre">Experiment.finish</span></code><a class="headerlink" href="#experiment-finish" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">Experiment</span><span class="o">.</span><span class="n">finish</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>Marks the run as succeeded and clears the active run of its study. A finished run accepts no more recorded values. Stream annotations can still be added to it.</p>
+<p><strong>Returns</strong></p>
+<p>A <code class="docutils literal notranslate"><span class="pre">dict</span></code> with <code class="docutils literal notranslate"><span class="pre">run_id</span></code>, <code class="docutils literal notranslate"><span class="pre">status</span></code> and <code class="docutils literal notranslate"><span class="pre">finished_at</span></code> (an ISO 8601 string). The <code class="docutils literal notranslate"><span class="pre">status</span></code> and <code class="docutils literal notranslate"><span class="pre">finished_at</span></code> attributes of the run are updated.</p>
+<p><strong>Raises</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">requests.HTTPError</span></code> (400): when the run has already finished or failed.</p></li>
+</ul>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">run</span><span class="o">.</span><span class="n">finish</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>{'run_id': 'd0f5b988-53a7-4062-9417-88a623318346', 'status': 'succeeded', 'finished_at': '2026-11-18T00:54:40.712606+00:00'}
+</pre></div>
+</div>
+</section>
+<section id="experiment-fail">
+<h2><code class="docutils literal notranslate"><span class="pre">Experiment.fail</span></code><a class="headerlink" href="#experiment-fail" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">Experiment</span><span class="o">.</span><span class="n">fail</span><span class="p">(</span><span class="n">error</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Marks the run as failed, saves the error and clears the active run of its study.</p>
+<p><strong>Parameters</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">error</span></code> (<code class="docutils literal notranslate"><span class="pre">BaseException</span></code> or any value): the reason. Its type name and <code class="docutils literal notranslate"><span class="pre">str(error)</span></code> are saved.</p></li>
+</ul>
+<p><strong>Returns</strong></p>
+<p>A <code class="docutils literal notranslate"><span class="pre">dict</span></code> with <code class="docutils literal notranslate"><span class="pre">run_id</span></code>, <code class="docutils literal notranslate"><span class="pre">status</span></code> and <code class="docutils literal notranslate"><span class="pre">finished_at</span></code>. Note that the <code class="docutils literal notranslate"><span class="pre">error</span></code> attribute of this object is not updated. Read the saved error from a fresh handle, as in the example.</p>
+<p><strong>Raises</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">requests.HTTPError</span></code> (400): when the run has already finished or failed.</p></li>
+</ul>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">run</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"bad input"</span><span class="p">)</span>
+<span class="k">except</span> <span class="ne">ValueError</span> <span class="k">as</span> <span class="n">error</span><span class="p">:</span>
+    <span class="n">run</span><span class="o">.</span><span class="n">fail</span><span class="p">(</span><span class="n">error</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">study</span><span class="o">.</span><span class="n">experiments</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">run</span><span class="o">.</span><span class="n">run_id</span><span class="p">)</span><span class="o">.</span><span class="n">error</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>{'message': 'bad input', 'type': 'ValueError'}
+</pre></div>
+</div>
+</section>
+<section id="experiment-as-dict">
+<h2><code class="docutils literal notranslate"><span class="pre">Experiment.as_dict</span></code><a class="headerlink" href="#experiment-as-dict" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">Experiment</span><span class="o">.</span><span class="n">as_dict</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>Returns the run as a dictionary.</p>
+<p><strong>Returns</strong></p>
+<p>A <code class="docutils literal notranslate"><span class="pre">dict</span></code> with the keys <code class="docutils literal notranslate"><span class="pre">experiment_id</span></code>, <code class="docutils literal notranslate"><span class="pre">status</span></code>, <code class="docutils literal notranslate"><span class="pre">metadata</span></code>, <code class="docutils literal notranslate"><span class="pre">started_at</span></code>, <code class="docutils literal notranslate"><span class="pre">finished_at</span></code> and <code class="docutils literal notranslate"><span class="pre">error</span></code>.</p>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">run</span><span class="o">.</span><span class="n">as_dict</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>{'experiment_id': '1409a1c3-faec-4f57-9fd0-06ffae570005', 'status': 'running', 'metadata': {'scenario': 'baseline'}, 'started_at': datetime.datetime(2026, 11, 18, 0, 58, 35, 547670, tzinfo=datetime.timezone.utc), 'finished_at': None, 'error': None}
+</pre></div>
+</div>
+</section>
+<section id="experiment-delete">
+<h2><code class="docutils literal notranslate"><span class="pre">Experiment.delete</span></code><a class="headerlink" href="#experiment-delete" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">Experiment</span><span class="o">.</span><span class="n">delete</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>Deletes a finished or failed run. This removes its recorded values, its stream annotations, the time-series samples it stored and the files no other run uses.</p>
+<p><strong>Returns</strong></p>
+<p>A <code class="docutils literal notranslate"><span class="pre">dict</span></code> with the number of <code class="docutils literal notranslate"><span class="pre">runs</span></code>, <code class="docutils literal notranslate"><span class="pre">observations</span></code>, <code class="docutils literal notranslate"><span class="pre">annotations</span></code>, <code class="docutils literal notranslate"><span class="pre">samples</span></code> and <code class="docutils literal notranslate"><span class="pre">files</span></code> removed.</p>
+<p><strong>Raises</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">requests.HTTPError</span></code> (409): when the run is still running, or when another run recorded a reference to a stream this run stored.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">requests.HTTPError</span></code> (404): when the run no longer exists.</p></li>
+</ul>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">run</span><span class="o">.</span><span class="n">delete</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>{'runs': 1, 'observations': 3, 'annotations': 0, 'samples': 2, 'files': 0}
+</pre></div>
+</div>
+</section>
+</section>
+
+    <script type="text/x-thebe-config">
+    {
+        requestKernel: true,
+        binderOptions: {
+            repo: "binder-examples/jupyter-stacks-datascience",
+            ref: "master",
+        },
+        codeMirrorConfig: {
+            theme: "abcdef",
+            mode: "python"
+        },
+        kernelOptions: {
+            name: "python3",
+            path: "./reference/experiments"
+        },
+        predefinedOutput: true
+    }
+    </script>
+    <script>kernelName = 'python3'</script>
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="_index.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Experiments</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="declaring-variables.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Declaring variables</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#acq-study-define"><code class="docutils literal notranslate"><span class="pre">acq.study.define</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#acq-study-get"><code class="docutils literal notranslate"><span class="pre">acq.study.get</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#acq-study-all"><code class="docutils literal notranslate"><span class="pre">acq.study.all</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#acq-study-usage"><code class="docutils literal notranslate"><span class="pre">acq.study.usage</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#acq-study-clear"><code class="docutils literal notranslate"><span class="pre">acq.study.clear</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#study"><code class="docutils literal notranslate"><span class="pre">Study</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#study-start"><code class="docutils literal notranslate"><span class="pre">Study.start</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#study-resume"><code class="docutils literal notranslate"><span class="pre">Study.resume</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#study-usage"><code class="docutils literal notranslate"><span class="pre">Study.usage</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#study-delete"><code class="docutils literal notranslate"><span class="pre">Study.delete</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experiment"><code class="docutils literal notranslate"><span class="pre">Experiment</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experiment-finish"><code class="docutils literal notranslate"><span class="pre">Experiment.finish</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experiment-fail"><code class="docutils literal notranslate"><span class="pre">Experiment.fail</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experiment-as-dict"><code class="docutils literal notranslate"><span class="pre">Experiment.as_dict</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experiment-delete"><code class="docutils literal notranslate"><span class="pre">Experiment.delete</span></code></a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By NAWI Project Team
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2023.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>

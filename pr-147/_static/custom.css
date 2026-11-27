@@ -1,0 +1,11 @@
+/* the version notice at the top of the home page */
+.version-warning {
+  background-color: rgba(220, 53, 69, 0.4);
+  padding: 0.75rem 1rem;
+  border-radius: 0.25rem;
+  margin-bottom: 1.5rem;
+  text-align: center;
+}
+.version-warning p {
+  margin: 0;
+}

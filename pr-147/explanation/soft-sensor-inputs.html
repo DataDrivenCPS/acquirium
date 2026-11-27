@@ -1,0 +1,1339 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Soft sensor inputs &#8212; Acquirium Documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
+    <link rel="stylesheet" type="text/css" href="../_static/togglebutton.css?v=9c3e77be" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/mystnb.11b39860a7a0cbfd473a3ad8a317855267ff0bd372690045ca344a6b62be495e.css" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinx-thebe.css?v=4fa983c6" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=5b658e50" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../_static/scripts/fontawesome.js?digest=55c26ed414f5f8a31ebb"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb" />
+
+    <script src="../_static/documentation_options.js?v=9eb32ce0"></script>
+    <script src="../_static/doctools.js?v=9a2dae69"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=f281be69"></script>
+    <script src="../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../_static/togglebutton.js?v=b8b12719"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script src="../_static/design-tabs.js?v=f930bc37"></script>
+    <script>const THEBE_JS_URL = "https://unpkg.com/thebe@0.8.2/lib/index.js"; const thebe_selector = ".thebe,.cell"; const thebe_selector_input = "pre"; const thebe_selector_output = ".output, .cell_output"</script>
+    <script async="async" src="../_static/sphinx-thebe.js?v=c100c467"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>const THEBE_JS_URL = "https://unpkg.com/thebe@0.8.2/lib/index.js"; const thebe_selector = ".thebe,.cell"; const thebe_selector_input = "pre"; const thebe_selector_output = ".output, .cell_output"</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'explanation/soft-sensor-inputs';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="icon" href="../_static/logo-notext.png"/>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Server internals" href="server-internals.html" />
+    <link rel="prev" title="Escapement core" href="escapement-core.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../_static/searchtools.js"></script>
+    <script src="../_static/language_data.js"></script>
+    <script src="../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search this book..."
+         aria-label="Search this book..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../_index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/logo.png" class="logo__image only-light" alt="Acquirium Documentation - Home"/>
+    <img src="../_static/logo.png" class="logo__image only-dark pst-js-only" alt="Acquirium Documentation - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        
+        <ul class="nav bd-sidenav bd-sidenav__home-link">
+            <li class="toctree-l1">
+                <a class="reference internal" href="../_index.html">
+                    Acquirium documentation
+                </a>
+            </li>
+        </ul>
+        <ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../getting-started.html">Getting started</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../tutorials/_index.html">Tutorials</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/fundamentals.html">0 - Fundamentals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/inserting-data.html">1 - Inserting Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/querying-data.html">2 - Querying Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/inserting-metadata.html">3 - Inserting Metadata</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/inserting-plant-model.html">4 - Inserting a Plant Model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/a-full-example.html">5 - A Full Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/acquirium-at-a-glance.html">Acquirium at a glance</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/turbidity.html">Turbidity alarm pipeline</a></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../tutorials/advanced/_index.html">Advanced topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/writing-a-driver.html">Writing a driver</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/first-app.html">Declaring and deploying apps</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/experiments.html">Running experiments</a></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../how-to/_index.html">How-to guides</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/explore-a-model.html">Explore a plant model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/debug-an-empty-query.html">Debug an empty or unexpected query result</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/query-cookbook.html">Query cookbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/access-a-shared-server.html">Access data on a shared server</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/write-soft-sensors.html">Soft sensor calculations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/chain-cleaning-apps.html">Data cleaning with multiple apps</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/clean-data-with-multiple-outputs.html">Data cleaning with multiple outputs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/parameterize-soft-sensors.html">Soft sensor parameters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/soft-sensor-examples.html">Soft sensor examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/consume-streaming-changes.html">Streaming change feed</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/check-deploy-apps.html">App deployment and recovery</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/record-a-whole-model.html">Record a whole model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/record-experiments.html">Record experiments</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/compare-experiment-runs.html">Compare experiment runs</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../reference/_index.html">Reference</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/client/_index.html">Client</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/starting.html">Starting and stopping</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/streams.html">Streams</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/timeseries.html">Time series</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/graph.html">Graph</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/metadata.html">Metadata</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/querying.html">Querying</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/logs.html">Logs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/apps.html">Apps and engine status</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/query/_index.html">Query</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/building.html">Building a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/filtering.html">Filtering</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/columns.html">Columns</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/facets.html">Options and facets</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/reading.html">Reading results</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/data-object.html">DataObject: values</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/data-object-info.html">DataObject: streams and statistics</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/inspecting.html">Inspecting a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/writing.html">Writing from a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/traversal.html">Traversal settings</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/drivers/_index.html">Drivers</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/base-classes.html">Base classes</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/hooks.html">Hooks</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/helpers.html">Helpers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/state.html">Persistent state</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/configuration.html">Configuration</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/built-in-drivers.html">Built-in drivers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/tabular-helpers.html">Tabular helpers</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/apps/_index.html">Apps</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/apps/app-class.html">App declarations, windows, and functions</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/apps/inputs.html">App inputs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/apps/outputs.html">App outputs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/apps/deploying.html">Deploying apps</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/apps/cli.html">App commands</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/actors.html">Actors</a></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/experiments/_index.html">Experiments</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/studies-and-runs.html">Studies and runs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/declaring-variables.html">Declaring variables</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/recording.html">Recording values</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/annotations.html">Stream annotations</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/selecting-runs.html">Selecting and comparing runs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/reading.html">Reading recorded data</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/model-adapters.html">Model adapters</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/codecs-and-values.html">Codecs and values</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/server/_index.html">Server</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/server/cli.html">Command line</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/server/configuration.html">Server configuration</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/server/http-api.html">HTTP API</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/server/storage-migrations.html">Storage upgrades and recovery</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/glossary.html">Glossary</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="_index.html">Explanation</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="query-model.html">The query model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="values.html">Values</a></li>
+<li class="toctree-l2"><a class="reference internal" href="units.html">Units</a></li>
+<li class="toctree-l2"><a class="reference internal" href="drivers.html">Drivers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="apps.html">Derived stream updates</a></li>
+<li class="toctree-l2"><a class="reference internal" href="soft-sensor-actors.html">Soft sensor actors</a></li>
+<li class="toctree-l2"><a class="reference internal" href="stream-lifecycle.html">The stream lifecycle</a></li>
+<li class="toctree-l2"><a class="reference internal" href="experiments.html">How experiments work</a></li>
+<li class="toctree-l2"><a class="reference internal" href="text-resolution.html">Text matcher</a></li>
+<li class="toctree-l2"><a class="reference internal" href="escapement-core.html">Escapement core</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">Soft sensor inputs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="server-internals.html">Server internals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="graph-backend.html">The graph store</a></li>
+</ul>
+</details></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-source-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Source repositories">
+    <i class="fab fa-github"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="https://github.com/DataDrivenCPS/acquirium" target="_blank"
+   class="btn btn-sm btn-source-repository-button dropdown-item"
+   title="Source repository"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+<span class="btn__text-container">Repository</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/DataDrivenCPS/acquirium/issues/new?title=Issue%20on%20page%20%2Fexplanation/soft-sensor-inputs.html&body=Your%20issue%20content%20here." target="_blank"
+   class="btn btn-sm btn-source-issues-button dropdown-item"
+   title="Open an issue"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-lightbulb"></i>
+  </span>
+<span class="btn__text-container">Open issue</span>
+</a>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+
+
+<div class="dropdown dropdown-download-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Download this page">
+    <i class="fas fa-download"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="../_sources/explanation/soft-sensor-inputs.md" target="_blank"
+   class="btn btn-sm btn-download-source-button dropdown-item"
+   title="Download source file"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file"></i>
+  </span>
+<span class="btn__text-container">.md</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li>
+<button onclick="window.print()"
+  class="btn btn-sm btn-download-pdf-button dropdown-item"
+  title="Print to PDF"
+  data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file-pdf"></i>
+  </span>
+<span class="btn__text-container">.pdf</span>
+</button>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button pst-navbar-icon"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>Soft sensor inputs</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#input-stream-selection">Input stream selection</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#python-function">Python function</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#app-declaration">App declaration</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#reading-insertion-and-recalculation">Reading insertion and recalculation</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#group-and-window-selection">Group and window selection</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#input-dataframe">Input dataframe</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#function-context">Function context</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#output-replacement">Output replacement</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#timestamp-fields">Timestamp fields</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#window-types">Window types</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#stream-grouping-and-outputs">Stream grouping and outputs</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#one-to-one-mean-per-probe">One-to-one: mean per probe</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#one-to-many-mean-and-peak-per-probe">One-to-many: mean and peak per probe</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#many-to-one-overall-mean">Many-to-one: overall mean</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#many-to-many-mean-and-peak-per-tank">Many-to-many: mean and peak per tank</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#query-api-selections">Query API selections</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#function-execution-modes">Function execution modes</a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="soft-sensor-inputs">
+<h1>Soft sensor inputs<a class="headerlink" href="#soft-sensor-inputs" title="Link to this heading">#</a></h1>
+<p>We have two tanks, each with two temperature probes. We want to calculate the
+mean and peak temperature for each tank.</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>selected streams     group by tank          function             output streams
+
+probe A1 ─┐
+          ├────────► tank A ──────────► summarize(frame, context)
+probe A2 ─┘                                                      │
+                                                          ┌─────┴─────┐
+                                                          ▼           ▼
+                                                       A mean       A peak
+
+probe B1 ─┐
+          ├────────► tank B ──────────► summarize(frame, context)
+probe B2 ─┘                                                      │
+                                                          ┌─────┴─────┐
+                                                          ▼           ▼
+                                                       B mean       B peak
+</pre></div>
+</div>
+<p>First we define this calculation. Then we insert a reading and trace its
+effect on the results.</p>
+<section id="input-stream-selection">
+<h2>Input stream selection<a class="headerlink" href="#input-stream-selection" title="Link to this heading">#</a></h2>
+<p>Each probe writes readings in degrees Celsius to its own stream.
+A reading’s sample timestamp is the time that reading represents.</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>                  tanks and temperature probes
+
+       ┌──────────────────┐           ┌──────────────────┐
+       │      Tank A      │           │      Tank B      │
+       │                  │           │                  │
+       │  probe A1   A2   │           │  probe B1   B2   │
+       └─────┬────────┬───┘           └─────┬────────┬───┘
+             │        │                     │        │
+             ▼        ▼                     ▼        ▼
+          stream   stream                stream   stream
+            A1       A2                    B1       B2
+</pre></div>
+</div>
+<p>This query finds the tanks and their raw temperature streams:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">selection_query</span> <span class="o">=</span> <span class="s2">"""</span>
+<span class="s2">PREFIX watr: &lt;https://watermetadata.org/ontology/watr#&gt;</span>
+<span class="s2">PREFIX s223: &lt;http://data.ashrae.org/standard223#&gt;</span>
+<span class="s2">PREFIX ref: &lt;https://brickschema.org/schema/Brick/ref#&gt;</span>
+<span class="s2">PREFIX rdfs: &lt;http://www.w3.org/2000/01/rdf-schema#&gt;</span>
+<span class="s2">SELECT ?stream ?tank WHERE {</span>
+<span class="s2">    ?tank a watr:Tank ; s223:hasProperty ?point .</span>
+<span class="s2">    ?point rdfs:label "Raw temperature" ; ref:hasExternalReference ?stream .</span>
+<span class="s2">}</span>
+<span class="s2">"""</span>
+</pre></div>
+</div>
+<p>The query returns these stream/tank pairs, with URIs shortened for display:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>stream</p></th>
+<th class="head"><p>tank</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>A1</p></td>
+<td><p>A</p></td>
+</tr>
+<tr class="row-odd"><td><p>A2</p></td>
+<td><p>A</p></td>
+</tr>
+<tr class="row-even"><td><p>B1</p></td>
+<td><p>B</p></td>
+</tr>
+<tr class="row-odd"><td><p>B2</p></td>
+<td><p>B</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>A group is a set of streams processed together. A time window selects readings
+by their sample timestamps.</p>
+<p>Each row pairs a probe’s stream with its tank. With <code class="docutils literal notranslate"><span class="pre">group=&quot;tank&quot;</span></code>, Acquirium
+groups A1 and A2 under tank A. It groups B1 and B2 under tank B.</p>
+<section id="python-function">
+<h3>Python function<a class="headerlink" href="#python-function" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">frame</span></code> is a Polars dataframe containing the readings for one group and time
+window. <code class="docutils literal notranslate"><span class="pre">context</span></code> is a dictionary describing that group and window, including
+the timestamp for the result. <code class="docutils literal notranslate"><span class="pre">emit(context,</span> <span class="pre">value)</span></code> returns a dataframe
+containing one result at that timestamp.</p>
+<p>The function computes the mean and peak of <code class="docutils literal notranslate"><span class="pre">frame[&quot;value&quot;]</span></code>.
+Save it as <code class="docutils literal notranslate"><span class="pre">temperature_functions.py</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">acquirium.functions</span><span class="w"> </span><span class="kn">import</span> <span class="n">emit</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">summarize</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+    <span class="c1"># Ignore missing values.</span>
+    <span class="n">values</span> <span class="o">=</span> <span class="n">frame</span><span class="p">[</span><span class="s2">"value"</span><span class="p">]</span><span class="o">.</span><span class="n">drop_nulls</span><span class="p">()</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">"mean"</span><span class="p">:</span> <span class="n">emit</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="n">values</span><span class="o">.</span><span class="n">mean</span><span class="p">()),</span>
+        <span class="s2">"peak"</span><span class="p">:</span> <span class="n">emit</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="n">values</span><span class="o">.</span><span class="n">max</span><span class="p">()),</span>
+    <span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="app-declaration">
+<h3>App declaration<a class="headerlink" href="#app-declaration" title="Link to this heading">#</a></h3>
+<p>Register the function as an app. Use a connected <code class="docutils literal notranslate"><span class="pre">client</span></code> with the probes and
+tank metadata registered; the <a class="reference internal" href="../how-to/soft-sensor-examples.html"><span class="std std-doc">worked examples</span></a>
+provide the setup steps.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">acquirium</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+
+<span class="n">MINUTE</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">(</span><span class="s2">"1m"</span><span class="p">)</span>
+<span class="n">summary_function</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">PythonFunction</span><span class="o">.</span><span class="n">from_file</span><span class="p">(</span><span class="s2">"temperature_functions.py"</span><span class="p">,</span> <span class="s2">"summarize"</span><span class="p">)</span>
+
+<span class="n">by_tank</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">App</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"tank-temperature-summary"</span><span class="p">,</span>
+    <span class="n">inputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Selection</span><span class="p">(</span><span class="n">selection_query</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="s2">"tank"</span><span class="p">)},</span>
+    <span class="c1"># Declare the two outputs that summarize() returns.</span>
+    <span class="n">outputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"mean"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Output</span><span class="p">(),</span> <span class="s2">"peak"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Output</span><span class="p">()},</span>
+    <span class="n">function</span><span class="o">=</span><span class="n">summary_function</span><span class="p">,</span>
+    <span class="n">window</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">FixedBucket</span><span class="p">(</span><span class="n">MINUTE</span><span class="p">),</span>  <span class="c1"># One non-overlapping minute per result.</span>
+<span class="p">)</span>
+<span class="n">client</span><span class="o">.</span><span class="n">deploy_app</span><span class="p">(</span><span class="n">by_tank</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>The app declares its outputs in <code class="docutils literal notranslate"><span class="pre">outputs</span></code>. Here it declares <code class="docutils literal notranslate"><span class="pre">mean</span></code> and <code class="docutils literal notranslate"><span class="pre">peak</span></code>;
+these names are its output ports. The function must return a dataframe for
+each declared name. Acquirium creates
+a <code class="docutils literal notranslate"><span class="pre">mean</span></code> stream and a <code class="docutils literal notranslate"><span class="pre">peak</span></code> stream for each tank.</p>
+<p><code class="docutils literal notranslate"><span class="pre">group=&quot;tank&quot;</span></code> puts A1 and A2 together, and B1 and B2 together.</p>
+<p><code class="docutils literal notranslate"><span class="pre">FixedBucket(MINUTE)</span></code> divides each group’s data into non-overlapping minutes:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>                         10:00                  10:01                  10:02
+tank A (A1 and A2)        [ one bucket            )[ next bucket         )
+tank B (B1 and B2)        [ a separate bucket     )[ next bucket         )
+</pre></div>
+</div>
+<p>Each bucket includes its start and excludes its end. A reading exactly at
+10:01 belongs to the second bucket. Acquirium stamps each result at its
+bucket’s start.</p>
+<p>On deployment, Acquirium calculates the results for stored readings. After
+each write, it recalculates the affected buckets.</p>
+</section>
+</section>
+<section id="reading-insertion-and-recalculation">
+<h2>Reading insertion and recalculation<a class="headerlink" href="#reading-insertion-and-recalculation" title="Link to this heading">#</a></h2>
+<p>Suppose these readings have already been stored and processed. All times here
+are January 1, 2026, in UTC. A dash means no reading is stored at that time.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Probe</p></th>
+<th class="head"><p>Tank</p></th>
+<th class="head text-right"><p>At 10:00:10</p></th>
+<th class="head text-right"><p>At 10:00:40</p></th>
+<th class="head text-right"><p>At 10:01:10</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>A1</p></td>
+<td><p>A</p></td>
+<td class="text-right"><p>20</p></td>
+<td class="text-right"><p>22</p></td>
+<td class="text-right"><p>28</p></td>
+</tr>
+<tr class="row-odd"><td><p>A2</p></td>
+<td><p>A</p></td>
+<td class="text-right"><p>24</p></td>
+<td class="text-right"><p>—</p></td>
+<td class="text-right"><p>—</p></td>
+</tr>
+<tr class="row-even"><td><p>B1</p></td>
+<td><p>B</p></td>
+<td class="text-right"><p>30</p></td>
+<td class="text-right"><p>32</p></td>
+<td class="text-right"><p>—</p></td>
+</tr>
+<tr class="row-odd"><td><p>B2</p></td>
+<td><p>B</p></td>
+<td class="text-right"><p>34</p></td>
+<td class="text-right"><p>36</p></td>
+<td class="text-right"><p>—</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Tank A’s 10:00 bucket currently contains <code class="docutils literal notranslate"><span class="pre">[20,</span> <span class="pre">22,</span> <span class="pre">24]</span></code>, so its mean is 22
+and its peak is 24. The A1 reading at 10:01:10 is in a different bucket.</p>
+<p>At 10:05, a delayed reading arrives from A2: <strong>26 °C, sampled at 10:00:40</strong>.
+The probes are registered under source <code class="docutils literal notranslate"><span class="pre">&quot;input-demo&quot;</span></code> with local names
+<code class="docutils literal notranslate"><span class="pre">&quot;a1&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;a2&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;b1&quot;</span></code>, and <code class="docutils literal notranslate"><span class="pre">&quot;b2&quot;</span></code>. Insert the reading:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Supply the time of the sample, even though it reaches the server later.</span>
+<span class="n">sample_time</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timestamp</span><span class="p">(</span><span class="s2">"2026-01-01T10:00:40Z"</span><span class="p">)</span>
+<span class="n">client</span><span class="o">.</span><span class="n">insert_timeseries</span><span class="p">(</span><span class="s2">"input-demo"</span><span class="p">,</span> <span class="s2">"a2"</span><span class="p">,</span> <span class="p">[(</span><span class="n">sample_time</span><span class="p">,</span> <span class="mf">26.0</span><span class="p">)])</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">Z</span></code> sets the time zone to UTC. A timestamp of
+<code class="docutils literal notranslate"><span class="pre">&quot;2026-01-01T03:00:40-07:00&quot;</span></code> represents the same instant.</p>
+<section id="group-and-window-selection">
+<h3>Group and window selection<a class="headerlink" href="#group-and-window-selection" title="Link to this heading">#</a></h3>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>incoming: A2, 10:00:40, 26 °C
+    │
+    ├─ stream A2 belongs to tank A
+    │
+    └─ sample time 10:00:40 falls in [10:00:00, 10:01:00)
+                                        │
+                                        ▼
+                           recalculate tank A's 10:00 bucket
+</pre></div>
+</div>
+<p>The sample timestamp, 10:00:40, selects the 10:00 bucket.</p>
+</section>
+<section id="input-dataframe">
+<h3>Input dataframe<a class="headerlink" href="#input-dataframe" title="Link to this heading">#</a></h3>
+<p>To recalculate tank A’s 10:00 result, Acquirium selects readings that satisfy
+both conditions:</p>
+<ul class="simple">
+<li><p>Their stream belongs to tank A: A1 or A2.</p></li>
+<li><p>Their sample timestamp is at or after 10:00:00 and before 10:01:00.</p></li>
+</ul>
+<p>Three stored readings and the new reading match. The mean and peak describe
+the whole bucket, so Acquirium passes all four readings to the function:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>already stored                         newly arrived
+A1  10:00:10  20                        A2  10:00:40  26
+A1  10:00:40  22                              │
+A2  10:00:10  24                              │
+       └──────────────────┬───────────────────┘
+                          ▼
+                  one four-row frame
+                          │
+                          ▼
+                 summarize(frame, context)
+
+not included: tank B's readings, or A1's reading at 10:01:10
+</pre></div>
+</div>
+<p>The input frame has six columns. Four are shown below. <code class="docutils literal notranslate"><span class="pre">time</span></code> contains
+each reading’s sample timestamp as a UTC datetime with microsecond precision.
+Stream URIs are abbreviated. Sort by time if the calculation requires ordered readings.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>input</p></th>
+<th class="head"><p>stream</p></th>
+<th class="head"><p>time</p></th>
+<th class="head text-right"><p>value</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>temperature</p></td>
+<td><p>A1</p></td>
+<td><p>2026-01-01 10:00:10 UTC</p></td>
+<td class="text-right"><p>20.0</p></td>
+</tr>
+<tr class="row-odd"><td><p>temperature</p></td>
+<td><p>A1</p></td>
+<td><p>2026-01-01 10:00:40 UTC</p></td>
+<td class="text-right"><p>22.0</p></td>
+</tr>
+<tr class="row-even"><td><p>temperature</p></td>
+<td><p>A2</p></td>
+<td><p>2026-01-01 10:00:10 UTC</p></td>
+<td class="text-right"><p>24.0</p></td>
+</tr>
+<tr class="row-odd"><td><p>temperature</p></td>
+<td><p>A2</p></td>
+<td><p>2026-01-01 10:00:40 UTC</p></td>
+<td class="text-right"><p>26.0</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The last row is the new reading; the other three were already stored.</p>
+<p><code class="docutils literal notranslate"><span class="pre">stream</span></code> identifies the probe’s stream. <code class="docutils literal notranslate"><span class="pre">input</span></code> contains the input’s name,
+<code class="docutils literal notranslate"><span class="pre">&quot;temperature&quot;</span></code>, the key it has in the app’s <code class="docutils literal notranslate"><span class="pre">inputs</span></code>. Filter these columns to
+select particular inputs.</p>
+<p>The remaining columns are <code class="docutils literal notranslate"><span class="pre">text</span></code> and <code class="docutils literal notranslate"><span class="pre">context</span></code>.
+Here, <code class="docutils literal notranslate"><span class="pre">text</span></code> is null. Each row’s
+<code class="docutils literal notranslate"><span class="pre">context</span></code> contains JSON metadata from the selection, including its tank.</p>
+</section>
+<section id="function-context">
+<h3>Function context<a class="headerlink" href="#function-context" title="Link to this heading">#</a></h3>
+<p>Acquirium passes <code class="docutils literal notranslate"><span class="pre">context</span></code> as the function’s second argument. It tells the
+function which window it is processing and provides the group’s parameters.
+The function can use these details to decide how to process the readings.</p>
+<p>This call is for <strong>tank A</strong>, whose group ID is <code class="docutils literal notranslate"><span class="pre">urn:input-demo:tank-a</span></code>.
+Its window is 10:00:00 through 10:01:00. The timestamp values in <code class="docutils literal notranslate"><span class="pre">context</span></code>
+are timezone-aware Python datetimes. Written with <code class="docutils literal notranslate"><span class="pre">aq.to_timestamp</span></code>, they are:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+    <span class="s2">"output_time"</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timestamp</span><span class="p">(</span><span class="s2">"2026-01-01T10:00:00Z"</span><span class="p">),</span>
+    <span class="s2">"window_start"</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timestamp</span><span class="p">(</span><span class="s2">"2026-01-01T10:00:00Z"</span><span class="p">),</span>
+    <span class="s2">"window_end"</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timestamp</span><span class="p">(</span><span class="s2">"2026-01-01T10:01:00Z"</span><span class="p">),</span>
+    <span class="s2">"parameters"</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">"group"</span><span class="p">:</span> <span class="p">(</span><span class="s2">"urn:input-demo:tank-a"</span><span class="p">,),</span>  <span class="c1"># The group key: tank A.</span>
+    <span class="p">},</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Acquirium adds the group key to <code class="docutils literal notranslate"><span class="pre">parameters</span></code> automatically. It is always a
+tuple. Here it contains the tank URI from the selection’s <code class="docutils literal notranslate"><span class="pre">tank</span></code> column:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">context</span><span class="p">[</span><span class="s2">"parameters"</span><span class="p">][</span><span class="s2">"group"</span><span class="p">]</span>  <span class="c1"># ("urn:input-demo:tank-a",)</span>
+</pre></div>
+</div>
+<p>The trailing comma makes this a tuple with one item. To read the tank URI:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tank</span><span class="p">,</span> <span class="o">=</span> <span class="n">context</span><span class="p">[</span><span class="s2">"parameters"</span><span class="p">][</span><span class="s2">"group"</span><span class="p">]</span>
+</pre></div>
+</div>
+<p>Any settings configured for this group also appear in <code class="docutils literal notranslate"><span class="pre">parameters</span></code>.</p>
+<p>The one-minute bucket includes 10:00:00 and excludes 10:01:00. A sample exactly
+at 10:01:00 belongs to the next bucket.</p>
+</section>
+<section id="output-replacement">
+<h3>Output replacement<a class="headerlink" href="#output-replacement" title="Link to this heading">#</a></h3>
+<p>Acquirium calls <code class="docutils literal notranslate"><span class="pre">summarize(frame,</span> <span class="pre">context)</span></code>. The function calculates a mean
+of 23 and a peak of 26 from <code class="docutils literal notranslate"><span class="pre">[20,</span> <span class="pre">22,</span> <span class="pre">24,</span> <span class="pre">26]</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">emit</span></code> creates one output row for each result. Its timestamp comes from
+<code class="docutils literal notranslate"><span class="pre">context[&quot;output_time&quot;]</span></code>, which is 10:00:00 for this bucket.</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>inputs for tank A                  results for tank A
+
+10:00:10   20, 24  ─┐              mean stream: 10:00:00 → 23
+                   ├─ summarize ─►
+10:00:40   22, 26  ─┘              peak stream: 10:00:00 → 26
+</pre></div>
+</div>
+<p>Acquirium replaces the old results at the <strong>same output timestamp</strong>:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Group</p></th>
+<th class="head"><p>Output timestamp</p></th>
+<th class="head"><p>Before the write: mean / peak</p></th>
+<th class="head"><p>After the write: mean / peak</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Tank A</p></td>
+<td><p>10:00:00</p></td>
+<td><p>22 / 24</p></td>
+<td><p><strong>23 / 26</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>Tank A</p></td>
+<td><p>10:01:00</p></td>
+<td><p>28 / 28</p></td>
+<td><p>28 / 28, unchanged</p></td>
+</tr>
+<tr class="row-even"><td><p>Tank B</p></td>
+<td><p>10:00:00</p></td>
+<td><p>33 / 36</p></td>
+<td><p>33 / 36, unchanged</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The incoming reading changed tank A’s 10:00 bucket. Acquirium leaves tank B
+and tank A’s next bucket unchanged. If another app reads the changed mean or
+peak, Acquirium recalculates its affected results next.</p>
+<p>A correction follows the same path. If we write a different value for A2 at
+10:00:40, Acquirium replaces that sample. It rebuilds the four-row frame and
+calls the function with the corrected value.</p>
+</section>
+</section>
+<section id="timestamp-fields">
+<h2>Timestamp fields<a class="headerlink" href="#timestamp-fields" title="Link to this heading">#</a></h2>
+<p>A sample timestamp is the time represented by an input reading. An output
+timestamp is the time represented by a result. Function dataframe timestamps
+use Polars <code class="docutils literal notranslate"><span class="pre">Datetime(&quot;us&quot;,</span> <span class="pre">&quot;UTC&quot;)</span></code>. Context timestamps are timezone-aware
+Python datetimes. Both have microsecond precision.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head"><p>Meaning</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Input dataframe <code class="docutils literal notranslate"><span class="pre">time</span></code></p></td>
+<td><p>Sample timestamp supplied when the reading was inserted.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">context[&quot;output_time&quot;]</span></code></p></td>
+<td><p>Output timestamp used by <code class="docutils literal notranslate"><span class="pre">emit(context,</span> <span class="pre">value)</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">context[&quot;window_start&quot;]</span></code></p></td>
+<td><p>Start of the time window used to select input readings.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">context[&quot;window_end&quot;]</span></code></p></td>
+<td><p>Exclusive end of that time window.</p></td>
+</tr>
+<tr class="row-even"><td><p>Query dataframe <code class="docutils literal notranslate"><span class="pre">time</span></code></p></td>
+<td><p>Stored timestamp of each reading: the sample timestamp for raw data or the output timestamp for derived data.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Arrival time is when Acquirium receives a reading. Execution time is when it
+runs the function. Acquirium selects windows using the sample timestamp.</p>
+</section>
+<section id="window-types">
+<h2>Window types<a class="headerlink" href="#window-types" title="Link to this heading">#</a></h2>
+<p>The window type determines which readings enter a call and the timestamp of
+its results. For a rolling window, <code class="docutils literal notranslate"><span class="pre">lookback</span></code> sets how far back to read
+from the output timestamp. <code class="docutils literal notranslate"><span class="pre">step</span></code> sets the interval between output
+timestamps. These examples use tank A’s four readings and a one-minute step.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Window</p></th>
+<th class="head"><p>Readings in a call</p></th>
+<th class="head"><p>Mean output</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">aq.Pointwise()</span></code></p></td>
+<td><p>At 10:00:10: 20 and 24. At 10:00:40: 22 and 26.</p></td>
+<td><p>22 at 10:00:10; 24 at 10:00:40.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">aq.FixedBucket(MINUTE)</span></code></p></td>
+<td><p>All four readings in the 10:00 minute.</p></td>
+<td><p>23 at 10:00:00, the bucket start.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">aq.Rolling(lookback=MINUTE,</span> <span class="pre">step=MINUTE)</span></code></p></td>
+<td><p>For the output at 10:01: all four readings from 10:00 through 10:01.</p></td>
+<td><p>23 at 10:01:00.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>same tank A readings:       10:00:10 ●             10:00:40 ●
+
+Pointwise:                          [call]                  [call]
+Fixed bucket:          [──────────── one call ────────────────────)
+                       10:00                                 10:01
+                       ▲ result
+Rolling at 10:01:       [──────────── one call ────────────────────]
+                                                             ▲ result
+</pre></div>
+</div>
+<p>A pointwise call can contain several rows if several probes have readings at
+that exact timestamp. Readings at different timestamps are not automatically
+aligned or filled forward.</p>
+<p>A reading can affect several rolling windows. With a two-minute lookback and
+a one-minute step, Acquirium recalculates both of these when the A2 reading at
+10:00:40 arrives:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>output at 10:01:00: pull tank A's readings from 09:59:00 through 10:01:00
+output at 10:02:00: pull tank A's readings from 10:00:00 through 10:02:00
+                                                ▲
+                       both ranges include the sample at 10:00:40
+</pre></div>
+</div>
+<p>Acquirium builds an input frame for each window. The second frame also
+includes A1’s reading at 10:01:10, because it falls within that window.</p>
+<p>A rolling window includes both endpoints. Adding <code class="docutils literal notranslate"><span class="pre">lookahead=MINUTE</span></code> lets
+the call also read samples up to one minute <strong>after</strong> its output timestamp.
+This is useful for interpolation; a later sample can fill an earlier gap.
+As later data arrives, that earlier output may change.</p>
+<p>The step sets the interval between output timestamps. Acquirium calculates
+from available readings and updates results when the inputs change. It can
+publish a bucket’s result before the bucket ends.</p>
+</section>
+<section id="stream-grouping-and-outputs">
+<h2>Stream grouping and outputs<a class="headerlink" href="#stream-grouping-and-outputs" title="Link to this heading">#</a></h2>
+<p>The following definitions change the data flow’s grouping or output ports.
+The numbers show the 10:00 bucket after the A2 reading has arrived.
+Here, “one” and “many” count <strong>streams</strong>, not dataframe rows or function calls.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Pattern</p></th>
+<th class="head"><p>Grouping</p></th>
+<th class="head"><p>Output ports</p></th>
+<th class="head"><p>Result for these four probes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>One-to-one</p></td>
+<td><p>Each input stream separately</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">mean</span></code></p></td>
+<td><p>Four mean streams.</p></td>
+</tr>
+<tr class="row-odd"><td><p>One-to-many</p></td>
+<td><p>Each input stream separately</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">mean</span></code>, <code class="docutils literal notranslate"><span class="pre">peak</span></code></p></td>
+<td><p>Eight streams: two per probe.</p></td>
+</tr>
+<tr class="row-even"><td><p>Many-to-one</p></td>
+<td><p>All streams together</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">mean</span></code></p></td>
+<td><p>One mean stream.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Many-to-many, grouped</p></td>
+<td><p>Streams grouped by tank</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">mean</span></code>, <code class="docutils literal notranslate"><span class="pre">peak</span></code></p></td>
+<td><p>Four streams: two per tank.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<section id="one-to-one-mean-per-probe">
+<h3>One-to-one: mean per probe<a class="headerlink" href="#one-to-one-mean-per-probe" title="Link to this heading">#</a></h3>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>A1 ─► its call ─► A1 mean = 21
+A2 ─► its call ─► A2 mean = 25
+B1 ─► its call ─► B1 mean = 31
+B2 ─► its call ─► B2 mean = 35
+</pre></div>
+</div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">per_probe</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">App</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"probe-means"</span><span class="p">,</span>
+    <span class="n">inputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Selection</span><span class="p">(</span><span class="n">selection_query</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="s2">"stream"</span><span class="p">)},</span>
+    <span class="n">outputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"mean"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Output</span><span class="p">()},</span>
+    <span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">Native</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="s2">"mean"</span><span class="p">),</span>
+    <span class="n">window</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">FixedBucket</span><span class="p">(</span><span class="n">MINUTE</span><span class="p">),</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>The group ID is the input stream itself. A1’s frame has just its two rows,
+<code class="docutils literal notranslate"><span class="pre">[20,</span> <span class="pre">22]</span></code>; the other probes’ readings go to separate calls. This example uses
+a built-in mean, which computes the same result without calling Python.</p>
+</section>
+<section id="one-to-many-mean-and-peak-per-probe">
+<h3>One-to-many: mean and peak per probe<a class="headerlink" href="#one-to-many-mean-and-peak-per-probe" title="Link to this heading">#</a></h3>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>A1 ─► summarize([20, 22]) ─┬─► A1 mean = 21
+                          └─► A1 peak = 22
+
+Repeat independently for A2, B1, and B2.
+</pre></div>
+</div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">per_probe_summary</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">App</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"probe-summaries"</span><span class="p">,</span>
+    <span class="n">inputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Selection</span><span class="p">(</span><span class="n">selection_query</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="s2">"stream"</span><span class="p">)},</span>
+    <span class="n">outputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"mean"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Output</span><span class="p">(),</span> <span class="s2">"peak"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Output</span><span class="p">()},</span>
+    <span class="n">function</span><span class="o">=</span><span class="n">summary_function</span><span class="p">,</span>
+    <span class="n">window</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">FixedBucket</span><span class="p">(</span><span class="n">MINUTE</span><span class="p">),</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>The input dataframe is unchanged from one-to-one. A1 still gets one call with
+two rows. That call now returns two named results, creating two streams per
+probe. Additional ports do not cause additional Python calls.</p>
+</section>
+<section id="many-to-one-overall-mean">
+<h3>Many-to-one: overall mean<a class="headerlink" href="#many-to-one-overall-mean" title="Link to this heading">#</a></h3>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>A1 ─┐
+A2 ─┤
+    ├─► one frame with eight readings ─► overall mean = 28
+B1 ─┤
+B2 ─┘
+</pre></div>
+</div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">overall</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">App</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"overall-temperature"</span><span class="p">,</span>
+    <span class="n">inputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"temperature"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Selection</span><span class="p">(</span><span class="n">selection_query</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="kc">None</span><span class="p">)},</span>
+    <span class="n">outputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"mean"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Output</span><span class="p">()},</span>
+    <span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">Native</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="s2">"mean"</span><span class="p">),</span>
+    <span class="n">window</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">FixedBucket</span><span class="p">(</span><span class="n">MINUTE</span><span class="p">),</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>Here <code class="docutils literal notranslate"><span class="pre">group=None</span></code> on <code class="docutils literal notranslate"><span class="pre">aq.Selection</span></code> puts every selected stream in one
+app-wide group. Its frame contains all eight readings, so the overall mean is
+28. Every observation has equal weight; a probe reporting more often would
+contribute more rows.</p>
+</section>
+<section id="many-to-many-mean-and-peak-per-tank">
+<h3>Many-to-many: mean and peak per tank<a class="headerlink" href="#many-to-many-mean-and-peak-per-tank" title="Link to this heading">#</a></h3>
+<p>This is our original <code class="docutils literal notranslate"><span class="pre">by_tank</span></code> definition:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>A1 ─┐                              ┌─► A mean = 23
+    ├─► tank A: four rows ─► call ──┤
+A2 ─┘                              └─► A peak = 26
+
+B1 ─┐                              ┌─► B mean = 33
+    ├─► tank B: four rows ─► call ──┤
+B2 ─┘                              └─► B peak = 36
+</pre></div>
+</div>
+<p>Four input streams become two groups, each with two outputs. More generally,
+each distinct group gets one stream per output port. The group controls which
+streams meet; the ports control what each group publishes. A stream selected
+into two groups contributes to both groups’ calculations.</p>
+<p>Grouping by tank and declaring just <code class="docutils literal notranslate"><span class="pre">mean</span></code> would instead produce two streams,
+one per tank. The function itself does not need a Polars <code class="docutils literal notranslate"><span class="pre">group_by(&quot;tank&quot;)</span></code>:
+Acquirium has already separated the calls by tank.</p>
+</section>
+</section>
+<section id="query-api-selections">
+<h2>Query API selections<a class="headerlink" href="#query-api-selections" title="Link to this heading">#</a></h2>
+<p>The same grouping choice is available through <code class="docutils literal notranslate"><span class="pre">Selection.from_query</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">temperatures</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">entity</span><span class="p">(</span><span class="s2">"https://watermetadata.org/ontology/watr#Tank"</span><span class="p">,</span> <span class="n">alias</span><span class="o">=</span><span class="s2">"tank"</span><span class="p">)</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span>
+    <span class="n">alias</span><span class="o">=</span><span class="s2">"temperature"</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"Raw temperature"</span>
+<span class="p">)</span>
+<span class="c1"># Each matched stream gets its own calculation.</span>
+<span class="n">separate</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">Selection</span><span class="o">.</span><span class="n">from_query</span><span class="p">(</span><span class="n">temperatures</span><span class="p">,</span> <span class="n">measurement</span><span class="o">=</span><span class="s2">"temperature"</span><span class="p">)</span>
+<span class="c1"># All matched probes belonging to the same tank enter the same calculation.</span>
+<span class="n">together</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">Selection</span><span class="o">.</span><span class="n">from_query</span><span class="p">(</span><span class="n">temperatures</span><span class="p">,</span> <span class="n">measurement</span><span class="o">=</span><span class="s2">"temperature"</span><span class="p">,</span> <span class="n">group</span><span class="o">=</span><span class="s2">"tank"</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>There is one naming detail to watch: omitting <code class="docutils literal notranslate"><span class="pre">group</span></code> from <code class="docutils literal notranslate"><span class="pre">from_query</span></code>
+keeps streams separate. Passing <code class="docutils literal notranslate"><span class="pre">group=None</span></code> to the lower-level <code class="docutils literal notranslate"><span class="pre">Selection</span></code>
+constructor combines them. The examples above spell out the grouping choice.</p>
+</section>
+<section id="function-execution-modes">
+<h2>Function execution modes<a class="headerlink" href="#function-execution-modes" title="Link to this heading">#</a></h2>
+<p>Everything above uses the ordinary interface: one call for one group’s time
+window. Two optional modes change how those calls are delivered:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Mode</p></th>
+<th class="head"><p>What the function receives</p></th>
+<th class="head"><p>When it helps</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Default</p></td>
+<td><p>One group’s readings for one window.</p></td>
+<td><p>Start here for most calculations.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">batch=True</span></code></p></td>
+<td><p>Several affected windows of one group together. An added <code class="docutils literal notranslate"><span class="pre">output_time</span></code> column assigns each row to a window.</p></td>
+<td><p>Processing a large backfill with Polars.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">sequential=True</span></code></p></td>
+<td><p>One window at a time in timestamp order, with earlier results in <code class="docutils literal notranslate"><span class="pre">context[&quot;previous&quot;]</span></code>.</p></td>
+<td><p>A running total or filter that uses its previous result.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Neither mode changes which streams belong to a group. In batch mode, a sample
+used by overlapping windows appears once for each window it contributes to.
+The extra <code class="docutils literal notranslate"><span class="pre">output_time</span></code> column tells you which result that copy is for; its
+<code class="docutils literal notranslate"><span class="pre">time</span></code> still records the sample’s own time. For a sequential function,
+earlier output timestamps remain distinct from the current output timestamp.</p>
+<p>For runnable calculations, continue with the
+<a class="reference internal" href="../how-to/soft-sensor-examples.html"><span class="std std-doc">soft sensor examples</span></a>. For every frame
+column and option, see the <a class="reference internal" href="../reference/apps/app-class.html#python-functions"><span class="std std-ref">app reference</span></a>.
+<a class="reference internal" href="apps.html"><span class="std std-doc">Derived stream updates</span></a> explains what happens when an old
+reading, a group membership, or a function changes.</p>
+</section>
+</section>
+
+    <script type="text/x-thebe-config">
+    {
+        requestKernel: true,
+        binderOptions: {
+            repo: "binder-examples/jupyter-stacks-datascience",
+            ref: "master",
+        },
+        codeMirrorConfig: {
+            theme: "abcdef",
+            mode: "python"
+        },
+        kernelOptions: {
+            name: "python3",
+            path: "./explanation"
+        },
+        predefinedOutput: true
+    }
+    </script>
+    <script>kernelName = 'python3'</script>
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="escapement-core.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Escapement core</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="server-internals.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Server internals</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#input-stream-selection">Input stream selection</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#python-function">Python function</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#app-declaration">App declaration</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#reading-insertion-and-recalculation">Reading insertion and recalculation</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#group-and-window-selection">Group and window selection</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#input-dataframe">Input dataframe</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#function-context">Function context</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#output-replacement">Output replacement</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#timestamp-fields">Timestamp fields</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#window-types">Window types</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#stream-grouping-and-outputs">Stream grouping and outputs</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#one-to-one-mean-per-probe">One-to-one: mean per probe</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#one-to-many-mean-and-peak-per-probe">One-to-many: mean and peak per probe</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#many-to-one-overall-mean">Many-to-one: overall mean</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#many-to-many-mean-and-peak-per-tank">Many-to-many: mean and peak per tank</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#query-api-selections">Query API selections</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#function-execution-modes">Function execution modes</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By NAWI Project Team
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2023.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>

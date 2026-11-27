@@ -1,0 +1,890 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>App declarations, windows, and functions &#8212; Acquirium Documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
+    <link rel="stylesheet" type="text/css" href="../../_static/togglebutton.css?v=9c3e77be" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/mystnb.11b39860a7a0cbfd473a3ad8a317855267ff0bd372690045ca344a6b62be495e.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-thebe.css?v=4fa983c6" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/custom.css?v=5b658e50" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=55c26ed414f5f8a31ebb"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb" />
+
+    <script src="../../_static/documentation_options.js?v=9eb32ce0"></script>
+    <script src="../../_static/doctools.js?v=9a2dae69"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../_static/togglebutton.js?v=b8b12719"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>const THEBE_JS_URL = "https://unpkg.com/thebe@0.8.2/lib/index.js"; const thebe_selector = ".thebe,.cell"; const thebe_selector_input = "pre"; const thebe_selector_output = ".output, .cell_output"</script>
+    <script async="async" src="../../_static/sphinx-thebe.js?v=c100c467"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>const THEBE_JS_URL = "https://unpkg.com/thebe@0.8.2/lib/index.js"; const thebe_selector = ".thebe,.cell"; const thebe_selector_input = "pre"; const thebe_selector_output = ".output, .cell_output"</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'reference/apps/app-class';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="icon" href="../../_static/logo-notext.png"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="App inputs" href="inputs.html" />
+    <link rel="prev" title="Apps" href="_index.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search this book..."
+         aria-label="Search this book..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../_index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/logo.png" class="logo__image only-light" alt="Acquirium Documentation - Home"/>
+    <img src="../../_static/logo.png" class="logo__image only-dark pst-js-only" alt="Acquirium Documentation - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        
+        <ul class="nav bd-sidenav bd-sidenav__home-link">
+            <li class="toctree-l1">
+                <a class="reference internal" href="../../_index.html">
+                    Acquirium documentation
+                </a>
+            </li>
+        </ul>
+        <ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../getting-started.html">Getting started</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../tutorials/_index.html">Tutorials</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/fundamentals.html">0 - Fundamentals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/inserting-data.html">1 - Inserting Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/querying-data.html">2 - Querying Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/inserting-metadata.html">3 - Inserting Metadata</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/inserting-plant-model.html">4 - Inserting a Plant Model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/a-full-example.html">5 - A Full Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/acquirium-at-a-glance.html">Acquirium at a glance</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/turbidity.html">Turbidity alarm pipeline</a></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../tutorials/advanced/_index.html">Advanced topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/writing-a-driver.html">Writing a driver</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/first-app.html">Declaring and deploying apps</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/experiments.html">Running experiments</a></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../how-to/_index.html">How-to guides</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/explore-a-model.html">Explore a plant model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/debug-an-empty-query.html">Debug an empty or unexpected query result</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/query-cookbook.html">Query cookbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/access-a-shared-server.html">Access data on a shared server</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/write-soft-sensors.html">Soft sensor calculations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/chain-cleaning-apps.html">Data cleaning with multiple apps</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/clean-data-with-multiple-outputs.html">Data cleaning with multiple outputs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/parameterize-soft-sensors.html">Soft sensor parameters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/soft-sensor-examples.html">Soft sensor examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/consume-streaming-changes.html">Streaming change feed</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/check-deploy-apps.html">App deployment and recovery</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/record-a-whole-model.html">Record a whole model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/record-experiments.html">Record experiments</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/compare-experiment-runs.html">Compare experiment runs</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="../_index.html">Reference</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2 has-children"><a class="reference internal" href="../client/_index.html">Client</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../client/starting.html">Starting and stopping</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/streams.html">Streams</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/timeseries.html">Time series</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/graph.html">Graph</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/metadata.html">Metadata</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/querying.html">Querying</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/logs.html">Logs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/apps.html">Apps and engine status</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../query/_index.html">Query</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../query/building.html">Building a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/filtering.html">Filtering</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/columns.html">Columns</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/facets.html">Options and facets</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/reading.html">Reading results</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/data-object.html">DataObject: values</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/data-object-info.html">DataObject: streams and statistics</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/inspecting.html">Inspecting a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/writing.html">Writing from a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/traversal.html">Traversal settings</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../drivers/_index.html">Drivers</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/base-classes.html">Base classes</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/hooks.html">Hooks</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/helpers.html">Helpers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/state.html">Persistent state</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/configuration.html">Configuration</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/built-in-drivers.html">Built-in drivers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/tabular-helpers.html">Tabular helpers</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 current active has-children"><a class="reference internal" href="_index.html">Apps</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l3 current active"><a class="current reference internal" href="#">App declarations, windows, and functions</a></li>
+<li class="toctree-l3"><a class="reference internal" href="inputs.html">App inputs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="outputs.html">App outputs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="deploying.html">Deploying apps</a></li>
+<li class="toctree-l3"><a class="reference internal" href="cli.html">App commands</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2"><a class="reference internal" href="../actors.html">Actors</a></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../experiments/_index.html">Experiments</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/studies-and-runs.html">Studies and runs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/declaring-variables.html">Declaring variables</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/recording.html">Recording values</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/annotations.html">Stream annotations</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/selecting-runs.html">Selecting and comparing runs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/reading.html">Reading recorded data</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/model-adapters.html">Model adapters</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/codecs-and-values.html">Codecs and values</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../server/_index.html">Server</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../server/cli.html">Command line</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../server/configuration.html">Server configuration</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../server/http-api.html">HTTP API</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../server/storage-migrations.html">Storage upgrades and recovery</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2"><a class="reference internal" href="../glossary.html">Glossary</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../explanation/_index.html">Explanation</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/query-model.html">The query model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/values.html">Values</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/units.html">Units</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/drivers.html">Drivers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/apps.html">Derived stream updates</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/soft-sensor-actors.html">Soft sensor actors</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/stream-lifecycle.html">The stream lifecycle</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/experiments.html">How experiments work</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/text-resolution.html">Text matcher</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/escapement-core.html">Escapement core</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/soft-sensor-inputs.html">Soft sensor inputs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/server-internals.html">Server internals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/graph-backend.html">The graph store</a></li>
+</ul>
+</details></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-source-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Source repositories">
+    <i class="fab fa-github"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="https://github.com/DataDrivenCPS/acquirium" target="_blank"
+   class="btn btn-sm btn-source-repository-button dropdown-item"
+   title="Source repository"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+<span class="btn__text-container">Repository</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/DataDrivenCPS/acquirium/issues/new?title=Issue%20on%20page%20%2Freference/apps/app-class.html&body=Your%20issue%20content%20here." target="_blank"
+   class="btn btn-sm btn-source-issues-button dropdown-item"
+   title="Open an issue"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-lightbulb"></i>
+  </span>
+<span class="btn__text-container">Open issue</span>
+</a>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+
+
+<div class="dropdown dropdown-download-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Download this page">
+    <i class="fas fa-download"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="../../_sources/reference/apps/app-class.md" target="_blank"
+   class="btn btn-sm btn-download-source-button dropdown-item"
+   title="Download source file"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file"></i>
+  </span>
+<span class="btn__text-container">.md</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li>
+<button onclick="window.print()"
+  class="btn btn-sm btn-download-pdf-button dropdown-item"
+  title="Print to PDF"
+  data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file-pdf"></i>
+  </span>
+<span class="btn__text-container">.pdf</span>
+</button>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button pst-navbar-icon"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>App declarations, windows, and functions</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#windows">Windows</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#built-in-functions">Built-in functions</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#totals-and-integrals">Totals and integrals</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#python-functions">Python functions</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#dataframe-type">Dataframe type</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#inputs-and-outputs">Inputs and outputs</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batch-functions">Batch functions</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#sequential-functions">Sequential functions</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#as-of-inputs">As-of inputs</a></li>
+</ul>
+</li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="app-declarations-windows-and-functions">
+<h1>App declarations, windows, and functions<a class="headerlink" href="#app-declarations-windows-and-functions" title="Link to this heading">#</a></h1>
+<section id="windows">
+<h2>Windows<a class="headerlink" href="#windows" title="Link to this heading">#</a></h2>
+<p>Window declarations take durations as <code class="docutils literal notranslate"><span class="pre">datetime.timedelta</span></code> values, such as
+<code class="docutils literal notranslate"><span class="pre">pd.Timedelta(&quot;5m&quot;)</span></code>. An origin is a timestamp: a <code class="docutils literal notranslate"><span class="pre">datetime</span></code>, an ISO string, or
+UTC nanoseconds, with the Unix epoch as the default. In a Python function’s
+context, durations are <code class="docutils literal notranslate"><span class="pre">datetime.timedelta</span></code> values and timestamps are
+timezone-aware UTC <code class="docutils literal notranslate"><span class="pre">datetime</span></code> values.</p>
+<p><code class="docutils literal notranslate"><span class="pre">Pointwise()</span></code> supplies readings at one timestamp and emits there. It is the
+default. Asynchronous streams are not automatically forward-filled.</p>
+<p><code class="docutils literal notranslate"><span class="pre">FixedBucket(width,</span> <span class="pre">origin=0)</span></code> supplies a half-open bucket and emits at its
+start. Results can change before or after the bucket ends; there is no wait for
+wall-clock completion.</p>
+<p><code class="docutils literal notranslate"><span class="pre">Rolling(lookback,</span> <span class="pre">step,</span> <span class="pre">lookahead=timedelta(0),</span> <span class="pre">origin=0)</span></code> emits at grid points
+<code class="docutils literal notranslate"><span class="pre">origin</span> <span class="pre">+</span> <span class="pre">k</span> <span class="pre">*</span> <span class="pre">step</span></code>. At time <code class="docutils literal notranslate"><span class="pre">t</span></code> it reads <code class="docutils literal notranslate"><span class="pre">[t</span> <span class="pre">-</span> <span class="pre">lookback,</span> <span class="pre">t</span> <span class="pre">+</span> <span class="pre">lookahead]</span></code>, including
+both endpoints. A correction repairs every window that reads the changed time.
+Empty spans produce no results. Overlapping windows reread their shared history.</p>
+<p>Apps do not choose arbitrary output timestamps or run on a wall-clock schedule.</p>
+</section>
+<section id="built-in-functions">
+<h2>Built-in functions<a class="headerlink" href="#built-in-functions" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">aq.Native.mean(port,</span> <span class="pre">per_stream=False)</span></code>, <code class="docutils literal notranslate"><span class="pre">sum</span></code>, <code class="docutils literal notranslate"><span class="pre">min</span></code>, <code class="docutils literal notranslate"><span class="pre">max</span></code>, and <code class="docutils literal notranslate"><span class="pre">count</span></code> reduce
+all input rows in each window to one numeric result. An empty window produces
+no row. The default mean weights observations equally.</p>
+<p><code class="docutils literal notranslate"><span class="pre">aq.Native.threshold(port,</span> <span class="pre">above)</span></code> passes through a window’s single input value
+when it is greater than <code class="docutils literal notranslate"><span class="pre">above</span></code>; otherwise it produces no row. It does not emit
+zeros and ones. Acquirium supplies these calculations to the Python workers.</p>
+<p>Use <code class="docutils literal notranslate"><span class="pre">aq.Parameter(&quot;limit&quot;)</span></code> in place of a function argument to resolve it from
+each group’s parameters, for example:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">Native</span><span class="o">.</span><span class="n">threshold</span><span class="p">(</span><span class="s2">"alarm"</span><span class="p">,</span> <span class="n">above</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="s2">"limit"</span><span class="p">))</span>
+</pre></div>
+</div>
+<p>Deployment fails when a group lacks the required parameter. For a complete
+average-and-threshold example, see <a class="reference internal" href="../../how-to/write-soft-sensors.html"><span class="std std-doc">Soft sensor calculations</span></a>.</p>
+<section id="totals-and-integrals">
+<h3>Totals and integrals<a class="headerlink" href="#totals-and-integrals" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">aq.Native.cumulative_sum(port,</span> <span class="pre">reset=None)</span></code> adds each window’s sum to the
+previous total. <code class="docutils literal notranslate"><span class="pre">aq.Native.integral(port,</span> <span class="pre">per,</span> <span class="pre">reset=None,</span> <span class="pre">max_gap=None)</span></code>
+integrates one reading per pointwise timestamp. For a flow measured per hour,
+pass <code class="docutils literal notranslate"><span class="pre">per=pd.Timedelta(&quot;1h&quot;)</span></code> to obtain a volume.</p>
+<p><code class="docutils literal notranslate"><span class="pre">reset=aq.FixedBucket(width)</span></code> restarts a total at each bucket boundary.
+Corrections repair later totals until the results stop changing. Every repaired
+window counts toward the engine’s limits per instance.</p>
+<p>An integral assigns a step across a boundary to the period in which it ends.
+A step longer than <code class="docutils literal notranslate"><span class="pre">max_gap</span></code> adds nothing. Integrals require the default
+<code class="docutils literal notranslate"><span class="pre">Pointwise()</span></code> window and one reading per timestamp.</p>
+</section>
+</section>
+<section id="python-functions">
+<h2>Python functions<a class="headerlink" href="#python-functions" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">PythonFunction.from_file(path,</span> <span class="pre">entrypoint,</span> <span class="pre">batch=False,</span> <span class="pre">sequential=False)</span></code> pins
+a function’s file content. The entrypoint has signature <code class="docutils literal notranslate"><span class="pre">function(frame,</span> <span class="pre">context)</span></code>.
+The <a class="reference internal" href="../../how-to/write-soft-sensors.html#python-functions"><span class="std std-ref">calculation guide</span></a> walks through one.</p>
+<p>For diagrams connecting stream groups, windows, timestamps, and function calls,
+see <a class="reference internal" href="../../explanation/soft-sensor-inputs.html"><span class="std std-doc">Soft sensor inputs</span></a>.</p>
+<section id="dataframe-type">
+<h3>Dataframe type<a class="headerlink" href="#dataframe-type" title="Link to this heading">#</a></h3>
+<p>The first parameter’s annotation selects the input dataframe:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">frame:</span> <span class="pre">pandas.DataFrame</span></code>: pandas 2.x, with Arrow-backed columns.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">frame:</span> <span class="pre">polars.DataFrame</span></code>: Polars.</p></li>
+<li><p>No annotation: Polars.</p></li>
+</ul>
+<p>Imports such as <code class="docutils literal notranslate"><span class="pre">import</span> <span class="pre">pandas</span> <span class="pre">as</span> <span class="pre">pd</span></code>, aliases, string annotations, and
+<code class="docutils literal notranslate"><span class="pre">from</span> <span class="pre">__future__</span> <span class="pre">import</span> <span class="pre">annotations</span></code> work. Acquirium resolves the annotation
+once when a worker loads the function. Other frame annotations are rejected.
+Deployment syntax stays the same.</p>
+<p>pandas inputs use <code class="docutils literal notranslate"><span class="pre">table.to_pandas(types_mapper=pd.ArrowDtype)</span></code>. Numeric, text,
+and timestamp columns retain Arrow storage and nulls. Numeric nulls appear as
+<code class="docutils literal notranslate"><span class="pre">pd.NA</span></code>; timestamps have dtype <code class="docutils literal notranslate"><span class="pre">timestamp[us,</span> <span class="pre">tz=UTC][pyarrow]</span></code>. Context
+timestamps remain Python datetimes. pandas operations may allocate new buffers
+or convert individual columns; Arrow-backed input does not guarantee that
+every pandas operation is zero-copy.</p>
+<p>During a calculation, <code class="docutils literal notranslate"><span class="pre">emit</span></code>, <code class="docutils literal notranslate"><span class="pre">empty</span></code>, and <code class="docutils literal notranslate"><span class="pre">previous_outputs</span></code>
+use the selected library. pandas missing scalar values passed to <code class="docutils literal notranslate"><span class="pre">emit</span></code> produce
+an empty result. <code class="docutils literal notranslate"><span class="pre">emit_windows</span></code> accepts either library and returns that same
+kind of dataframe. Outside a calculation, helpers default to Polars.</p>
+<p>An app may return pandas or Polars dataframes, including different types on
+different output ports. Return timestamps in a <code class="docutils literal notranslate"><span class="pre">time</span></code> column; use
+<code class="docutils literal notranslate"><span class="pre">reset_index()</span></code> when a pandas result has a time index. Apps using different
+libraries can feed each other. The <a class="reference internal" href="../../tutorials/turbidity.html#cleaning-steps"><span class="std std-ref">turbidity tutorial</span></a>
+uses a pandas cleaner followed by a Polars alarm.</p>
+</section>
+<section id="inputs-and-outputs">
+<h3>Inputs and outputs<a class="headerlink" href="#inputs-and-outputs" title="Link to this heading">#</a></h3>
+<p>The input frame has <code class="docutils literal notranslate"><span class="pre">input</span></code>, <code class="docutils literal notranslate"><span class="pre">stream</span></code>, <code class="docutils literal notranslate"><span class="pre">time</span></code>,
+<code class="docutils literal notranslate"><span class="pre">value</span></code>, <code class="docutils literal notranslate"><span class="pre">text</span></code>, and JSON <code class="docutils literal notranslate"><span class="pre">context</span></code> columns. Each reading has either a
+numeric <code class="docutils literal notranslate"><span class="pre">value</span></code> or <code class="docutils literal notranslate"><span class="pre">text</span></code>. Selected graph columns are strings in the row context.</p>
+<p><code class="docutils literal notranslate"><span class="pre">time</span></code> is the input sample’s timestamp, in UTC microseconds. In Polars its
+type is <code class="docutils literal notranslate"><span class="pre">Datetime(&quot;us&quot;,</span> <span class="pre">&quot;UTC&quot;)</span></code>; in pandas it is an Arrow timestamp column.
+It is the timestamp supplied when the sample was inserted. <code class="docutils literal notranslate"><span class="pre">input</span></code> is the
+row’s <a class="reference internal" href="inputs.html"><span class="doc std std-doc">input name</span></a>, and <code class="docutils literal notranslate"><span class="pre">stream</span></code> identifies the input stream.</p>
+<p>The function’s context describes the calculation. <code class="docutils literal notranslate"><span class="pre">output_time</span></code> is its output
+timestamp; <code class="docutils literal notranslate"><span class="pre">window_start</span></code> and <code class="docutils literal notranslate"><span class="pre">window_end</span></code> bound the window. <code class="docutils literal notranslate"><span class="pre">parameters</span></code>
+holds the group key and configured parameter values, and <code class="docutils literal notranslate"><span class="pre">operator</span></code> holds its declaration,
+including <code class="docutils literal notranslate"><span class="pre">operator[&quot;window&quot;]</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">context[&quot;operator&quot;][&quot;outputs&quot;]</span></code> maps each declared output name to its full
+stream URI for the current group. The function returns dataframes under those
+output names; Acquirium routes them to the corresponding URIs.</p>
+<p>Context timestamps are timezone-aware Python datetimes. Function timestamps
+and window declarations must align to microseconds; finer values are rejected
+without rounding. All context window bounds are half-open: start included,
+end excluded. For a pointwise window, the end is one microsecond after its
+timestamp. For a rolling window, it is one microsecond after the last included
+timestamp.</p>
+<p>Within <code class="docutils literal notranslate"><span class="pre">operator[&quot;window&quot;]</span></code>, <code class="docutils literal notranslate"><span class="pre">width</span></code>, <code class="docutils literal notranslate"><span class="pre">lookback</span></code>, <code class="docutils literal notranslate"><span class="pre">lookahead</span></code>, and <code class="docutils literal notranslate"><span class="pre">step</span></code> are
+timedeltas; <code class="docutils literal notranslate"><span class="pre">origin</span></code> is a UTC datetime. Input validity and span bounds are UTC
+datetimes, with <code class="docutils literal notranslate"><span class="pre">None</span></code> for an unbounded validity interval. As-of ages in
+<code class="docutils literal notranslate"><span class="pre">operator[&quot;as_of&quot;]</span></code> are timedeltas. The app declaration and deployment reports
+retain the engine’s integer representation.</p>
+<p>For <code class="docutils literal notranslate"><span class="pre">Pointwise()</span></code>, <code class="docutils literal notranslate"><span class="pre">output_time</span></code> is the input timestamp. For <code class="docutils literal notranslate"><span class="pre">Rolling()</span></code>, it is
+the output’s grid point, and the frame can contain samples before or after
+that point, as allowed by the declared window. <code class="docutils literal notranslate"><span class="pre">emit(context,</span> <span class="pre">value)</span></code> uses
+<code class="docutils literal notranslate"><span class="pre">output_time</span></code> as the result’s timestamp.</p>
+<p>Context also lists the declared inputs, including those with no readings. Each
+input’s <code class="docutils literal notranslate"><span class="pre">span_start</span></code> and <code class="docutils literal notranslate"><span class="pre">span_end</span></code> describe the part of the window it
+covers, as a half-open span.</p>
+<p>Return a mapping with every declared port. Each port’s frame has these columns
+in order. The types below are Polars types; pandas frames use the equivalent
+Arrow types or compatible numeric and timezone-aware datetime types.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Column</p></th>
+<th class="head"><p>Type</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">time</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Datetime(&quot;us&quot;,</span> <span class="pre">&quot;UTC&quot;)</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">value</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Float64</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">text</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">String</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Numeric results set <code class="docutils literal notranslate"><span class="pre">value</span></code> and leave <code class="docutils literal notranslate"><span class="pre">text</span></code> null; numeric functions may also
+omit the <code class="docutils literal notranslate"><span class="pre">text</span></code> column. Use finite numbers.
+<code class="docutils literal notranslate"><span class="pre">acquirium.functions.emit(context,</span> <span class="pre">value)</span></code>
+returns a one-row dataframe at <code class="docutils literal notranslate"><span class="pre">context[&quot;output_time&quot;]</span></code>; a <code class="docutils literal notranslate"><span class="pre">None</span></code> value produces
+an empty dataframe. The helper constructs the function’s return value.
+Acquirium stores the results after the function returns.
+<code class="docutils literal notranslate"><span class="pre">empty()</span></code> also builds an empty frame. An empty result removes the previous
+result for that window. Return the complete result, including unchanged rows.</p>
+<p>Functions use only their declared inputs and frozen context. Do not query the
+live graph, fetch undeclared history, or depend on wall-clock time. Results must
+be independent of process lifetime and invocation order; mutable globals are
+not persistent calculation state.</p>
+</section>
+<section id="batch-functions">
+<h3>Batch functions<a class="headerlink" href="#batch-functions" title="Link to this heading">#</a></h3>
+<p>With <code class="docutils literal notranslate"><span class="pre">batch=True</span></code>, one call receives a batch of affected windows. The frame gains a
+<code class="docutils literal notranslate"><span class="pre">output_time</span></code> UTC datetime column, and <code class="docutils literal notranslate"><span class="pre">context[&quot;windows&quot;]</span></code> lists their contexts,
+including empty windows. A reading shared by overlapping windows appears once
+per window.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">polars</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pl</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">acquirium.functions</span><span class="w"> </span><span class="kn">import</span> <span class="n">emit_windows</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">bucket_mean</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+    <span class="n">means</span> <span class="o">=</span> <span class="n">frame</span><span class="o">.</span><span class="n">group_by</span><span class="p">(</span><span class="s2">"output_time"</span><span class="p">)</span><span class="o">.</span><span class="n">agg</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">"value"</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">())</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">"mean"</span><span class="p">:</span> <span class="n">emit_windows</span><span class="p">(</span><span class="n">means</span><span class="p">)}</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">emit_windows</span></code> accepts <code class="docutils literal notranslate"><span class="pre">output_time</span></code> and <code class="docutils literal notranslate"><span class="pre">value</span></code> or <code class="docutils literal notranslate"><span class="pre">text</span></code> columns.
+Omitting a window removes its old result. A row at an undeclared window timestamp
+fails the computation. Switching batch mode recalculates the app’s history. The
+<a class="reference external" href="https://github.com/DataDrivenCPS/acquirium/tree/main/examples/bulk_ingest" rel="noreferer noopener" target="_blank">bulk-ingest example</a> compares both modes.</p>
+</section>
+<section id="sequential-functions">
+<h3>Sequential functions<a class="headerlink" href="#sequential-functions" title="Link to this heading">#</a></h3>
+<p>With <code class="docutils literal notranslate"><span class="pre">sequential=True</span></code>, the function runs in time order, once per window.
+<code class="docutils literal notranslate"><span class="pre">context[&quot;previous&quot;]</span></code> holds the latest earlier output window’s <code class="docutils literal notranslate"><span class="pre">output_time</span></code>
+and the latest reading on each port from that window. Store any input values
+needed by a later window on an output port.</p>
+<p><code class="docutils literal notranslate"><span class="pre">acquirium.functions.previous_value(context,</span> <span class="pre">port,</span> <span class="pre">default)</span></code> reads an earlier output.
+<code class="docutils literal notranslate"><span class="pre">acquirium.functions.same_period(context,</span> <span class="pre">width)</span></code> takes a positive
+<code class="docutils literal notranslate"><span class="pre">datetime.timedelta</span></code> and helps restart state at period boundaries. A repair
+continues until state and outputs stop changing.
+<code class="docutils literal notranslate"><span class="pre">batch=True</span></code> does not apply to sequential functions. The
+<a class="reference external" href="https://github.com/DataDrivenCPS/acquirium/tree/main/examples/membrane_monitoring" rel="noreferer noopener" target="_blank">membrane-monitoring example</a>
+uses this interface for drift detection and parameter estimation.</p>
+</section>
+<section id="as-of-inputs">
+<h3>As-of inputs<a class="headerlink" href="#as-of-inputs" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">Selection(...,</span> <span class="pre">as_of=max_age)</span></code> reads each selected stream’s latest reading
+at or before the window timestamp, no older than the maximum age, such as
+<code class="docutils literal notranslate"><span class="pre">pd.Timedelta(&quot;2h&quot;)</span></code>. It retains
+that reading’s own <code class="docutils literal notranslate"><span class="pre">time</span></code>. <code class="docutils literal notranslate"><span class="pre">outputs_of</span></code> accepts the same argument.</p>
+<p>An as-of input creates no windows; other inputs determine when to calculate.
+A correction repairs the windows that read the value, up to its next reading or
+maximum age. All selections of one input must use the same age. Changing it
+recalculates history.</p>
+</section>
+</section>
+</section>
+
+    <script type="text/x-thebe-config">
+    {
+        requestKernel: true,
+        binderOptions: {
+            repo: "binder-examples/jupyter-stacks-datascience",
+            ref: "master",
+        },
+        codeMirrorConfig: {
+            theme: "abcdef",
+            mode: "python"
+        },
+        kernelOptions: {
+            name: "python3",
+            path: "./reference/apps"
+        },
+        predefinedOutput: true
+    }
+    </script>
+    <script>kernelName = 'python3'</script>
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="_index.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Apps</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="inputs.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">App inputs</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#windows">Windows</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#built-in-functions">Built-in functions</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#totals-and-integrals">Totals and integrals</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#python-functions">Python functions</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#dataframe-type">Dataframe type</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#inputs-and-outputs">Inputs and outputs</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#batch-functions">Batch functions</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#sequential-functions">Sequential functions</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#as-of-inputs">As-of inputs</a></li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By NAWI Project Team
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2023.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>

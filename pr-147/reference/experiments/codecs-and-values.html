@@ -1,0 +1,1046 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Codecs and values &#8212; Acquirium Documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
+    <link rel="stylesheet" type="text/css" href="../../_static/togglebutton.css?v=9c3e77be" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/mystnb.11b39860a7a0cbfd473a3ad8a317855267ff0bd372690045ca344a6b62be495e.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-thebe.css?v=4fa983c6" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/custom.css?v=5b658e50" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=55c26ed414f5f8a31ebb"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb" />
+
+    <script src="../../_static/documentation_options.js?v=9eb32ce0"></script>
+    <script src="../../_static/doctools.js?v=9a2dae69"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../_static/togglebutton.js?v=b8b12719"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>const THEBE_JS_URL = "https://unpkg.com/thebe@0.8.2/lib/index.js"; const thebe_selector = ".thebe,.cell"; const thebe_selector_input = "pre"; const thebe_selector_output = ".output, .cell_output"</script>
+    <script async="async" src="../../_static/sphinx-thebe.js?v=c100c467"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>const THEBE_JS_URL = "https://unpkg.com/thebe@0.8.2/lib/index.js"; const thebe_selector = ".thebe,.cell"; const thebe_selector_input = "pre"; const thebe_selector_output = ".output, .cell_output"</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'reference/experiments/codecs-and-values';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="icon" href="../../_static/logo-notext.png"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Server" href="../server/_index.html" />
+    <link rel="prev" title="Model adapters" href="model-adapters.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search this book..."
+         aria-label="Search this book..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../_index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/logo.png" class="logo__image only-light" alt="Acquirium Documentation - Home"/>
+    <img src="../../_static/logo.png" class="logo__image only-dark pst-js-only" alt="Acquirium Documentation - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        
+        <ul class="nav bd-sidenav bd-sidenav__home-link">
+            <li class="toctree-l1">
+                <a class="reference internal" href="../../_index.html">
+                    Acquirium documentation
+                </a>
+            </li>
+        </ul>
+        <ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../getting-started.html">Getting started</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../tutorials/_index.html">Tutorials</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/fundamentals.html">0 - Fundamentals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/inserting-data.html">1 - Inserting Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/querying-data.html">2 - Querying Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/inserting-metadata.html">3 - Inserting Metadata</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/inserting-plant-model.html">4 - Inserting a Plant Model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/a-full-example.html">5 - A Full Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/acquirium-at-a-glance.html">Acquirium at a glance</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/turbidity.html">Turbidity alarm pipeline</a></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../tutorials/advanced/_index.html">Advanced topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/writing-a-driver.html">Writing a driver</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/first-app.html">Declaring and deploying apps</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/experiments.html">Running experiments</a></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../how-to/_index.html">How-to guides</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/explore-a-model.html">Explore a plant model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/debug-an-empty-query.html">Debug an empty or unexpected query result</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/query-cookbook.html">Query cookbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/access-a-shared-server.html">Access data on a shared server</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/write-soft-sensors.html">Soft sensor calculations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/chain-cleaning-apps.html">Data cleaning with multiple apps</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/clean-data-with-multiple-outputs.html">Data cleaning with multiple outputs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/parameterize-soft-sensors.html">Soft sensor parameters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/soft-sensor-examples.html">Soft sensor examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/consume-streaming-changes.html">Streaming change feed</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/check-deploy-apps.html">App deployment and recovery</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/record-a-whole-model.html">Record a whole model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/record-experiments.html">Record experiments</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/compare-experiment-runs.html">Compare experiment runs</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="../_index.html">Reference</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2 has-children"><a class="reference internal" href="../client/_index.html">Client</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../client/starting.html">Starting and stopping</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/streams.html">Streams</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/timeseries.html">Time series</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/graph.html">Graph</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/metadata.html">Metadata</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/querying.html">Querying</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/logs.html">Logs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/apps.html">Apps and engine status</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../query/_index.html">Query</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../query/building.html">Building a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/filtering.html">Filtering</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/columns.html">Columns</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/facets.html">Options and facets</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/reading.html">Reading results</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/data-object.html">DataObject: values</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/data-object-info.html">DataObject: streams and statistics</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/inspecting.html">Inspecting a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/writing.html">Writing from a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/traversal.html">Traversal settings</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../drivers/_index.html">Drivers</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/base-classes.html">Base classes</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/hooks.html">Hooks</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/helpers.html">Helpers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/state.html">Persistent state</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/configuration.html">Configuration</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/built-in-drivers.html">Built-in drivers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/tabular-helpers.html">Tabular helpers</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../apps/_index.html">Apps</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../apps/app-class.html">App declarations, windows, and functions</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../apps/inputs.html">App inputs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../apps/outputs.html">App outputs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../apps/deploying.html">Deploying apps</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../apps/cli.html">App commands</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2"><a class="reference internal" href="../actors.html">Actors</a></li>
+<li class="toctree-l2 current active has-children"><a class="reference internal" href="_index.html">Experiments</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l3"><a class="reference internal" href="studies-and-runs.html">Studies and runs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="declaring-variables.html">Declaring variables</a></li>
+<li class="toctree-l3"><a class="reference internal" href="recording.html">Recording values</a></li>
+<li class="toctree-l3"><a class="reference internal" href="annotations.html">Stream annotations</a></li>
+<li class="toctree-l3"><a class="reference internal" href="selecting-runs.html">Selecting and comparing runs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="reading.html">Reading recorded data</a></li>
+<li class="toctree-l3"><a class="reference internal" href="model-adapters.html">Model adapters</a></li>
+<li class="toctree-l3 current active"><a class="current reference internal" href="#">Codecs and values</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../server/_index.html">Server</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../server/cli.html">Command line</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../server/configuration.html">Server configuration</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../server/http-api.html">HTTP API</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../server/storage-migrations.html">Storage upgrades and recovery</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2"><a class="reference internal" href="../glossary.html">Glossary</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../explanation/_index.html">Explanation</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/query-model.html">The query model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/values.html">Values</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/units.html">Units</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/drivers.html">Drivers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/apps.html">Derived stream updates</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/soft-sensor-actors.html">Soft sensor actors</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/stream-lifecycle.html">The stream lifecycle</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/experiments.html">How experiments work</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/text-resolution.html">Text matcher</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/escapement-core.html">Escapement core</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/soft-sensor-inputs.html">Soft sensor inputs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/server-internals.html">Server internals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/graph-backend.html">The graph store</a></li>
+</ul>
+</details></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-source-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Source repositories">
+    <i class="fab fa-github"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="https://github.com/DataDrivenCPS/acquirium" target="_blank"
+   class="btn btn-sm btn-source-repository-button dropdown-item"
+   title="Source repository"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+<span class="btn__text-container">Repository</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/DataDrivenCPS/acquirium/issues/new?title=Issue%20on%20page%20%2Freference/experiments/codecs-and-values.html&body=Your%20issue%20content%20here." target="_blank"
+   class="btn btn-sm btn-source-issues-button dropdown-item"
+   title="Open an issue"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-lightbulb"></i>
+  </span>
+<span class="btn__text-container">Open issue</span>
+</a>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+
+
+<div class="dropdown dropdown-download-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Download this page">
+    <i class="fas fa-download"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="../../_sources/reference/experiments/codecs-and-values.md" target="_blank"
+   class="btn btn-sm btn-download-source-button dropdown-item"
+   title="Download source file"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file"></i>
+  </span>
+<span class="btn__text-container">.md</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li>
+<button onclick="window.print()"
+  class="btn btn-sm btn-download-pdf-button dropdown-item"
+  title="Print to PDF"
+  data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file-pdf"></i>
+  </span>
+<span class="btn__text-container">.pdf</span>
+</button>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button pst-navbar-icon"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>Codecs and values</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#codec"><code class="docutils literal notranslate"><span class="pre">Codec</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#picklecodec"><code class="docutils literal notranslate"><span class="pre">PickleCodec</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#cloudpicklecodec"><code class="docutils literal notranslate"><span class="pre">CloudpickleCodec</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#jsoncodec"><code class="docutils literal notranslate"><span class="pre">JsonCodec</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#bytescodec"><code class="docutils literal notranslate"><span class="pre">BytesCodec</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#value-conversion">Value conversion</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#register-value-handler"><code class="docutils literal notranslate"><span class="pre">register_value_handler</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#timestamp"><code class="docutils literal notranslate"><span class="pre">timestamp</span></code></a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="codecs-and-values">
+<h1>Codecs and values<a class="headerlink" href="#codecs-and-values" title="Link to this heading">#</a></h1>
+<p>This page covers how Python values become stored data. Codecs save whole Python objects as bytes for <code class="docutils literal notranslate"><span class="pre">object</span></code> variables. Value handlers teach recording to convert your own types to JSON. <code class="docutils literal notranslate"><span class="pre">timestamp</span></code> normalizes times to UTC. All of these names are exported from <code class="docutils literal notranslate"><span class="pre">acquirium</span></code>.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Item</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><a class="reference internal" href="#codec"><code class="docutils literal notranslate"><span class="pre">Codec</span></code></a></p></td>
+<td><p>The interface a codec implements</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#picklecodec"><code class="docutils literal notranslate"><span class="pre">PickleCodec</span></code></a></p></td>
+<td><p>Save objects with Python’s pickle</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#cloudpicklecodec"><code class="docutils literal notranslate"><span class="pre">CloudpickleCodec</span></code></a></p></td>
+<td><p>Save objects with cloudpickle</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#jsoncodec"><code class="docutils literal notranslate"><span class="pre">JsonCodec</span></code></a></p></td>
+<td><p>Save a JSON document as a file</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#bytescodec"><code class="docutils literal notranslate"><span class="pre">BytesCodec</span></code></a></p></td>
+<td><p>Save bytes unchanged</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#value-conversion">Value conversion</a></p></td>
+<td><p>How recorded values and metadata become JSON</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="#register-value-handler"><code class="docutils literal notranslate"><span class="pre">register_value_handler</span></code></a></p></td>
+<td><p>Convert your own type to JSON when it is recorded</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="#timestamp"><code class="docutils literal notranslate"><span class="pre">timestamp</span></code></a></p></td>
+<td><p>Parse a time and convert it to UTC</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>A codec is used in two places. Declare an object variable with <a class="reference internal" href="declaring-variables.html#builder-object"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">builder.object(codec=...)</span></code></span></a>, and read the object back with <a class="reference internal" href="reading.html#observation-load"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">Observation.load</span></code></span></a>. The server stores the bytes and never decodes them. A codec runs only in the Python process that records or loads.</p>
+<section id="codec">
+<h2><code class="docutils literal notranslate"><span class="pre">Codec</span></code><a class="headerlink" href="#codec" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">Codec</span><span class="p">(</span><span class="n">Protocol</span><span class="p">):</span>
+    <span class="n">media_type</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">dumps</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span> <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">loads</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span> <span class="o">...</span>
+</pre></div>
+</div>
+<p>The interface of a codec. Any class with these members is a codec. It does not need to inherit from <code class="docutils literal notranslate"><span class="pre">Codec</span></code>.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Member</p></th>
+<th class="head"><p>Meaning</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">media_type</span></code></p></td>
+<td><p>A non-empty string with the content type of the bytes, such as <code class="docutils literal notranslate"><span class="pre">&quot;application/json&quot;</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">dumps(value)</span></code></p></td>
+<td><p>Return the object as <code class="docutils literal notranslate"><span class="pre">bytes</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">loads(data)</span></code></p></td>
+<td><p>Rebuild the object from <code class="docutils literal notranslate"><span class="pre">bytes</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">suffix</span></code> (optional)</p></td>
+<td><p>A string added to the variable label to form the stored filename, such as <code class="docutils literal notranslate"><span class="pre">&quot;.json&quot;</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Four rules apply to a codec class:</p>
+<ul class="simple">
+<li><p>Pass the class, not an instance. The declaration saves the import path of the class.</p></li>
+<li><p>Define the class at the top level of a module, so that <code class="docutils literal notranslate"><span class="pre">load()</span></code> can import it. A class defined inside a function is rejected.</p></li>
+<li><p>The class is built with no arguments. To configure a codec, write a subclass.</p></li>
+<li><p>Keep the class in a module that other scripts can import. A class defined in the script you run is saved as <code class="docutils literal notranslate"><span class="pre">__main__:ClassName</span></code>, which another script cannot import.</p></li>
+</ul>
+<p>Where the declared codec cannot be imported, pass a codec to <code class="docutils literal notranslate"><span class="pre">load(codec=...)</span></code>.</p>
+<p><strong>Example</strong></p>
+<p>A codec that saves a model through a specification the model can be rebuilt from:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">acquirium</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Tank</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">speed</span><span class="o">=</span><span class="mf">45.0</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">speed</span> <span class="o">=</span> <span class="n">speed</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TankCodec</span><span class="p">:</span>
+    <span class="n">media_type</span> <span class="o">=</span> <span class="s2">"application/json"</span>
+    <span class="n">suffix</span> <span class="o">=</span> <span class="s2">".json"</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">dumps</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tank</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span><span class="s2">"speed"</span><span class="p">:</span> <span class="n">tank</span><span class="o">.</span><span class="n">speed</span><span class="p">})</span><span class="o">.</span><span class="n">encode</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">loads</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">Tank</span><span class="p">(</span><span class="o">**</span><span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">data</span><span class="p">))</span>
+
+<span class="n">acq</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">init</span><span class="p">()</span>
+<span class="n">study</span> <span class="o">=</span> <span class="n">acq</span><span class="o">.</span><span class="n">study</span><span class="o">.</span><span class="n">define</span><span class="p">(</span><span class="s2">"tank"</span><span class="p">)</span>
+<span class="n">spec</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="s2">"spec"</span><span class="p">)</span><span class="o">.</span><span class="n">object</span><span class="p">(</span><span class="n">codec</span><span class="o">=</span><span class="n">TankCodec</span><span class="p">)</span>
+
+<span class="n">run</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+<span class="n">spec</span><span class="o">.</span><span class="n">record</span><span class="p">(</span><span class="n">Tank</span><span class="p">(</span><span class="n">speed</span><span class="o">=</span><span class="mf">45.0</span><span class="p">))</span>
+<span class="n">run</span><span class="o">.</span><span class="n">finish</span><span class="p">()</span>
+
+<span class="n">restored</span> <span class="o">=</span> <span class="n">run</span><span class="o">.</span><span class="n">observations</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span><span class="o">.</span><span class="n">latest</span><span class="p">()</span><span class="o">.</span><span class="n">load</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">restored</span><span class="o">.</span><span class="n">speed</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>45.0
+</pre></div>
+</div>
+</section>
+<section id="picklecodec">
+<h2><code class="docutils literal notranslate"><span class="pre">PickleCodec</span></code><a class="headerlink" href="#picklecodec" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">aq</span><span class="o">.</span><span class="n">PickleCodec</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>Saves any picklable object with Python’s <code class="docutils literal notranslate"><span class="pre">pickle</span></code>, at the highest protocol. Its <code class="docutils literal notranslate"><span class="pre">media_type</span></code> is <code class="docutils literal notranslate"><span class="pre">&quot;application/x-python-pickle&quot;</span></code> and its <code class="docutils literal notranslate"><span class="pre">suffix</span></code> is <code class="docutils literal notranslate"><span class="pre">&quot;.pkl&quot;</span></code>.</p>
+<p>Note that loading a pickle runs code named in its bytes. Load pickles only from people you trust. A pickle also loads only where the classes it names can still be imported, usually with the same library versions that wrote it.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Method</p></th>
+<th class="head"><p>Behaviour</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">dumps(value)</span></code></p></td>
+<td><p>Returns <code class="docutils literal notranslate"><span class="pre">pickle.dumps(value)</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">loads(data)</span></code></p></td>
+<td><p>Returns <code class="docutils literal notranslate"><span class="pre">pickle.loads(data)</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">model</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="s2">"model"</span><span class="p">)</span><span class="o">.</span><span class="n">object</span><span class="p">(</span><span class="n">codec</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">PickleCodec</span><span class="p">)</span>
+
+<span class="n">run</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">record</span><span class="p">({</span><span class="s2">"weights"</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]}))</span>
+<span class="n">run</span><span class="o">.</span><span class="n">finish</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">run</span><span class="o">.</span><span class="n">observations</span><span class="p">(</span><span class="n">model</span><span class="p">)</span><span class="o">.</span><span class="n">latest</span><span class="p">()</span><span class="o">.</span><span class="n">load</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>{'digest': 'b2327a1a3eafcb64769f0401dc13c846c1eb769fbde8640484e4d76f9f29d3a7', 'filename': 'model.pkl', 'byte_length': 35}
+{'weights': [1, 2, 3]}
+</pre></div>
+</div>
+</section>
+<section id="cloudpicklecodec">
+<h2><code class="docutils literal notranslate"><span class="pre">CloudpickleCodec</span></code><a class="headerlink" href="#cloudpicklecodec" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">aq</span><span class="o">.</span><span class="n">CloudpickleCodec</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>Saves objects with <code class="docutils literal notranslate"><span class="pre">cloudpickle</span></code>. It also saves lambdas and classes defined in a notebook, which <code class="docutils literal notranslate"><span class="pre">pickle</span></code> cannot. It is a subclass of <a class="reference internal" href="#picklecodec"><code class="docutils literal notranslate"><span class="pre">PickleCodec</span></code></a> with the same <code class="docutils literal notranslate"><span class="pre">media_type</span></code> and <code class="docutils literal notranslate"><span class="pre">suffix</span></code>, and the same trust and version limits.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Method</p></th>
+<th class="head"><p>Behaviour</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">dumps(value)</span></code></p></td>
+<td><p>Returns <code class="docutils literal notranslate"><span class="pre">cloudpickle.dumps(value)</span></code>. Raises <code class="docutils literal notranslate"><span class="pre">ImportError</span></code> when the <code class="docutils literal notranslate"><span class="pre">cloudpickle</span></code> package is not installed</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">loads(data)</span></code></p></td>
+<td><p>Returns <code class="docutils literal notranslate"><span class="pre">pickle.loads(data)</span></code>. Loading needs <code class="docutils literal notranslate"><span class="pre">cloudpickle</span></code> installed for anything <code class="docutils literal notranslate"><span class="pre">pickle</span></code> alone could not have saved</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">function</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="s2">"objective"</span><span class="p">)</span><span class="o">.</span><span class="n">object</span><span class="p">(</span><span class="n">codec</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">CloudpickleCodec</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="jsoncodec">
+<h2><code class="docutils literal notranslate"><span class="pre">JsonCodec</span></code><a class="headerlink" href="#jsoncodec" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">aq</span><span class="o">.</span><span class="n">JsonCodec</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>Saves a JSON document as a file. Its <code class="docutils literal notranslate"><span class="pre">media_type</span></code> is <code class="docutils literal notranslate"><span class="pre">&quot;application/json&quot;</span></code> and its <code class="docutils literal notranslate"><span class="pre">suffix</span></code> is <code class="docutils literal notranslate"><span class="pre">&quot;.json&quot;</span></code>. This is useful for a large document nobody filters on, such as a full model specification. A <code class="docutils literal notranslate"><span class="pre">json</span></code> variable keeps its value inside the observation instead, where <code class="docutils literal notranslate"><span class="pre">observation.value</span></code> and result tables show it.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Method</p></th>
+<th class="head"><p>Behaviour</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">dumps(value)</span></code></p></td>
+<td><p>Converts the value to JSON (see <a class="reference internal" href="#value-conversion">value conversion</a>) and returns compact UTF-8 bytes with sorted keys</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">loads(data)</span></code></p></td>
+<td><p>Returns <code class="docutils literal notranslate"><span class="pre">json.loads(data)</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">codec</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">JsonCodec</span><span class="p">()</span>
+<span class="n">data</span> <span class="o">=</span> <span class="n">codec</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span><span class="s2">"b"</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">"a"</span><span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)})</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">codec</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">data</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>b'{"a":[1,2],"b":1}'
+{'a': [1, 2], 'b': 1}
+</pre></div>
+</div>
+</section>
+<section id="bytescodec">
+<h2><code class="docutils literal notranslate"><span class="pre">BytesCodec</span></code><a class="headerlink" href="#bytescodec" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">aq</span><span class="o">.</span><span class="n">BytesCodec</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>Saves bytes exactly as given and loads them back as <code class="docutils literal notranslate"><span class="pre">bytes</span></code>. Its <code class="docutils literal notranslate"><span class="pre">media_type</span></code> is <code class="docutils literal notranslate"><span class="pre">&quot;application/octet-stream&quot;</span></code> and its <code class="docutils literal notranslate"><span class="pre">suffix</span></code> is empty. It is also useful with <code class="docutils literal notranslate"><span class="pre">load(codec=aq.BytesCodec)</span></code> to get the raw bytes of any file, table or object observation.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Method</p></th>
+<th class="head"><p>Behaviour</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">dumps(value)</span></code></p></td>
+<td><p>Returns <code class="docutils literal notranslate"><span class="pre">bytes(value)</span></code>. Raises <code class="docutils literal notranslate"><span class="pre">TypeError</span></code> when the value is not <code class="docutils literal notranslate"><span class="pre">bytes</span></code>, <code class="docutils literal notranslate"><span class="pre">bytearray</span></code> or <code class="docutils literal notranslate"><span class="pre">memoryview</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">loads(data)</span></code></p></td>
+<td><p>Returns <code class="docutils literal notranslate"><span class="pre">data</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">codec</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">BytesCodec</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">codec</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="nb">bytearray</span><span class="p">(</span><span class="sa">b</span><span class="s2">"ab"</span><span class="p">)))</span>
+<span class="n">codec</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="s2">"ab"</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>b'ab'
+TypeError: BytesCodec records bytes, not str
+</pre></div>
+</div>
+</section>
+<section id="value-conversion">
+<h2>Value conversion<a class="headerlink" href="#value-conversion" title="Link to this heading">#</a></h2>
+<p>Scalar, text, JSON and log values, and the metadata of runs, variables and annotations, are converted to JSON before they are sent. The same conversion applies to every one of them.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Python value</p></th>
+<th class="head"><p>Stored as</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">None</span></code>, <code class="docutils literal notranslate"><span class="pre">str</span></code>, <code class="docutils literal notranslate"><span class="pre">bool</span></code>, <code class="docutils literal notranslate"><span class="pre">int</span></code></p></td>
+<td><p>Unchanged</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">float</span></code></p></td>
+<td><p>Unchanged. NaN and infinity raise <code class="docutils literal notranslate"><span class="pre">ValueError</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">dict</span></code></p></td>
+<td><p>A JSON object. A key that is not a string raises <code class="docutils literal notranslate"><span class="pre">TypeError</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">list</span></code>, <code class="docutils literal notranslate"><span class="pre">tuple</span></code></p></td>
+<td><p>A JSON array</p></td>
+</tr>
+<tr class="row-even"><td><p>NumPy scalar</p></td>
+<td><p>A Python number</p></td>
+</tr>
+<tr class="row-odd"><td><p>NumPy array</p></td>
+<td><p>A JSON array</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">datetime</span></code></p></td>
+<td><p>An ISO 8601 string in UTC. A value without a timezone is read as UTC</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">date</span></code>, <code class="docutils literal notranslate"><span class="pre">time</span></code></p></td>
+<td><p>An ISO 8601 string</p></td>
+</tr>
+<tr class="row-even"><td><p>Any other type</p></td>
+<td><p>The result of its registered handler. Without a handler, <code class="docutils literal notranslate"><span class="pre">TypeError</span></code> is raised</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Note that the conversion goes one way. A recorded <code class="docutils literal notranslate"><span class="pre">datetime</span></code> or tuple is read back as a string or a list.</p>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">dt</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="n">settings</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="s2">"settings"</span><span class="p">)</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
+<span class="n">run</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+<span class="n">settings</span><span class="o">.</span><span class="n">record</span><span class="p">({</span><span class="s2">"gain"</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">(</span><span class="mf">1.5</span><span class="p">),</span> <span class="s2">"steps"</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]),</span> <span class="s2">"when"</span><span class="p">:</span> <span class="n">dt</span><span class="o">.</span><span class="n">datetime</span><span class="p">(</span><span class="mi">2026</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">)})</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">run</span><span class="o">.</span><span class="n">observations</span><span class="p">(</span><span class="n">settings</span><span class="p">)</span><span class="o">.</span><span class="n">latest</span><span class="p">()</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+<span class="n">run</span><span class="o">.</span><span class="n">finish</span><span class="p">()</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>{'gain': 1.5, 'steps': [1, 2], 'when': '2026-01-01T00:00:00+00:00'}
+</pre></div>
+</div>
+</section>
+<section id="register-value-handler">
+<h2><code class="docutils literal notranslate"><span class="pre">register_value_handler</span></code><a class="headerlink" href="#register-value-handler" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">aq</span><span class="o">.</span><span class="n">register_value_handler</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">handler</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Registers a function that converts instances of <code class="docutils literal notranslate"><span class="pre">cls</span></code> to JSON when they are recorded. The handler also applies to subclasses of <code class="docutils literal notranslate"><span class="pre">cls</span></code>. Registering a class again replaces its handler. The registration lasts for the current Python process.</p>
+<p><strong>Parameters</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">cls</span></code> (<code class="docutils literal notranslate"><span class="pre">type</span></code>): the class to convert.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">handler</span></code> (callable): a function that takes one instance and returns a JSON value. The result is converted again, so it may contain NumPy values, dates or other handled types.</p></li>
+</ul>
+<p><strong>Returns</strong></p>
+<p><code class="docutils literal notranslate"><span class="pre">None</span></code>.</p>
+<p><strong>Raises</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">TypeError</span></code>: when <code class="docutils literal notranslate"><span class="pre">cls</span></code> is not a class.</p></li>
+</ul>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">Money</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">amount</span><span class="p">,</span> <span class="n">currency</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">amount</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">currency</span> <span class="o">=</span> <span class="n">amount</span><span class="p">,</span> <span class="n">currency</span>
+
+<span class="n">aq</span><span class="o">.</span><span class="n">register_value_handler</span><span class="p">(</span><span class="n">Money</span><span class="p">,</span> <span class="k">lambda</span> <span class="n">value</span><span class="p">:</span> <span class="p">{</span><span class="s2">"amount"</span><span class="p">:</span> <span class="n">value</span><span class="o">.</span><span class="n">amount</span><span class="p">,</span> <span class="s2">"currency"</span><span class="p">:</span> <span class="n">value</span><span class="o">.</span><span class="n">currency</span><span class="p">})</span>
+
+<span class="n">price</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">output</span><span class="p">(</span><span class="s2">"price"</span><span class="p">)</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
+<span class="n">run</span> <span class="o">=</span> <span class="n">study</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+<span class="n">price</span><span class="o">.</span><span class="n">record</span><span class="p">(</span><span class="n">Money</span><span class="p">(</span><span class="mi">5</span><span class="p">,</span> <span class="s2">"USD"</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">run</span><span class="o">.</span><span class="n">observations</span><span class="p">(</span><span class="n">price</span><span class="p">)</span><span class="o">.</span><span class="n">latest</span><span class="p">()</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+<span class="n">run</span><span class="o">.</span><span class="n">finish</span><span class="p">()</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>{'amount': 5, 'currency': 'USD'}
+</pre></div>
+</div>
+<p>Without the handler, the same <code class="docutils literal notranslate"><span class="pre">record()</span></code> call raises:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>TypeError: value is a Money, which cannot be recorded as JSON; convert it first or register a handler with acquirium.register_value_handler()
+</pre></div>
+</div>
+</section>
+<section id="timestamp">
+<h2><code class="docutils literal notranslate"><span class="pre">timestamp</span></code><a class="headerlink" href="#timestamp" title="Link to this heading">#</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">aq</span><span class="o">.</span><span class="n">timestamp</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Parses a time and returns it in UTC. The experiment methods use it for every time argument, such as <code class="docutils literal notranslate"><span class="pre">occurred_at</span></code>, <code class="docutils literal notranslate"><span class="pre">start</span></code>, <code class="docutils literal notranslate"><span class="pre">end</span></code> and <code class="docutils literal notranslate"><span class="pre">at</span></code>.</p>
+<p><strong>Parameters</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">value</span></code> (<code class="docutils literal notranslate"><span class="pre">datetime</span> <span class="pre">|</span> <span class="pre">str</span></code>): a <code class="docutils literal notranslate"><span class="pre">datetime</span></code>, or an ISO 8601 string such as <code class="docutils literal notranslate"><span class="pre">&quot;2026-01-01T12:00:00+02:00&quot;</span></code>. A value without a timezone is read as UTC.</p></li>
+</ul>
+<p><strong>Returns</strong></p>
+<p>A timezone-aware <code class="docutils literal notranslate"><span class="pre">datetime</span></code> in UTC.</p>
+<p><strong>Raises</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">ValueError</span></code>: when a string is not ISO 8601.</p></li>
+</ul>
+<p><strong>Example</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">aq</span><span class="o">.</span><span class="n">timestamp</span><span class="p">(</span><span class="s2">"2026-01-01T12:00:00"</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">aq</span><span class="o">.</span><span class="n">timestamp</span><span class="p">(</span><span class="s2">"2026-01-01T12:00:00+02:00"</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>2026-01-01 12:00:00+00:00
+2026-01-01 10:00:00+00:00
+</pre></div>
+</div>
+</section>
+</section>
+
+    <script type="text/x-thebe-config">
+    {
+        requestKernel: true,
+        binderOptions: {
+            repo: "binder-examples/jupyter-stacks-datascience",
+            ref: "master",
+        },
+        codeMirrorConfig: {
+            theme: "abcdef",
+            mode: "python"
+        },
+        kernelOptions: {
+            name: "python3",
+            path: "./reference/experiments"
+        },
+        predefinedOutput: true
+    }
+    </script>
+    <script>kernelName = 'python3'</script>
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="model-adapters.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Model adapters</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="../server/_index.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Server</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#codec"><code class="docutils literal notranslate"><span class="pre">Codec</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#picklecodec"><code class="docutils literal notranslate"><span class="pre">PickleCodec</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#cloudpicklecodec"><code class="docutils literal notranslate"><span class="pre">CloudpickleCodec</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#jsoncodec"><code class="docutils literal notranslate"><span class="pre">JsonCodec</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#bytescodec"><code class="docutils literal notranslate"><span class="pre">BytesCodec</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#value-conversion">Value conversion</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#register-value-handler"><code class="docutils literal notranslate"><span class="pre">register_value_handler</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#timestamp"><code class="docutils literal notranslate"><span class="pre">timestamp</span></code></a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By NAWI Project Team
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2023.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>

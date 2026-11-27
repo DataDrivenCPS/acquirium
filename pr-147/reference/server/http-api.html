@@ -1,0 +1,1501 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>HTTP API &#8212; Acquirium Documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
+    <link rel="stylesheet" type="text/css" href="../../_static/togglebutton.css?v=9c3e77be" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/mystnb.11b39860a7a0cbfd473a3ad8a317855267ff0bd372690045ca344a6b62be495e.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-thebe.css?v=4fa983c6" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/custom.css?v=5b658e50" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=55c26ed414f5f8a31ebb"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb" />
+
+    <script src="../../_static/documentation_options.js?v=9eb32ce0"></script>
+    <script src="../../_static/doctools.js?v=9a2dae69"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../_static/togglebutton.js?v=b8b12719"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>const THEBE_JS_URL = "https://unpkg.com/thebe@0.8.2/lib/index.js"; const thebe_selector = ".thebe,.cell"; const thebe_selector_input = "pre"; const thebe_selector_output = ".output, .cell_output"</script>
+    <script async="async" src="../../_static/sphinx-thebe.js?v=c100c467"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>const THEBE_JS_URL = "https://unpkg.com/thebe@0.8.2/lib/index.js"; const thebe_selector = ".thebe,.cell"; const thebe_selector_input = "pre"; const thebe_selector_output = ".output, .cell_output"</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'reference/server/http-api';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="icon" href="../../_static/logo-notext.png"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Storage upgrades and recovery" href="storage-migrations.html" />
+    <link rel="prev" title="Server configuration" href="configuration.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search this book..."
+         aria-label="Search this book..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../_index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/logo.png" class="logo__image only-light" alt="Acquirium Documentation - Home"/>
+    <img src="../../_static/logo.png" class="logo__image only-dark pst-js-only" alt="Acquirium Documentation - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        
+        <ul class="nav bd-sidenav bd-sidenav__home-link">
+            <li class="toctree-l1">
+                <a class="reference internal" href="../../_index.html">
+                    Acquirium documentation
+                </a>
+            </li>
+        </ul>
+        <ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../getting-started.html">Getting started</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../tutorials/_index.html">Tutorials</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/fundamentals.html">0 - Fundamentals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/inserting-data.html">1 - Inserting Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/querying-data.html">2 - Querying Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/inserting-metadata.html">3 - Inserting Metadata</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/inserting-plant-model.html">4 - Inserting a Plant Model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/a-full-example.html">5 - A Full Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/acquirium-at-a-glance.html">Acquirium at a glance</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/turbidity.html">Turbidity alarm pipeline</a></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../tutorials/advanced/_index.html">Advanced topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/writing-a-driver.html">Writing a driver</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/first-app.html">Declaring and deploying apps</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/experiments.html">Running experiments</a></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../how-to/_index.html">How-to guides</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/explore-a-model.html">Explore a plant model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/debug-an-empty-query.html">Debug an empty or unexpected query result</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/query-cookbook.html">Query cookbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/access-a-shared-server.html">Access data on a shared server</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/write-soft-sensors.html">Soft sensor calculations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/chain-cleaning-apps.html">Data cleaning with multiple apps</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/clean-data-with-multiple-outputs.html">Data cleaning with multiple outputs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/parameterize-soft-sensors.html">Soft sensor parameters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/soft-sensor-examples.html">Soft sensor examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/consume-streaming-changes.html">Streaming change feed</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/check-deploy-apps.html">App deployment and recovery</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/record-a-whole-model.html">Record a whole model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/record-experiments.html">Record experiments</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/compare-experiment-runs.html">Compare experiment runs</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="../_index.html">Reference</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2 has-children"><a class="reference internal" href="../client/_index.html">Client</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../client/starting.html">Starting and stopping</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/streams.html">Streams</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/timeseries.html">Time series</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/graph.html">Graph</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/metadata.html">Metadata</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/querying.html">Querying</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/logs.html">Logs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/apps.html">Apps and engine status</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../query/_index.html">Query</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../query/building.html">Building a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/filtering.html">Filtering</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/columns.html">Columns</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/facets.html">Options and facets</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/reading.html">Reading results</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/data-object.html">DataObject: values</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/data-object-info.html">DataObject: streams and statistics</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/inspecting.html">Inspecting a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/writing.html">Writing from a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/traversal.html">Traversal settings</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../drivers/_index.html">Drivers</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/base-classes.html">Base classes</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/hooks.html">Hooks</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/helpers.html">Helpers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/state.html">Persistent state</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/configuration.html">Configuration</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/built-in-drivers.html">Built-in drivers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/tabular-helpers.html">Tabular helpers</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../apps/_index.html">Apps</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../apps/app-class.html">App declarations, windows, and functions</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../apps/inputs.html">App inputs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../apps/outputs.html">App outputs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../apps/deploying.html">Deploying apps</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../apps/cli.html">App commands</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2"><a class="reference internal" href="../actors.html">Actors</a></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../experiments/_index.html">Experiments</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/studies-and-runs.html">Studies and runs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/declaring-variables.html">Declaring variables</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/recording.html">Recording values</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/annotations.html">Stream annotations</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/selecting-runs.html">Selecting and comparing runs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/reading.html">Reading recorded data</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/model-adapters.html">Model adapters</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/codecs-and-values.html">Codecs and values</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 current active has-children"><a class="reference internal" href="_index.html">Server</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l3"><a class="reference internal" href="cli.html">Command line</a></li>
+<li class="toctree-l3"><a class="reference internal" href="configuration.html">Server configuration</a></li>
+<li class="toctree-l3 current active"><a class="current reference internal" href="#">HTTP API</a></li>
+<li class="toctree-l3"><a class="reference internal" href="storage-migrations.html">Storage upgrades and recovery</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2"><a class="reference internal" href="../glossary.html">Glossary</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../explanation/_index.html">Explanation</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/query-model.html">The query model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/values.html">Values</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/units.html">Units</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/drivers.html">Drivers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/apps.html">Derived stream updates</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/soft-sensor-actors.html">Soft sensor actors</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/stream-lifecycle.html">The stream lifecycle</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/experiments.html">How experiments work</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/text-resolution.html">Text matcher</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/escapement-core.html">Escapement core</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/soft-sensor-inputs.html">Soft sensor inputs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/server-internals.html">Server internals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/graph-backend.html">The graph store</a></li>
+</ul>
+</details></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-source-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Source repositories">
+    <i class="fab fa-github"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="https://github.com/DataDrivenCPS/acquirium" target="_blank"
+   class="btn btn-sm btn-source-repository-button dropdown-item"
+   title="Source repository"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+<span class="btn__text-container">Repository</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/DataDrivenCPS/acquirium/issues/new?title=Issue%20on%20page%20%2Freference/server/http-api.html&body=Your%20issue%20content%20here." target="_blank"
+   class="btn btn-sm btn-source-issues-button dropdown-item"
+   title="Open an issue"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-lightbulb"></i>
+  </span>
+<span class="btn__text-container">Open issue</span>
+</a>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+
+
+<div class="dropdown dropdown-download-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Download this page">
+    <i class="fas fa-download"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="../../_sources/reference/server/http-api.md" target="_blank"
+   class="btn btn-sm btn-download-source-button dropdown-item"
+   title="Download source file"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file"></i>
+  </span>
+<span class="btn__text-container">.md</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li>
+<button onclick="window.print()"
+  class="btn btn-sm btn-download-pdf-button dropdown-item"
+  title="Print to PDF"
+  data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file-pdf"></i>
+  </span>
+<span class="btn__text-container">.pdf</span>
+</button>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button pst-navbar-icon"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>HTTP API</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#system">System</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#get-health"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/health</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#get-graph-version"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/graph_version</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#get-embedding-status"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/embedding_status</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#knowledge-graph">Knowledge graph</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#post-insert-graph"><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/insert_graph</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#get-export-graph"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/export_graph</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#post-validate-graph"><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/validate_graph</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#get-namespace-list"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/namespace/list</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#sparql">SPARQL</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#get-sparql"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/sparql</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#get-sparql-json"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/sparql_json</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#post-sparql-update"><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/sparql_update</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#readings-and-epoch-engine">Readings and epoch engine</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#semantic-resolution">Semantic resolution</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#get-resolve-text"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/resolve_text</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#post-resolve-record"><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/resolve_record</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#unit-conversion">Unit conversion</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#post-resolve-unit"><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/resolve_unit</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#post-resolve-conversion"><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/resolve_conversion</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#post-conversion-factors"><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/conversion_factors</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#logs">Logs</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#post-insert-log"><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/insert_log</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#get-query-logs"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/query_logs</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#delete-delete-logs"><code class="docutils literal notranslate"><span class="pre">DELETE</span> <span class="pre">/delete_logs</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#drivers">Drivers</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#post-drivers-start"><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/drivers/start</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#post-drivers-stop"><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/drivers/stop</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#get-drivers-list"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/drivers/list</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experiments">Experiments</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#apps">Apps</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#complete-metadata-documents">Complete metadata documents</a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="http-api">
+<h1>HTTP API<a class="headerlink" href="#http-api" title="Link to this heading">#</a></h1>
+<p>This is a reference for the HTTP endpoints the acquirium server exposes
+(default <code class="docutils literal notranslate"><span class="pre">http://127.0.0.1:8000</span></code>).
+The Python client covers all of these; use the raw endpoints when scripting
+against the server directly.</p>
+<p>Timestamps are ISO 8601 strings (e.g. <code class="docutils literal notranslate"><span class="pre">2026-01-01T00:00:00Z</span></code>). Errors return
+HTTP 400 with a JSON body <code class="docutils literal notranslate"><span class="pre">{&quot;detail&quot;:</span> <span class="pre">&quot;&lt;message&gt;&quot;}</span></code>. Unknown drivers, apps,
+and experiment runs return 404.</p>
+<p>The server does not check who sends a request. To require an access token,
+place a reverse proxy in front of it. The Python client sends its <code class="docutils literal notranslate"><span class="pre">token</span></code> as
+the header <code class="docutils literal notranslate"><span class="pre">Authorization:</span> <span class="pre">Bearer</span> <span class="pre">&lt;token&gt;</span></code>.</p>
+<hr class="docutils" />
+<section id="system">
+<h2>System<a class="headerlink" href="#system" title="Link to this heading">#</a></h2>
+<section id="get-health">
+<h3><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/health</span></code><a class="headerlink" href="#get-health" title="Link to this heading">#</a></h3>
+<p>Returns <code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:</span> <span class="pre">true}</span></code> when the server is running.</p>
+<p>Note that the drivers and apps of the config file are started after this endpoint answers, so they may still be starting. <a class="reference internal" href="#get-drivers-list"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/drivers/list</span></code></a> lists the drivers and <a class="reference internal" href="#get-materializationdag"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/materialization/dag</span></code></span></a> shows the state of the apps.</p>
+</section>
+<section id="get-graph-version">
+<h3><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/graph_version</span></code><a class="headerlink" href="#get-graph-version" title="Link to this heading">#</a></h3>
+<p>Returns the store-owned source-data generation and the state of the derived
+query cache.
+The cache is fresh when <code class="docutils literal notranslate"><span class="pre">published_version</span></code> equals <code class="docutils literal notranslate"><span class="pre">source_version</span></code> and
+<code class="docutils literal notranslate"><span class="pre">is_current</span></code> is true.</p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+<span class="w">  </span><span class="nt">"source_version"</span><span class="p">:</span><span class="w"> </span><span class="mi">42</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"published_version"</span><span class="p">:</span><span class="w"> </span><span class="mi">41</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"is_current"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"rebuild_in_progress"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Long-running clients can poll <code class="docutils literal notranslate"><span class="pre">source_version</span></code> to invalidate local query
+state.
+Note that this endpoint is informational; a query that must see the current
+inferred data should pass <code class="docutils literal notranslate"><span class="pre">wait_for_fresh=true</span></code> itself.</p>
+</section>
+<section id="get-embedding-status">
+<h3><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/embedding_status</span></code><a class="headerlink" href="#get-embedding-status" title="Link to this heading">#</a></h3>
+<p>Returns the current state of the semantic embedding indexes.</p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+<span class="w">  </span><span class="nt">"semantic"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"graph"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"state"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ready"</span><span class="p">,</span><span class="w"> </span><span class="nt">"concepts"</span><span class="p">:</span><span class="w"> </span><span class="mi">120</span><span class="p">,</span><span class="w"> </span><span class="nt">"surfaces"</span><span class="p">:</span><span class="w"> </span><span class="mi">340</span><span class="p">,</span><span class="w"> </span><span class="nt">"error"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"last_built"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">,</span><span class="w"> </span><span class="nt">"duration_s"</span><span class="p">:</span><span class="w"> </span><span class="mf">1.2</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">"qudt"</span><span class="p">:</span><span class="w">  </span><span class="p">{</span><span class="nt">"state"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ready"</span><span class="p">,</span><span class="w"> </span><span class="nt">"concepts"</span><span class="p">:</span><span class="w"> </span><span class="mi">80</span><span class="p">,</span><span class="w">  </span><span class="nt">"surfaces"</span><span class="p">:</span><span class="w"> </span><span class="mi">210</span><span class="p">,</span><span class="w"> </span><span class="nt">"error"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"last_built"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">,</span><span class="w"> </span><span class="nt">"duration_s"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.8</span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">state</span></code> is one of <code class="docutils literal notranslate"><span class="pre">&quot;idle&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;building&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;ready&quot;</span></code>, or <code class="docutils literal notranslate"><span class="pre">&quot;error&quot;</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">semantic</span></code> is <code class="docutils literal notranslate"><span class="pre">false</span></code> when the server runs with
+<a class="reference internal" href="configuration.html#exact-only-matching"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">exact_only</span></code></span></a>: both indexes still
+build and report <code class="docutils literal notranslate"><span class="pre">&quot;ready&quot;</span></code>, but they answer exact matches only.</p>
+</section>
+</section>
+<hr class="docutils" />
+<section id="knowledge-graph">
+<h2>Knowledge graph<a class="headerlink" href="#knowledge-graph" title="Link to this heading">#</a></h2>
+<section id="post-insert-graph">
+<h3><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/insert_graph</span></code><a class="headerlink" href="#post-insert-graph" title="Link to this heading">#</a></h3>
+<p>Insert or replace an RDF graph.</p>
+<p><strong>Request body</strong></p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+<span class="w">  </span><span class="nt">"rdf_graph"</span><span class="p">:</span><span class="w"> </span><span class="s2">"&lt;file path or RDF text&gt;"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"format"</span><span class="p">:</span><span class="w"> </span><span class="s2">"turtle"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"replace"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"source_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"plant"</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">format</span></code> accepts <code class="docutils literal notranslate"><span class="pre">turtle</span></code>, <code class="docutils literal notranslate"><span class="pre">n3</span></code>, <code class="docutils literal notranslate"><span class="pre">xml</span></code>, <code class="docutils literal notranslate"><span class="pre">trig</span></code>, <code class="docutils literal notranslate"><span class="pre">nquads</span></code>. <code class="docutils literal notranslate"><span class="pre">source_id</span></code> is required: use the reserved <code class="docutils literal notranslate"><span class="pre">plant</span></code> source for the shared plant model, otherwise use the owning driver or app source ID. <code class="docutils literal notranslate"><span class="pre">replace:</span> <span class="pre">true</span></code> replaces only that owner’s graph.</p>
+<p><strong>Response</strong> <code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:</span> <span class="pre">true,</span> <span class="pre">&quot;embedding_ready&quot;:</span> <span class="pre">true}</span></code></p>
+</section>
+<section id="get-export-graph">
+<h3><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/export_graph</span></code><a class="headerlink" href="#get-export-graph" title="Link to this heading">#</a></h3>
+<p>Export the RDF graph as serialized RDF.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">include_dependencies</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>Include all registered deployment/source graphs plus imported ontology/shape dependencies. <code class="docutils literal notranslate"><span class="pre">false</span></code> returns all deployment/source graphs without those dependencies.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">format</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">turtle</span></code></p></td>
+<td><p>Serialization format (<code class="docutils literal notranslate"><span class="pre">turtle</span></code>, <code class="docutils literal notranslate"><span class="pre">n3</span></code>, <code class="docutils literal notranslate"><span class="pre">xml</span></code>, <code class="docutils literal notranslate"><span class="pre">trig</span></code>, <code class="docutils literal notranslate"><span class="pre">nquads</span></code>)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Returns the RDF document with the appropriate content type (e.g. <code class="docutils literal notranslate"><span class="pre">text/turtle</span></code>).</p>
+</section>
+<section id="post-validate-graph">
+<h3><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/validate_graph</span></code><a class="headerlink" href="#post-validate-graph" title="Link to this heading">#</a></h3>
+<p>Validate all registered deployment data against the ontology shapes and SHACL rules. Takes no parameters.</p>
+<p><strong>Response</strong></p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+<span class="w">  </span><span class="nt">"conforms"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"report"</span><span class="p">:</span><span class="w"> </span><span class="s2">"@prefix sh: &lt;http://www.w3.org/ns/shacl#&gt; . ..."</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"results_text"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Validation Report\nConforms: False\nResults (364): ..."</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">report</span></code> is the SHACL validation report as Turtle; <code class="docutils literal notranslate"><span class="pre">results_text</span></code> is the same report rendered for reading. Validation runs against the source data and the shapes directly, so it does not wait for a derived-graph rebuild.</p>
+</section>
+<section id="get-namespace-list">
+<h3><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/namespace/list</span></code><a class="headerlink" href="#get-namespace-list" title="Link to this heading">#</a></h3>
+<p>Returns the server’s prefix bindings as a <code class="docutils literal notranslate"><span class="pre">{prefix:</span> <span class="pre">uri}</span></code> map: acquirium’s own
+prefixes (<code class="docutils literal notranslate"><span class="pre">acq</span></code>, <code class="docutils literal notranslate"><span class="pre">point</span></code>, <code class="docutils literal notranslate"><span class="pre">qudt</span></code>, <code class="docutils literal notranslate"><span class="pre">unit</span></code>, <code class="docutils literal notranslate"><span class="pre">quantitykind</span></code>, <code class="docutils literal notranslate"><span class="pre">s223</span></code>, <code class="docutils literal notranslate"><span class="pre">g36</span></code>, <code class="docutils literal notranslate"><span class="pre">watr</span></code>,
+<code class="docutils literal notranslate"><span class="pre">brick</span></code>, <code class="docutils literal notranslate"><span class="pre">ref</span></code>), the prefixes inserted models declared for their own
+vocabularies, and rdflib’s defaults. Generated names (<code class="docutils literal notranslate"><span class="pre">ns1</span></code>, <code class="docutils literal notranslate"><span class="pre">ns2</span></code>, …) are
+never bound, so a URI compacts to the same CURIE in every client and after a
+restart.</p>
+</section>
+</section>
+<hr class="docutils" />
+<section id="sparql">
+<h2>SPARQL<a class="headerlink" href="#sparql" title="Link to this heading">#</a></h2>
+<section id="get-sparql">
+<h3><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/sparql</span></code><a class="headerlink" href="#get-sparql" title="Link to this heading">#</a></h3>
+<p>Read-only <a class="reference external" href="https://www.w3.org/TR/sparql11-protocol/" rel="noreferer noopener" target="_blank">SPARQL 1.1 Protocol</a> endpoint. It accepts <code class="docutils literal notranslate"><span class="pre">SELECT</span></code>, <code class="docutils literal notranslate"><span class="pre">ASK</span></code>, <code class="docutils literal notranslate"><span class="pre">CONSTRUCT</span></code>, and <code class="docutils literal notranslate"><span class="pre">DESCRIBE</span></code> queries through the required <code class="docutils literal notranslate"><span class="pre">query</span></code> URL parameter. SPARQL Update and POST protocol forms are not implemented yet.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">query</span></code></p></td>
+<td><p>required</p></td>
+<td><p>SPARQL query string</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">include_dependencies</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>Query inferred deployment data plus resolved ontology/shape triples. <code class="docutils literal notranslate"><span class="pre">false</span></code> queries inferred deployment data without those triples.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">wait_for_fresh</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Wait for inference after graph writes. <code class="docutils literal notranslate"><span class="pre">false</span></code> uses the last complete published derived graph.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Use HTTP <code class="docutils literal notranslate"><span class="pre">Accept</span></code> to select a response serialization. The default is <code class="docutils literal notranslate"><span class="pre">application/sparql-results+json</span></code> for <code class="docutils literal notranslate"><span class="pre">SELECT</span></code>/<code class="docutils literal notranslate"><span class="pre">ASK</span></code> and <code class="docutils literal notranslate"><span class="pre">text/turtle</span></code> for <code class="docutils literal notranslate"><span class="pre">CONSTRUCT</span></code>/<code class="docutils literal notranslate"><span class="pre">DESCRIBE</span></code>.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Query form</p></th>
+<th class="head"><p>Supported response media types</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">SELECT</span></code>, <code class="docutils literal notranslate"><span class="pre">ASK</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">application/sparql-results+json</span></code>, <code class="docutils literal notranslate"><span class="pre">application/sparql-results+xml</span></code>, <code class="docutils literal notranslate"><span class="pre">text/csv</span></code>, <code class="docutils literal notranslate"><span class="pre">text/tab-separated-values</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">CONSTRUCT</span></code>, <code class="docutils literal notranslate"><span class="pre">DESCRIBE</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">text/turtle</span></code>, <code class="docutils literal notranslate"><span class="pre">application/n-triples</span></code>, <code class="docutils literal notranslate"><span class="pre">application/rdf+xml</span></code>, <code class="docutils literal notranslate"><span class="pre">application/ld+json</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>SELECT response (<code class="docutils literal notranslate"><span class="pre">application/sparql-results+json</span></code>)</strong></p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+<span class="w">  </span><span class="nt">"head"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"vars"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"s"</span><span class="p">,</span><span class="w"> </span><span class="s2">"p"</span><span class="p">,</span><span class="w"> </span><span class="s2">"o"</span><span class="p">]},</span>
+<span class="w">  </span><span class="nt">"results"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"bindings"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">      </span><span class="p">{</span><span class="nt">"s"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"uri"</span><span class="p">,</span><span class="w"> </span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="s2">"urn:example#foo"</span><span class="p">},</span><span class="w"> </span><span class="err">...</span><span class="p">}</span>
+<span class="w">    </span><span class="p">]</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Term types: <code class="docutils literal notranslate"><span class="pre">uri</span></code>, <code class="docutils literal notranslate"><span class="pre">literal</span></code>, <code class="docutils literal notranslate"><span class="pre">bnode</span></code>. Literals may include <code class="docutils literal notranslate"><span class="pre">&quot;xml:lang&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;datatype&quot;</span></code> fields.</p>
+<p><strong>ASK response</strong></p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span><span class="nt">"head"</span><span class="p">:</span><span class="w"> </span><span class="p">{},</span><span class="w"> </span><span class="nt">"boolean"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="get-sparql-json">
+<h3><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/sparql_json</span></code><a class="headerlink" href="#get-sparql-json" title="Link to this heading">#</a></h3>
+<p>Legacy endpoint. Executes a SPARQL SELECT query and returns results in an internal <code class="docutils literal notranslate"><span class="pre">{columns,</span> <span class="pre">rows,</span> <span class="pre">datatypes}</span></code> format. Prefer <code class="docutils literal notranslate"><span class="pre">/sparql</span></code> for new code.</p>
+<p><code class="docutils literal notranslate"><span class="pre">rows</span></code> holds every cell as text. <code class="docutils literal notranslate"><span class="pre">datatypes</span></code> is a matrix of the same shape naming what each cell is: <code class="docutils literal notranslate"><span class="pre">&quot;iri&quot;</span></code> for a node, the XSD datatype IRI of a typed literal (<code class="docutils literal notranslate"><span class="pre">http://www.w3.org/2001/XMLSchema#integer</span></code>, <code class="docutils literal notranslate"><span class="pre">...#date</span></code>, …), <code class="docutils literal notranslate"><span class="pre">null</span></code> for a plain string or an unbound cell. The Python client’s <code class="docutils literal notranslate"><span class="pre">metadata()</span></code> parses typed values from it.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">query</span></code></p></td>
+<td><p>required</p></td>
+<td><p>SPARQL query string</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">include_dependencies</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>Include ontology/shape triples in the query graph</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">wait_for_fresh</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>If true, wait for pending inference after graph writes. Otherwise return the last complete published graph while rebuilding.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Also accepts POST with the same fields as a JSON body. The Python client always POSTs, because a resolved traversal query exceeds URL length limits.</p>
+</section>
+<section id="post-sparql-update">
+<h3><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/sparql_update</span></code><a class="headerlink" href="#post-sparql-update" title="Link to this heading">#</a></h3>
+<p>Execute a SPARQL UPDATE against one owned data graph. <code class="docutils literal notranslate"><span class="pre">/sparql</span></code> is read-only; this is the write path.</p>
+<p><strong>Request body</strong></p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+<span class="w">  </span><span class="nt">"update"</span><span class="p">:</span><span class="w"> </span><span class="s2">"INSERT DATA { &lt;urn:swro/P1&gt; &lt;http://www.w3.org/2000/01/rdf-schema#label&gt; \"Feed pump 1\" }"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"source_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"plant"</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head"><p>Required</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">update</span></code></p></td>
+<td><p>yes</p></td>
+<td><p>SPARQL UPDATE (<code class="docutils literal notranslate"><span class="pre">INSERT</span></code>/<code class="docutils literal notranslate"><span class="pre">DELETE</span></code>) statement</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">source_id</span></code></p></td>
+<td><p>yes</p></td>
+<td><p>Owner of the data graph to update; use the reserved <code class="docutils literal notranslate"><span class="pre">plant</span></code> for the shared plant model</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The update is scoped to that owner’s graph, so it cannot touch the plant model or another source’s triples unless <code class="docutils literal notranslate"><span class="pre">source_id</span></code> names it. Drivers and apps use their own <code class="docutils literal notranslate"><span class="pre">sparql_update()</span></code> helper, which supplies the owner for them. The client’s <code class="docutils literal notranslate"><span class="pre">insert_metadata()</span></code> is one such update, sent with the reserved <code class="docutils literal notranslate"><span class="pre">metadata</span></code> source; there is no separate endpoint for it.</p>
+<p>The server compares the graph’s <code class="docutils literal notranslate"><span class="pre">owl:imports</span></code> and <code class="docutils literal notranslate"><span class="pre">owl:Ontology</span></code> triples before and after the update and recomputes the ontology closure only when they changed. After the update it removes, from the <code class="docutils literal notranslate"><span class="pre">metadata</span></code> source graph, every triple whose subject or URI object no longer appears in any other graph.</p>
+<p><strong>Response</strong> <code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:</span> <span class="pre">true,</span> <span class="pre">...}</span></code></p>
+</section>
+</section>
+<hr class="docutils" />
+<section id="readings-and-epoch-engine">
+<h2>Readings and epoch engine<a class="headerlink" href="#readings-and-epoch-engine" title="Link to this heading">#</a></h2>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Endpoint</p></th>
+<th class="head"><p>Contract</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/resolve_storage_keys</span></code></p></td>
+<td><p>Property and stream URIs to the selected streams; ambiguous properties fail</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/stream_views</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{uris:</span> <span class="pre">[...],</span> <span class="pre">epoch:</span> <span class="pre">optional}</span></code> returns <code class="docutils literal notranslate"><span class="pre">{epoch,</span> <span class="pre">streams}</span></code> with each reference’s <code class="docutils literal notranslate"><span class="pre">current</span></code> and <code class="docutils literal notranslate"><span class="pre">raw</span></code> streams at the pinned epoch and the replacement head’s unit, if any</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/insert_timeseries</span></code></p></td>
+<td><p>JSON list of <code class="docutils literal notranslate"><span class="pre">{source_id,</span> <span class="pre">stream_name,</span> <span class="pre">request_id,</span> <span class="pre">values,</span> <span class="pre">replace:</span> <span class="pre">false}</span></code>; items sharing a <code class="docutils literal notranslate"><span class="pre">request_id</span></code> form one atomic request, and <code class="docutils literal notranslate"><span class="pre">replace</span></code> makes that stream hold exactly <code class="docutils literal notranslate"><span class="pre">values</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/insert_timeseries_arrow</span></code></p></td>
+<td><p>Arrow <code class="docutils literal notranslate"><span class="pre">source_id,</span> <span class="pre">stream_name,</span> <span class="pre">ts,</span> <span class="pre">value</span></code>; required <code class="docutils literal notranslate"><span class="pre">X-Acquirium-Request-Id</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/delete_timeseries</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{source_id,</span> <span class="pre">stream_name,</span> <span class="pre">timestamps:</span> <span class="pre">[UTC-ns],</span> <span class="pre">request_id}</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/timeseries</span></code></p></td>
+<td><p>Arrow <code class="docutils literal notranslate"><span class="pre">ts:</span> <span class="pre">timestamp[ns,</span> <span class="pre">UTC],</span> <span class="pre">value:</span> <span class="pre">float64,</span> <span class="pre">uri:</span> <span class="pre">utf8</span></code>; <code class="docutils literal notranslate"><span class="pre">after=&lt;sequence&gt;</span></code> waits until that receipt is published</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/timeseries_info</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">{uris:</span> <span class="pre">[...],</span> <span class="pre">view:</span> <span class="pre">&quot;current&quot;}</span></code> to current counts and UTC bounds</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/timeseries_exists</span></code></p></td>
+<td><p>Same read selectors; returns <code class="docutils literal notranslate"><span class="pre">{uris:</span> <span class="pre">[...]}</span></code> with rows present</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/engine/status</span></code></p></td>
+<td><p>Accepted/applied frontiers, backlog, per-operator failures, processor error, timings, worker queue/RSS, server PID and peak RSS</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/engine/snapshot</span></code></p></td>
+<td><p>Published epoch, applied sequence, complete active plan, per-operator failures. Returns once the plan reflects the metadata graph as of the request; while an app install is under way it waits up to 30 s, and <code class="docutils literal notranslate"><span class="pre">plan_current</span></code> is <code class="docutils literal notranslate"><span class="pre">false</span></code> if the plan is still behind</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/engine/changes</span></code></p></td>
+<td><p>Bounded signed change-feed pages with exclusive epoch/ordinal cursor and complete-epoch frontier</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/engine/retry</span></code></p></td>
+<td><p>Request another attempt for failed operators</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/timeseries</span></code> uses query parameters; <code class="docutils literal notranslate"><span class="pre">/resolve_storage_keys</span></code>,</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/engine/status</span></code> reports the published epoch, admitted and applied</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>where available. <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/engine/snapshot</span></code> reports the plan and stream failures</p></td>
+<td><p></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Timeseries reads accept <code class="docutils literal notranslate"><span class="pre">view=&quot;current&quot;</span></code> (the last replacement), <code class="docutils literal notranslate"><span class="pre">&quot;raw&quot;</span></code>
+(the chain’s original input), or <code class="docutils literal notranslate"><span class="pre">&quot;stored&quot;</span></code> (the requested physical stream).
+<code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/timeseries</span></code> uses query parameters; <code class="docutils literal notranslate"><span class="pre">/resolve_storage_keys</span></code>,
+<code class="docutils literal notranslate"><span class="pre">/timeseries_info</span></code>, and <code class="docutils literal notranslate"><span class="pre">/timeseries_exists</span></code> accept <code class="docutils literal notranslate"><span class="pre">view</span></code> in their JSON
+bodies. Reads and <code class="docutils literal notranslate"><span class="pre">/resolve_storage_keys</span></code> also accept an optional <code class="docutils literal notranslate"><span class="pre">epoch</span></code>:
+resolution and rows use the same published epoch, including across
+pagination. Without an epoch, the read captures the current one after waiting
+for <code class="docutils literal notranslate"><span class="pre">after</span></code>, if supplied. An explicit epoch must include that receipt. Counts
+and existence checks resolve and count against the current snapshot. See <a class="reference internal" href="../apps/outputs.html#replacement-outputs"><span class="std std-ref">replacement outputs</span></a>.</p>
+<p>JSON values contain timestamp/value pairs. Integer timestamps are UTC nanoseconds;
+ISO datetime strings are also accepted. A timestamp without a time zone is interpreted as UTC. Values are numbers or text,
+each stored as its stream’s <code class="docutils literal notranslate"><span class="pre">value_kind</span></code> (<a class="reference internal" href="../../explanation/values.html"><span class="std std-doc">values</span></a>);
+null, blank and non-finite values are dropped. Arrow timestamps must be timezone-aware. Duplicate keys keep the last
+row before submission to the engine; source/request IDs and normalized payloads identify
+retries within the bounded retry window.</p>
+<p>JSON rows sharing a source/request ID commit as one request. Different sources
+or IDs commit independently. Ingestion’s <code class="docutils literal notranslate"><span class="pre">wait</span></code> query parameter is a nonnegative
+publication timeout in seconds (default 30, zero for immediate durable admission).
+Responses include database-scoped receipt sequences and <code class="docutils literal notranslate"><span class="pre">accepted</span></code>/<code class="docutils literal notranslate"><span class="pre">published</span></code>
+state. <code class="docutils literal notranslate"><span class="pre">rows_inserted</span></code> counts normalized observations after missing values
+are dropped and duplicate keys are collapsed. Failed or timed-out computation
+after admission remains accepted/pending;
+inspect the receipt and engine status before retrying with the same identity.
+Admission capacity rejection returns HTTP 503 with <code class="docutils literal notranslate"><span class="pre">Retry-After:</span> <span class="pre">1</span></code>.</p>
+<p>The change-feed endpoint accepts <code class="docutils literal notranslate"><span class="pre">epoch=0</span></code>, <code class="docutils literal notranslate"><span class="pre">ordinal=0</span></code>, and <code class="docutils literal notranslate"><span class="pre">limit=1000</span></code>
+(maximum 10,000), and returns:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head"><p>Meaning</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">changes</span></code></p></td>
+<td><p>signed rows, in epoch and ordinal order</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">cursor</span></code></p></td>
+<td><p>exclusive resume position, either the last row in a partial epoch or the end of the last completed epoch (ordinal <code class="docutils literal notranslate"><span class="pre">18446744073709551615</span></code>)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">published_epoch</span></code></p></td>
+<td><p>the publication frontier when the page was cut</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">complete_through</span></code></p></td>
+<td><p>every change up to this epoch has now been returned</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">has_more</span></code></p></td>
+<td><p>more rows remain at or below <code class="docutils literal notranslate"><span class="pre">published_epoch</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Pages can split epochs and correction pairs; see
+<a class="reference internal" href="../../how-to/consume-streaming-changes.html"><span class="std std-doc">consume streaming changes</span></a> before
+checkpointing or publishing a consumer view.</p>
+<p>When retention expires a cursor, rebuild from a current snapshot. To follow
+changes strictly after the rebuilt epoch, send that epoch with ordinal
+<code class="docutils literal notranslate"><span class="pre">18446744073709551615</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/engine/status</span></code> reports the published epoch, admitted and applied
+request sequences, current backlog, retention point, and any engine fault.
+<code class="docutils literal notranslate"><span class="pre">process.peak_rss_bytes</span></code> reports the server process’s peak resident memory
+where available. <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/engine/snapshot</span></code> reports the plan and stream failures
+at the captured epoch.</p>
+<p>Timeseries parameters include <code class="docutils literal notranslate"><span class="pre">uri</span></code>, optional <code class="docutils literal notranslate"><span class="pre">start</span></code> and <code class="docutils literal notranslate"><span class="pre">end</span></code> datetime strings or
+<code class="docutils literal notranslate"><span class="pre">start_ns</span></code> and <code class="docutils literal notranslate"><span class="pre">end_ns</span></code> integers, optional <code class="docutils literal notranslate"><span class="pre">limit</span></code>, <code class="docutils literal notranslate"><span class="pre">order=asc|desc</span></code>, and an optional
+published <code class="docutils literal notranslate"><span class="pre">epoch</span></code>. Bounds are half-open. Without a limit, paging returns the
+complete range. Related reads should use the same captured epoch. <code class="docutils literal notranslate"><span class="pre">value_mode</span></code> is
+<code class="docutils literal notranslate"><span class="pre">default</span></code> (the stream’s declared kind), <code class="docutils literal notranslate"><span class="pre">numeric</span></code>, <code class="docutils literal notranslate"><span class="pre">text</span></code> or <code class="docutils literal notranslate"><span class="pre">coalesce</span></code> (every
+reading as a string). The Arrow <code class="docutils literal notranslate"><span class="pre">value</span></code> column is <code class="docutils literal notranslate"><span class="pre">float64</span></code> for numeric reads
+and <code class="docutils literal notranslate"><span class="pre">string</span></code> otherwise.</p>
+</section>
+<section id="semantic-resolution">
+<h2>Semantic resolution<a class="headerlink" href="#semantic-resolution" title="Link to this heading">#</a></h2>
+<section id="get-resolve-text">
+<h3><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/resolve_text</span></code><a class="headerlink" href="#get-resolve-text" title="Link to this heading">#</a></h3>
+<p>Resolve a free-text string to matching semantic concepts using the embedding index.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">text</span></code></p></td>
+<td><p>required</p></td>
+<td><p>Text to resolve</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">kind</span></code></p></td>
+<td><p>—</p></td>
+<td><p>Filter by concept kind (e.g. <code class="docutils literal notranslate"><span class="pre">&quot;quantity&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;unit&quot;</span></code>)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">top_k</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">5</span></code></p></td>
+<td><p>Maximum number of matches to return</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">min_score</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.5</span></code></p></td>
+<td><p>Minimum similarity score (0–1)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">context</span></code></p></td>
+<td><p>—</p></td>
+<td><p>Repeated query param; additional context URIs to bias matching</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Response</strong> <code class="docutils literal notranslate"><span class="pre">{&quot;matches&quot;:</span> <span class="pre">[{&quot;uri&quot;:</span> <span class="pre">&quot;...&quot;,</span> <span class="pre">&quot;score&quot;:</span> <span class="pre">0.92,</span> <span class="pre">...},</span> <span class="pre">...]}</span></code></p>
+</section>
+<section id="post-resolve-record">
+<h3><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/resolve_record</span></code><a class="headerlink" href="#post-resolve-record" title="Link to this heading">#</a></h3>
+<p>Resolve multiple fields of a structured record to semantic concepts in a single call.</p>
+<p><strong>Request body</strong></p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+<span class="w">  </span><span class="nt">"fields"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="p">{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"temperature"</span><span class="p">,</span><span class="w"> </span><span class="nt">"text"</span><span class="p">:</span><span class="w"> </span><span class="s2">"supply air temp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"quantity"</span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"unit"</span><span class="p">,</span><span class="w">        </span><span class="nt">"text"</span><span class="p">:</span><span class="w"> </span><span class="s2">"degF"</span><span class="p">,</span><span class="w">             </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"unit"</span><span class="p">}</span>
+<span class="w">  </span><span class="p">],</span>
+<span class="w">  </span><span class="nt">"top_k"</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"min_score"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.5</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"context"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"urn:example#AHU-1"</span><span class="p">]</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p><strong>Response</strong> <code class="docutils literal notranslate"><span class="pre">{&quot;matches&quot;:</span> <span class="pre">{&quot;temperature&quot;:</span> <span class="pre">[...],</span> <span class="pre">&quot;unit&quot;:</span> <span class="pre">[...]}}</span></code></p>
+</section>
+</section>
+<hr class="docutils" />
+<section id="unit-conversion">
+<h2>Unit conversion<a class="headerlink" href="#unit-conversion" title="Link to this heading">#</a></h2>
+<p>Every unit is expressed as a multiplier and an offset against the base unit of its dimension, and a value moves between two units through that base:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>converted = (value + from_offset) * from_multiplier / to_multiplier - to_offset
+</pre></div>
+</div>
+<section id="post-resolve-unit">
+<h3><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/resolve_unit</span></code><a class="headerlink" href="#post-resolve-unit" title="Link to this heading">#</a></h3>
+<p>Look up a unit by URI, label, symbol, or UCUM code.</p>
+<p><strong>Request body</strong> <code class="docutils literal notranslate"><span class="pre">{&quot;identifier&quot;:</span> <span class="pre">&quot;psi&quot;}</span></code></p>
+<p><strong>Response</strong></p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+<span class="w">  </span><span class="nt">"uri"</span><span class="p">:</span><span class="w"> </span><span class="s2">"http://qudt.org/vocab/unit/PSI"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Psi"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"symbol"</span><span class="p">:</span><span class="w"> </span><span class="s2">"psi"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"quantity_kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"http://qudt.org/vocab/quantitykind/VapourPressure"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"multiplier"</span><span class="p">:</span><span class="w"> </span><span class="mf">6894.757293168362</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"offset"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="post-resolve-conversion">
+<h3><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/resolve_conversion</span></code><a class="headerlink" href="#post-resolve-conversion" title="Link to this heading">#</a></h3>
+<p>Resolve both sides of a conversion together and return a <em>convertible</em> pair. Candidates for each side are considered jointly, so a near-match that does not convert never shadows one that does. Use this when either side is free text; use <code class="docutils literal notranslate"><span class="pre">/conversion_factors</span></code> when both URIs are already known.</p>
+<p><strong>Request body</strong></p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span><span class="nt">"from_unit"</span><span class="p">:</span><span class="w"> </span><span class="s2">"psi"</span><span class="p">,</span><span class="w"> </span><span class="nt">"to_unit"</span><span class="p">:</span><span class="w"> </span><span class="s2">"bar"</span><span class="p">,</span><span class="w"> </span><span class="nt">"top_k"</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="nt">"min_score"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.5</span><span class="p">}</span>
+</pre></div>
+</div>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head"><p>Required</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">from_unit</span></code>, <code class="docutils literal notranslate"><span class="pre">to_unit</span></code></p></td>
+<td><p>yes</p></td>
+<td><p>Unit URI or free text</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">top_k</span></code></p></td>
+<td><p>no (default <code class="docutils literal notranslate"><span class="pre">5</span></code>)</p></td>
+<td><p>Candidates considered per side</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">min_score</span></code></p></td>
+<td><p>no (default <code class="docutils literal notranslate"><span class="pre">0.5</span></code>)</p></td>
+<td><p>Minimum resolver score</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Response</strong> the resolved unit record for each side plus the factors between them:</p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+<span class="w">  </span><span class="nt">"from"</span><span class="p">:</span><span class="w">    </span><span class="p">{</span><span class="nt">"uri"</span><span class="p">:</span><span class="w"> </span><span class="s2">".../PSI"</span><span class="p">,</span><span class="w"> </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Psi"</span><span class="p">,</span><span class="w"> </span><span class="nt">"symbol"</span><span class="p">:</span><span class="w"> </span><span class="s2">"psi"</span><span class="p">,</span><span class="w"> </span><span class="nt">"multiplier"</span><span class="p">:</span><span class="w"> </span><span class="mf">6894.757293168362</span><span class="p">,</span><span class="w"> </span><span class="nt">"offset"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="err">...</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">"to"</span><span class="p">:</span><span class="w">      </span><span class="p">{</span><span class="nt">"uri"</span><span class="p">:</span><span class="w"> </span><span class="s2">".../BAR"</span><span class="p">,</span><span class="w"> </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Bar"</span><span class="p">,</span><span class="w"> </span><span class="nt">"symbol"</span><span class="p">:</span><span class="w"> </span><span class="s2">"bar"</span><span class="p">,</span><span class="w"> </span><span class="nt">"multiplier"</span><span class="p">:</span><span class="w"> </span><span class="mf">100000.0</span><span class="p">,</span><span class="w">          </span><span class="nt">"offset"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="err">...</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">"factors"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"from_uri"</span><span class="p">:</span><span class="w"> </span><span class="s2">".../PSI"</span><span class="p">,</span><span class="w"> </span><span class="nt">"to_uri"</span><span class="p">:</span><span class="w"> </span><span class="s2">".../BAR"</span><span class="p">,</span>
+<span class="w">              </span><span class="nt">"from_multiplier"</span><span class="p">:</span><span class="w"> </span><span class="mf">6894.757293168362</span><span class="p">,</span><span class="w"> </span><span class="nt">"from_offset"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
+<span class="w">              </span><span class="nt">"to_multiplier"</span><span class="p">:</span><span class="w"> </span><span class="mf">100000.0</span><span class="p">,</span><span class="w"> </span><span class="nt">"to_offset"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="nt">"compatible"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>A request with no convertible pair among the candidates fails with HTTP 400 and both candidate lists in <code class="docutils literal notranslate"><span class="pre">detail</span></code>.</p>
+</section>
+<section id="post-conversion-factors">
+<h3><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/conversion_factors</span></code><a class="headerlink" href="#post-conversion-factors" title="Link to this heading">#</a></h3>
+<p>Get the conversion factors between two units that are already identified by URI.</p>
+<p><strong>Request body</strong> <code class="docutils literal notranslate"><span class="pre">{&quot;from_unit&quot;:</span> <span class="pre">&quot;http://qudt.org/vocab/unit/PSI&quot;,</span> <span class="pre">&quot;to_unit&quot;:</span> <span class="pre">&quot;http://qudt.org/vocab/unit/BAR&quot;}</span></code></p>
+<p><strong>Response</strong></p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+<span class="w">  </span><span class="nt">"from_uri"</span><span class="p">:</span><span class="w"> </span><span class="s2">"http://qudt.org/vocab/unit/PSI"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"to_uri"</span><span class="p">:</span><span class="w"> </span><span class="s2">"http://qudt.org/vocab/unit/BAR"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"from_multiplier"</span><span class="p">:</span><span class="w"> </span><span class="mf">6894.757293168362</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"from_offset"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"to_multiplier"</span><span class="p">:</span><span class="w"> </span><span class="mf">100000.0</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"to_offset"</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"compatible"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">compatible</span></code> is the verdict of the dimension-vector check described in the <a class="reference internal" href="../../explanation/units.html#what-convertible-means"><span class="std std-ref">units guide</span></a>.</p>
+</section>
+</section>
+<hr class="docutils" />
+<section id="logs">
+<h2>Logs<a class="headerlink" href="#logs" title="Link to this heading">#</a></h2>
+<section id="post-insert-log">
+<h3><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/insert_log</span></code><a class="headerlink" href="#post-insert-log" title="Link to this heading">#</a></h3>
+<p>Insert a log entry associated with a property URI and optional observation period. All parameters are query parameters.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Required</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">log_timestamp</span></code></p></td>
+<td><p>yes</p></td>
+<td><p>ISO 8601 timestamp for the log entry</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">message</span></code></p></td>
+<td><p>yes</p></td>
+<td><p>Log message text</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">property_uri</span></code></p></td>
+<td><p>no</p></td>
+<td><p>Semantic property URI (defaults to plant URI)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">observation_start</span></code></p></td>
+<td><p>no</p></td>
+<td><p>ISO 8601 start of the observed period</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">observation_end</span></code></p></td>
+<td><p>no</p></td>
+<td><p>ISO 8601 end of the observed period</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Response</strong> <code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:</span> <span class="pre">true}</span></code></p>
+</section>
+<section id="get-query-logs">
+<h3><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/query_logs</span></code><a class="headerlink" href="#get-query-logs" title="Link to this heading">#</a></h3>
+<p>Query log entries by property URI and time range. All parameters are query parameters.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">property_uri</span></code></p></td>
+<td><p>Filter by property URI (defaults to plant URI)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">log_time_start</span></code></p></td>
+<td><p>Earliest log timestamp (inclusive)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">log_time_end</span></code></p></td>
+<td><p>Latest log timestamp (inclusive)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">observation_start</span></code></p></td>
+<td><p>Filter by observation period start</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">observation_end</span></code></p></td>
+<td><p>Filter by observation period end</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Response</strong> Array of log entry objects.</p>
+</section>
+<section id="delete-delete-logs">
+<h3><code class="docutils literal notranslate"><span class="pre">DELETE</span> <span class="pre">/delete_logs</span></code><a class="headerlink" href="#delete-delete-logs" title="Link to this heading">#</a></h3>
+<p>Delete all log entries for a property URI.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">property_uri</span></code></p></td>
+<td><p>Property URI to delete logs for (defaults to plant URI)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Response</strong> <code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:</span> <span class="pre">true}</span></code></p>
+</section>
+</section>
+<hr class="docutils" />
+<section id="drivers">
+<h2>Drivers<a class="headerlink" href="#drivers" title="Link to this heading">#</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">acquirium</span> <span class="pre">driver</span></code> CLI group is a thin wrapper over these three. See the <a class="reference internal" href="../drivers/_index.html"><span class="std std-doc">driver reference</span></a> for what a driver is and how it is configured.</p>
+<section id="post-drivers-start">
+<h3><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/drivers/start</span></code><a class="headerlink" href="#post-drivers-start" title="Link to this heading">#</a></h3>
+<p>Start a driver as a Ray actor on this server.</p>
+<p><strong>Request body</strong></p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+<span class="w">  </span><span class="nt">"spec"</span><span class="p">:</span><span class="w"> </span><span class="s2">"acquirium.Drivers.BuiltInDrivers.csv_ingest:CSVIngestDriver"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"config"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"driver"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"source_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ro-skid"</span><span class="p">,</span><span class="w"> </span><span class="nt">"watch_dir"</span><span class="p">:</span><span class="w"> </span><span class="s2">"./data"</span><span class="p">,</span><span class="w"> </span><span class="nt">"glob"</span><span class="p">:</span><span class="w"> </span><span class="s2">"*.csv"</span><span class="p">,</span><span class="w"> </span><span class="nt">"format"</span><span class="p">:</span><span class="w"> </span><span class="s2">"wide"</span><span class="p">}},</span>
+<span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ro-skid"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"interval"</span><span class="p">:</span><span class="w"> </span><span class="mf">60.0</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head"><p>Required</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">spec</span></code></p></td>
+<td><p>yes</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">module.path:ClassName</span></code>, or <code class="docutils literal notranslate"><span class="pre">path/to/file.py:ClassName</span></code> resolved against the config’s directory <strong>on the server host</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">config</span></code></p></td>
+<td><p>no (default <code class="docutils literal notranslate"><span class="pre">{}</span></code>)</p></td>
+<td><p>The full merged acquirium config; the driver reads its own entry as <code class="docutils literal notranslate"><span class="pre">self.config[&quot;driver&quot;]</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">name</span></code></p></td>
+<td><p>no</p></td>
+<td><p>Registry name; defaults to the spec’s class name. Starting a second driver under a name already in use fails</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">interval</span></code></p></td>
+<td><p>no</p></td>
+<td><p>Tick interval in seconds; falls back to <code class="docutils literal notranslate"><span class="pre">[driver]</span> <span class="pre">interval</span></code>, then <code class="docutils literal notranslate"><span class="pre">10.0</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The driver’s <code class="docutils literal notranslate"><span class="pre">setup()</span></code> runs before this returns, so a slow setup means a slow response, and a setup that raises fails the request rather than leaving a registered driver behind.</p>
+<p><strong>Response</strong> <code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:</span> <span class="pre">true,</span> <span class="pre">&quot;driver&quot;:</span> <span class="pre">{&quot;name&quot;:</span> <span class="pre">...,</span> <span class="pre">&quot;spec&quot;:</span> <span class="pre">...,</span> <span class="pre">&quot;interval&quot;:</span> <span class="pre">...,</span> <span class="pre">&quot;started_at&quot;:</span> <span class="pre">...,</span> <span class="pre">&quot;status&quot;:</span> <span class="pre">&quot;running&quot;}}</span></code></p>
+</section>
+<section id="post-drivers-stop">
+<h3><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/drivers/stop</span></code><a class="headerlink" href="#post-drivers-stop" title="Link to this heading">#</a></h3>
+<p>Signal a driver to stop, wait up to 10 seconds for the current tick, run its <code class="docutils literal notranslate"><span class="pre">stop()</span></code>, flush what is buffered, then kill the actor.</p>
+<p><strong>Request body</strong> <code class="docutils literal notranslate"><span class="pre">{&quot;name&quot;:</span> <span class="pre">&quot;ro-skid&quot;}</span></code></p>
+<p><strong>Response</strong> <code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:</span> <span class="pre">true,</span> <span class="pre">&quot;name&quot;:</span> <span class="pre">&quot;ro-skid&quot;,</span> <span class="pre">&quot;stopped&quot;:</span> <span class="pre">true}</span></code></p>
+<p><code class="docutils literal notranslate"><span class="pre">stopped:</span> <span class="pre">false</span></code> with an <code class="docutils literal notranslate"><span class="pre">error</span></code> means the driver did not exit within the window and the actor was killed anyway. An unknown name returns 404.</p>
+</section>
+<section id="get-drivers-list">
+<h3><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/drivers/list</span></code><a class="headerlink" href="#get-drivers-list" title="Link to this heading">#</a></h3>
+<p>List the drivers running on this server. Takes no parameters.</p>
+<p><strong>Response</strong></p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+<span class="w">  </span><span class="nt">"ok"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"drivers"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"WaterTAPParquetDriver"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"spec"</span><span class="p">:</span><span class="w"> </span><span class="s2">"../../scripts/parquet_driver.py:WaterTAPParquetDriver"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"interval"</span><span class="p">:</span><span class="w"> </span><span class="mf">120.0</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"started_at"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-08-26T22:22:39.362884+00:00"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"running"</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">]</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">status</span></code> is <code class="docutils literal notranslate"><span class="pre">running</span></code>, <code class="docutils literal notranslate"><span class="pre">stopped</span></code>, or <code class="docutils literal notranslate"><span class="pre">failed:</span> <span class="pre">&lt;error&gt;</span></code>.</p>
+</section>
+</section>
+<hr class="docutils" />
+<section id="experiments">
+<h2>Experiments<a class="headerlink" href="#experiments" title="Link to this heading">#</a></h2>
+<p>The experiment endpoints create Studies, declare variables, start runs, and
+record values or stream references. The HTTP API calls a Study a <code class="docutils literal notranslate"><span class="pre">template</span></code>.
+See the <a class="reference internal" href="../experiments/_index.html"><span class="std std-doc">experiment endpoint table</span></a> for the full list
+and the <a class="reference internal" href="../../how-to/record-experiments.html"><span class="std std-doc">recording guide</span></a> for Python examples.</p>
+<p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/experiments/templates/{template_id}/runs</span></code> and
+<code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/experiments/templates/{template_id}/observations</span></code> accept <code class="docutils literal notranslate"><span class="pre">status</span></code>,
+<code class="docutils literal notranslate"><span class="pre">started_after</span></code>, <code class="docutils literal notranslate"><span class="pre">started_before</span></code>, and a legacy <code class="docutils literal notranslate"><span class="pre">metadata</span></code> filter encoded as a
+JSON object string. Observation reads also accept <code class="docutils literal notranslate"><span class="pre">run_id</span></code> and <code class="docutils literal notranslate"><span class="pre">variable_id</span></code>.</p>
+<p>The shared query builder selects graph nodes first. The Python client passes
+the selected run IDs to these endpoints:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/experiments/templates/{template_id}/runs/query</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/experiments/templates/{template_id}/observations/query</span></code></p></li>
+</ul>
+<p>Example request body:</p>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+<span class="w">  </span><span class="nt">"run_ids"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"saved-run-id"</span><span class="p">],</span>
+<span class="w">  </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"succeeded"</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Both accept the same lifecycle and legacy metadata filters as their GET forms.
+Observation selection bodies can also include <code class="docutils literal notranslate"><span class="pre">run_id</span></code> and <code class="docutils literal notranslate"><span class="pre">variable_id</span></code>.
+Responses are the corresponding lists of run or observation objects. An empty
+ID list returns an empty list. IDs are scoped to the specified Study.</p>
+<p>Time-series observations contain stream references and recorded intervals.
+Fetch the sample values through <code class="docutils literal notranslate"><span class="pre">/timeseries</span></code>; they are not embedded in the
+observation response.</p>
+<p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/experiments/runs/{run_id}/record</span></code> accepts a JSON array of discriminated
+entries for values, artifact bytes or digests, sample rows, and existing stream
+intervals. It returns ordered observation receipts and owned sample stream URIs.
+Registration, samples, revisions, artifact ownership, observations, and resolved
+graph intent commit together. Invalid entries reject the whole SQL batch.
+See <a class="reference internal" href="../experiments/_index.html"><span class="std std-doc">batch recording forms</span></a>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/experiments/metadata/sync</span></code> takes <code class="docutils literal notranslate"><span class="pre">{}</span></code> and returns
+<code class="docutils literal notranslate"><span class="pre">{&quot;ok&quot;:</span> <span class="pre">true,</span> <span class="pre">&quot;unpublished&quot;:</span> <span class="pre">[]}</span></code> after delivering the durable outbox and
+completing scheduled declaration upgrades. <code class="docutils literal notranslate"><span class="pre">unpublished</span></code> is an always-empty
+compatibility field. Delivery and document-read failures propagate; the server
+does not rebuild acknowledged metadata from SQL. Restore missing authoritative
+graphs with their matching backup. The Python interface synchronizes
+automatically. See <a class="reference internal" href="storage-migrations.html"><span class="std std-doc">storage migration and recovery</span></a>.</p>
+</section>
+<section id="apps">
+<h2>Apps<a class="headerlink" href="#apps" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/apps</span></code> lists declarations and their status.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/apps/{name}</span></code> inspects the declared app and its published operators.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">PUT</span> <span class="pre">/apps/{name}?dry_run=true</span></code> previews a declaration. Without <code class="docutils literal notranslate"><span class="pre">dry_run</span></code>, the request deploys it.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">DELETE</span> <span class="pre">/apps/{name}</span></code> removes an app. Remove any dependants first.</p></li>
+</ul>
+<p>See the <a class="reference internal" href="../apps/_index.html"><span class="std std-doc">app reference</span></a> for declaration fields.
+The server reports <code class="docutils literal notranslate"><span class="pre">pending</span></code> while an app activation is publishing.</p>
+</section>
+<section id="complete-metadata-documents">
+<h2>Complete metadata documents<a class="headerlink" href="#complete-metadata-documents" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/metadata/documents</span></code> accepts a JSON array of full subject URIs and returns
+an object mapping each URI to its complete document in the internal typed JSON
+encoding. <code class="docutils literal notranslate"><span class="pre">AcquiriumClient.metadata_documents(subjects)</span></code> decodes it to ordinary
+Python values, preserving dates, null positions, and empty containers. User JSON
+inside the <code class="docutils literal notranslate"><span class="pre">metadata</span></code> namespace retains arbitrary string keys. This endpoint
+reads asserted source documents independently of inference and delivers pending
+experiment metadata writes first. Unknown subjects have empty documents.</p>
+<p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/metadata/asserted</span></code> accepts the same subject list and returns the property values and their asserting sources.</p>
+</section>
+</section>
+
+    <script type="text/x-thebe-config">
+    {
+        requestKernel: true,
+        binderOptions: {
+            repo: "binder-examples/jupyter-stacks-datascience",
+            ref: "master",
+        },
+        codeMirrorConfig: {
+            theme: "abcdef",
+            mode: "python"
+        },
+        kernelOptions: {
+            name: "python3",
+            path: "./reference/server"
+        },
+        predefinedOutput: true
+    }
+    </script>
+    <script>kernelName = 'python3'</script>
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="configuration.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Server configuration</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="storage-migrations.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Storage upgrades and recovery</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#system">System</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#get-health"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/health</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#get-graph-version"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/graph_version</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#get-embedding-status"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/embedding_status</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#knowledge-graph">Knowledge graph</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#post-insert-graph"><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/insert_graph</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#get-export-graph"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/export_graph</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#post-validate-graph"><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/validate_graph</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#get-namespace-list"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/namespace/list</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#sparql">SPARQL</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#get-sparql"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/sparql</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#get-sparql-json"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/sparql_json</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#post-sparql-update"><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/sparql_update</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#readings-and-epoch-engine">Readings and epoch engine</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#semantic-resolution">Semantic resolution</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#get-resolve-text"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/resolve_text</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#post-resolve-record"><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/resolve_record</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#unit-conversion">Unit conversion</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#post-resolve-unit"><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/resolve_unit</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#post-resolve-conversion"><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/resolve_conversion</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#post-conversion-factors"><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/conversion_factors</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#logs">Logs</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#post-insert-log"><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/insert_log</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#get-query-logs"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/query_logs</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#delete-delete-logs"><code class="docutils literal notranslate"><span class="pre">DELETE</span> <span class="pre">/delete_logs</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#drivers">Drivers</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#post-drivers-start"><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/drivers/start</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#post-drivers-stop"><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/drivers/stop</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#get-drivers-list"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/drivers/list</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#experiments">Experiments</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#apps">Apps</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#complete-metadata-documents">Complete metadata documents</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By NAWI Project Team
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2023.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>

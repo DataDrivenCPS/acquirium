@@ -1,0 +1,973 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Soft sensor actors &#8212; Acquirium Documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
+    <link rel="stylesheet" type="text/css" href="../_static/togglebutton.css?v=9c3e77be" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/mystnb.11b39860a7a0cbfd473a3ad8a317855267ff0bd372690045ca344a6b62be495e.css" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinx-thebe.css?v=4fa983c6" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=5b658e50" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../_static/scripts/fontawesome.js?digest=55c26ed414f5f8a31ebb"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb" />
+
+    <script src="../_static/documentation_options.js?v=9eb32ce0"></script>
+    <script src="../_static/doctools.js?v=9a2dae69"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=f281be69"></script>
+    <script src="../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../_static/togglebutton.js?v=b8b12719"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script src="../_static/design-tabs.js?v=f930bc37"></script>
+    <script>const THEBE_JS_URL = "https://unpkg.com/thebe@0.8.2/lib/index.js"; const thebe_selector = ".thebe,.cell"; const thebe_selector_input = "pre"; const thebe_selector_output = ".output, .cell_output"</script>
+    <script async="async" src="../_static/sphinx-thebe.js?v=c100c467"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>const THEBE_JS_URL = "https://unpkg.com/thebe@0.8.2/lib/index.js"; const thebe_selector = ".thebe,.cell"; const thebe_selector_input = "pre"; const thebe_selector_output = ".output, .cell_output"</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'explanation/soft-sensor-actors';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="icon" href="../_static/logo-notext.png"/>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="The stream lifecycle" href="stream-lifecycle.html" />
+    <link rel="prev" title="Derived stream updates" href="apps.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../_static/searchtools.js"></script>
+    <script src="../_static/language_data.js"></script>
+    <script src="../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search this book..."
+         aria-label="Search this book..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../_index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/logo.png" class="logo__image only-light" alt="Acquirium Documentation - Home"/>
+    <img src="../_static/logo.png" class="logo__image only-dark pst-js-only" alt="Acquirium Documentation - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        
+        <ul class="nav bd-sidenav bd-sidenav__home-link">
+            <li class="toctree-l1">
+                <a class="reference internal" href="../_index.html">
+                    Acquirium documentation
+                </a>
+            </li>
+        </ul>
+        <ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../getting-started.html">Getting started</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../tutorials/_index.html">Tutorials</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/fundamentals.html">0 - Fundamentals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/inserting-data.html">1 - Inserting Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/querying-data.html">2 - Querying Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/inserting-metadata.html">3 - Inserting Metadata</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/inserting-plant-model.html">4 - Inserting a Plant Model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/a-full-example.html">5 - A Full Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/acquirium-at-a-glance.html">Acquirium at a glance</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/turbidity.html">Turbidity alarm pipeline</a></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../tutorials/advanced/_index.html">Advanced topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/writing-a-driver.html">Writing a driver</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/first-app.html">Declaring and deploying apps</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/experiments.html">Running experiments</a></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../how-to/_index.html">How-to guides</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/explore-a-model.html">Explore a plant model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/debug-an-empty-query.html">Debug an empty or unexpected query result</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/query-cookbook.html">Query cookbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/access-a-shared-server.html">Access data on a shared server</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/write-soft-sensors.html">Soft sensor calculations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/chain-cleaning-apps.html">Data cleaning with multiple apps</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/clean-data-with-multiple-outputs.html">Data cleaning with multiple outputs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/parameterize-soft-sensors.html">Soft sensor parameters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/soft-sensor-examples.html">Soft sensor examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/consume-streaming-changes.html">Streaming change feed</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/check-deploy-apps.html">App deployment and recovery</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/record-a-whole-model.html">Record a whole model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/record-experiments.html">Record experiments</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/compare-experiment-runs.html">Compare experiment runs</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../reference/_index.html">Reference</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/client/_index.html">Client</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/starting.html">Starting and stopping</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/streams.html">Streams</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/timeseries.html">Time series</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/graph.html">Graph</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/metadata.html">Metadata</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/querying.html">Querying</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/logs.html">Logs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/apps.html">Apps and engine status</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/query/_index.html">Query</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/building.html">Building a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/filtering.html">Filtering</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/columns.html">Columns</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/facets.html">Options and facets</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/reading.html">Reading results</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/data-object.html">DataObject: values</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/data-object-info.html">DataObject: streams and statistics</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/inspecting.html">Inspecting a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/writing.html">Writing from a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/traversal.html">Traversal settings</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/drivers/_index.html">Drivers</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/base-classes.html">Base classes</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/hooks.html">Hooks</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/helpers.html">Helpers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/state.html">Persistent state</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/configuration.html">Configuration</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/built-in-drivers.html">Built-in drivers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/tabular-helpers.html">Tabular helpers</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/apps/_index.html">Apps</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/apps/app-class.html">App declarations, windows, and functions</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/apps/inputs.html">App inputs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/apps/outputs.html">App outputs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/apps/deploying.html">Deploying apps</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/apps/cli.html">App commands</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/actors.html">Actors</a></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/experiments/_index.html">Experiments</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/studies-and-runs.html">Studies and runs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/declaring-variables.html">Declaring variables</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/recording.html">Recording values</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/annotations.html">Stream annotations</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/selecting-runs.html">Selecting and comparing runs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/reading.html">Reading recorded data</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/model-adapters.html">Model adapters</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/codecs-and-values.html">Codecs and values</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/server/_index.html">Server</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/server/cli.html">Command line</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/server/configuration.html">Server configuration</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/server/http-api.html">HTTP API</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/server/storage-migrations.html">Storage upgrades and recovery</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/glossary.html">Glossary</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="_index.html">Explanation</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="query-model.html">The query model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="values.html">Values</a></li>
+<li class="toctree-l2"><a class="reference internal" href="units.html">Units</a></li>
+<li class="toctree-l2"><a class="reference internal" href="drivers.html">Drivers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="apps.html">Derived stream updates</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">Soft sensor actors</a></li>
+<li class="toctree-l2"><a class="reference internal" href="stream-lifecycle.html">The stream lifecycle</a></li>
+<li class="toctree-l2"><a class="reference internal" href="experiments.html">How experiments work</a></li>
+<li class="toctree-l2"><a class="reference internal" href="text-resolution.html">Text matcher</a></li>
+<li class="toctree-l2"><a class="reference internal" href="escapement-core.html">Escapement core</a></li>
+<li class="toctree-l2"><a class="reference internal" href="soft-sensor-inputs.html">Soft sensor inputs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="server-internals.html">Server internals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="graph-backend.html">The graph store</a></li>
+</ul>
+</details></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-source-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Source repositories">
+    <i class="fab fa-github"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="https://github.com/DataDrivenCPS/acquirium" target="_blank"
+   class="btn btn-sm btn-source-repository-button dropdown-item"
+   title="Source repository"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+<span class="btn__text-container">Repository</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/DataDrivenCPS/acquirium/issues/new?title=Issue%20on%20page%20%2Fexplanation/soft-sensor-actors.html&body=Your%20issue%20content%20here." target="_blank"
+   class="btn btn-sm btn-source-issues-button dropdown-item"
+   title="Open an issue"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-lightbulb"></i>
+  </span>
+<span class="btn__text-container">Open issue</span>
+</a>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+
+
+<div class="dropdown dropdown-download-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Download this page">
+    <i class="fas fa-download"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="../_sources/explanation/soft-sensor-actors.md" target="_blank"
+   class="btn btn-sm btn-download-source-button dropdown-item"
+   title="Download source file"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file"></i>
+  </span>
+<span class="btn__text-container">.md</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li>
+<button onclick="window.print()"
+  class="btn btn-sm btn-download-pdf-button dropdown-item"
+  title="Print to PDF"
+  data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file-pdf"></i>
+  </span>
+<span class="btn__text-container">.pdf</span>
+</button>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button pst-navbar-icon"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>Soft sensor actors</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#standalone-turbidity-alarm">Standalone turbidity alarm</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#put-the-alarm-on-a-schedule">Put the alarm on a schedule</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#fit-a-model-on-a-timer-and-predict-on-each-reading">Fit a model on a timer and predict on each reading</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#check-model-error-before-retraining">Check model error before retraining</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#follow-the-probes-assigned-to-a-tank">Follow the probes assigned to a tank</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#react-when-a-probe-is-replaced">React when a probe is replaced</a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="soft-sensor-actors">
+<h1>Soft sensor actors<a class="headerlink" href="#soft-sensor-actors" title="Link to this heading">#</a></h1>
+<p>An Acquirium <strong>app</strong> updates a calculation as its inputs change. An
+<strong>actor</strong> gives you control over when to run a calculation and whether to
+publish a result.</p>
+<p>For example, an app can estimate how much water passes through a membrane for
+every pressure reading by invoking a model. Training the model takes a long
+time (well, long enough that you don’t want to retrain on <em>every sensor
+reading</em>). Here, using an actor gives you some options:</p>
+<ul class="simple">
+<li><p>re-fit the model once an hour</p></li>
+<li><p>check recent prediction errors and retrain only when they exceed a threshold</p></li>
+</ul>
+<p>Actors “react” to events such as timer ticks or changes to an input query’s
+results. A timer might trigger a turbidity check. A probe replacement (seen in
+the graph) might prompt an actor to reset its baseline.</p>
+<section id="standalone-turbidity-alarm">
+<h2>Standalone turbidity alarm<a class="headerlink" href="#standalone-turbidity-alarm" title="Link to this heading">#</a></h2>
+<p>On each timer tick, the actor reads the last 15 minutes of turbidity
+readings and publishes an alarm if their average exceeds 0.5 NTU.
+Acquirium calls <code class="docutils literal notranslate"><span class="pre">on_timer</span></code> with the scheduled time and a snapshot of the
+published readings. A check scheduled for 10:30 reads from 10:15 up to 10:30.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="sd">"""Check average turbidity on a timer."""</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">acquirium</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TurbidityAlarm</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">initial_state</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="c1"># Every check uses the readings in its snapshot, so no state is needed.</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">on_timer</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tick</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">TimerFired</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">aq</span><span class="o">.</span><span class="n">Transition</span><span class="p">:</span>
+        <span class="c1"># Anchor the 15-minute window to the scheduled tick.</span>
+        <span class="n">end</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timestamp</span><span class="p">(</span><span class="n">tick</span><span class="o">.</span><span class="n">scheduled_at</span><span class="p">)</span>
+        <span class="n">readings</span> <span class="o">=</span> <span class="n">tick</span><span class="o">.</span><span class="n">snapshot</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="s2">"turbidity"</span><span class="p">,</span> <span class="n">start</span><span class="o">=</span><span class="n">end</span> <span class="o">-</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">(</span><span class="s2">"15m"</span><span class="p">),</span> <span class="n">end</span><span class="o">=</span><span class="n">end</span><span class="p">)</span>
+
+        <span class="n">average_ntu</span> <span class="o">=</span> <span class="n">readings</span><span class="p">[</span><span class="s2">"value"</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>  <span class="c1"># None if there are no numeric readings.</span>
+        <span class="k">if</span> <span class="n">average_ntu</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">average_ntu</span> <span class="o">&gt;</span> <span class="mf">0.5</span><span class="p">:</span>
+            <span class="c1"># Publish a 1 to the alarm stream at the tick time.</span>
+            <span class="k">return</span> <span class="n">aq</span><span class="o">.</span><span class="n">Transition</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="p">{</span><span class="s2">"alarm"</span><span class="p">:</span> <span class="p">[(</span><span class="n">tick</span><span class="o">.</span><span class="n">scheduled_at</span><span class="p">,</span> <span class="mi">1</span><span class="p">)]})</span>
+        <span class="k">return</span> <span class="n">aq</span><span class="o">.</span><span class="n">Transition</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+
+
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">Transition</span></code> tells Acquirium what to save. When the average is above
+the limit, the actor writes a <code class="docutils literal notranslate"><span class="pre">1</span></code> at the scheduled time. Otherwise it
+writes nothing. The actor uses the current window alone, so its state is
+<code class="docutils literal notranslate"><span class="pre">None</span></code>.</p>
+</section>
+<section id="put-the-alarm-on-a-schedule">
+<h2>Put the alarm on a schedule<a class="headerlink" href="#put-the-alarm-on-a-schedule" title="Link to this heading">#</a></h2>
+<p>In the same file, create an <code class="docutils literal notranslate"><span class="pre">aq.Actor</span></code> with the handler class, its input
+stream, its output, and the time between checks. The input key
+<code class="docutils literal notranslate"><span class="pre">&quot;turbidity&quot;</span></code> is the name the handler passes to <code class="docutils literal notranslate"><span class="pre">tick.snapshot.read()</span></code>.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">alarm</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">Actor</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"turbidity-alarm"</span><span class="p">,</span>
+    <span class="n">handler</span><span class="o">=</span><span class="n">TurbidityAlarm</span><span class="p">,</span>
+    <span class="n">inputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"turbidity"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Stream</span><span class="o">.</span><span class="n">from_source</span><span class="p">(</span><span class="s2">"filter"</span><span class="p">,</span> <span class="s2">"turbidity"</span><span class="p">)},</span>
+    <span class="n">outputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"alarm"</span><span class="p">:</span> <span class="s2">"numeric"</span><span class="p">},</span>
+    <span class="n">timers</span><span class="o">=</span><span class="p">{</span><span class="s2">"check"</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">(</span><span class="s2">"4s"</span><span class="p">)},</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>In <code class="docutils literal notranslate"><span class="pre">acquirium.toml</span></code>, point <code class="docutils literal notranslate"><span class="pre">spec</span></code> at the Python file and the <code class="docutils literal notranslate"><span class="pre">alarm</span></code>
+variable. The server loads that declaration at startup.</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[[actors]]</span>
+<span class="n">spec</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"turbidity_alarm.py:alarm"</span>
+</pre></div>
+</div>
+<p>The example checks every four seconds so the result appears quickly.
+Each check looks back 15 minutes.</p>
+<p>From the repository root, start the example server:</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>examples/actors
+uv<span class="w"> </span>run<span class="w"> </span>--locked<span class="w"> </span>acquirium<span class="w"> </span>server
+</pre></div>
+</div>
+<p>The sample driver makes up a turbidity reading of 0.8 NTU every second, so
+the alarm fires on every check that has readings. Open a Python session
+with <code class="docutils literal notranslate"><span class="pre">uv</span> <span class="pre">run</span> <span class="pre">--locked</span> <span class="pre">python</span></code> in a second terminal to read the alarm.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">acquirium</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">aq</span>
+
+<span class="n">client</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">Acquirium</span><span class="p">()</span>
+<span class="n">client</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span><span class="s2">"actor:turbidity-alarm"</span><span class="p">,</span> <span class="s2">"alarm"</span><span class="p">)</span><span class="o">.</span><span class="n">dataframe</span><span class="p">()</span><span class="o">.</span><span class="n">tail</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+<section id="fit-a-model-on-a-timer-and-predict-on-each-reading">
+<h2>Fit a model on a timer and predict on each reading<a class="headerlink" href="#fit-a-model-on-a-timer-and-predict-on-each-reading" title="Link to this heading">#</a></h2>
+<p>The membrane model predicts flux, the rate of water flow per unit of
+membrane area. It multiplies pressure by a coefficient called
+<em>permeability</em>. At a pressure of 3, a coefficient of 2 predicts a flux
+of 6. To estimate the coefficient, the actor pairs pressure and measured
+flux by timestamp within the training window.</p>
+<p>The actor keeps a count of successful fits in its state. <code class="docutils literal notranslate"><span class="pre">initial_state()</span></code>
+sets the count to zero. Each successful fit returns the updated count and
+the new coefficient together.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">class</span><span class="w"> </span><span class="nc">MembraneFit</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">initial_state</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="c1"># Count successful fits to show how the actor carries state across ticks.</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">"fits"</span><span class="p">:</span> <span class="mi">0</span><span class="p">}</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">on_timer</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tick</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">TimerFired</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">aq</span><span class="o">.</span><span class="n">Transition</span><span class="p">:</span>
+        <span class="c1"># Both inputs come from the same published snapshot and training interval.</span>
+        <span class="n">end</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timestamp</span><span class="p">(</span><span class="n">tick</span><span class="o">.</span><span class="n">scheduled_at</span><span class="p">)</span>
+        <span class="n">start</span> <span class="o">=</span> <span class="n">end</span> <span class="o">-</span> <span class="n">tick</span><span class="o">.</span><span class="n">interval</span>
+        <span class="n">pressure</span> <span class="o">=</span> <span class="n">tick</span><span class="o">.</span><span class="n">snapshot</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="s2">"pressure"</span><span class="p">,</span> <span class="n">start</span><span class="o">=</span><span class="n">start</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="n">end</span><span class="p">)</span>
+        <span class="n">flux</span> <span class="o">=</span> <span class="n">tick</span><span class="o">.</span><span class="n">snapshot</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="s2">"flux"</span><span class="p">,</span> <span class="n">start</span><span class="o">=</span><span class="n">start</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="n">end</span><span class="p">)</span>
+        <span class="n">pairs</span> <span class="o">=</span> <span class="n">pressure</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="s2">"time"</span><span class="p">,</span> <span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">"value"</span><span class="p">)</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">"pressure"</span><span class="p">))</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+            <span class="n">flux</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="s2">"time"</span><span class="p">,</span> <span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">"value"</span><span class="p">)</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">"flux"</span><span class="p">)),</span> <span class="n">on</span><span class="o">=</span><span class="s2">"time"</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">drop_nulls</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">pairs</span><span class="o">.</span><span class="n">is_empty</span><span class="p">():</span>
+            <span class="k">return</span> <span class="n">aq</span><span class="o">.</span><span class="n">Transition</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="p">)</span>
+
+        <span class="c1"># Least squares for flux = permeability × pressure, with zero intercept.</span>
+        <span class="n">pressure_values</span> <span class="o">=</span> <span class="n">pairs</span><span class="p">[</span><span class="s2">"pressure"</span><span class="p">]</span>
+        <span class="n">pressure_squared</span> <span class="o">=</span> <span class="n">pressure_values</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">pressure_values</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">pressure_squared</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">aq</span><span class="o">.</span><span class="n">Transition</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="p">)</span>
+        <span class="n">permeability</span> <span class="o">=</span> <span class="n">pressure_values</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">pairs</span><span class="p">[</span><span class="s2">"flux"</span><span class="p">])</span> <span class="o">/</span> <span class="n">pressure_squared</span>
+        <span class="c1"># The timestamp decides which readings are run against this model.</span>
+        <span class="c1"># Stamp it when the fit finishes so it applies to later readings, or use</span>
+        <span class="c1"># tick.scheduled_at to also recalculate readings that arrived during the fit.</span>
+        <span class="n">effective_at</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timestamp</span><span class="o">.</span><span class="n">now</span><span class="p">(</span><span class="n">tz</span><span class="o">=</span><span class="s2">"UTC"</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">aq</span><span class="o">.</span><span class="n">Transition</span><span class="p">(</span>
+            <span class="p">{</span><span class="s2">"fits"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="p">[</span><span class="s2">"fits"</span><span class="p">]</span> <span class="o">+</span> <span class="mi">1</span><span class="p">},</span>
+            <span class="p">{</span><span class="s2">"permeability"</span><span class="p">:</span> <span class="p">[(</span><span class="n">effective_at</span><span class="p">,</span> <span class="n">permeability</span><span class="p">)]},</span>
+        <span class="p">)</span>
+</pre></div>
+</div>
+<p>Acquirium saves the state as JSON with the output and restores it to
+<code class="docutils literal notranslate"><span class="pre">self.state</span></code> before the next handler call, including after a restart.
+That means the state has to be JSON: dicts, lists, strings, numbers,
+booleans and <code class="docutils literal notranslate"><span class="pre">None</span></code>, with no NaN. A fitted model object won’t fit there.
+Publish its parameters as outputs, as this actor does, or save the model
+to a file and keep the file’s path in the state.</p>
+<p>The actor timestamps each model it publishes, and that timestamp decides
+which readings are run against the new model. Here the model is a single
+coefficient, published to the <code class="docutils literal notranslate"><span class="pre">permeability</span></code> stream. The prediction app reads
+it as an <em>as-of input</em>: it uses a model for every reading at or after its
+timestamp, until a newer one arrives. The two-hour limit lets the app keep
+using a recent model while the next fit runs. The same file declares the
+actor and the app:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">fit</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">Actor</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"membrane-fit"</span><span class="p">,</span>
+    <span class="n">handler</span><span class="o">=</span><span class="n">MembraneFit</span><span class="p">,</span>
+    <span class="n">inputs</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">"pressure"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Stream</span><span class="o">.</span><span class="n">from_source</span><span class="p">(</span><span class="s2">"membrane"</span><span class="p">,</span> <span class="s2">"pressure"</span><span class="p">),</span>
+        <span class="s2">"flux"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Stream</span><span class="o">.</span><span class="n">from_source</span><span class="p">(</span><span class="s2">"membrane"</span><span class="p">,</span> <span class="s2">"flux"</span><span class="p">),</span>
+    <span class="p">},</span>
+    <span class="n">outputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"permeability"</span><span class="p">:</span> <span class="s2">"numeric"</span><span class="p">},</span>
+    <span class="n">timers</span><span class="o">=</span><span class="p">{</span><span class="s2">"train"</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">(</span><span class="s2">"4s"</span><span class="p">)},</span>
+<span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">predict</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+    <span class="n">pressure</span> <span class="o">=</span> <span class="n">frame</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">"input"</span><span class="p">)</span> <span class="o">==</span> <span class="s2">"pressure"</span><span class="p">)[</span><span class="s2">"value"</span><span class="p">]</span><span class="o">.</span><span class="n">drop_nulls</span><span class="p">()</span>
+    <span class="n">permeability</span> <span class="o">=</span> <span class="n">frame</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">"input"</span><span class="p">)</span> <span class="o">==</span> <span class="s2">"permeability"</span><span class="p">)[</span><span class="s2">"value"</span><span class="p">]</span><span class="o">.</span><span class="n">drop_nulls</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">pressure</span><span class="o">.</span><span class="n">is_empty</span><span class="p">()</span> <span class="ow">or</span> <span class="n">permeability</span><span class="o">.</span><span class="n">is_empty</span><span class="p">():</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">"flux"</span><span class="p">:</span> <span class="n">empty</span><span class="p">()}</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">"flux"</span><span class="p">:</span> <span class="n">emit</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="n">pressure</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="o">*</span> <span class="n">permeability</span><span class="o">.</span><span class="n">item</span><span class="p">())}</span>
+
+
+<span class="n">prediction</span> <span class="o">=</span> <span class="n">aq</span><span class="o">.</span><span class="n">App</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"predict-membrane-flux"</span><span class="p">,</span>
+    <span class="n">inputs</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">"pressure"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Selection</span><span class="o">.</span><span class="n">from_stream</span><span class="p">(</span><span class="n">aq</span><span class="o">.</span><span class="n">Stream</span><span class="o">.</span><span class="n">from_source</span><span class="p">(</span><span class="s2">"membrane"</span><span class="p">,</span> <span class="s2">"pressure"</span><span class="p">)),</span>
+        <span class="c1"># Read the latest coefficient available at each pressure sample's time.</span>
+        <span class="s2">"permeability"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Selection</span><span class="o">.</span><span class="n">from_stream</span><span class="p">(</span>
+            <span class="n">aq</span><span class="o">.</span><span class="n">Stream</span><span class="o">.</span><span class="n">from_source</span><span class="p">(</span><span class="s2">"actor:membrane-fit"</span><span class="p">,</span> <span class="s2">"permeability"</span><span class="p">),</span>
+            <span class="n">as_of</span><span class="o">=</span><span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">(</span><span class="s2">"2h"</span><span class="p">),</span>
+        <span class="p">),</span>
+    <span class="p">},</span>
+    <span class="n">outputs</span><span class="o">=</span><span class="p">{</span><span class="s2">"flux"</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">Output</span><span class="p">()},</span>
+    <span class="n">function</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">PythonFunction</span><span class="o">.</span><span class="n">from_file</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="vm">__file__</span><span class="p">),</span> <span class="s2">"predict"</span><span class="p">),</span>
+    <span class="n">window</span><span class="o">=</span><span class="n">aq</span><span class="o">.</span><span class="n">Pointwise</span><span class="p">(),</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>The app reads the actor’s output like any other stream, under the source
+<code class="docutils literal notranslate"><span class="pre">actor:membrane-fit</span></code>.</p>
+<p>This actor stamps a model when the fit finishes, so the new model only
+applies to readings from then on. To also run the readings that arrived
+during the fit against the new model, stamp it with the time the fit started:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">effective_at</span> <span class="o">=</span> <span class="n">tick</span><span class="o">.</span><span class="n">scheduled_at</span>
+</pre></div>
+</div>
+<p>For a fit that starts at 10:00 and finishes at 10:20, Acquirium then
+recalculates the predictions for 10:00–10:20 with the new model.</p>
+<p>On the example server, pressure stays at 3 and measured flux rises from
+6 to 12 after 20 seconds. A training window that spans the change can
+produce a coefficient between 2 and 4. Once a fit uses the new readings
+alone, the app predicts 12 for new samples at pressure 3. Commands to
+inspect the fits and predictions are in the
+<a class="reference external" href="https://github.com/DataDrivenCPS/acquirium/tree/main/examples/actors" rel="noreferer noopener" target="_blank">example README</a>.</p>
+<section id="check-model-error-before-retraining">
+<h3>Check model error before retraining<a class="headerlink" href="#check-model-error-before-retraining" title="Link to this heading">#</a></h3>
+<p>Use an hourly check to decide whether retraining is worth the cost. An app
+can compare predictions with measured flux and publish the difference to
+a stream. Declare that stream as the actor’s <code class="docutils literal notranslate"><span class="pre">flux_error</span></code> input.</p>
+<p>After the first fit, the example check requires at least ten errors from
+the last hour and a mean absolute error above 0.5 in flux units.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Add this check at the start of the training handler.</span>
+<span class="n">end</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timestamp</span><span class="p">(</span><span class="n">tick</span><span class="o">.</span><span class="n">scheduled_at</span><span class="p">)</span>
+<span class="n">errors</span> <span class="o">=</span> <span class="n">tick</span><span class="o">.</span><span class="n">snapshot</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="s2">"flux_error"</span><span class="p">,</span> <span class="n">start</span><span class="o">=</span><span class="n">end</span> <span class="o">-</span> <span class="n">tick</span><span class="o">.</span><span class="n">interval</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="n">end</span><span class="p">)</span>
+<span class="n">values</span> <span class="o">=</span> <span class="n">errors</span><span class="p">[</span><span class="s2">"value"</span><span class="p">]</span><span class="o">.</span><span class="n">drop_nulls</span><span class="p">()</span>
+<span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="p">[</span><span class="s2">"fits"</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="ow">and</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">values</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">10</span> <span class="ow">or</span> <span class="n">values</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span> <span class="o">&lt;=</span> <span class="mf">0.5</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">aq</span><span class="o">.</span><span class="n">Transition</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>An early return leaves the current coefficient in use. If the app sets a
+maximum age, the actor also needs to refresh the coefficient before it
+expires.</p>
+</section>
+</section>
+<section id="follow-the-probes-assigned-to-a-tank">
+<h2>Follow the probes assigned to a tank<a class="headerlink" href="#follow-the-probes-assigned-to-a-tank" title="Link to this heading">#</a></h2>
+<p>Use a query when the streams an actor reads can change. For a tank whose
+probes can be replaced during maintenance, the following input selects
+the measurements currently assigned to the tank and includes their units.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">inputs</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">"tank_probes"</span><span class="p">:</span> <span class="p">(</span>
+        <span class="n">aq</span><span class="o">.</span><span class="n">Query</span><span class="p">()</span>
+        <span class="o">.</span><span class="n">entity</span><span class="p">(</span><span class="n">uri</span><span class="o">=</span><span class="s2">"urn:plant:tank-a"</span><span class="p">,</span> <span class="n">alias</span><span class="o">=</span><span class="s2">"tank"</span><span class="p">)</span>
+        <span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">alias</span><span class="o">=</span><span class="s2">"probe"</span><span class="p">,</span> <span class="n">include_connection_points</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="o">.</span><span class="n">include</span><span class="p">(</span><span class="s2">"unit"</span><span class="p">,</span> <span class="n">of</span><span class="o">=</span><span class="s2">"probe"</span><span class="p">)</span>
+    <span class="p">),</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>In <code class="docutils literal notranslate"><span class="pre">on_timer</span></code>, <code class="docutils literal notranslate"><span class="pre">tick.snapshot.read(&quot;tank_probes&quot;)</span></code> returns the selected
+readings with <code class="docutils literal notranslate"><span class="pre">time</span></code>, numeric <code class="docutils literal notranslate"><span class="pre">value</span></code>, and <code class="docutils literal notranslate"><span class="pre">text</span></code> columns. When several
+probes match, <code class="docutils literal notranslate"><span class="pre">stream_uri</span></code> tells you which one produced each row. For a
+time range, <code class="docutils literal notranslate"><span class="pre">start</span></code> is included and <code class="docutils literal notranslate"><span class="pre">end</span></code> is excluded. Call
+<code class="docutils literal notranslate"><span class="pre">tick.snapshot.metadata(&quot;tank_probes&quot;)</span></code> to look up the units for those
+same probes.</p>
+<p>If a probe is swapped during a check, the handler keeps using the
+assignments and readings it started with. The next check can use the
+replacement. A deferred read with <code class="docutils literal notranslate"><span class="pre">dataframe()</span></code> uses the same snapshot.
+This example collects the five minutes leading up to the scheduled check.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+
+<span class="n">end</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timestamp</span><span class="p">(</span><span class="n">tick</span><span class="o">.</span><span class="n">scheduled_at</span><span class="p">)</span>
+<span class="n">query</span> <span class="o">=</span> <span class="n">tick</span><span class="o">.</span><span class="n">snapshot</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="s2">"tank_probes"</span><span class="p">)</span>
+<span class="n">readings</span> <span class="o">=</span> <span class="n">query</span><span class="o">.</span><span class="n">dataframe</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="n">end</span> <span class="o">-</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">(</span><span class="s2">"5m"</span><span class="p">),</span> <span class="n">end</span><span class="o">=</span><span class="n">end</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Use <code class="docutils literal notranslate"><span class="pre">snapshot.query()</span></code> with no names to read all declared inputs together.
+The resulting <code class="docutils literal notranslate"><span class="pre">input</span></code> column identifies the declaration each row came from.</p>
+</section>
+<section id="react-when-a-probe-is-replaced">
+<h2>React when a probe is replaced<a class="headerlink" href="#react-when-a-probe-is-replaced" title="Link to this heading">#</a></h2>
+<p>Use <code class="docutils literal notranslate"><span class="pre">on_graph_change</span></code> to respond to a change between timer checks. For
+example, reset the sample count for a baseline when a probe is added or
+removed.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">on_graph_change</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">change</span><span class="p">:</span> <span class="n">aq</span><span class="o">.</span><span class="n">GraphChange</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">aq</span><span class="o">.</span><span class="n">Transition</span><span class="p">:</span>
+    <span class="n">probes</span> <span class="o">=</span> <span class="n">change</span><span class="o">.</span><span class="n">inputs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"tank_probes"</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">probes</span> <span class="ow">and</span> <span class="p">(</span><span class="n">probes</span><span class="o">.</span><span class="n">added_streams</span> <span class="ow">or</span> <span class="n">probes</span><span class="o">.</span><span class="n">removed_streams</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">aq</span><span class="o">.</span><span class="n">Transition</span><span class="p">({</span><span class="o">**</span><span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="p">,</span> <span class="s2">"samples_since_swap"</span><span class="p">:</span> <span class="mi">0</span><span class="p">})</span>
+    <span class="k">return</span> <span class="n">aq</span><span class="o">.</span><span class="n">Transition</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Acquirium calls this handler when a declared query’s matched streams or
+metadata change. To handle an edit to a probe’s unit, for example, compare
+<code class="docutils literal notranslate"><span class="pre">probes.old_metadata</span></code> and <code class="docutils literal notranslate"><span class="pre">probes.new_metadata</span></code>. Read <code class="docutils literal notranslate"><span class="pre">change.snapshot</span></code> if
+you need the readings for the new assignment right away.</p>
+<details class="sd-sphinx-override sd-dropdown sd-card sd-mb-3">
+<summary class="sd-summary-title sd-card-header">
+<span class="sd-summary-text">Scheduling and snapshots in more detail</span><span class="sd-summary-state-marker sd-summary-chevron-right"><svg version="1.1" width="1.5em" height="1.5em" class="sd-octicon sd-octicon-chevron-right" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.72 18.78a.75.75 0 0 1 0-1.06L14.44 12 8.72 6.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018l6.25 6.25a.75.75 0 0 1 0 1.06l-6.25 6.25a.75.75 0 0 1-1.06 0Z"></path></svg></span></summary><div class="sd-summary-content sd-card-body docutils">
+<ul class="simple">
+<li><p class="sd-card-text">Each actor handles one message at a time. Ticks fall on multiples of the
+interval counted from the Unix epoch, so an hourly timer fires on the hour
+and a daily timer fires at midnight UTC, not local midnight. An actor that
+falls behind takes the latest due tick for each timer and skips the rest.</p></li>
+<li><p class="sd-card-text">When a query change and a timer are both due, the change handler runs
+before the timer uses the updated assignment. If several revisions arrive
+while the actor is busy, it compares the last observed assignment with
+the latest available one.</p></li>
+<li><p class="sd-card-text">Startup and restart establish the initial query assignments. After a
+restart, the actor schedules its next tick and resumes from saved state.
+A failed handler leaves the last saved state and output intact. The server
+logs the error and continues processing messages.</p></li>
+<li><p class="sd-card-text">For diagnostics, <code class="docutils literal notranslate"><span class="pre">snapshot.graph_revision</span></code> identifies the metadata view
+used for query inputs and <code class="docutils literal notranslate"><span class="pre">snapshot.epoch</span></code> identifies the published data.</p></li>
+</ul>
+<p class="sd-card-text">Every class, method and message is listed in the <a class="reference internal" href="../reference/actors.html"><span class="std std-doc">actor reference</span></a>.</p>
+</div>
+</details></section>
+</section>
+
+    <script type="text/x-thebe-config">
+    {
+        requestKernel: true,
+        binderOptions: {
+            repo: "binder-examples/jupyter-stacks-datascience",
+            ref: "master",
+        },
+        codeMirrorConfig: {
+            theme: "abcdef",
+            mode: "python"
+        },
+        kernelOptions: {
+            name: "python3",
+            path: "./explanation"
+        },
+        predefinedOutput: true
+    }
+    </script>
+    <script>kernelName = 'python3'</script>
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="apps.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Derived stream updates</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="stream-lifecycle.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">The stream lifecycle</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#standalone-turbidity-alarm">Standalone turbidity alarm</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#put-the-alarm-on-a-schedule">Put the alarm on a schedule</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#fit-a-model-on-a-timer-and-predict-on-each-reading">Fit a model on a timer and predict on each reading</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#check-model-error-before-retraining">Check model error before retraining</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#follow-the-probes-assigned-to-a-tank">Follow the probes assigned to a tank</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#react-when-a-probe-is-replaced">React when a probe is replaced</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By NAWI Project Team
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2023.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>

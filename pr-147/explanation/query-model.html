@@ -1,0 +1,922 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>The query model &#8212; Acquirium Documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
+    <link rel="stylesheet" type="text/css" href="../_static/togglebutton.css?v=9c3e77be" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/mystnb.11b39860a7a0cbfd473a3ad8a317855267ff0bd372690045ca344a6b62be495e.css" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinx-thebe.css?v=4fa983c6" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=5b658e50" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../_static/scripts/fontawesome.js?digest=55c26ed414f5f8a31ebb"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb" />
+
+    <script src="../_static/documentation_options.js?v=9eb32ce0"></script>
+    <script src="../_static/doctools.js?v=9a2dae69"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=f281be69"></script>
+    <script src="../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../_static/togglebutton.js?v=b8b12719"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script src="../_static/design-tabs.js?v=f930bc37"></script>
+    <script>const THEBE_JS_URL = "https://unpkg.com/thebe@0.8.2/lib/index.js"; const thebe_selector = ".thebe,.cell"; const thebe_selector_input = "pre"; const thebe_selector_output = ".output, .cell_output"</script>
+    <script async="async" src="../_static/sphinx-thebe.js?v=c100c467"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>const THEBE_JS_URL = "https://unpkg.com/thebe@0.8.2/lib/index.js"; const thebe_selector = ".thebe,.cell"; const thebe_selector_input = "pre"; const thebe_selector_output = ".output, .cell_output"</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'explanation/query-model';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="icon" href="../_static/logo-notext.png"/>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Values" href="values.html" />
+    <link rel="prev" title="Explanation" href="_index.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../_static/searchtools.js"></script>
+    <script src="../_static/language_data.js"></script>
+    <script src="../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search this book..."
+         aria-label="Search this book..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../_index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/logo.png" class="logo__image only-light" alt="Acquirium Documentation - Home"/>
+    <img src="../_static/logo.png" class="logo__image only-dark pst-js-only" alt="Acquirium Documentation - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        
+        <ul class="nav bd-sidenav bd-sidenav__home-link">
+            <li class="toctree-l1">
+                <a class="reference internal" href="../_index.html">
+                    Acquirium documentation
+                </a>
+            </li>
+        </ul>
+        <ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../getting-started.html">Getting started</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../tutorials/_index.html">Tutorials</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/fundamentals.html">0 - Fundamentals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/inserting-data.html">1 - Inserting Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/querying-data.html">2 - Querying Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/inserting-metadata.html">3 - Inserting Metadata</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/inserting-plant-model.html">4 - Inserting a Plant Model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/a-full-example.html">5 - A Full Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/acquirium-at-a-glance.html">Acquirium at a glance</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tutorials/turbidity.html">Turbidity alarm pipeline</a></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../tutorials/advanced/_index.html">Advanced topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/writing-a-driver.html">Writing a driver</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/first-app.html">Declaring and deploying apps</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../tutorials/advanced/experiments.html">Running experiments</a></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../how-to/_index.html">How-to guides</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/explore-a-model.html">Explore a plant model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/debug-an-empty-query.html">Debug an empty or unexpected query result</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/query-cookbook.html">Query cookbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/access-a-shared-server.html">Access data on a shared server</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/write-soft-sensors.html">Soft sensor calculations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/chain-cleaning-apps.html">Data cleaning with multiple apps</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/clean-data-with-multiple-outputs.html">Data cleaning with multiple outputs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/parameterize-soft-sensors.html">Soft sensor parameters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/soft-sensor-examples.html">Soft sensor examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/consume-streaming-changes.html">Streaming change feed</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/check-deploy-apps.html">App deployment and recovery</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/record-a-whole-model.html">Record a whole model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/record-experiments.html">Record experiments</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../how-to/compare-experiment-runs.html">Compare experiment runs</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../reference/_index.html">Reference</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/client/_index.html">Client</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/starting.html">Starting and stopping</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/streams.html">Streams</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/timeseries.html">Time series</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/graph.html">Graph</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/metadata.html">Metadata</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/querying.html">Querying</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/logs.html">Logs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/client/apps.html">Apps and engine status</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/query/_index.html">Query</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/building.html">Building a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/filtering.html">Filtering</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/columns.html">Columns</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/facets.html">Options and facets</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/reading.html">Reading results</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/data-object.html">DataObject: values</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/data-object-info.html">DataObject: streams and statistics</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/inspecting.html">Inspecting a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/writing.html">Writing from a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/query/traversal.html">Traversal settings</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/drivers/_index.html">Drivers</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/base-classes.html">Base classes</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/hooks.html">Hooks</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/helpers.html">Helpers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/state.html">Persistent state</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/configuration.html">Configuration</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/built-in-drivers.html">Built-in drivers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/drivers/tabular-helpers.html">Tabular helpers</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/apps/_index.html">Apps</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/apps/app-class.html">App declarations, windows, and functions</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/apps/inputs.html">App inputs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/apps/outputs.html">App outputs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/apps/deploying.html">Deploying apps</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/apps/cli.html">App commands</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/actors.html">Actors</a></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/experiments/_index.html">Experiments</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/studies-and-runs.html">Studies and runs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/declaring-variables.html">Declaring variables</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/recording.html">Recording values</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/annotations.html">Stream annotations</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/selecting-runs.html">Selecting and comparing runs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/reading.html">Reading recorded data</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/model-adapters.html">Model adapters</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/experiments/codecs-and-values.html">Codecs and values</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../reference/server/_index.html">Server</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../reference/server/cli.html">Command line</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/server/configuration.html">Server configuration</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/server/http-api.html">HTTP API</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../reference/server/storage-migrations.html">Storage upgrades and recovery</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/glossary.html">Glossary</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="_index.html">Explanation</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">The query model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="values.html">Values</a></li>
+<li class="toctree-l2"><a class="reference internal" href="units.html">Units</a></li>
+<li class="toctree-l2"><a class="reference internal" href="drivers.html">Drivers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="apps.html">Derived stream updates</a></li>
+<li class="toctree-l2"><a class="reference internal" href="soft-sensor-actors.html">Soft sensor actors</a></li>
+<li class="toctree-l2"><a class="reference internal" href="stream-lifecycle.html">The stream lifecycle</a></li>
+<li class="toctree-l2"><a class="reference internal" href="experiments.html">How experiments work</a></li>
+<li class="toctree-l2"><a class="reference internal" href="text-resolution.html">Text matcher</a></li>
+<li class="toctree-l2"><a class="reference internal" href="escapement-core.html">Escapement core</a></li>
+<li class="toctree-l2"><a class="reference internal" href="soft-sensor-inputs.html">Soft sensor inputs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="server-internals.html">Server internals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="graph-backend.html">The graph store</a></li>
+</ul>
+</details></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-source-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Source repositories">
+    <i class="fab fa-github"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="https://github.com/DataDrivenCPS/acquirium" target="_blank"
+   class="btn btn-sm btn-source-repository-button dropdown-item"
+   title="Source repository"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+<span class="btn__text-container">Repository</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/DataDrivenCPS/acquirium/issues/new?title=Issue%20on%20page%20%2Fexplanation/query-model.html&body=Your%20issue%20content%20here." target="_blank"
+   class="btn btn-sm btn-source-issues-button dropdown-item"
+   title="Open an issue"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-lightbulb"></i>
+  </span>
+<span class="btn__text-container">Open issue</span>
+</a>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+
+
+<div class="dropdown dropdown-download-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Download this page">
+    <i class="fas fa-download"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="../_sources/explanation/query-model.md" target="_blank"
+   class="btn btn-sm btn-download-source-button dropdown-item"
+   title="Download source file"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file"></i>
+  </span>
+<span class="btn__text-container">.md</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li>
+<button onclick="window.print()"
+  class="btn btn-sm btn-download-pdf-button dropdown-item"
+  title="Print to PDF"
+  data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file-pdf"></i>
+  </span>
+<span class="btn__text-container">.pdf</span>
+</button>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button pst-navbar-icon"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>The query model</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#a-query-is-a-pattern">A query is a pattern</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#attributes-and-links">Attributes and links</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#why-not-sparql">Why not SPARQL</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#plain-text-in-a-query">Plain text in a query</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-a-query-is-run">How a query is run</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#searching-over-links">Searching over links</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#searching-along-the-flow">Searching along the flow</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#from-an-entity-to-its-measurements">From an entity to its measurements</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#further-reading">Further reading</a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="the-query-model">
+<h1>The query model<a class="headerlink" href="#the-query-model" title="Link to this heading">#</a></h1>
+<p>In this article we’ll describe the ideas behind the query interface: what a query is, how it sees the plant model, and how it is run.
+Using the interface is covered in the tutorial, starting from <a class="reference internal" href="../tutorials/querying-data.html"><span class="std std-doc">2 - Querying Data</span></a>.
+The examples use the plant of <a class="reference internal" href="../tutorials/a-full-example.html"><span class="std std-doc">5 - A Full Example</span></a>.</p>
+<section id="a-query-is-a-pattern">
+<h2>A query is a pattern<a class="headerlink" href="#a-query-is-a-pattern" title="Link to this heading">#</a></h2>
+<p>A query describes a pattern of nodes in the plant model.
+The server finds every place in the model where the pattern matches, and each match is one row of the result.</p>
+<p>There are three kinds of nodes:</p>
+<ul class="simple">
+<li><p>An <strong>entity</strong> node is a part of the plant, such as a pump, a tank or a pipe. It is added with <code class="docutils literal notranslate"><span class="pre">entity()</span></code> and <code class="docutils literal notranslate"><span class="pre">related()</span></code>.</p></li>
+<li><p>A <strong>property</strong> node is one measured quantity of the plant. It is added with <code class="docutils literal notranslate"><span class="pre">property()</span></code>.</p></li>
+<li><p>A <strong>measurement</strong> node is a property that has a stream connected. It is added with <code class="docutils literal notranslate"><span class="pre">measurement()</span></code>, and it is the only kind of node that returns data.</p></li>
+</ul>
+<p>For instance, the pattern below has two nodes: a pump, and a power measurement of that pump.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">pumps</span> <span class="o">=</span> <span class="n">acq</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">entity</span><span class="p">(</span><span class="s2">"pump"</span><span class="p">)</span>
+<span class="n">power</span> <span class="o">=</span> <span class="n">pumps</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">quantity_kind</span><span class="o">=</span><span class="s2">"power"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">power</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Query
+  pump: entity, Pump
+  pump_data: measurement, of pump, quantity_kind=Power
+2 matches:
+┌────────┬─────────────────────────┬─────────────────────┐
+│ pump   ┆ pump_data               ┆ pump_data.label     │
+│ ---    ┆ ---                     ┆ ---                 │
+│ str    ┆ str                     ┆ str                 │
+╞════════╪═════════════════════════╪═════════════════════╡
+│ wbs:P2 ┆ wbs:P2-mechanical-power ┆ P2 mechanical power │
+│ wbs:P1 ┆ wbs:P1-mechanical-power ┆ P1 mechanical power │
+└────────┴─────────────────────────┴─────────────────────┘
+</pre></div>
+</div>
+<p>Every method returns a new query and leaves the original unchanged.
+This is useful for keeping a part of a query in a variable and extending it in several ways.
+For instance, <code class="docutils literal notranslate"><span class="pre">pumps</span></code> is still the query with one node, and it can be extended again:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tanks</span> <span class="o">=</span> <span class="n">pumps</span><span class="o">.</span><span class="n">related</span><span class="p">(</span><span class="s2">"tank"</span><span class="p">,</span> <span class="n">direction</span><span class="o">=</span><span class="s2">"downstream"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">tanks</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Query
+  pump: entity, Pump
+  tank: entity, Tank, downstream of pump
+5 matches:
+┌────────────┬──────────────────────────────┐
+│ pump       ┆ tank                         │
+│ ---        ┆ ---                          │
+│ str        ┆ str                          │
+╞════════════╪══════════════════════════════╡
+│ wbs:intake ┆ wbs:static-mixer             │
+│ wbs:P1     ┆ wbs:storage-tank-2           │
+│ wbs:P2     ┆ wbs:storage-tank-2           │
+│ wbs:intake ┆ wbs:ferric-chloride-addition │
+│ wbs:intake ┆ wbs:chlorination             │
+└────────────┴──────────────────────────────┘
+</pre></div>
+</div>
+<p>Note that the table includes reactors and the static mixer, which are kinds of tank in the water ontology.</p>
+<p>Building a query does not search the plant model.
+The search runs when a result is asked for, with <code class="docutils literal notranslate"><span class="pre">print()</span></code>, <code class="docutils literal notranslate"><span class="pre">metadata()</span></code>, <code class="docutils literal notranslate"><span class="pre">dataframe()</span></code> or <code class="docutils literal notranslate"><span class="pre">options()</span></code>.
+So a query can be built step by step and checked after every step, and the data is read only at the end.</p>
+<p><strong>Note:</strong> The result of a search is kept on the query object.
+If the plant model or the streams change, build the query again to see the change.</p>
+</section>
+<section id="attributes-and-links">
+<h2>Attributes and links<a class="headerlink" href="#attributes-and-links" title="Link to this heading">#</a></h2>
+<p>The plant model is an RDF graph, where every fact is a link between two nodes.
+A query does not show the graph this way.
+It sorts the links into two groups:</p>
+<ul class="simple">
+<li><p><strong>Attributes</strong> describe one node: its class, label, unit, quantity kind, medium, and the keys written with <code class="docutils literal notranslate"><span class="pre">insert_metadata()</span></code>. They are used with <code class="docutils literal notranslate"><span class="pre">where()</span></code>, <code class="docutils literal notranslate"><span class="pre">include()</span></code> and <code class="docutils literal notranslate"><span class="pre">options()</span></code>.</p></li>
+<li><p><strong>Links</strong> connect the parts of the plant, such as a pipe between a pump and a tank. They are followed with <code class="docutils literal notranslate"><span class="pre">related()</span></code>.</p></li>
+</ul>
+<p>For instance, the unit of a property is a separate node in the graph.
+In a query it is a value of the property:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">power</span><span class="o">.</span><span class="n">include</span><span class="p">(</span><span class="s2">"unit"</span><span class="p">)</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (2, 4)
+┌────────┬─────────────────────────┬─────────────────────┬────────────────┐
+│ pump   ┆ pump_data               ┆ pump_data.label     ┆ pump_data.unit │
+│ ---    ┆ ---                     ┆ ---                 ┆ ---            │
+│ str    ┆ str                     ┆ str                 ┆ str            │
+╞════════╪═════════════════════════╪═════════════════════╪════════════════╡
+│ wbs:P2 ┆ wbs:P2-mechanical-power ┆ P2 mechanical power ┆ unit:W         │
+│ wbs:P1 ┆ wbs:P1-mechanical-power ┆ P1 mechanical power ┆ unit:W         │
+└────────┴─────────────────────────┴─────────────────────┴────────────────┘
+</pre></div>
+</div>
+<p>For the same reason, <code class="docutils literal notranslate"><span class="pre">related()</span></code> does not follow the attributes.
+Otherwise two pumps would be related because they have the same class or the same unit.
+The links that <code class="docutils literal notranslate"><span class="pre">related()</span></code> skips are called hidden predicates, and the list can be changed (see <a class="reference internal" href="../reference/query/traversal.html"><span class="std std-doc">Traversal settings</span></a>).</p>
+</section>
+<section id="why-not-sparql">
+<h2>Why not SPARQL<a class="headerlink" href="#why-not-sparql" title="Link to this heading">#</a></h2>
+<p>RDF graphs are normally queried with SPARQL.
+We designed this interface for the following reasons:</p>
+<ul class="simple">
+<li><p>SPARQL and other declarative languages are not designed for building a query step by step and looking at the results in between.</p></li>
+<li><p>Dataframe libraries work better than SQL databases for data exploration, and we wanted the same for plant models.</p></li>
+<li><p>Earlier systems that combine data and metadata (Mortar, Energon, Chrontext) depend on declarative languages, and do not focus on exploring the data and the metadata together.</p></li>
+<li><p>We do not expect our users to know RDF and SPARQL.</p></li>
+</ul>
+<p>See <a class="reference external" href="https://dl.acm.org/doi/abs/10.1145/3744256.3812557" rel="noreferer noopener" target="_blank">our paper</a> for more.</p>
+</section>
+<section id="plain-text-in-a-query">
+<h2>Plain text in a query<a class="headerlink" href="#plain-text-in-a-query" title="Link to this heading">#</a></h2>
+<p>Classes and attribute values can be written as plain text, such as “pump” or “power” above.
+The text matcher of the server turns the text into a term of the ontologies when the method is called.
+A text that matches nothing raises a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">acq</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">entity</span><span class="p">(</span><span class="s2">"pmp"</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>ValueError: Could not resolve 'pmp' as class
+</pre></div>
+</div>
+<p>Note that the text matcher only knows the ontologies.
+It does not search the names in your plant model, so <code class="docutils literal notranslate"><span class="pre">entity(&quot;High-pressure</span> <span class="pre">Pump</span> <span class="pre">P1&quot;)</span></code> does not find the pump with that label.
+Use <code class="docutils literal notranslate"><span class="pre">where(label=...)</span></code> or <code class="docutils literal notranslate"><span class="pre">uri=</span></code> for that.
+See <a class="reference internal" href="text-resolution.html"><span class="std std-doc">Text matcher</span></a> for how the matching works.</p>
+</section>
+<section id="how-a-query-is-run">
+<h2>How a query is run<a class="headerlink" href="#how-a-query-is-run" title="Link to this heading">#</a></h2>
+<p>The client turns the query into SPARQL and sends it to the server, which runs it on the graph store.
+<code class="docutils literal notranslate"><span class="pre">to_sparql()</span></code> shows this text:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="n">pumps</span><span class="o">.</span><span class="n">to_sparql</span><span class="p">())</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>SELECT DISTINCT ?v0
+WHERE {
+  ?v0 &lt;http://www.w3.org/1999/02/22-rdf-syntax-ns#type&gt; ?v0_typ .
+  { SELECT DISTINCT ?v0_typ WHERE { ?v0_typ &lt;http://www.w3.org/2000/01/rdf-schema#subClassOf&gt;* &lt;https://watermetadata.org/ontology/watr#Pump&gt; . } }
+}
+</pre></div>
+</div>
+<p>The second line of the pattern is the reason a class also matches its subclasses.
+The query reads the plant model together with the ontologies it imports, so it knows which classes are a kind of pump.</p>
+<section id="searching-over-links">
+<h3>Searching over links<a class="headerlink" href="#searching-over-links" title="Link to this heading">#</a></h3>
+<p>A search that follows any link for several steps is slow in SPARQL.
+For this reason the client does this part itself.
+With <code class="docutils literal notranslate"><span class="pre">related()</span></code> and no <code class="docutils literal notranslate"><span class="pre">direction</span></code>, the client reads the links one step at a time, starting from the nodes found so far.
+It stops after <code class="docutils literal notranslate"><span class="pre">max_depth</span></code> steps, which is 3 by default.
+By default it keeps only the nearest matches of each start node:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">p1</span> <span class="o">=</span> <span class="n">acq</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">entity</span><span class="p">(</span><span class="n">uri</span><span class="o">=</span><span class="s2">"wbs:P1"</span><span class="p">,</span> <span class="n">alias</span><span class="o">=</span><span class="s2">"p1"</span><span class="p">)</span>
+<span class="n">p1</span><span class="o">.</span><span class="n">related</span><span class="p">(</span><span class="s2">"pump"</span><span class="p">,</span> <span class="n">alias</span><span class="o">=</span><span class="s2">"other"</span><span class="p">)</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (1, 2)
+┌────────┬────────┐
+│ p1     ┆ other  │
+│ ---    ┆ ---    │
+│ str    ┆ str    │
+╞════════╪════════╡
+│ wbs:P1 ┆ wbs:P2 │
+└────────┴────────┘
+</pre></div>
+</div>
+<p>With <code class="docutils literal notranslate"><span class="pre">nearest=False</span></code> and <code class="docutils literal notranslate"><span class="pre">max_depth=0</span></code>, which means no limit, the same query also returns the intake pump <code class="docutils literal notranslate"><span class="pre">wbs:intake</span></code>.</p>
+<p>The links that were read are kept in the client until the graph changes, so the next search is faster.</p>
+</section>
+<section id="searching-along-the-flow">
+<h3>Searching along the flow<a class="headerlink" href="#searching-along-the-flow" title="Link to this heading">#</a></h3>
+<p>With <code class="docutils literal notranslate"><span class="pre">direction=&quot;upstream&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">direction=&quot;downstream&quot;</span></code>, only the connections of the plant are followed: from an entity to its connection points, to the pipe, and to the next entity.</p>
+<p>When the nearest match is wanted, the client searches place by place.
+For a measurement, the first place is the inlets or outlets of the entity itself.
+The next places are the connected pipe, then the next entity with its connection points, and so on.
+The search of a start node stops at the first place that has a match.
+For instance, the nearest pressure upstream of the reverse osmosis stage is at its own inlet:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ro</span> <span class="o">=</span> <span class="n">acq</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">entity</span><span class="p">(</span><span class="n">uri</span><span class="o">=</span><span class="s2">"wbs:RO"</span><span class="p">,</span> <span class="n">alias</span><span class="o">=</span><span class="s2">"ro"</span><span class="p">)</span>
+<span class="n">ro</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">direction</span><span class="o">=</span><span class="s2">"upstream"</span><span class="p">,</span> <span class="n">quantity_kind</span><span class="o">=</span><span class="s2">"pressure"</span><span class="p">)</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (1, 4)
+┌────────┬────────────────────┬───────────────────────┬────────────────────────┐
+│ ro     ┆ ro_upstream_entity ┆ ro_upstream_data      ┆ ro_upstream_data.label │
+│ ---    ┆ ---                ┆ ---                   ┆ ---                    │
+│ str    ┆ str                ┆ str                   ┆ str                    │
+╞════════╪════════════════════╪═══════════════════════╪════════════════════════╡
+│ wbs:RO ┆ wbs:RO-in          ┆ wbs:RO-in-pressure-pa ┆ RO in pressure pa      │
+└────────┴────────────────────┴───────────────────────┴────────────────────────┘
+</pre></div>
+</div>
+<p>With <code class="docutils literal notranslate"><span class="pre">nearest=False</span></code>, the places further upstream are included as well:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ro</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">direction</span><span class="o">=</span><span class="s2">"upstream"</span><span class="p">,</span> <span class="n">quantity_kind</span><span class="o">=</span><span class="s2">"pressure"</span><span class="p">,</span> <span class="n">nearest</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (3, 4)
+┌────────┬────────────────────┬───────────────────────────────┬───────────────────────────┐
+│ ro     ┆ ro_upstream_entity ┆ ro_upstream_data              ┆ ro_upstream_data.label    │
+│ ---    ┆ ---                ┆ ---                           ┆ ---                       │
+│ str    ┆ str                ┆ str                           ┆ str                       │
+╞════════╪════════════════════╪═══════════════════════════════╪═══════════════════════════╡
+│ wbs:RO ┆ wbs:P1             ┆ wbs:P1-out-pressure-pa        ┆ P1 out pressure pa        │
+│ wbs:RO ┆ wbs:PXR            ┆ wbs:PXR-brine-out-pressure-pa ┆ PXR brine out pressure pa │
+│ wbs:RO ┆ wbs:RO-in          ┆ wbs:RO-in-pressure-pa         ┆ RO in pressure pa         │
+└────────┴────────────────────┴───────────────────────────────┴───────────────────────────┘
+</pre></div>
+</div>
+</section>
+<section id="from-an-entity-to-its-measurements">
+<h3>From an entity to its measurements<a class="headerlink" href="#from-an-entity-to-its-measurements" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">measurement()</span></code> after an entity does not search over links.
+It matches the properties that the model puts on the entity or on one of its connection points.
+<code class="docutils literal notranslate"><span class="pre">context()</span></code> is the reverse: it starts from a measurement and adds the entity it belongs to.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">acq</span><span class="o">.</span><span class="n">query</span><span class="p">()</span><span class="o">.</span><span class="n">measurement</span><span class="p">(</span><span class="n">quantity_kind</span><span class="o">=</span><span class="s2">"power"</span><span class="p">)</span><span class="o">.</span><span class="n">context</span><span class="p">()</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>shape: (2, 3)
+┌─────────────────────────┬─────────────────────┬─────────────┐
+│ data                    ┆ data.label          ┆ data_entity │
+│ ---                     ┆ ---                 ┆ ---         │
+│ str                     ┆ str                 ┆ str         │
+╞═════════════════════════╪═════════════════════╪═════════════╡
+│ wbs:P2-mechanical-power ┆ P2 mechanical power ┆ wbs:P2      │
+│ wbs:P1-mechanical-power ┆ P1 mechanical power ┆ wbs:P1      │
+└─────────────────────────┴─────────────────────┴─────────────┘
+</pre></div>
+</div>
+<p>Note that a sensor is not the entity of a property.
+A property that a sensor observes is found through the equipment or the connection point that has it.</p>
+</section>
+</section>
+<section id="further-reading">
+<h2>Further reading<a class="headerlink" href="#further-reading" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p><a class="reference internal" href="../reference/query/_index.html"><span class="std std-doc">Query reference</span></a>: every method of a query, with its parameters.</p></li>
+<li><p><a class="reference internal" href="../reference/query/traversal.html"><span class="std std-doc">Traversal settings</span></a>: the hidden predicates and the relations of <code class="docutils literal notranslate"><span class="pre">context()</span></code>.</p></li>
+<li><p><a class="reference internal" href="text-resolution.html"><span class="std std-doc">Text matcher</span></a>: how plain text is matched to the terms of the ontologies.</p></li>
+<li><p><a class="reference internal" href="units.html"><span class="std std-doc">Units</span></a> and <a class="reference internal" href="values.html"><span class="std std-doc">Values</span></a>: what happens to the data when it is read.</p></li>
+</ul>
+</section>
+</section>
+
+    <script type="text/x-thebe-config">
+    {
+        requestKernel: true,
+        binderOptions: {
+            repo: "binder-examples/jupyter-stacks-datascience",
+            ref: "master",
+        },
+        codeMirrorConfig: {
+            theme: "abcdef",
+            mode: "python"
+        },
+        kernelOptions: {
+            name: "python3",
+            path: "./explanation"
+        },
+        predefinedOutput: true
+    }
+    </script>
+    <script>kernelName = 'python3'</script>
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="_index.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Explanation</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="values.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Values</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#a-query-is-a-pattern">A query is a pattern</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#attributes-and-links">Attributes and links</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#why-not-sparql">Why not SPARQL</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#plain-text-in-a-query">Plain text in a query</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-a-query-is-run">How a query is run</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#searching-over-links">Searching over links</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#searching-along-the-flow">Searching along the flow</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#from-an-entity-to-its-measurements">From an entity to its measurements</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#further-reading">Further reading</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By NAWI Project Team
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2023.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>

@@ -1,0 +1,900 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Server configuration &#8212; Acquirium Documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=55c26ed414f5f8a31ebb" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=03e43079" />
+    <link rel="stylesheet" type="text/css" href="../../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
+    <link rel="stylesheet" type="text/css" href="../../_static/togglebutton.css?v=9c3e77be" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/mystnb.11b39860a7a0cbfd473a3ad8a317855267ff0bd372690045ca344a6b62be495e.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-thebe.css?v=4fa983c6" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/custom.css?v=5b658e50" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=55c26ed414f5f8a31ebb"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb" />
+
+    <script src="../../_static/documentation_options.js?v=9eb32ce0"></script>
+    <script src="../../_static/doctools.js?v=9a2dae69"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script>let toggleHintShow = 'Click to show';</script>
+    <script>let toggleHintHide = 'Click to hide';</script>
+    <script>let toggleOpenOnPrint = 'true';</script>
+    <script src="../../_static/togglebutton.js?v=b8b12719"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    <script>const THEBE_JS_URL = "https://unpkg.com/thebe@0.8.2/lib/index.js"; const thebe_selector = ".thebe,.cell"; const thebe_selector_input = "pre"; const thebe_selector_output = ".output, .cell_output"</script>
+    <script async="async" src="../../_static/sphinx-thebe.js?v=c100c467"></script>
+    <script>var togglebuttonSelector = '.toggle, .admonition.dropdown';</script>
+    <script>const THEBE_JS_URL = "https://unpkg.com/thebe@0.8.2/lib/index.js"; const thebe_selector = ".thebe,.cell"; const thebe_selector_input = "pre"; const thebe_selector_output = ".output, .cell_output"</script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'reference/server/configuration';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <link rel="icon" href="../../_static/logo-notext.png"/>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="HTTP API" href="http-api.html" />
+    <link rel="prev" title="Command line" href="cli.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search this book..."
+         aria-label="Search this book..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../_index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/logo.png" class="logo__image only-light" alt="Acquirium Documentation - Home"/>
+    <img src="../../_static/logo.png" class="logo__image only-dark pst-js-only" alt="Acquirium Documentation - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        
+        <ul class="nav bd-sidenav bd-sidenav__home-link">
+            <li class="toctree-l1">
+                <a class="reference internal" href="../../_index.html">
+                    Acquirium documentation
+                </a>
+            </li>
+        </ul>
+        <ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../getting-started.html">Getting started</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../tutorials/_index.html">Tutorials</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/fundamentals.html">0 - Fundamentals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/inserting-data.html">1 - Inserting Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/querying-data.html">2 - Querying Data</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/inserting-metadata.html">3 - Inserting Metadata</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/inserting-plant-model.html">4 - Inserting a Plant Model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/a-full-example.html">5 - A Full Example</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/acquirium-at-a-glance.html">Acquirium at a glance</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../tutorials/turbidity.html">Turbidity alarm pipeline</a></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../../tutorials/advanced/_index.html">Advanced topics</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/writing-a-driver.html">Writing a driver</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/first-app.html">Declaring and deploying apps</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../../tutorials/advanced/experiments.html">Running experiments</a></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../how-to/_index.html">How-to guides</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/explore-a-model.html">Explore a plant model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/debug-an-empty-query.html">Debug an empty or unexpected query result</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/query-cookbook.html">Query cookbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/access-a-shared-server.html">Access data on a shared server</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/write-soft-sensors.html">Soft sensor calculations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/chain-cleaning-apps.html">Data cleaning with multiple apps</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/clean-data-with-multiple-outputs.html">Data cleaning with multiple outputs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/parameterize-soft-sensors.html">Soft sensor parameters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/soft-sensor-examples.html">Soft sensor examples</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/consume-streaming-changes.html">Streaming change feed</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/check-deploy-apps.html">App deployment and recovery</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/record-a-whole-model.html">Record a whole model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/record-experiments.html">Record experiments</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../how-to/compare-experiment-runs.html">Compare experiment runs</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="../_index.html">Reference</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2 has-children"><a class="reference internal" href="../client/_index.html">Client</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../client/starting.html">Starting and stopping</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/streams.html">Streams</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/timeseries.html">Time series</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/graph.html">Graph</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/metadata.html">Metadata</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/querying.html">Querying</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/logs.html">Logs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../client/apps.html">Apps and engine status</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../query/_index.html">Query</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../query/building.html">Building a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/filtering.html">Filtering</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/columns.html">Columns</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/facets.html">Options and facets</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/reading.html">Reading results</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/data-object.html">DataObject: values</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/data-object-info.html">DataObject: streams and statistics</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/inspecting.html">Inspecting a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/writing.html">Writing from a query</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../query/traversal.html">Traversal settings</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../drivers/_index.html">Drivers</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/base-classes.html">Base classes</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/hooks.html">Hooks</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/helpers.html">Helpers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/state.html">Persistent state</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/configuration.html">Configuration</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/built-in-drivers.html">Built-in drivers</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../drivers/tabular-helpers.html">Tabular helpers</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../apps/_index.html">Apps</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../apps/app-class.html">App declarations, windows, and functions</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../apps/inputs.html">App inputs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../apps/outputs.html">App outputs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../apps/deploying.html">Deploying apps</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../apps/cli.html">App commands</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2"><a class="reference internal" href="../actors.html">Actors</a></li>
+<li class="toctree-l2 has-children"><a class="reference internal" href="../experiments/_index.html">Experiments</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/studies-and-runs.html">Studies and runs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/declaring-variables.html">Declaring variables</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/recording.html">Recording values</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/annotations.html">Stream annotations</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/selecting-runs.html">Selecting and comparing runs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/reading.html">Reading recorded data</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/model-adapters.html">Model adapters</a></li>
+<li class="toctree-l3"><a class="reference internal" href="../experiments/codecs-and-values.html">Codecs and values</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2 current active has-children"><a class="reference internal" href="_index.html">Server</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l3"><a class="reference internal" href="cli.html">Command line</a></li>
+<li class="toctree-l3 current active"><a class="current reference internal" href="#">Server configuration</a></li>
+<li class="toctree-l3"><a class="reference internal" href="http-api.html">HTTP API</a></li>
+<li class="toctree-l3"><a class="reference internal" href="storage-migrations.html">Storage upgrades and recovery</a></li>
+</ul>
+</details></li>
+<li class="toctree-l2"><a class="reference internal" href="../glossary.html">Glossary</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../explanation/_index.html">Explanation</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/query-model.html">The query model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/values.html">Values</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/units.html">Units</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/drivers.html">Drivers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/apps.html">Derived stream updates</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/soft-sensor-actors.html">Soft sensor actors</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/stream-lifecycle.html">The stream lifecycle</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/experiments.html">How experiments work</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/text-resolution.html">Text matcher</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/escapement-core.html">Escapement core</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/soft-sensor-inputs.html">Soft sensor inputs</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/server-internals.html">Server internals</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../explanation/graph-backend.html">The graph store</a></li>
+</ul>
+</details></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-source-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Source repositories">
+    <i class="fab fa-github"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="https://github.com/DataDrivenCPS/acquirium" target="_blank"
+   class="btn btn-sm btn-source-repository-button dropdown-item"
+   title="Source repository"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+<span class="btn__text-container">Repository</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/DataDrivenCPS/acquirium/issues/new?title=Issue%20on%20page%20%2Freference/server/configuration.html&body=Your%20issue%20content%20here." target="_blank"
+   class="btn btn-sm btn-source-issues-button dropdown-item"
+   title="Open an issue"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-lightbulb"></i>
+  </span>
+<span class="btn__text-container">Open issue</span>
+</a>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+
+
+<div class="dropdown dropdown-download-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Download this page">
+    <i class="fas fa-download"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="../../_sources/reference/server/configuration.md" target="_blank"
+   class="btn btn-sm btn-download-source-button dropdown-item"
+   title="Download source file"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file"></i>
+  </span>
+<span class="btn__text-container">.md</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li>
+<button onclick="window.print()"
+  class="btn btn-sm btn-download-pdf-button dropdown-item"
+  title="Print to PDF"
+  data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-file-pdf"></i>
+  </span>
+<span class="btn__text-container">.pdf</span>
+</button>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="toggleFullScreen()"
+  class="btn btn-sm btn-fullscreen-button pst-navbar-icon"
+  title="Fullscreen mode"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-expand"></i>
+  </span>
+
+</button>
+
+
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>Server configuration</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-driver-and-drivers-sections">The [driver] and [[drivers]] sections</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-actors-section">The [[actors]] section</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-ontologies-section">The [ontologies] section</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-http-api">The HTTP API</a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="server-configuration">
+<h1>Server configuration<a class="headerlink" href="#server-configuration" title="Link to this heading">#</a></h1>
+<p>This is the reference for <code class="docutils literal notranslate"><span class="pre">acquirium.toml</span></code>: every key of the <code class="docutils literal notranslate"><span class="pre">[server]</span></code>
+section, the environment variables that override them, the <code class="docutils literal notranslate"><span class="pre">[ontologies]</span></code>
+section, and the endpoint map.
+The driver sections are in the <a class="reference internal" href="../drivers/configuration.html"><span class="std std-doc">driver reference</span></a>.
+For starting the server, see <a class="reference internal" href="cli.html#acquirium-server"><span class="std std-ref">run the server</span></a>.</p>
+<p>Relative paths in a config file always resolve against that file’s own
+directory, never the working directory.</p>
+<p>All servers use one embedded Escapement engine and one embedded Oxigraph graph.
+Paths resolve relative to the configuration file.</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[server]</span>
+<span class="n">host</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"127.0.0.1"</span>
+<span class="n">port</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">8000</span>
+<span class="n">data_dir</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">".acquirium"</span>
+<span class="n">exact_only</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="n">recreate</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span>
+<span class="n">engine_workers</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span>
+<span class="n">epoch_requests</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">128</span>
+<span class="n">max_pending_requests</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">100000</span>
+</pre></div>
+</div>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Setting</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Meaning</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">data_dir</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.acquirium</span></code></p></td>
+<td><p>Graph, indexes, cached calculation artifacts, and default engine database</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">engine_path</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">data_dir/escapement-epoch.duckdb</span></code></p></td>
+<td><p>Escapement store, either a DuckDB file or a PostgreSQL URL</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">engine_schema</span></code></p></td>
+<td><p>URL <code class="docutils literal notranslate"><span class="pre">search_path</span></code> when provided, otherwise <code class="docutils literal notranslate"><span class="pre">acquirium_epoch</span></code></p></td>
+<td><p>PostgreSQL schema for Escapement</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">experiments_path</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">engine_path</span></code> if it is a <code class="docutils literal notranslate"><span class="pre">postgres://</span></code> URL, else <code class="docutils literal notranslate"><span class="pre">data_dir/experiments.duckdb</span></code></p></td>
+<td><p>Experiment ledger: a DuckDB file or a <code class="docutils literal notranslate"><span class="pre">postgres://</span></code> URL. Holds Studies, runs, observations, artifact bytes, and logbook entries; their samples are Escapement streams</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">engine_workers</span></code></p></td>
+<td><p>2</p></td>
+<td><p>Python workers available to synchronous app calculations</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">epoch_requests</span></code></p></td>
+<td><p>128</p></td>
+<td><p>Maximum accepted requests processed per epoch</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">max_pending_requests</span></code></p></td>
+<td><p>100000</p></td>
+<td><p>Maximum accepted requests awaiting publication. A full queue returns HTTP 503 for new requests</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">history_epochs</span></code></p></td>
+<td><p>unlimited</p></td>
+<td><p>Optional number of recent epochs to retain. Older snapshots and feed cursors can expire, including epochs referenced by experiments</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">drain_timeout</span></code></p></td>
+<td><p>10</p></td>
+<td><p>Seconds shutdown waits for pending writes to publish; what’s left is processed at the next start</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">graph_path</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">data_dir/.oxigraph</span></code></p></td>
+<td><p>Embedded RDF storage</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">exact_only</span></code></p></td>
+<td><p>false</p></td>
+<td><p>Resolve exact ontology surfaces without downloading an embedding model</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">recreate</span></code></p></td>
+<td><p>false</p></td>
+<td><p>Explicitly erase the configured data directory and the experiment ledger at startup</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">read_batch_size</span></code></p></td>
+<td><p>50000</p></td>
+<td><p>Arrow response page size</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">workers</span></code></p></td>
+<td><p>1</p></td>
+<td><p>HTTP processes; must remain one</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">host</span></code>, <code class="docutils literal notranslate"><span class="pre">port</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.0.0.0</span></code>, 8000</p></td>
+<td><p>Standalone bind address</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">aq.init()</span></code> uses loopback, an automatically selected port, persistent storage,
+and exact-only resolution by default. Its first caller owns the server lifetime.</p>
+<p>Environment overrides include <code class="docutils literal notranslate"><span class="pre">ACQUIRIUM_DATA_DIR</span></code>, <code class="docutils literal notranslate"><span class="pre">ACQUIRIUM_ENGINE_PATH</span></code>, <code class="docutils literal notranslate"><span class="pre">ACQUIRIUM_ENGINE_SCHEMA</span></code>,
+<code class="docutils literal notranslate"><span class="pre">ACQUIRIUM_EXPERIMENTS_PATH</span></code>,
+<code class="docutils literal notranslate"><span class="pre">ACQUIRIUM_ENGINE_WORKERS</span></code>,
+<code class="docutils literal notranslate"><span class="pre">ACQUIRIUM_EPOCH_REQUESTS</span></code>,
+<code class="docutils literal notranslate"><span class="pre">ACQUIRIUM_MAX_PENDING_REQUESTS</span></code>, <code class="docutils literal notranslate"><span class="pre">ACQUIRIUM_HISTORY_EPOCHS</span></code>, <code class="docutils literal notranslate"><span class="pre">ACQUIRIUM_DRAIN_TIMEOUT</span></code>, <code class="docutils literal notranslate"><span class="pre">ACQUIRIUM_GRAPH_PATH</span></code>,
+<code class="docutils literal notranslate"><span class="pre">ACQUIRIUM_EXACT_ONLY</span></code>, <code class="docutils literal notranslate"><span class="pre">ACQUIRIUM_EMBEDDING_MODEL</span></code>, <code class="docutils literal notranslate"><span class="pre">ACQUIRIUM_RECREATE</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">ACQUIRIUM_WORKERS</span></code>.</p>
+<section id="the-driver-and-drivers-sections">
+<h2>The [driver] and [[drivers]] sections<a class="headerlink" href="#the-driver-and-drivers-sections" title="Link to this heading">#</a></h2>
+<p>These declare the drivers the server starts; they are documented in the
+<a class="reference internal" href="../drivers/configuration.html"><span class="std std-doc">driver reference</span></a>.
+One key concerns the server itself: <code class="docutils literal notranslate"><span class="pre">[driver]</span> <span class="pre">server_url</span></code> and <code class="docutils literal notranslate"><span class="pre">server_port</span></code>
+are the address driver actors use to reach the server. The server also uses
+that address for the client which deploys configured <code class="docutils literal notranslate"><span class="pre">[[apps]]</span></code> after startup.
+The default (<code class="docutils literal notranslate"><span class="pre">127.0.0.1</span></code> and the <code class="docutils literal notranslate"><span class="pre">[server]</span></code> port) is right for a single-host
+setup; set them when the bind address is not reachable under that name.
+Note that <code class="docutils literal notranslate"><span class="pre">127.0.0.1</span></code> is preferred over <code class="docutils literal notranslate"><span class="pre">localhost</span></code>: the server listens on IPv4
+only, <code class="docutils literal notranslate"><span class="pre">localhost</span></code> resolves to <code class="docutils literal notranslate"><span class="pre">::1</span></code> first, and on Windows every new connection
+waits about 2 s for the IPv6 attempt to fail. The server closes idle
+connections after 5 s, so an actor ticking every 10 s reconnects on each tick
+and, with <code class="docutils literal notranslate"><span class="pre">localhost</span></code>, pays that delay every time.</p>
+</section>
+<section id="the-actors-section">
+<h2>The [[actors]] section<a class="headerlink" href="#the-actors-section" title="Link to this heading">#</a></h2>
+<p>Each <code class="docutils literal notranslate"><span class="pre">[[actors]]</span></code> entry names an actor declaration for the server to start,
+for example <code class="docutils literal notranslate"><span class="pre">spec</span> <span class="pre">=</span> <span class="pre">&quot;turbidity_alarm.py:alarm&quot;</span></code>. See the
+<a class="reference internal" href="../actors.html#actors-configuration"><span class="std std-ref">actor reference</span></a>.</p>
+</section>
+<section id="the-ontologies-section">
+<h2>The [ontologies] section<a class="headerlink" href="#the-ontologies-section" title="Link to this heading">#</a></h2>
+<p>The package ships five ontologies, registered under canonical IRIs at
+startup:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>ontology</p></th>
+<th class="head"><p>canonical IRI</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>NAWI Water</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">https://watermetadata.org/ontology/watr</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p>ASHRAE 223P</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">http://data.ashrae.org/standard223/1.0/model/all</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p>QUDT units</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">https://qudt.org/vocab/unit</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p>QUDT quantity kinds</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">https://qudt.org/vocab/quantitykind</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p>Brick ref-schema</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">https://brickschema.org/schema/Brick/ref</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">[ontologies]</span> <span class="pre">sources</span></code> adds to or replaces this set:</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[ontologies]</span>
+<span class="n">sources</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span>
+<span class="w">  </span><span class="s2">"./local-extensions.ttl"</span><span class="p">,</span><span class="w">                       </span><span class="c1"># add under its declared IRI</span>
+<span class="w">  </span><span class="p">{</span><span class="w"> </span><span class="n">source</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">"https://qudt.org/3.3.0/vocab/unit"</span><span class="p">,</span><span class="w"> </span><span class="c1"># replace a bundled graph</span>
+<span class="w">    </span><span class="n">as</span><span class="w">     </span><span class="p">=</span><span class="w"> </span><span class="s2">"https://qudt.org/vocab/unit"</span><span class="w"> </span><span class="p">},</span>
+<span class="p">]</span>
+</pre></div>
+</div>
+<p>A plain string loads the file or URL and registers it under whatever IRI its
+<code class="docutils literal notranslate"><span class="pre">owl:Ontology</span></code> declaration uses.
+The <code class="docutils literal notranslate"><span class="pre">{</span> <span class="pre">source,</span> <span class="pre">as</span> <span class="pre">}</span></code> form rewrites that IRI to <code class="docutils literal notranslate"><span class="pre">as</span></code> and replaces any graph
+already registered there.
+Replacing a bundled ontology requires the <code class="docutils literal notranslate"><span class="pre">as</span></code> form; a plain string pointing
+at an already-populated IRI is skipped.</p>
+<p>Note that <code class="docutils literal notranslate"><span class="pre">[ontologies]</span></code> is read from the config file only, with no
+environment variable.</p>
+</section>
+<section id="the-http-api">
+<h2>The HTTP API<a class="headerlink" href="#the-http-api" title="Link to this heading">#</a></h2>
+<p>The Python client covers all of these; the raw endpoints are listed for
+scripting against the server directly.
+This table is the map; each endpoint’s parameters and response shape are in
+the <a class="reference internal" href="http-api.html"><span class="std std-doc">HTTP API reference</span></a>.
+A running server also serves the generated OpenAPI schema at <code class="docutils literal notranslate"><span class="pre">/docs</span></code> and
+<code class="docutils literal notranslate"><span class="pre">/openapi.json</span></code>.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>area</p></th>
+<th class="head"><p>endpoints</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>liveness</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/health</span></code>, <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/graph_version</span></code>, <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/embedding_status</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p>graph</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/insert_graph</span></code>, <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/export_graph</span></code>, <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/sparql_update</span></code>, <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/validate_graph</span></code>, <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/namespace/list</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p>sparql</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/sparql</span></code> (standards-compatible), <code class="docutils literal notranslate"><span class="pre">GET|POST</span> <span class="pre">/sparql_json</span></code> (legacy <code class="docutils literal notranslate"><span class="pre">{columns,</span> <span class="pre">rows}</span></code>)</p></td>
+</tr>
+<tr class="row-odd"><td><p>timeseries</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/insert_timeseries</span></code>, <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/insert_timeseries_arrow</span></code>, <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/timeseries</span></code>, <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/timeseries_info</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p>resolution</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/resolve_text</span></code>, <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/resolve_record</span></code>, <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/resolve_unit</span></code>, <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/resolve_conversion</span></code>, <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/conversion_factors</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p>drivers</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/drivers/start</span></code>, <code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/drivers/stop</span></code>, <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/drivers/list</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p>apps</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/apps</span></code>, <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/apps/{name}</span></code>, <code class="docutils literal notranslate"><span class="pre">PUT</span> <span class="pre">/apps/{name}</span></code>, <code class="docutils literal notranslate"><span class="pre">DELETE</span> <span class="pre">/apps/{name}</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p>logbook</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">POST</span> <span class="pre">/insert_log</span></code>, <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/query_logs</span></code>, <code class="docutils literal notranslate"><span class="pre">DELETE</span> <span class="pre">/delete_logs</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The conventions across all of them:</p>
+<ul class="simple">
+<li><p>Almost every failure is an HTTP 400 with the reason in <code class="docutils literal notranslate"><span class="pre">detail</span></code>.
+404 is reserved for an unknown driver or app.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/timeseries</span></code> streams Arrow record batches, not JSON.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">/sparql_json</span></code> accepts POST with a JSON body because resolved traversal
+queries exceed URL length limits; the client always POSTs.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/sparql</span></code> is the SPARQL 1.1 endpoint for outside tools, with content
+negotiation on <code class="docutils literal notranslate"><span class="pre">Accept</span></code>. <code class="docutils literal notranslate"><span class="pre">/sparql_json</span></code> stays for the Python client’s
+<code class="docutils literal notranslate"><span class="pre">{columns,</span> <span class="pre">rows}</span></code> contract.</p></li>
+<li><p>Graph reads take <code class="docutils literal notranslate"><span class="pre">include_dependencies</span></code> (default true) and <code class="docutils literal notranslate"><span class="pre">wait_for_fresh</span></code>
+(default false).</p></li>
+</ul>
+</section>
+</section>
+
+    <script type="text/x-thebe-config">
+    {
+        requestKernel: true,
+        binderOptions: {
+            repo: "binder-examples/jupyter-stacks-datascience",
+            ref: "master",
+        },
+        codeMirrorConfig: {
+            theme: "abcdef",
+            mode: "python"
+        },
+        kernelOptions: {
+            name: "python3",
+            path: "./reference/server"
+        },
+        predefinedOutput: true
+    }
+    </script>
+    <script>kernelName = 'python3'</script>
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="cli.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Command line</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="http-api.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">HTTP API</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-driver-and-drivers-sections">The [driver] and [[drivers]] sections</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-actors-section">The [[actors]] section</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-ontologies-section">The [ontologies] section</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-http-api">The HTTP API</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By NAWI Project Team
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2023.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=55c26ed414f5f8a31ebb"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=55c26ed414f5f8a31ebb"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>
