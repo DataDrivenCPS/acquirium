@@ -22,8 +22,9 @@ For a new installation, begin at step 2.
    if present. If you set them through the server's environment, remove
    `ACQUIRIUM_TIMESERIES_BACKEND`, `ACQUIRIUM_DUCKDB_PATH`, or `PG_DSN` there.
 4. [Start the server with the new configuration](cli.md#acquirium-server).
-   Load the plant model and start ingestion for the streams you want to use.
-   Verify that you can read a new sample before deploying soft sensors.
+   Load the plant model. If you want to carry over old readings,
+   [copy them before starting ingestion](#copy-legacy-readings). Verify that
+   you can read a sample before deploying soft sensors.
 
 Use the old Acquirium version to read historical records from its original
 stores or a backup.
@@ -33,6 +34,53 @@ stores or a backup.
 experiment database, including one configured outside that directory.
 Use a new path when moving to Escapement.
 ```
+
+## Copy legacy readings
+
+`acquirium migrate` copies registered raw streams and their current stored
+readings between two running servers. The legacy server uses the backend in
+its own configuration. The command reads its HTTP API and writes through
+the Escapement server's ingest API. This workflow was tested with Acquirium
+v0.4.1 on both DuckDB and TimescaleDB.
+
+1. Start the legacy server using the legacy Acquirium release and its
+   storage settings. Keep ingestion paused throughout the copy so the source
+   readings stay consistent. To copy from a legacy backup, point a copy of
+   the legacy configuration at the backup and remove its `[[drivers]]`
+   and `[[apps]]` entries before starting it.
+2. Start the Escapement server with a separate TOML file and fresh storage.
+   Give the servers different ports, such as `8000` and `8001` when running
+   on the same machine. Keep destination drivers and apps stopped until the
+   copy has been verified.
+3. In the Escapement environment, check the endpoints and row counts first.
+   Then run the copy.
+
+```sh
+acquirium migrate --from legacy.toml --to escapement.toml --dry-run
+acquirium migrate --from legacy.toml --to escapement.toml
+```
+
+A small test copy produced this output.
+
+```text
+Found 2 raw streams and 2 readings.
+Verified 2 readings in 2 destination streams.
+```
+
+Each file identifies its server through `[driver]`'s `server_url` and
+`server_port`, or `[server]`'s `host` and `port`. Substitute the paths
+to your configurations. After a completed run, the command reports how
+many readings it verified in the destination. If a copy is interrupted,
+rerun it with the same source and destination. The command checks already
+copied readings before continuing and stops if the destination has
+conflicting readings.
+
+The copy retains source IDs, stream names and property links, value kinds,
+stored units, quantity kinds, timestamps, and numeric or text values. It covers
+raw readings from registered streams. Load the plant model and other graph
+data separately. Deploy the updated apps to rebuild derived readings.
+Keep the legacy backup for experiment runs, artifacts, logs, and older
+versions of corrected readings.
 
 ## Backup and restore
 

@@ -20,6 +20,8 @@ Subcommands:
   acquirium app list               List deployed apps and binding status.
   acquirium app inspect NAME       Inspect schemas, settings, streams, and progress.
   acquirium config init [PATH]     Write a starter acquirium.toml.
+  acquirium migrate --from OLD --to NEW
+      Copy registered raw readings between running servers.
 """
 
 import importlib
@@ -376,6 +378,28 @@ def app_deploy(
     if not isinstance(declaration, App):
         raise ValueError("app target must be an App declaration or factory")
     typer.echo(json.dumps(client.deploy_app(declaration, dry_run=dry_run), indent=2))
+
+
+@app.command("migrate")
+def migrate(
+    source: Annotated[Path, typer.Option("--from", exists=True, dir_okay=False,
+                                        help="Configuration for the running legacy server.")],
+    destination: Annotated[Path, typer.Option("--to", exists=True, dir_okay=False,
+                                             help="Configuration for the running Escapement server.")],
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Check and count readings without writing.")] = False,
+) -> None:
+    """Copy registered raw readings from a legacy Acquirium server."""
+    from requests import RequestException
+    from acquirium.Client.client import AcquiriumClient
+    from acquirium.migration import migrate_readings
+
+    try:
+        source_client = AcquiriumClient(*_config_server_address(load_config(source).data))
+        target_client = AcquiriumClient(*_config_server_address(load_config(destination).data))
+        migrate_readings(source_client, target_client, dry_run=dry_run, report=typer.echo)
+    except (OSError, RequestException, RuntimeError, ValueError) as error:
+        typer.echo(f"Migration failed: {error}", err=True)
+        raise typer.Exit(1) from None
 
 
 def _run_uvicorn(

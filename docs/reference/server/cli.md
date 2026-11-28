@@ -15,10 +15,22 @@ With uv, run it as `uv run acquirium ...`.
 | [`acquirium app inspect`](#acquirium-app-inspect) | show the details of one deployed app |
 | [`acquirium app deploy`](#acquirium-app-deploy) | deploy an app or preview its plan |
 | [`acquirium config init`](#acquirium-config-init) | write a starter `acquirium.toml` |
+| [`acquirium migrate`](#acquirium-migrate) | copy registered raw readings from a legacy server |
 | [`acquirium example init`](#acquirium-example-init) | create the files of the example plant |
 | [`acquirium clear`](#acquirium-clear) | erase the stored data of a data folder |
 
 Every command accepts `--help`.
+
+## `acquirium migrate`
+
+```sh
+acquirium migrate --from legacy.toml --to escapement.toml [--dry-run]
+```
+
+Connects to the two running servers identified by the configuration files.
+Use `--dry-run` to check the endpoints and count the source streams and
+readings without writing. See [copy legacy readings](storage-migrations.md#copy-legacy-readings)
+for setup, verification, and retry steps.
 
 ## Choosing the server
 
