@@ -80,6 +80,23 @@ def test_streams_takes_the_same_stream_handles(hist):
     assert latest["value"].to_list() == [11.0]
 
 
+def test_query_data_keeps_distinct_properties_on_one_stream(hist):
+    points = {"urn:test:refstats#shared-a": "Probe A", "urn:test:refstats#shared-b": "Probe B"}
+    hist.register_streams([
+        {"property_uri": point, "label": label, "source_id": SOURCE,
+         "stream_name": "FT_shared", "value_kind": "numeric"}
+        for point, label in points.items()
+    ])
+    hist.insert_timeseries(SOURCE, "FT_shared", [(T0, 7.0)])
+    stream = hist.stream(SOURCE, "FT_shared")
+    query = hist.query().measurement(stream=stream)
+    for view in ("stored", "current"):
+        data = query.data(view=view)
+        assert {binding.property_uri: binding.property_label for binding in data.bindings} == points
+        rows = data.dataframe(shape="narrow", compact=False)
+        assert dict(rows.select("property_uri", "value_numeric").iter_rows()) == dict.fromkeys(points, 7.0)
+
+
 @pytest.mark.parametrize("ref", [[], "urn:acquirium:no-such-stream"])
 def test_ref_without_a_match_is_empty(hist, ref):
     data = hist.query().measurement(stream=ref).data()

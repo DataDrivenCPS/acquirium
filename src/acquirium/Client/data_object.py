@@ -573,9 +573,10 @@ class DataObject:
         }
         raw_units = query.client._stream_units(redirected_raw) if redirected_raw else {}
 
-        # Keep one logical measurement per node and entity context. Prefer
-        # the base point's label and units when both it and a stage matched.
-        logical = {}
+        # Prefer the base stream when a chain contributes multiple stages to
+        # a context. Each property linked to the chosen stage remains distinct.
+        preferred_stage = {}
+        merged = {}
         for binding in sorted(bindings, key=lambda b: b.stream_uri != streams[b.stream_uri]["raw"]):
             stream = streams[binding.stream_uri]
             ref = binding.stream_uri if binding.view == "stored" else stream["raw"]
@@ -586,15 +587,14 @@ class DataObject:
                 property_unit, stream_unit = raw_units.get(ref, (None, None))
                 units = dict(property_unit=property_unit, stream_unit=stream_unit)
             for context in binding.entity_contexts or [{}]:
-                key = (binding.nid, ref, binding.view, tuple(sorted(context.items())))
-                logical.setdefault(key, replace(binding, stream_uri=ref, entity_contexts=[context], **units))
-        merged = {}
-        for binding in logical.values():
-            key = (binding.nid, binding.property_uri, binding.stream_uri, binding.view)
-            if key in merged:
-                merged[key].entity_contexts.extend(binding.entity_contexts)
-            else:
-                merged[key] = binding
+                chain = (binding.nid, ref, binding.view, tuple(sorted(context.items())))
+                if preferred_stage.setdefault(chain, binding.stream_uri) != binding.stream_uri:
+                    continue
+                key = (binding.nid, binding.property_uri, ref, binding.view)
+                if key in merged:
+                    merged[key].entity_contexts.append(context)
+                else:
+                    merged[key] = replace(binding, stream_uri=ref, entity_contexts=[context], **units)
         bindings = list(merged.values())
 
         return cls(
