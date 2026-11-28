@@ -732,13 +732,13 @@ def graph_version() -> dict[str, int | bool]:
 @app.post("/insert_graph")
 def insert_graph(req: InsertGraphRequest) -> dict[str, Any]:
     try:
-        app.state.manager.insert_graph(
+        reconciliation = app.state.manager.insert_graph(
             rdf_graph=req.rdf_graph,
             format=req.format,
             replace=req.replace,
             source_id=req.source_id,
         )
-        return {"ok": True, "embedding_ready": True}
+        return {"ok": True, "embedding_ready": True, **reconciliation}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

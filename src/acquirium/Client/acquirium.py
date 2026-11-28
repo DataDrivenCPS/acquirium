@@ -115,7 +115,7 @@ class Acquirium:
         replace=True,
         *,
         source_id: str,
-    ) -> None:
+    ) -> dict[str, Any]:
         """
         Insert RDF graph into an explicitly owned deployment data graph.
 
@@ -129,7 +129,7 @@ class Acquirium:
             source_id: Data-graph owner. Use ``"plant"`` for the shared plant
                 model, or a component's stable source ID.
         """
-        self.client.insert_graph(
+        return self.client.insert_graph(
             rdf_graph,
             format=format,
             replace=replace,
@@ -143,9 +143,9 @@ class Acquirium:
         replace: bool = True,
         *,
         source_id: str,
-    ) -> None:
+    ) -> dict[str, Any]:
         """Read RDF from a file and insert it into an explicitly owned graph."""
-        self.client.insert_graph_file(
+        return self.client.insert_graph_file(
             path,
             format=format,
             replace=replace,

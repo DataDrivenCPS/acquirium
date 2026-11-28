@@ -316,12 +316,12 @@ class AcquiriumClient:
         replace: bool = True,
         *,
         source_id: str,
-    ) -> None:
+    ) -> dict[str, Any]:
         """
         Insert RDF graph into an explicitly owned deployment data graph.
 
-        The server refreshes the embedding index synchronously before
-        responding, so inserted concepts are resolvable once this returns.
+        The response confirms the RDF write and includes
+        ``app_reconciliation_error`` if rebuilding the app plan failed.
 
         Args:
             rdf_graph: RDF graph content as text.
@@ -346,6 +346,7 @@ class AcquiriumClient:
         _raise_for_status(response)
         # the graph may bind new prefixes: read the list again when next needed
         self._namespaces_cache = None
+        return response.json()
 
     def insert_graph_file(
         self,
@@ -354,7 +355,7 @@ class AcquiriumClient:
         replace: bool = True,
         *,
         source_id: str,
-    ) -> None:
+    ) -> dict[str, Any]:
         """Read RDF from *path* and insert it into an explicitly owned graph."""
         source_path = Path(path)
         if not source_path.is_file():
@@ -364,7 +365,7 @@ class AcquiriumClient:
             raise ValueError(
                 f"cannot infer RDF format from {source_path.suffix!r}; pass format explicitly"
             )
-        self.insert_graph(
+        return self.insert_graph(
             source_path.read_text(),
             format=resolved_format,
             replace=replace,

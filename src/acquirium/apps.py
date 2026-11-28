@@ -12,6 +12,7 @@ from datetime import timedelta
 import functools
 from hashlib import sha256
 import json
+import logging
 import os
 import re
 from uuid import uuid4
@@ -854,7 +855,7 @@ class Apps:
                 self._pending = Receipt(status["accepted"]), None
                 self._published = (*self._published[:2], True)
             else:
-                self.refresh()
+                self.reconcile()
 
     def _install(self, declarations):
         """Activate a changed plan and adopt it after the engine publishes it."""
@@ -894,6 +895,20 @@ class Apps:
             except Exception as error:
                 self.error = f"{type(error).__name__}: {error}"
                 raise
+
+    def reconcile(self) -> dict[str, str]:
+        """Refresh after a committed graph change or startup and report any error.
+
+        The published plan remains the recovery point when compilation fails.
+        """
+        with self.lock:
+            try:
+                self.refresh()
+            except Exception as error:
+                self.error = f"{type(error).__name__}: {error}"
+                logging.getLogger(__name__).warning("App reconciliation failed: %s", self.error)
+                return {"app_reconciliation_error": self.error}
+        return {}
 
     def catch_up(self, timeout: float = 30.0) -> bool:
         """Wait until the published plan reflects the graph as of this call,

@@ -540,12 +540,15 @@ class Manager:
         replace: bool = True,
         *,
         source_id: str,
-    ) -> None:
+    ) -> dict[str, str]:
         """
         Insert RDF graph into one explicitly owned deployment data graph.
 
         The embedding indexes cover the bundled ontologies only, so an insert
         does not rebuild them.
+
+        The RDF commits before app reconciliation. Return any reconciliation
+        error separately so callers can repair the graph against the published plan.
 
         Args:
             :param rdf_graph: An `xml.sax.xmlreader.InputSource`, file-like object,
@@ -583,10 +586,10 @@ class Manager:
             # bad stream registration to the caller that made it.
             with timed_debug(logger, "insert_graph: _sync_stream_refs_from_graph"):
                 self._sync_stream_refs_from_graph()
-            self.apps.refresh()
         except Exception as e:
             logging.error("acquirium: failed to insert graph: %s", e)
             raise
+        return self.apps.reconcile()
 
     def _editing_source(self, source_id: str):
         """Hold the experiment metadata edit while writing a source graph it
@@ -840,8 +843,7 @@ class Manager:
             graph_uri = self.graph_store.source_graph_uri(source_id)
             result = self.graph_store.sparql_update(update, graph_uri=graph_uri)
         self._sync_stream_refs_from_graph()
-        self.apps.refresh()
-        return result
+        return {**result, **self.apps.reconcile()}
 
     def validate_graph(self) -> dict[str, str | bool]:
         """Validate all registered deployment data against ontology shapes."""

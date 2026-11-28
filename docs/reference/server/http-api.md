@@ -89,6 +89,11 @@ Insert or replace an RDF graph.
 
 **Response** `{"ok": true, "embedding_ready": true}`
 
+The RDF write commits before the server reconciles deployed apps. If app
+reconciliation fails, this endpoint and `/sparql_update` return success for the
+graph write and include `app_reconciliation_error`. The server retains the
+published plan and reports the error in app status while the graph is repaired.
+
 ### `GET /export_graph`
 
 Export the RDF graph as serialized RDF.

@@ -392,6 +392,37 @@ def test_replacements_inherit_metadata_and_may_change_to_a_compatible_unit(syste
     assert replacements.units(manager.core.engine.snapshot().plan()) == {clean: DEG_C}
 
 
+@pytest.mark.parametrize("edit", ["insert_graph", "sparql_update"])
+def test_committed_graph_edit_reports_app_failure_and_can_recover(system, edit):
+    manager, _, client, module, source, _, ref = system
+    put(system, [(0, 2.)])
+    app = declaration("clean", ref, aq.PythonFunction.from_file(module, "double"))
+    manager.deploy_app(replace(app, outputs={"out": aq.ReplacementOutput(unit=NTU)}))
+    plan = manager.core.engine.snapshot().plan()
+    graph = manager.graph_store.data_graph(source).serialize(format="nt")
+
+    # The RDF write commits even though the deployed app cannot use its new unit.
+    if edit == "insert_graph":
+        result = client.insert_graph(graph.replace(NTU, DEG_C), source_id=source)
+    else:
+        unit = "http://qudt.org/schema/qudt/hasUnit"
+        result = client.sparql_update(
+            f"DELETE {{ ?s <{unit}> <{NTU}> }} INSERT {{ ?s <{unit}> <{DEG_C}> }} "
+            f"WHERE {{ ?s <{unit}> <{NTU}> }}",
+            source_id=source,
+        )
+    assert result["ok"] is True
+    assert "not compatible" in result["app_reconciliation_error"]
+    assert DEG_C in manager.graph_store.data_graph(source).serialize(format="nt")
+
+    # Startup can adopt the previous published plan, and a later graph edit repairs it.
+    manager.recover_apps()
+    assert manager.core.engine.snapshot().plan() == plan
+    assert "not compatible" in client.inspect_app("clean")["app"]["error"]
+    assert "app_reconciliation_error" not in client.insert_graph(graph, source_id=source)
+    assert client.inspect_app("clean")["app"]["error"] is None
+
+
 def test_failed_new_head_stale_values_and_successful_empty_result(system):
     manager, _, client, module, _, _, ref = system
     put(system, [(0, 1.)])
