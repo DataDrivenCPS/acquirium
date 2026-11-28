@@ -308,6 +308,7 @@ class Registry(Mapping):
         self._found: Optional[Dict[str, Attr]] = None
 
     def _discovered(self) -> Dict[str, Attr]:
+        """Load user attributes once and share discovery results at the same graph version."""
         if self.client is None:
             return {}
         if self._found is not None:
@@ -326,6 +327,7 @@ class Registry(Mapping):
                 [str(r[pi]) for r in rows],
                 [r[di] if di is not None and di < len(r) else None for r in rows],
             )
+            # Existing registries hold their own references to older results.
             for stale in [k for k in _DISCOVERED_CACHE if k[0] == key[0]]:
                 del _DISCOVERED_CACHE[stale]
             _DISCOVERED_CACHE[key] = found

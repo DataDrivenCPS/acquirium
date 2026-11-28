@@ -167,7 +167,10 @@ class UnitKeyIndex:
         return self._lookup(text, singular=False) or self._lookup(text, singular=True)
 
     def _lookup(self, text: str, singular: bool) -> list[tuple[dict[str, Any], str]]:
+        """Rank all case readings, then keep the best spelling for each URI."""
         found: list[tuple[int, tuple[dict[str, Any], str, int]]] = []
+        # Keep folded alternatives available for context even when the
+        # exact spelling matches a different unit.
         for case_rank, (table, fold) in enumerate(((self._exact, False), (self._folded, True))):
             key = unit_key(text, fold_case=fold, singular=singular)
             if key is None:

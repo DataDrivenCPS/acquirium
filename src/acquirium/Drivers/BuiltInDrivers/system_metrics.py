@@ -72,6 +72,7 @@ class SystemMetricsDriver(PollingIngestDriver):
         psutil.cpu_percent(interval=None)  # first call always returns 0.0; discard it
 
     def collect(self) -> pl.DataFrame:
+        """Read host metrics at one timestamp and keep network bytes as counters."""
         ts = datetime.now(tz=timezone.utc)
         mem  = psutil.virtual_memory()
         disk = psutil.disk_usage("/")

@@ -1,4 +1,9 @@
-"""Copy registered raw readings from an older Acquirium server into Escapement."""
+"""Copy registered raw readings from an older Acquirium server into Escapement.
+
+Migration checks all registrations and populated streams before submitting
+writes. The later copy and verification passes can use the preflight's gap
+ranges to avoid rereading history that already matches.
+"""
 
 from collections.abc import Callable, Collection, Iterator
 from contextlib import ExitStack, closing
@@ -38,6 +43,8 @@ _UTC_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 @dataclass(frozen=True)
 class _Window:
+    """A closed UTC nanosecond range and its expected number of source readings."""
+
     start: int
     end: int
     rows: int
@@ -57,6 +64,8 @@ class _Window:
 
 @dataclass(frozen=True)
 class _Inspection:
+    """Preflight counts and the ranges to copy. A ``None`` plan revisits the whole stream."""
+
     total: int
     matched: int
     windows: list[_Window] | None
@@ -65,6 +74,7 @@ class _Inspection:
 def _catalog(
     client: AcquiriumClient, *, legacy: bool = False, only: Collection[str] | None = None,
 ) -> dict[str, dict[str, str]]:
+    """Read canonical registrations keyed by stream URI for a metadata comparison."""
     result = client.sparql_query(_STREAMS, include_dependencies=False, wait_for_fresh=True)
     streams: dict[str, dict[str, str]] = {}
     for row in result["rows"]:
@@ -78,6 +88,7 @@ def _catalog(
         if uri != str(compute_stream_uri(source, name)):
             raise ValueError(f"Stream {source}/{name} has a noncanonical URI: {uri}")
         if registration.get("property_uri") == f"{uri}__point":
+            # Stream registration recreates this default point on the destination.
             del registration["property_uri"]
         if uri in streams and streams[uri] != registration:
             raise ValueError(f"Stream {source}/{name} has conflicting registration metadata")
@@ -116,7 +127,13 @@ def _typed_batches(
 def _compare(
     source: AcquiriumClient, target: AcquiriumClient, uri: str, window: _Window | None = None,
 ) -> Iterator[tuple[pl.Series, pl.DataFrame]]:
-    """Yield source timestamps and missing readings in timestamp-aligned batches."""
+    """Yield source timestamps and missing readings in timestamp-aligned batches.
+
+    A left join gives each source reading either a matching timestamp to
+    compare or a gap to fill. Readings found only on the destination stay
+    outside the result. Keeping separate numeric and text columns preserves
+    the distinction between values such as ``1.0`` and ``"1.0"``.
+    """
     with ExitStack() as stack:
         readers = [
             stack.enter_context(closing(_typed_batches(client, uri, mode, window)))
@@ -124,7 +141,8 @@ def _compare(
         ]
         heads = [next(reader, None) for reader in readers]
         while heads[0] is not None or heads[1] is not None:
-            # Each reader has delivered all of its rows through this timestamp.
+            # The earliest batch end is the last timestamp all readers can
+            # compare now. Keep any later rows for the next iteration.
             through = min(batch["ts"][-1] for batch in heads if batch is not None)
             source_parts, target_parts = [], []
             for index, batch in enumerate(heads):
@@ -152,6 +170,7 @@ def _compare(
 
 
 def _inspect(source: AcquiriumClient, target: AcquiriumClient, uri: str) -> _Inspection:
+    """Preflight one populated stream and plan the ranges to revisit."""
     total = matched = 0
     windows: list[_Window] | None = []
     with closing(_compare(source, target, uri)) as batches:
@@ -160,6 +179,8 @@ def _inspect(source: AcquiriumClient, target: AcquiriumClient, uri: str) -> _Ins
             matched += len(timestamps) - len(missing)
             if windows is None or missing.is_empty():
                 continue
+            # Track one range per slice with gaps. Count matching rows inside
+            # it too, so copy and verification can check what the range returned.
             start, end = missing["ts"].min(), missing["ts"].max()
             rows = timestamps.is_between(start, end).sum()
             if windows and start == windows[-1].end + 1:
@@ -169,6 +190,8 @@ def _inspect(source: AcquiriumClient, target: AcquiriumClient, uri: str) -> _Ins
                 windows.append(_Window(start, end, rows))
             else:
                 windows = None
+    # Widely scattered gaps can make bounded reads cover most of the stream.
+    # In that case a single range avoids repeated HTTP setup on each pass.
     if windows is not None and sum(window.rows for window in windows) * 2 > total:
         windows = None
     return _Inspection(total, matched, windows)
@@ -177,6 +200,7 @@ def _inspect(source: AcquiriumClient, target: AcquiriumClient, uri: str) -> _Ins
 def _compare_ranges(
     source: AcquiriumClient, target: AcquiriumClient, uri: str, windows: list[_Window] | None,
 ) -> Iterator[tuple[pl.Series, pl.DataFrame]]:
+    """Compare the planned ranges and check their preflight row counts."""
     for window in (None,) if windows is None else windows:
         total = 0
         with closing(_compare(source, target, uri, window)) as batches:
@@ -213,6 +237,7 @@ def _copy_missing(
     source: AcquiriumClient, target: AcquiriumClient, uri: str, registration: dict[str, str],
     windows: list[_Window] | None,
 ) -> int:
+    """Submit only missing rows and return the total source readings examined."""
     # Arrow writes need a single value type per batch.
     pending: dict[str, list[pl.DataFrame]] = {"number": [], "text": []}
     buffered = dict.fromkeys(pending, 0)
@@ -267,7 +292,13 @@ def migrate_readings(
     dry_run: bool,
     report: Callable[[str], None],
 ) -> None:
-    """Plan or run the migration using the server APIs. The source is read only."""
+    """Plan or copy missing raw readings using the server APIs.
+
+    Dry runs stop after preflight. A copy preserves destination-only
+    readings and verifies imported readings against the source. Keep
+    ingestion paused on both servers so their readings stay stable across
+    passes.
+    """
     if source.address == target.address:
         raise ValueError("Source and destination must be different servers")
 

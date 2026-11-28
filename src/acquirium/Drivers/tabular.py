@@ -126,6 +126,8 @@ def to_timestamp(
         if non_null.is_empty():
             col = col.cast(pl.Datetime("us"))
         else:
+            # Infer one epoch unit for the column. The median reduces the
+            # influence of isolated values at a different scale.
             magnitude = abs(int(non_null.median()))
             unit = "s" if magnitude < 100_000_000_000 else "ms"
             if magnitude >= 100_000_000_000_000:
@@ -294,6 +296,7 @@ def _parse_timestamp_text(
     date_format: str | None,
     day_first: bool,
 ) -> pl.Series:
+    """Parse a text column using an explicit format or one inferred format."""
     if date_format is not None:
         return col.str.to_datetime(format=date_format, strict=False)
 
@@ -342,6 +345,8 @@ def _parse_timestamp_text(
     )
     best: pl.Series | None = None
     best_count = 0
+    # Use the export format that parses the most rows. On a tie, keep the
+    # earlier format so day_first controls ambiguous dates.
     for date_format_candidate in formats:
         candidate = col.str.to_datetime(format=date_format_candidate, strict=False)
         count = candidate.drop_nulls().len()

@@ -106,6 +106,7 @@ class Query:
         return uri
 
     def _normalize_instance_uri(self, uri: str | URIRef | None, *, param: str = "uri") -> str | None:
+        """Accept an explicit node URI or expand a CURIE using the client namespaces."""
         if uri is None:
             return None
         if isinstance(uri, URIRef) or _is_uri(uri):
@@ -1438,11 +1439,11 @@ class Query:
     def execute(self, include_dependencies: bool = True) -> dict:
         """Execute the compiled SPARQL against the metadata graph (cached).
 
-        Traversal-program edges (via expressions / ``via="any"``) are
-        resolved first by client-side BFS (see ``explore.traverse``) —
-        nearest edges keep only the closest matches, others all reachable
-        matches. The final result always comes from one SPARQL query with
-        the matches injected as paired VALUES.
+        Resolve traversal-program edges (via expressions or ``via="any"``)
+        with a client-side breadth-first search, then bind the resulting
+        source-target pairs in SPARQL. For a nearest directional edge,
+        query candidates in distance order and keep the first place that
+        satisfies the complete query for each source.
         """
         cache_key = f"execute_{include_dependencies}"
         if self.cache.get(cache_key) is None:
@@ -2067,6 +2068,7 @@ class Query:
         return names
 
     def _col_name_to_alias(self, col_name: str) -> str:
+        """Translate a compiled SPARQL variable into its public result column."""
         if col_name.startswith("attr"):
             head, _, attr_name = col_name[4:].partition("_")
             try:

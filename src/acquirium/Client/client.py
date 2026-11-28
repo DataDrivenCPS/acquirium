@@ -225,6 +225,7 @@ class AcquiriumClient:
     # turns them into Study/Experiment/Variable objects in Experiments.py.
     def define_experiment(self, name: str) -> dict: return self._experiment_post("/experiments/templates", {"name": name})
     def sync_experiment_metadata(self) -> dict:
+        """Ask the server to publish pending experiment metadata and reconcile apps."""
         try:
             return self._experiment_post("/experiments/metadata/sync", {})
         except HTTPError as error:
@@ -1527,7 +1528,10 @@ class AcquiriumClient:
         return _send_in_order(chunks, request_id or str(uuid.uuid4()), wait, send)
 
     def wait(self, receipt, *, timeout=30):
-        """Wait for a database-scoped sequence returned by an accepted request."""
+        """Return the current engine snapshot once the receipt's sequence has applied.
+
+        Raise if a publication fault blocks the request or the wait expires.
+        """
         import math
         if not math.isfinite(timeout) or timeout < 0:
             raise ValueError("timeout must be finite and nonnegative")
@@ -1535,6 +1539,7 @@ class AcquiriumClient:
         deadline = time.monotonic() + timeout
         while True:
             status = self.engine_status()
+            # A fault after this receipt applied still leaves its write visible.
             if status["applied"] >= sequence:
                 return self.engine_snapshot()
             if status["fault"]:
@@ -1544,11 +1549,13 @@ class AcquiriumClient:
             time.sleep(min(0.05, max(0, deadline - time.monotonic())))
 
     def engine_status(self):
+        """Read the accepted and applied sequence counters and any engine fault."""
         response = self._http.get(f"{self.base_url}/engine/status")
         _raise_for_status(response)
         return response.json()
 
     def engine_snapshot(self):
+        """Read the latest published epoch, its plan, and which outputs are behind."""
         response = self._http.get(f"{self.base_url}/engine/snapshot")
         _raise_for_status(response)
         return response.json()
@@ -1569,6 +1576,7 @@ class AcquiriumClient:
 
     def delete_timeseries(self, source_id, stream_name, timestamps, *, request_id=None, wait=30, timeout=60,
                           retry_for=CAPACITY_RETRY_S):
+        """Delete the specified timestamp keys from a stream and return the write receipt."""
         from acquirium.core import time_ns
         return self._post_admitted("/delete_timeseries", retry_for=retry_for, json={
             "source_id": source_id, "stream_name": stream_name,

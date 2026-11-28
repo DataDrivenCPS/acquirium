@@ -100,6 +100,7 @@ class DriverRunner:
             pass
 
     def run(self) -> None:
+        """Tick immediately, then run ticks and graph checks on separate schedules."""
         name = type(self.driver).__name__
         self.logger.info("Starting driver runner for %s", name)
         self._tick()
@@ -115,6 +116,8 @@ class DriverRunner:
                 next_graph_poll = time.monotonic() + self.graph_poll_interval
             if now >= next_tick:
                 self._tick()
+                # Schedule from completion to keep a full interval between
+                # ticks even when a collection runs long.
                 next_tick = time.monotonic() + self.interval
         self.logger.debug("driver loop exit: %s", name)
         try:
@@ -152,6 +155,7 @@ class DriverRunner:
             self.logger.exception("on_graph_change error")
 
     def _tick(self) -> None:
+        """Log a tick failure and leave the runner available for the next tick."""
         try:
             with _timed_debug(self.logger, "tick"):
                 self.driver.tick()

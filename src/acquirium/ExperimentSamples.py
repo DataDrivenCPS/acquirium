@@ -33,6 +33,7 @@ class EscapementSamples:
         the frame and everything written before it."""
         if frame is None or frame.is_empty():
             return self.core.engine.status()["accepted"]
+        # Resolve repeated keys across the entire frame before splitting it.
         frame = frame.unique(subset=["stream_uri", "ts"], keep="last", maintain_order=True)
         for chunk in frame.iter_slices(MAX_REQUEST_ROWS):
             result = self.core.ingest(source, str(uuid.uuid4()), chunk)

@@ -448,7 +448,11 @@ def _local_runtime_setup(
     port: int,
     config_fingerprint: str | None,
 ) -> Iterator[tuple[object, int, list[object]]]:
-    """Prepare aq.init() discovery around the shared uvicorn runner."""
+    """Reserve the local listener and publish discovery data for aq.init().
+
+    Hold the storage directory's server lock while the listener is owned.
+    The registry and the private HTTP endpoint identify the same instance.
+    """
     import socket
     from uuid import uuid4
 

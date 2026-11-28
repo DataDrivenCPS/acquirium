@@ -1,4 +1,10 @@
-# acquirium/mqtt_ingestion.py
+"""Map MQTT topics to registered streams and acknowledge accepted readings.
+
+One message can produce readings for several streams. The acknowledgment
+travels with the final buffered reading, keeping the message's QoS receive
+slot occupied until Acquirium accepts the rows.
+"""
+
 from __future__ import annotations
 
 from collections import deque
@@ -175,10 +181,12 @@ class MQTTIngestDriver(EventIngestDriver):
         super().tick()
 
     def flush(self) -> dict[str, Any]:
+        """Move waiting messages into the row buffer and flush it for admission."""
         with self._messages_lock:
             self._buffer_messages()
         result = super().flush()
         with self._messages_lock:
+            # The completed send may have made room for the rest of a message.
             if self._messages:
                 self._added.set()
         return result
@@ -426,6 +434,7 @@ class MQTTIngestDriver(EventIngestDriver):
         return ts, raw_val
 
     def _on_message(self, client_key: str):
+        """Build the receive callback that fans a message out to its stream readers."""
         window = self._windows[client_key]
 
         def acknowledge(client: mqtt.Client, msg: mqtt.MQTTMessage) -> None:
@@ -449,6 +458,8 @@ class MQTTIngestDriver(EventIngestDriver):
             except Exception as exc:
                 logger.warning("mqtt decode failed client=%s topic=%s err=%s", client_key, topic, exc)
             with self._messages_lock:
+                # QoS 0 has no receive-window slot to keep the broker from
+                # sending more. Drop it while waiting for space in the buffer.
                 if not msg.qos and self._messages:
                     logger.warning("mqtt: dropping QoS 0 readings while waiting for buffer space")
                     return

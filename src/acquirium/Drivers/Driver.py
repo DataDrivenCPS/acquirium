@@ -1,3 +1,11 @@
+"""Driver lifecycle and observation admission.
+
+Drivers declare streams before sending observations. Polling and event
+drivers can buffer individual readings, while file and polling drivers can
+submit whole frames. The lifetime of a buffered batch ends when the server
+accepts it into the inbox, and the engine publishes it separately.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -45,6 +53,8 @@ class FileBatch:
 
 @dataclass(frozen=True)
 class _IngestBatch:
+    """Rows and callbacks detached for sending under a stable request ID."""
+
     request_id: str
     rows: list[tuple[str, datetime, str, Any]]
     callbacks: list[Callable[[], None]]
@@ -57,7 +67,13 @@ if TYPE_CHECKING:
 
 
 def _value_column(col: "pl.Series") -> "pl.Expr":
-    """Keep the value's representation until the server applies its stream kind."""
+    """Choose an Arrow-compatible dtype for the values.
+
+    Keep native numeric columns as they are where Arrow supports the dtype.
+    For object columns, recover Int64 or Float64 when every present value
+    fits the same type. Other object values travel as text for the server to
+    interpret by stream kind.
+    """
     import math
     from numbers import Integral
     import polars as pl
@@ -496,6 +512,8 @@ class IngestDriver(Driver):
             with self._pending_lock:
                 if not self._pending and not self._on_accepted:
                     return result
+                # Swap the queues under the lock so producers can keep adding
+                # rows while the HTTP request is in flight.
                 batch = _IngestBatch(str(uuid.uuid4()), self._pending, self._on_accepted)
                 self._pending, self._on_accepted = [], []
                 self._active_batch = batch
@@ -503,6 +521,7 @@ class IngestDriver(Driver):
         return result
 
     def _send_batch(self, batch: _IngestBatch, result: dict[str, Any]) -> None:
+        """Retire the active batch after admission and run its callbacks."""
         if batch.rows:
             reply = self.insert_observations(self._pending_frame(batch.rows), request_id=batch.request_id)
             result["rows_inserted"] += reply["rows_inserted"]
@@ -512,6 +531,7 @@ class IngestDriver(Driver):
         self._accepted(batch.callbacks)
 
     def _accepted(self, callbacks: list[Callable[[], None]]) -> None:
+        """Run each callback even if an earlier acknowledgment failed."""
         for callback in callbacks:
             try:
                 callback()
@@ -519,6 +539,7 @@ class IngestDriver(Driver):
                 logger.exception("%s: acceptance callback failed", type(self).__name__)
 
     def _pending_frame(self, rows: list[tuple[str, datetime, str, Any]]) -> "pl.DataFrame":
+        """Build the frame without coercing mixed Python values during inference."""
         import polars as pl
 
         return pl.DataFrame({
@@ -531,7 +552,7 @@ class IngestDriver(Driver):
     def insert_observations(
         self, observations: "pl.DataFrame | None", *, request_id: str | None = None
     ) -> dict[str, Any]:
-        """Normalize and publish buffered observations.
+        """Normalize observations, register their streams, and submit them for admission.
 
         ``request_id`` is set by :meth:`flush` and identifies the request, so
         a resent one is deduplicated within Escapement's retry window. A frame
@@ -578,6 +599,11 @@ class IngestDriver(Driver):
         return {"ok": True, "rows_inserted": total, "receipts": receipts}
 
     def normalize_observations(self, observations: "pl.DataFrame | None") -> "pl.DataFrame":
+        """Build the upload frame with UTC timestamps and Arrow-compatible values.
+
+        Drop rows missing a stream name or a usable timestamp. The server
+        decides which remaining values to store using each stream's kind.
+        """
         import polars as pl
 
         schema = {
@@ -677,6 +703,7 @@ class IngestDriver(Driver):
         self.register_declared()
 
     def _shutdown(self) -> None:
+        """Stop the driver and attempt a final flush even when its stop hook fails."""
         stop_error: BaseException | None = None
         try:
             self.stop()
@@ -716,6 +743,7 @@ class PollingIngestDriver(IngestDriver):
             )
 
     def tick(self) -> None:
+        """Retry buffered work, sample once, and send this tick's observations."""
         # Retry any batch retained from a previous failed flush before sampling
         # again; a full retry backlog must not prevent the driver recovering.
         self.flush()
@@ -806,6 +834,7 @@ class FileIngestDriver(IngestDriver):
         self._cursors: dict[str, Any] = self.state.get("cursors", {})
 
     def tick(self) -> None:
+        """Read one page from each matching file and checkpoint its cursor."""
         # Declarations made during setup() reach the graph even before any file
         # shows up, so a model's bindings are complete from the first tick.
         self.register_declared()
@@ -830,6 +859,8 @@ class FileIngestDriver(IngestDriver):
             if next_cursor == cursor:
                 continue
 
+            # A failed insert leaves the cursor at the start of this page,
+            # so the next tick reads it again.
             if observations is not None and not observations.is_empty():
                 result = self.insert_observations(observations)
                 if not result.get("ok", False):
@@ -884,6 +915,7 @@ class EventIngestDriver(IngestDriver):
         self._flusher.start()
 
     def _flush_promptly(self) -> None:
+        """Coalesce arriving rows until the buffer goes quiet or the deadline expires."""
         while not self._stopping.is_set():
             if not self._added.wait(0.5):
                 continue
@@ -902,6 +934,7 @@ class EventIngestDriver(IngestDriver):
                 self._stopping.wait(self.flush_retry)
 
     def _shutdown(self) -> None:
+        """Join the background flusher before running the driver's final flush."""
         self._stopping.set()
         if self._flusher is not None:
             self._flusher.join()

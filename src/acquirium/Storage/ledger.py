@@ -38,7 +38,11 @@ def is_postgres(location: str | Path) -> bool:
 
 
 def open_ledger(location: str | Path, *, samples: Any = None, recreate: bool = False):
-    """A ledger at a DuckDB path or a ``postgres://`` URL."""
+    """Open a ledger at a DuckDB path or PostgreSQL URL.
+
+    ``recreate`` drops the component tables on open. Each component then
+    initializes its own schema when it first uses the ledger.
+    """
     if is_postgres(location):
         return PostgresLedger(str(location), samples=samples, recreate=recreate)
     return DuckDBLedger(location, samples=samples, recreate=recreate)
@@ -54,6 +58,7 @@ class _Ledger:
 
     @contextmanager
     def _own_conn(self):
+        """Borrow a separate autocommit connection for reads and schema setup."""
         conn = self._connect()
         try:
             yield conn
@@ -85,6 +90,7 @@ class DuckDBLedger(_Ledger):
 
     @contextmanager
     def _write_conn(self):
+        """Yield a fresh connection in a write transaction. Caller holds ``_lock``."""
         conn = self._connect()
         try:
             conn.begin()
@@ -118,6 +124,7 @@ class PostgresLedger(_Ledger):
 
     @contextmanager
     def _write_conn(self):
+        """Yield the shared connection in a write transaction. Caller holds ``_lock``."""
         with self.conn.transaction():
             yield self.conn
 

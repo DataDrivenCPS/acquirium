@@ -1,3 +1,10 @@
+"""Search ontology concepts by exact spelling and embedding similarity.
+
+Each index entry represents a spelling of a concept. Exact lookup can use
+every spelling, while semantic search only sees the entries with vectors.
+Both stages rank distinct concept URIs for callers.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -203,6 +210,7 @@ class EmbeddingMatcher:
             self._surface_index_cs = surface_index_cs
 
     def _ensure_model(self) -> None:
+        """Load the model on first use so an exact lookup needs no model setup."""
         if self._model is not None:
             return
         cache_dir = str(self._model_cache_dir) if self._model_cache_dir else None
@@ -229,6 +237,7 @@ class EmbeddingMatcher:
 
     @staticmethod
     def _concepts_hash(concepts: list[dict[str, Any]]) -> str:
+        """Derive the disk cache key from the canonicalized concept payload."""
         canonical = json.dumps(
             sorted(
                 (_canonicalize_jsonish(concept) for concept in concepts),
@@ -477,6 +486,7 @@ class EmbeddingMatcher:
         if n_candidates >= len(scores):
             top_indices = np.argsort(-scores)
         else:
+            # Partition first so only the candidate pool needs a full sort.
             top_indices = np.argpartition(-scores, n_candidates)[:n_candidates]
             top_indices = top_indices[np.argsort(-scores[top_indices])]
 
@@ -591,6 +601,7 @@ class EmbeddingMatcher:
         )
 
     def _try_load_cache(self, hash_val: str) -> bool:
+        """Install a saved index when both the vector and metadata files load."""
         try:
             vec_path, meta_path = self._cache_path(hash_val)
             if not vec_path.exists() or not meta_path.exists():
@@ -604,6 +615,7 @@ class EmbeddingMatcher:
             return False
 
     def _save_cache(self, hash_val: str) -> None:
+        """Write the current vectors and metadata as a best-effort cache."""
         try:
             with self._lock:
                 vectors = self._vectors

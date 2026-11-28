@@ -1,4 +1,11 @@
-"""Reusable, variable-centric experiment tracking."""
+"""Track experiment runs against reusable study and variable declarations.
+
+The SQL ledger owns run state, recording order, and artifact references.
+Escapement publishes sampled readings, and the experiment metadata outbox
+delivers graph updates after the ledger commits. An observation can point
+at samples the engine has accepted but has yet to publish. Readers use the
+saved sequence to find the epoch that contains those samples.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -86,6 +93,8 @@ def _publishes(method):
 
 @dataclass
 class _PreparedObservation:
+    """One validated ledger entry and any artifact or sample write it needs."""
+
     variable_id: str
     key: tuple | None = None
     occurred_at: datetime | None = None
@@ -100,6 +109,8 @@ class _PreparedObservation:
 
 @dataclass
 class _PreparedBatch:
+    """Validated observations and the stream registrations they depend on."""
+
     observations: list[_PreparedObservation] = field(default_factory=list)
     registrations: list[tuple] = field(default_factory=list)
     updates: list[dict] = field(default_factory=list)
@@ -215,6 +226,7 @@ class ExperimentStore:
         return sequence, _now()
     @_publishes
     def define(self, name: str) -> dict[str, Any]:
+        """Return the existing study for a name or create it and queue its graph record."""
         if not name.strip(): raise ValueError("experiment name is required")
         item = {"template_id": str(uuid4()), "name": name, "created_at": _now()}
         update = self.metadata_graph.record_update(study_record(item))
@@ -247,6 +259,7 @@ class ExperimentStore:
             return result
 
     def _prepare_declarations(self, template_id, declarations):
+        """Return declaration results in request order and updates for new variables."""
         # Only labels in this request are compared, so a new declaration does
         # not load (or wait for graph delivery of) the rest of the Study.
         labels = list(dict.fromkeys(declaration["label"] for declaration in declarations))
@@ -277,6 +290,7 @@ class ExperimentStore:
 
     @_publishes
     def start(self, template_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
+        """Create a running experiment under an existing study."""
         # Metadata belongs to this execution, while declarations belong to the
         # reusable study. This is what lets a parameter sweep share variables.
         run = {"run_id": str(uuid4()), "template_id": template_id, "status": "running", "metadata": metadata, "started_at": _now()}
@@ -308,12 +322,14 @@ class ExperimentStore:
 
     @contextmanager
     def _holding_run(self, run_id):
+        """Serialize recording and finishing across the run's separate transactions."""
         with self._run_locks_guard:
             lock = self._run_locks.setdefault(run_id, threading.RLock())
         with lock:
             yield
 
     def record_batch(self, run_id: str, entries: list[dict]) -> list[dict]:
+        """Validate and record a batch for an active run, returning receipts in order."""
         with self._holding_run(run_id):
             return self._write_recording(run_id, self._prepare_recording(run_id, entries))
 
@@ -390,6 +406,8 @@ class ExperimentStore:
                 if kind not in ARTIFACT_KINDS or item.artifact_digest is None:
                     raise ValueError(f"{label!r} is a {kind} variable; attach its bytes instead")
             elif form == "reference":
+                # External streams keep their own lifecycle. Only sample
+                # entries above reserve streams for this run to clean up.
                 if kind != "timeseries":
                     raise ValueError(f"{label!r} is a {kind} variable and cannot reference a stream or file")
                 item.stream_uri = entry["stream_uri"]
@@ -762,6 +780,7 @@ class ExperimentStore:
         run_ids: list[str] | None = None,
         kind: str | None = None,
     ) -> list[dict[str, Any]]:
+        """Read ledger observations in run order and resolve their sample epochs."""
         if run_ids == []:
             return []
         clauses = ["r.template_id=?"]
@@ -1936,6 +1955,7 @@ class ObservationCollection:
         self.selection = selection
 
     def _rows(self) -> list[dict[str, Any]]:
+        """Apply the parent run selection before fetching persisted observations."""
         selected_ids = self.selection._selected_run_ids() if self.selection is not None else None
         if selected_ids == set():
             return []
@@ -1950,6 +1970,7 @@ class ObservationCollection:
         )
 
     def all(self) -> list[Observation]:
+        """Build observation handles with shared variable definitions and saved epochs."""
         observations = []
         rows = self._rows()
         variables = self.study._variables_by_id(item["variable_id"] for item in rows)

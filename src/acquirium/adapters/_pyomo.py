@@ -16,6 +16,12 @@ class PyomoAdapter(AdapterDefinition):
 
     def _declare(self, kind, label, source=UNSET, *, read=None, read_at=None, unit=UNSET,
                  quantity_kind=None, observed=None, metadata=None, role="output"):
+        """Bind a declaration to a Pyomo component or explicit value reader.
+
+        A scalar component can supply its own reader. Indexed components
+        require a reader to select values. Component units become the
+        declaration's default when available.
+        """
         if any(reader is not None and not callable(reader) for reader in (read, read_at)):
             raise TypeError("readers must be callable")
         pyo = self.pyo
@@ -50,6 +56,7 @@ class PyomoAdapter(AdapterDefinition):
             if reader is None:
                 return None
             if kind in {"scalar", "timeseries", "text"}:
+                # Evaluate at capture time so a solve can update the values.
                 return lambda *args: pyo.value(reader(*args))
             return reader
 

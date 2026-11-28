@@ -44,7 +44,10 @@ def warn_deprecated(old: str, new: str, *, stacklevel: int = 3) -> None:
 
 
 def new_names(mapping: Mapping[str, Any], *, stacklevel: int = 3, renames: Mapping[str, str] = OLD_NAMES) -> dict[str, Any]:
-    """Return ``mapping`` with every old key replaced by its new name."""
+    """Copy a mapping with old keys translated to their current names.
+
+    Warn for deprecated keys and raise if the caller supplies both forms.
+    """
     if renames.keys().isdisjoint(mapping):
         return dict(mapping)
     out: dict[str, Any] = {}
@@ -71,6 +74,7 @@ def _wrap(func: Callable, renames: Mapping[str, str]) -> Callable:
 
 
 def _renames_for(func: Callable) -> dict[str, str]:
+    """Find aliases the signature can accept without replacing existing parameters."""
     try:
         parameters = inspect.signature(func).parameters
     except (TypeError, ValueError):
@@ -106,6 +110,7 @@ def accepts_old_names(target: T) -> T:
         renames = _renames_for(func)
         if not renames:
             continue
+        # Rewrap the function in its descriptor to preserve how it binds.
         wrapped = _wrap(func, renames)
         setattr(target, name, kind(wrapped) if kind in (staticmethod, classmethod) else wrapped)
     fields = set(getattr(target, "__annotations__", ())) | set(getattr(target, "_fields", ()))

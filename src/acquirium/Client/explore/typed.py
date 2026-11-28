@@ -172,6 +172,7 @@ def normalize_type(type_: Any) -> str:
 
 
 def _cast_scalar(v: Any, target: str) -> Any:
+    """Convert one metadata scalar. The column formatter handles lists and failures."""
     if v is None:
         return None
     if target == "string":
@@ -184,6 +185,7 @@ def _cast_scalar(v: Any, target: str) -> Any:
         if isinstance(v, int):
             return v
         if isinstance(v, float):
+            # Preserve the value when a float is used for an integer field.
             if v.is_integer():
                 return int(v)
             raise ValueError(v)
@@ -199,6 +201,7 @@ def _cast_scalar(v: Any, target: str) -> Any:
             return float(v.strip())
         raise ValueError(v)
     if target == "bool":
+        # General truthiness would interpret the string "false" as true.
         if isinstance(v, bool):
             return v
         if isinstance(v, int) and v in (0, 1):

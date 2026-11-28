@@ -105,6 +105,7 @@ class WaterTAPDriver(PollingIngestDriver):
             )
 
     def collect(self) -> pl.DataFrame:
+        """Build and solve the model, then sample mapped values at one UTC timestamp."""
         logger.debug("watertap collect: building model via %s", self._build_spec)
         result = self._build_fn(**self._build_kwargs)
         model = self._extract_model(result)
@@ -138,6 +139,7 @@ class WaterTAPDriver(PollingIngestDriver):
         )
 
     def _extract_model(self, result: Any) -> Any:
+        """Select the configured attribute, first sequence element, or build result."""
         if self._result_attr:
             try:
                 return getattr(result, str(self._result_attr))
@@ -164,7 +166,11 @@ def get_value_from_model(model: Any, component_name: str) -> float | None:
 
 
 def get_observation_from_model(model: Any, component_name: str) -> tuple[bool, Any]:
-    """Best-effort extraction of an observed value from a Pyomo-like model."""
+    """Return a success flag and value from a Pyomo-like component.
+
+    Try Pyomo evaluation before reading the component's value attribute.
+    An unresolved component or missing value returns ``(False, None)``.
+    """
     comp = None
     try:
         comp = model.find_component(component_name)

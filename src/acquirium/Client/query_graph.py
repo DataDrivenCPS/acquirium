@@ -91,6 +91,7 @@ class QueryGraph:
     object_excluded: tuple = ()
 
     def with_data_node(self, info: DataNodeInfo) -> "QueryGraph":
+        """Copy the graph with a data selector for this node and keep the current pointer."""
         dn = dict(self.data_nodes)
         dn[info.node_id] = info
         return QueryGraph(

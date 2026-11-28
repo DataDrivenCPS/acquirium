@@ -111,6 +111,7 @@ def _build_stream_triples(
                 "a stream registration needs a property_uri or a "
                 "(source_id, stream_name) pair to mint one"
             )
+        # A disconnected point gives unlinked streams a queryable property.
         subj = URIRef(f"{stream_uri}__point")
         g.add((subj, IS_DISCONNECTED, Literal(True)))
         if label is None:
@@ -168,6 +169,7 @@ def _build_stream_triples(
     if stream_uri is not None:
         g.add((subj, HAS_EXTERNAL_REFERENCE, stream_uri))
 
+    # Custom fields describe the stored reference when one is registered.
     target = stream_uri if stream_uri is not None else subj
     for pred, value in (stream.get("properties") or {}).items():
         _add_triple(g, target, pred, value)

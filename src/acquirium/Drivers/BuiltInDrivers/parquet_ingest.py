@@ -40,6 +40,7 @@ class ParquetIngestDriver(FileIngestDriver):
     """
 
     def read(self, path: Path, cursor: Any) -> FileBatch:
+        """Read the unprocessed portion of a Parquet file and declare its streams."""
         offset = cursor or 0
         cfg = self.config.get("driver", {})
         batch = read_parquet_batch(
@@ -78,7 +79,11 @@ def read_parquet_batch(
     day_first: bool = False,
     skip_cols: str | list[str] | tuple[str, ...] = (),
 ) -> FileBatch:
-    """Read one explicit Parquet file page into canonical observations."""
+    """Convert remaining Parquet rows into observations and return the next row offset.
+
+    Count file rows in the cursor even when timestamp or value filtering
+    drops observations.
+    """
     if layout is None:
         raise ValueError("Parquet ingestion requires driver.format = 'wide' or 'narrow'")
     offset = cursor or 0

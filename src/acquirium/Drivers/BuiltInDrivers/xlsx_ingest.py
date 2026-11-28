@@ -44,6 +44,7 @@ class XLSXIngestDriver(FileIngestDriver):
     """
 
     def read(self, path: Path, cursor: Any) -> FileBatch:
+        """Read the workbook into one frame and resume at its saved row offset."""
         offset = cursor or 0
         cfg = self.config.get("driver", {})
 
@@ -61,6 +62,7 @@ class XLSXIngestDriver(FileIngestDriver):
         if drop:
             df = df.drop(drop)
 
+        # The cursor counts rows across the combined sheets in reading order.
         df = df.slice(offset)
         if df.is_empty():
             return FileBatch(None, cursor)

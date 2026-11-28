@@ -46,6 +46,11 @@ class DriverSupervisor:
         interval: float | None = None,
         name: str | None = None,
     ) -> dict[str, Any]:
+        """Start a child and expose it only after the runner reports successful setup.
+
+        The name stays reserved under the supervisor lock through the setup
+        handshake. The returned record describes the child process.
+        """
         driver_section = config.get("driver", {})
         effective_interval = float(
             interval if interval is not None else driver_section.get("interval", 10.0)
@@ -111,6 +116,7 @@ class DriverSupervisor:
             return self._public_info(record)
 
     def stop_driver(self, name: str, *, timeout: float = 10.0) -> dict[str, Any]:
+        """Remove a named child from the registry and wait for its cleanup."""
         with self._lock:
             record = self._drivers.pop(name, None)
         if record is None:
@@ -121,6 +127,7 @@ class DriverSupervisor:
 
     @staticmethod
     def _wait_for_exit(record: dict[str, Any], timeout: float) -> dict[str, Any]:
+        """Report a clean exit, kill a timed-out child, or raise for a failed exit."""
         name, proc = record["name"], record["proc"]
         try:
             code = proc.wait(timeout=timeout)
@@ -140,6 +147,7 @@ class DriverSupervisor:
         return [self._public_info(r) for r in records]
 
     def stop_all(self, *, timeout: float = 10.0) -> None:
+        """Ask all registered children to stop and apply one deadline to the group."""
         with self._lock:
             records = list(self._drivers.values())
             self._drivers.clear()

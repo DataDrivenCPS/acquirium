@@ -260,6 +260,8 @@ def update_text(writes: Iterable[Write]) -> str:
         if forward or keys:
             terms = [f"?p = <{p}>" for p in forward]
             terms += [f"?p = <{ATTR_NS}{k}>" for k in keys]
+            # Replacing a parent key clears its flattened descendants too.
+            # The dot keeps deletion scoped to the key's path.
             terms += [f'STRSTARTS(STR(?p), "{ATTR_NS}{k}.")' for k in keys]
             subject = w.subject.n3()
             ops.append(

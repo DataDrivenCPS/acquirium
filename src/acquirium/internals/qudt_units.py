@@ -435,6 +435,7 @@ class QUDTUnitConverter:
         return None
 
     def _compose_ratio(self, numerator: UnitDefinition, denominator: UnitDefinition, label_text: str) -> UnitDefinition:
+        """Construct a unit from the ratio of two multiplicative conversion factors."""
         if numerator.offset != 0 or denominator.offset != 0:
             raise IncompatibleUnits("Cannot compose ratio units when offsets are non-zero")
 
@@ -488,6 +489,7 @@ class QUDTUnitConverter:
         return self._refine_ratio_multiplier(unit)
 
     def _refine_ratio_multiplier(self, unit: UnitDefinition) -> UnitDefinition:
+        """Derive a ratio's multiplier from its resolved parts when available."""
         local = self._unit_local(unit.uri)
         if "-PER-" not in local:
             return unit

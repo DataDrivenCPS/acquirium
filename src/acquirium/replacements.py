@@ -1,4 +1,10 @@
-"""Replacement claims live in the plan; reads and inputs follow its stream links."""
+"""Resolve replacement chains for reads and app inputs.
+
+Each replacement output claims one input stream. A current view follows
+those claims forward to the final stage, a raw view follows them backward
+to the base, and a stored view reads the physical reference itself. Compile
+the claims before rebinding consumers so they can see the whole chain.
+"""
 
 from acquirium.Storage.values import normalize_value_kind
 
@@ -91,6 +97,7 @@ def compile(plan, bindings, declarations, views, *, streams, rebind, previous_pl
     resolved = {}
 
     def inherit(ref, visiting=()):
+        """Resolve one stage's metadata from its immediate input, detecting cycles."""
         if ref in resolved:
             return resolved[ref]
         if ref not in sources:
@@ -183,6 +190,8 @@ def resolve(plan, refs, *, view="current"):
         for operator in _instances(plan):
             for port, source in annotation(operator, "replaces").items():
                 target = operator["outputs"][port]
+                # Each traversal has a single next stage. Reverse the links
+                # for raw reads without changing how the chain is walked.
                 key, value = (source, target) if view == "current" else (target, source)
                 if key in links and links[key] != value:
                     raise ValueError(f"conflicting replacement links for {key!r}")

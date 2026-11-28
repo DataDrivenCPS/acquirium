@@ -29,6 +29,7 @@ UNDECLARED_VALUE_KIND = "undeclared"
 
 
 def normalize_value_kind(value_kind: Any = None) -> Literal["numeric", "text"]:
+    """Resolve declaration aliases to the effective kind used for values."""
     if value_kind is None:
         return "text"
     value = str(value_kind).strip().lower()
@@ -49,6 +50,7 @@ def stored_value_kind(value_kind: Any = None) -> str:
 
 
 def normalize_value_mode(value_mode: Any = None) -> ValueMode:
+    """Validate a read mode, using ``default`` when the caller omits it."""
     value = "default" if value_mode is None else str(value_mode).strip().lower()
     if value in VALUE_MODES:
         return cast(ValueMode, value)
@@ -59,6 +61,7 @@ def normalize_value_mode(value_mode: Any = None) -> ValueMode:
 
 
 def _split_scalar(value: Any, *, numeric: bool) -> tuple[float | None, str | None]:
+    """Normalize a value from a mixed batch with a Python object column."""
     if value is None or (isinstance(value, str) and not value.strip()):
         return None, None
     if numeric:
@@ -150,7 +153,8 @@ def typed_value_series(values: list[Any]) -> pl.Series:
 
 
 def _validate_integers(frame: pl.DataFrame, integer: pl.Expr, numeric: pl.Expr) -> None:
-    # A rounded Int64 or UInt64 can exceed its original dtype.
+    """Raise when a numeric-stream integer changes on conversion to Float64."""
+    # Compare using Int128 because rounding may exceed the original dtype.
     roundtrip = integer.cast(pl.Float64).cast(pl.Int128, strict=False)
     if frame.select((numeric & integer.cast(pl.Int128).ne_missing(roundtrip)).any()).item():
         raise ValueError(_INEXACT_INTEGER)
@@ -164,7 +168,8 @@ def split_values(frame: pl.DataFrame) -> pl.DataFrame:
     On a numeric stream a value that parses as a number is stored as one
     (``"12.5"`` counts) and anything else as text, so a fault code is kept.
     On a text stream booleans retain their Python spelling. On a
-    numeric stream they are 1.0 and 0.0.
+    numeric stream they are 1.0 and 0.0. An integer reading for a
+    numeric stream must round-trip through Float64 or this raises ValueError.
     """
     dtype = frame.schema["value"]
     value, numeric = pl.col("value"), pl.col("value_kind").eq("numeric")

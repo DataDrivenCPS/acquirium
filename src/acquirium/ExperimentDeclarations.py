@@ -23,6 +23,7 @@ FIELDS = frozenset({"unit", "quantity_kind", "type", "substance", "process", "ro
 
 
 def stream_keys(kind: str, metadata: Mapping) -> tuple[str, ...]:
+    """Read index names in declaration order and reject collisions with stream metadata."""
     from acquirium.Client.explore.attributes import REGISTRY, check_key
     from acquirium.Client.explore.relations import RELATIONS
     from acquirium.Client.client import STREAM_FIELDS
@@ -42,6 +43,7 @@ def stream_keys(kind: str, metadata: Mapping) -> tuple[str, ...]:
 
 
 def stream_key(key: Any, keys: tuple[str, ...]) -> tuple:
+    """Normalize a key to a tuple of JSON scalars in the declared index order."""
     if not isinstance(key, (tuple, list)) or len(key) != len(keys):
         raise ValueError(f"expected a key tuple with {len(keys)} entries")
     key = to_json(list(key), path="key")
@@ -124,6 +126,7 @@ class Declaration:
         return (self.role, self.kind, identity(self.document())) == (role, kind, identity(document))
 
     def resolve(self, resolve):
+        """Return a copy with graph terms resolved alongside the supplied values."""
         from acquirium.Client.explore.attributes import REGISTRY
         from acquirium.Client.metadata import resolve_values
         resolved = dict(self.resolved)
@@ -139,6 +142,12 @@ _PROPERTIES = ("unit", "quantity_kind", "source_path", "description", "source_un
 
 
 def validate_declaration(component: Declaration, *, model=False, metadata_is_json=False) -> Declaration:
+    """Check a declaration's role, value kind, and storage options.
+
+    Return a normalized copy with JSON metadata and keys ready for stream
+    registration. Model components use the subset of roles and kinds a
+    model reader can supply.
+    """
     if not isinstance(component.label, str) or not component.label.strip():
         raise ValueError("a non-empty label is required")
     if component.role not in ({"input", "output"} if model else {"input", "output", "annotation"}):
@@ -160,6 +169,7 @@ def validate_declaration(component: Declaration, *, model=False, metadata_is_jso
     mappings = component.observed_by_key
     if not mappings and isinstance(component.observed, Mapping):
         mappings = [{"key": list(stream_key(key, keys)), "observed": str(uri)} for key, uri in component.observed.items()]
+        # Sorting gives equivalent mappings the same saved identity.
         mappings.sort(key=lambda item: json.dumps(item["key"], sort_keys=True))
     else:
         mappings = [{**item, "key": list(stream_key(item.get("key", ()), keys))} for item in mappings]

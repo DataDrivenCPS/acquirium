@@ -68,6 +68,8 @@ class Rolling:
 
 @dataclass(frozen=True)
 class PythonFunction:
+    """Identify a calculation by its location, source digest, and entry point."""
+
     path: str
     sha256: str
     entrypoint: str
@@ -76,10 +78,12 @@ class PythonFunction:
 
     @classmethod
     def from_file(cls, path, entrypoint, *, batch=False, sequential=False):
+        """Record the current source digest for validation when loading the calculation."""
         path = Path(path).resolve()
         return cls(str(path), sha256(path.read_bytes()).hexdigest(), entrypoint, batch, sequential)
 
     def to_dict(self):
+        """Build the transport spec with execution flags only when enabled."""
         spec = {"kind": "python", "path": self.path, "sha256": self.sha256, "entrypoint": self.entrypoint}
         if self.batch:
             spec["batch"] = True

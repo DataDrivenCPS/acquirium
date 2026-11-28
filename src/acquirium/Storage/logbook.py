@@ -21,6 +21,7 @@ def _create_logbook(conn):
 
 
 def _utc_naive(value: datetime) -> datetime:
+    """Convert to the database's naive UTC representation."""
     if value.tzinfo is not None:
         return value.astimezone(timezone.utc).replace(tzinfo=None)
     return value
@@ -42,6 +43,7 @@ class Logbook:
             )
 
     def insert(self, log: LogEntry) -> None:
+        """Upsert an entry keyed by property URI and UTC log timestamp."""
         start, end = log.period.start, log.period.end
         with self.ledger._lock, self.ledger._write_conn() as conn:
             execute(
@@ -69,6 +71,11 @@ class Logbook:
         log_time_interval: TimeIntervalModel | None,
         obs_time_interval: TimeIntervalModel | None,
     ) -> list[LogEntry]:
+        """Read a property's entries in log timestamp order.
+
+        Log-time bounds include their endpoints. Observation-time bounds
+        check interval overlap with strict comparisons at the endpoints.
+        """
         clauses = ["property_uri = ?"]
         params = [property_uri]
         if log_time_interval is not None:
@@ -81,6 +88,8 @@ class Logbook:
         if obs_time_interval is not None:
             start, end = obs_time_interval.start, obs_time_interval.end
             if start is not None and end is not None:
+                # A bounded overlap query includes continuing observations
+                # whose end has yet to be recorded.
                 clauses.append(
                     "observed_start < ? AND (observed_end IS NULL OR observed_end > ?)"
                 )
@@ -112,6 +121,7 @@ class Logbook:
         ]
 
     def delete(self, property_uri: str) -> None:
+        """Remove every log entry for the property."""
         with self.ledger._lock, self.ledger._write_conn() as conn:
             execute(
                 conn,

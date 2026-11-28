@@ -173,6 +173,7 @@ def _prune_target_subtree(graph: QueryGraph, edge) -> QueryGraph:
 
 
 def _fetch_source_uris(client, graph: QueryGraph, src_id: int, registry: Registry) -> List[str]:
+    """Extract distinct traversal starts in the source query's result order."""
     res = client.sparql_query(compile_sparql(graph, registry), include_dependencies=True)
     cols = res.get("columns", [])
     col = f"v{src_id}"

@@ -511,6 +511,7 @@ class Apps:
         return code
 
     def _compile(self, declarations, apps, graph):
+        """Resolve declared inputs against the graph and build concrete instances and bindings."""
         for name, declaration in declarations.items():
             for item in declaration["inputs"]:
                 upstream, port = item.get("upstream"), item.get("upstream_port")
@@ -756,6 +757,7 @@ class Apps:
         }, [("", source), ("aq_app_", code)]
 
     def _candidate(self, declarations):
+        """Build a candidate plan and the module artifacts needed to activate it."""
         if not declarations:
             return {"templates": [], "instances": [], "bindings": []}, [], self.graph.graph_status()["source_version"]
         apps = {name: App.from_dict(declaration) for name, declaration in declarations.items()}
@@ -769,6 +771,8 @@ class Apps:
         }
         with self.graph.selection_snapshot(sources | exclusions) as view:
             view.stage({source: Graph() for source in sources - desired})
+            # Output metadata can change other apps' input selections. Repeat
+            # against the staged graph until those selections settle.
             for _ in range(8):
                 plan, metadata, report = self._compile(declarations, apps, view)
                 if not view.stage({_source_id(name): graph for name, graph in metadata.items()}):
@@ -806,6 +810,7 @@ class Apps:
         return plan, modules, view.revision
 
     def _adopt(self, plan, revision=None, *, epoch=None):
+        """Project a published plan's declarations and metadata back into Acquirium."""
         declarations, sources, report = {}, {}, {}
         for template in plan["templates"]:
             name, annotation = template["id"], template["annotations"]
@@ -852,6 +857,7 @@ class Apps:
                 self.refresh()
 
     def _install(self, declarations):
+        """Activate a changed plan and adopt it after the engine publishes it."""
         plan, modules, revision = self._candidate(declarations)
         if plan != self.state["plan"]:
             for prefix, code in modules:
@@ -878,6 +884,7 @@ class Apps:
         return self.core.plan_at(epoch)
 
     def refresh(self):
+        """Recompile the adopted declarations when the source graph has changed."""
         with self.lock:
             self._settle()
             if self._revision == self.graph.graph_status()["source_version"]:

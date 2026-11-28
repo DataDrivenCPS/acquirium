@@ -1,3 +1,10 @@
+"""Shape query results into sensor data frames.
+
+Each binding ties one query alias to a point and the stream supplying it.
+Samples first take a common tall layout that preserves numeric and text
+values. That layout feeds both per-alias reads and wide pivots.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
@@ -297,6 +304,11 @@ def _with_mapped_column(tall: pl.DataFrame, keys: list[str], fn, name: str) -> p
 
 
 def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
+    """Pivot numeric and text readings separately to retain their dtypes.
+
+    A key with both kinds keeps its numeric column and gets a second column
+    with the ``_text`` suffix. Join both pivots on the full set of timestamps.
+    """
     parts: list[pl.DataFrame] = []
     numeric_rows = tall.filter(pl.col("value_numeric").is_not_null())
     if not numeric_rows.is_empty():
@@ -498,6 +510,11 @@ class DataObject:
         value_mode: str = "default",
         view: str | None = None,
     ) -> DataObject:
+        """Resolve a metadata query to stream bindings and record their engine epoch.
+
+        Lazy sample reads request the same epoch as the plan that selected
+        the stream views.
+        """
         qg = query.query_graph
         _validate_cast_value(cast_value)
         if view is not None and view not in VIEWS:
@@ -521,7 +538,8 @@ class DataObject:
                 all_entity_cols.update(ctx.keys())
         entity_columns = sorted(all_entity_cols)
 
-        # Build BindingInfo for each binding
+        # By default, app and explicit reference selectors read the stored
+        # stage. Other selectors follow the replacement chain.
         bindings: list[BindingInfo] = []
         for nid, property_uri, stream_uri in property_stream_uris:
             alias = qg.aliases_reverse.get(nid, str(nid))
@@ -723,9 +741,10 @@ class DataObject:
     ) -> pl.DataFrame:
         """Fetch ``bindings``' rows into a tall frame.
 
-        One request per binding, bounded by the given window. Values are
-        auto-converted from the external reference's unit to the annotated
-        unit, then the conversions recorded by ``convert_to()`` are applied.
+        Bindings with the same stream URI and view share one sample request,
+        bounded by the given window. Values are auto-converted from the
+        external reference's unit to the annotated unit, then the
+        conversions recorded by ``convert_to()`` are applied.
         The frame has one row per observation and entity context, in the
         standard tall layout. Does not touch ``self``.
         """
@@ -1104,6 +1123,7 @@ class DataObject:
 
     def _build_dataframe(self, shape, *, start, end, limit, order, include_stream, compact,
                          streams=None) -> pl.DataFrame:
+        """Select streams and apply the read window before reshaping the sampled rows."""
         refs = self._resolve_streams(streams)
         self._materialize()
 

@@ -725,6 +725,7 @@ class Manager:
         return self._ingest(source_id, frame, request_id, replace=replaced)
 
     def insert_timeseries_frame(self, source_id, frame, *, request_id=None) -> IngestResult:
+        """Resolve Arrow stream names to references and preserve the value column's dtype."""
         import polars as pl
 
         names = frame["stream_name"].unique().to_list()
@@ -748,11 +749,13 @@ class Manager:
                 # A first numeric observation changes registration metadata.
                 # Serialize that transition with other graph edits.
                 with self.apps.lock:
+                    # Registrations may have changed while acquiring the lock.
                     kinds = self._validate_refs(source_id, refs)
                     inferred = {uri for uri in inferred if kinds[uri] == UNDECLARED_VALUE_KIND}
                     kinds.update(dict.fromkeys(inferred, "numeric"))
                     result = self._submit_readings(source_id, frame, request_id, kinds, replace)
                     if inferred:
+                        # Record the inferred kind only after admission succeeds.
                         graph = Graph()
                         for uri in inferred:
                             graph.add((URIRef(uri), INFERRED_VALUE_KIND, Literal("numeric")))
@@ -763,6 +766,7 @@ class Manager:
         return self._submit_readings(source_id, frame, request_id, kinds, replace)
 
     def _submit_readings(self, source_id, frame, request_id, kinds, replace) -> IngestResult:
+        """Attach the registered kinds so the engine adapter can normalize readings."""
         import polars as pl
 
         frame = frame.with_columns(

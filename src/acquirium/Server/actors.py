@@ -1,4 +1,9 @@
-"""Run configured soft sensor actors alongside the Escapement epoch engine."""
+"""Run configured soft sensor actors alongside the Escapement epoch engine.
+
+Each actor processes timer and graph messages against a pinned input snapshot.
+The engine publishes an actor's readings and its state checkpoint together.
+After a restart, the actor resumes from the published checkpoint.
+"""
 
 from collections import Counter, deque
 from collections.abc import Mapping
@@ -167,6 +172,7 @@ class ActorSupervisor:
 
     def _input_snapshot(self, actor: Actor, pins: ExitStack, previous: _ActorBindings | None,
                         known_attributes: dict[str, Attr], *, track_changes: bool) -> InputSnapshot:
+        """Pin a data epoch and reuse semantic bindings while the graph revision holds."""
         if all(isinstance(value, Stream) for value in actor.inputs.values()):
             snapshot = pins.enter_context(self.core.pinned_snapshot())
             return InputSnapshot(snapshot, {
@@ -195,6 +201,7 @@ class ActorSupervisor:
         return InputSnapshot(snapshot, inputs, revision)
 
     def _run_messages(self, actor: Actor, handler, graph_handler, wake: Event):
+        """Restore saved state and dispatch graph changes and timer ticks serially."""
         checkpoint = f"urn:acquirium:actor-state:{actor.name}"
         # Pending requests from the previous server can contain the last checkpoint.
         if not self._wait_for_publication(self.core.engine.status()["accepted"]):
@@ -288,10 +295,11 @@ class ActorSupervisor:
                     del snapshot, change, message
 
             if self._commit(actor, request_id, frame):
+                # The next callback starts from the last published checkpoint.
                 saved = next_state
 
     def _commit(self, actor, request_id, frame):
-        # Output rows and the checkpoint are one Escapement request.
+        """Admit the output rows and checkpoint together and wait for publication."""
         while not self.stop.is_set():
             try:
                 receipt = self.core.ingest(actor.source_id, request_id, frame).receipt
@@ -356,6 +364,7 @@ def _load_checkpoint(snapshot, stream):
 
 
 def _prepare(actor, transition, timers, checkpoint):
+    """Validate an actor's output rows and include its checkpoint as a text reading."""
     if not isinstance(transition, Transition):
         raise TypeError("actor handlers must return a Transition")
     saved = _checkpoint(transition.state, timers)

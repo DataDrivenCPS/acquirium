@@ -574,6 +574,7 @@ class ResolveRecordRequest(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Recover server state before serving requests and close owned resources on exit."""
     from acquirium.internals._log import configure_logging
     configure_logging()  # honors ACQUIRIUM_VERBOSE env var set by `acquirium server -v`
 
@@ -977,6 +978,11 @@ def stream_views(req: StreamViewsRequest) -> dict[str, Any]:
 
 
 def _receipt(receipt, source_id, request_id, wait):
+    """Report an admitted request and whether publication has caught up.
+
+    A timeout or engine fault during the wait is reported on the receipt.
+    The admitted request remains available for later publication.
+    """
     core = app.state.manager.core
     error = None
     try:
@@ -995,6 +1001,7 @@ def _receipt(receipt, source_id, request_id, wait):
 def insert_timeseries(streams: Annotated[list[StreamInsert], Body()], wait: float = Query(30, ge=0)):
     receipts, total = [], 0
     groups, replaced = {}, {}
+    # All streams sharing the source and request ID form one engine request.
     for stream in streams:
         key = (stream.source_id, stream.request_id)
         groups.setdefault(key, {}).setdefault(stream.stream_name, []).extend(stream.values)
@@ -1022,6 +1029,7 @@ async def insert_timeseries_arrow(request: Request, wait: float = Query(30, ge=0
 
 
 def _insert_arrow_body(body: bytes, request_id: str, wait: float):
+    """Submit the Arrow rows as one request per source under the supplied ID."""
     with ipc.open_stream(body) as reader:
         frame = pl.from_arrow(reader.read_all())
     receipts, total = [], 0
@@ -1085,6 +1093,8 @@ def get_timeseries(
     )
 
     def arrow_stream() -> Iterator[bytes]:
+        # Keep the writer for the whole response so each chunk belongs to
+        # the same Arrow stream. Reuse the buffer after yielding its bytes.
         buf = io.BytesIO()
         writer: ipc.RecordBatchStreamWriter | None = None
         try:

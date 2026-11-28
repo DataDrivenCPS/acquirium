@@ -70,6 +70,11 @@ def _selected(times, values, texts, mode: str, stream: str) -> pa.RecordBatch:
 
 
 def time_ns(value: int | datetime | str | None) -> int | None:
+    """Normalize an optional timestamp to signed UTC nanoseconds.
+
+    Integers already use nanoseconds. Datetimes and ISO strings without a
+    time zone are interpreted as UTC.
+    """
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, datetime, str)):
@@ -158,6 +163,7 @@ class Core:
             self._retention_thread.start()
 
     def _prune_history(self, history_epochs):
+        """Advance retention while preserving the oldest pinned snapshot."""
         while not self._retention_stop.wait(1):
             try:
                 with self._snapshot_lock:
@@ -262,6 +268,7 @@ class Core:
         return self._submit(lambda: self.engine.write(source, request_id, deletes=deletes))
 
     def wait(self, receipt, timeout: float = 30):
+        """Return the snapshot that publishes the accepted request."""
         return self.engine.snapshot(after=receipt, timeout=timeout)
 
     def wait_for(self, sequence: int, timeout: float = 30):
@@ -297,6 +304,11 @@ class Core:
         epoch=None,
         mode="numeric",
     ):
+        """Stream a half-open time range from one published epoch.
+
+        The row limit applies after value-mode filtering. Even an empty
+        result yields a batch so Arrow readers receive the requested schema.
+        """
         lo, hi = _read_range(start, end, limit, order, batch_size, mode)
         try:
             snapshot = self.engine.snapshot(epoch)
@@ -411,7 +423,11 @@ class Core:
         }
 
     def close(self, *, drain=True, timeout: float | None = None) -> bool:
-        """Stop processing requests, after any running submissions finish."""
+        """Stop processing requests after any running submissions finish.
+
+        Return false if the shutdown thread is still running after waiting
+        for it. A subsequent call waits on that same shutdown.
+        """
         with self._state:
             self._closing = True
             self._state.wait_for(lambda: not self._submitting)

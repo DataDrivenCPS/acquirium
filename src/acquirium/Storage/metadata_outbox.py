@@ -5,12 +5,18 @@ import json
 
 
 def execute(conn, statement, parameters=()):
+    """Execute a ledger statement written with question-mark placeholders."""
     if conn.__class__.__module__.startswith("psycopg"):
         statement = statement.replace("?", "%s")
     return conn.execute(statement, list(parameters or ()))
 
 
 def enqueue(conn, update):
+    """Assign a new delivery version inside the caller's write transaction.
+
+    Committing the version and payload together lets the publisher read
+    pending metadata writes in the ledger's order.
+    """
     if isinstance(update, dict):
         update = json.dumps(update)
     version = execute(conn, "UPDATE experiment_metadata_state SET version=version+1 RETURNING version").fetchone()[0]

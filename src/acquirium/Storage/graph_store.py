@@ -1,3 +1,12 @@
+"""Store asserted RDF by owner and publish inferred RDF for queries.
+
+Source writes advance the generation. A background worker builds a query
+view from one source and ontology snapshot, then publishes it if both
+generations are still current. App selection can infer a temporary view
+with proposed app output graphs before publishing those graphs to the
+source dataset.
+"""
+
 from __future__ import annotations
 
 import json
@@ -160,6 +169,7 @@ def _replace_named_graph(dataset: Dataset, graph: Graph, graph_uri: URIRef) -> N
 
 
 def _query_result(result):
+    """Convert native ASK, SELECT, and graph answers to the client row shape."""
     if isinstance(result, ox.QueryBoolean):
         return {"columns": [], "rows": [[bool(result)]]}
     if isinstance(result, ox.QuerySolutions):
@@ -238,6 +248,11 @@ class _SelectionSnapshot:
         return self._sources.get(source_id, Graph())
 
     def stage(self, changes):
+        """Replace staged graphs by source ID and report any triple changes.
+
+        A real change invalidates this snapshot's inferred graph. Equivalent
+        graphs can reuse the view already available to the snapshot.
+        """
         changed = any(not _same_triples(graph, self.data_graph(source)) for source, graph in changes.items())
         self._sources.update(changes)
         if changed:
@@ -245,6 +260,7 @@ class _SelectionSnapshot:
         return changed
 
     def sparql_query(self, query, *, wait_for_fresh=False):
+        """Query the freshest published view or infer a view for staged data."""
         if not self._diverged:
             return self._store.sparql_query(query, wait_for_fresh=True)
         if not self._inferred:
@@ -307,6 +323,7 @@ class _OntoenvOxigraphStore:
         self._is_data_graph = is_data_graph
 
     def add_graph(self, iri: str, graph: Graph, overwrite: bool = False) -> None:
+        """Install an ontology and invalidate the owner's cache on change."""
         ctx = self._ds.graph(URIRef(iri))
         if len(ctx) and not overwrite:
             _logger.debug("add_graph skip (already populated): %s (%d triples)", iri, len(ctx))
@@ -316,6 +333,7 @@ class _OntoenvOxigraphStore:
         self._on_change()
 
     def get_graph(self, iri: str) -> Graph:
+        """Return a detached ontology graph for ontoenv to use in memory."""
         return Graph() + self._ds.graph(URIRef(iri))
 
     def remove_graph(self, iri: str) -> None:
@@ -344,16 +362,14 @@ class _OntoenvOxigraphStore:
 
 
 class OxigraphGraphStore:
-    """Oxigraph-backed source store with an in-memory imports-closure cache.
+    """Own the asserted RDF, inferred query data, and cached import closure.
 
-    There are two distinct representations in play:
-
-    - The persisted source dataset is the system of record. Driver/API writes
+    - The source dataset is authoritative. Driver/API writes
       and ontoenv-managed ontology graphs all land there.
-    - The dependency cache is an in-memory rdflib graph containing only the
-      triples introduced by owl:imports closure expansion. It exists for
-      export-style "data plus dependencies" views, not for normal SPARQL
-      reads.
+    - The query dataset holds the last published inferred data and a separate
+      named graph for imported ontology triples.
+    - The in-memory dependency cache holds the owl:imports closure delta.
+      Rebuilds use it as shapes, and exports can add it to the asserted data.
     """
 
     def __init__(
@@ -423,9 +439,8 @@ class OxigraphGraphStore:
         self._saved_prefixes = self._load_saved_prefixes()
         self._bind_prefixes(self._saved_prefixes.items(), override=False)
 
-        # ontoenv shares this Oxigraph store via the graph-store protocol,
-        # over the authoritative source dataset. SPARQL reads query that
-        # dataset directly; only export-time dependency closure is cached.
+        # ontoenv writes to the authoritative source dataset. Its callback
+        # invalidates the derived views when an ontology changes.
         self._ontoenv_store = _OntoenvOxigraphStore(
             self.source_dataset,
             self._mark_ontology_graph_changed,
@@ -530,6 +545,7 @@ class OxigraphGraphStore:
             _replace_named_graph(self.query_dataset, inferred, _SELECTION_GRAPH)
 
     def _query_selection(self, query):
+        """Query inferred staged data alongside the published import closure."""
         with self._lock:
             result = self.query_dataset.store._inner.query(
                 query, use_default_graph_as_union=False, default_graph=list(_SELECTION_DEFAULT_GRAPHS),
@@ -541,7 +557,11 @@ class OxigraphGraphStore:
             _replace_named_graph(self.query_dataset, Graph(), _SELECTION_GRAPH)
 
     def project_app_sources(self, sources):
-        """Install the active plan's output graphs and drop obsolete outputs."""
+        """Install the active plan's output graphs and drop obsolete outputs.
+
+        Return the source generation before and after projection. Equal
+        generations mean the projected graphs already matched storage.
+        """
         with self._lock:
             revision = self._source_version
             changed = False
@@ -683,6 +703,7 @@ class OxigraphGraphStore:
         )
 
     def _load_source_version(self) -> int:
+        """Restore the source generation, defaulting to zero without usable state."""
         path = self._source_state_path()
         if not path.exists():
             return 0
@@ -1044,6 +1065,7 @@ class OxigraphGraphStore:
         *,
         wait_for_fresh: bool = False,
     ) -> dict:
+        """Return rows from the published query view as Python values and RDF terms."""
         _logger.debug("sparql_query dependencies=%s query=%s", include_dependencies, query)
         # Take Oxigraph's repeatable-read snapshot while publication is locked.
         # Publication clears then reloads its named graph, so starting a
@@ -1127,6 +1149,7 @@ class OxigraphGraphStore:
         raise ValueError(f"Unexpected query result: {result!r}")
 
     def sparql_update(self, update: str, *, graph_uri: URIRef | None = None) -> dict:
+        """Apply an update to a registered source graph and schedule inference."""
         _logger.debug("sparql_update: %s", update.replace("\n", " ")[:200])
         with self._lock, timed_debug(_logger, "sparql_update"):
             target = self._registered_data_graph(graph_uri)
@@ -1336,6 +1359,7 @@ class OxigraphGraphStore:
         return merged
 
     def _merge_source_data(self, exclude=()) -> Graph:
+        """Copy the asserted data graphs, leaving selected owners out for staging."""
         merged = Graph()
         for context in self.source_dataset.graphs():
             if context.identifier not in exclude and self._is_registered_data_graph_uri(context.identifier):
@@ -1351,6 +1375,7 @@ class OxigraphGraphStore:
             pass
 
     def close(self) -> None:
+        """Wait for an active rebuild before closing ontology and store handles."""
         _logger.debug("OxigraphGraphStore.close")
         # A rebuild owns snapshots only while it is running, but its final
         # publication writes the query dataset. Do not close that dataset out

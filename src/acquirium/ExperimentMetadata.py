@@ -252,6 +252,12 @@ class ExperimentMetadata:
         enqueue(conn, update)
 
     def _ensure_graph_generation(self):
+        """Check once that the experiment graph belongs to this ledger generation.
+
+        An empty ledger or one with its entire initial delivery still pending
+        can initialize the graph. A ledger that already relies on graph data
+        raises so the matching backup can be restored.
+        """
         if self._generation_checked:
             return
         graph = self.writer.graph_store
@@ -272,6 +278,7 @@ class ExperimentMetadata:
         self._generation_checked = True
 
     def _publish_pending(self):
+        """Apply queued graph updates in ledger order, then acknowledge delivery."""
         self._ensure_graph_generation()
         with self.store._own_conn() as conn:
             pending = execute(conn, "SELECT version, update_text FROM experiment_metadata_outbox ORDER BY version").fetchall()
@@ -287,6 +294,7 @@ class ExperimentMetadata:
                 buffered.clear()
         for operation in operations:
             if "clear" in operation:
+                # Clear in queue order, after delivering earlier edits.
                 deliver()
                 graph.clear_graphs(operation["clear"])
             else:
@@ -306,6 +314,7 @@ class ExperimentMetadata:
             execute(conn, "UPDATE experiment_metadata_state SET published_version=greatest(published_version, ?)", [max(versions)])
 
     def sync(self):
+        """Drain committed metadata updates and reconcile apps under the same lock."""
         with self.lock:
             self._publish_pending()
             # Retry reconciliation even when an earlier delivery was acknowledged

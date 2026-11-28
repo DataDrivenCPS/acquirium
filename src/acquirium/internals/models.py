@@ -87,6 +87,8 @@ Order = Literal["asc", "desc"]
 
 @dataclass(frozen=True)
 class TimeInterval:
+    """An increasing pair of timestamps, built from bounds or an anchor and duration."""
+
     start: datetime
     end: datetime
 
@@ -120,6 +122,7 @@ class TimeInterval:
 
     @classmethod
     def from_str(cls, s: str) -> "TimeInterval":
+        """Parse the slash-separated ISO bounds and apply interval validation."""
         start_str, end_str = s.split("/")
         return cls(start=datetime.fromisoformat(start_str), end=datetime.fromisoformat(end_str))
 

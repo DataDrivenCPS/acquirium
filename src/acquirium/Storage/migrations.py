@@ -13,6 +13,8 @@ from typing import Any
 
 @dataclass(frozen=True)
 class Migration:
+    """An immutable schema step identified in the database by version and name."""
+
     version: int
     name: str
     upgrade: tuple[str, ...] | Callable[[Any], None]
@@ -40,6 +42,8 @@ def migrate(conn, *, backend: str, component: str, migrations: tuple[Migration, 
         f"SELECT version, name FROM schema_migrations WHERE component={placeholder}", [component]
     ).fetchall())
     known = {migration.version: migration.name for migration in migrations}
+    # Check the stored names as well as the versions before running upgrades.
+    # This catches a replaced step and ledgers written by a newer release.
     if any(known.get(version) != name for version, name in applied.items()):
         raise RuntimeError(
             f"incompatible {component} schema migration history: this database was written "

@@ -1,3 +1,11 @@
+"""Public entry points for collecting, querying, and processing readings.
+
+`Acquirium` connects to the HTTP API. `init` manages a local server or
+attaches to an existing one. On the server, Acquirium resolves streams and
+their metadata, and Escapement publishes readings and app outputs in
+epochs. Drivers feed the same write API that the Python client exposes.
+"""
+
 # TODO: import lazily (module __getattr__) so calculation workers importing
 # acquirium.functions skip the client stack (~0.25 s per cold worker).
 from acquirium.Client.acquirium import Acquirium

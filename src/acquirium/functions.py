@@ -228,6 +228,11 @@ def _split_own_ports(frame, context):
 
 
 def _epoch_input(frame, context, window, ports):
+    """Build the calculation's public frame and context for a single window.
+
+    Inputs carry their binding context. Earlier outputs are grouped by
+    their window time and exposed through the previous-output helpers.
+    """
     from acquirium.apps import _operator_id, output_reference
 
     own_ports, state, frame = _split_own_ports(frame, context)
@@ -278,6 +283,8 @@ def _epoch_input(frame, context, window, ports):
         port = own_ports[row.pop("stream")]
         time = row["time"]
         if window["kind"] == "fixed":
+            # An earlier output can fall anywhere in its bucket. Use the
+            # bucket anchor to collect ports from the same prior window.
             width = timedelta(microseconds=window["width_ns"] // 1000)
             origin = _datetime(window["origin_ns"])
             time -= (time - origin) % width
@@ -289,6 +296,7 @@ def _epoch_input(frame, context, window, ports):
 
 
 def _epoch_outputs(outputs, ports, replaced, anchors, *, scalar_time=None):
+    """Validate calculation results and prepare one engine frame per port."""
     results = {}
     for port, output in outputs.items():
         if scalar_time is not None and (output is None or isinstance(output, (Real, str)) or (
@@ -308,11 +316,13 @@ def _epoch_outputs(outputs, ports, replaced, anchors, *, scalar_time=None):
             raise ValueError("output timestamp is outside the engine's supported range")
         out = out.with_columns(pl.col("time").cast(_TIME))
         if port in replaced:
+            # Replacement ports update the input keys that triggered this run.
             out = out.filter(pl.col("time").is_in(pl.Series(anchors, dtype=_TIME).implode()))
         if "value" not in out:
             out = out.with_columns(pl.lit(None, pl.Float64).alias("value"))
         results[port] = out.with_columns(pl.col("value").cast(pl.Float64))
     for port in ports:
+        # The worker expects a result for every declared port.
         results.setdefault(port, pl.DataFrame(schema=SCHEMA))
     return results
 
