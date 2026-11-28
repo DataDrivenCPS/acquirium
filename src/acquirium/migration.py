@@ -1,14 +1,16 @@
 """Copy registered raw readings from a legacy server into Escapement."""
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Collection, Iterator
 from contextlib import closing
+from heapq import merge
+from operator import itemgetter
 
 import polars as pl
 from requests import HTTPError
 
 from acquirium.Client.client import AcquiriumClient
 from acquirium.Storage.graph_registry import DERIVED_SOURCE_PREFIX
-from acquirium.internals.models import compute_stream_uri
+from acquirium.internals.models import MAX_REQUEST_ROWS, compute_stream_uri
 
 
 _STREAMS = """
@@ -32,12 +34,16 @@ ORDER BY ?uri
 _VALUE_MODES = ("numeric", "text")
 
 
-def _catalog(client: AcquiriumClient, *, legacy: bool = False) -> dict[str, dict[str, str]]:
+def _catalog(
+    client: AcquiriumClient, *, legacy: bool = False, only: Collection[str] | None = None,
+) -> dict[str, dict[str, str]]:
     result = client.sparql_query(_STREAMS, include_dependencies=False, wait_for_fresh=True)
     streams: dict[str, dict[str, str]] = {}
     for row in result["rows"]:
         registration = {key: value for key, value in zip(result["columns"], row) if value is not None}
         uri = registration.pop("uri")
+        if only is not None and uri not in only:
+            continue
         source, name = registration["source_id"], registration["stream_name"]
         if legacy and source.startswith((DERIVED_SOURCE_PREFIX, "experiment/")):
             continue
@@ -54,26 +60,77 @@ def _catalog(client: AcquiriumClient, *, legacy: bool = False) -> dict[str, dict
 def _batches(client: AcquiriumClient, uri: str, mode: str) -> Iterator[pl.DataFrame]:
     with closing(client.timeseries_batches(uri, value_mode=mode, view="stored")) as batches:
         for batch in batches:
-            # Legacy Arrow timestamps are UTC microseconds. Compare and write
-            # both sides at the destination's nanosecond precision.
-            yield batch.select(pl.col("ts").cast(pl.Datetime("ns", "UTC")), "value")
+            yield batch.select("ts", "value")
 
 
-def _rows(client: AcquiriumClient, uri: str, mode: str) -> Iterator[tuple]:
+def _typed_rows(client: AcquiriumClient, uri: str, mode: str) -> Iterator[tuple[int, float | str]]:
     with closing(_batches(client, uri, mode)) as batches:
         for batch in batches:
-            yield from batch.select(pl.col("ts").cast(pl.Int64), "value").iter_rows()
+            # Compare legacy microseconds and destination nanoseconds exactly.
+            yield from batch.select(pl.col("ts").dt.epoch("ns"), "value").iter_rows()
 
 
-def _matching_prefix(source: AcquiriumClient, target: AcquiriumClient, uri: str, mode: str) -> int:
-    """Count already copied rows, rejecting a different value or an extra timestamp."""
-    with closing(_rows(source, uri, mode)) as expected, closing(_rows(target, uri, mode)) as observed:
-        count = 0
-        for actual in observed:
-            if actual != next(expected, None):
-                raise ValueError(f"Destination readings differ from the legacy {mode} readings for {uri}")
-            count += 1
-        return count
+def _readings(client: AcquiriumClient, uri: str) -> Iterator[tuple[int, float | str]]:
+    # Merge the typed reads so a number and a string at the same timestamp
+    # compare as a conflict, even if their printed values look the same.
+    with closing(_typed_rows(client, uri, "numeric")) as numbers, closing(_typed_rows(client, uri, "text")) as text:
+        yield from merge(numbers, text, key=itemgetter(0))
+
+
+def _compare(source: AcquiriumClient, target: AcquiriumClient, uri: str) -> Iterator[tuple[int, float | str, bool]]:
+    """Yield each legacy reading and whether the destination already has it."""
+    with closing(_readings(source, uri)) as expected, closing(_readings(target, uri)) as observed:
+        current = next(observed, None)
+        for timestamp, value in expected:
+            while current is not None and current[0] < timestamp:
+                current = next(observed, None)
+            matched = current is not None and current[0] == timestamp
+            if matched and current[1] != value:
+                raise ValueError(f"Destination readings differ for {uri} at {timestamp} UTC nanoseconds")
+            yield timestamp, value, matched
+            if matched:
+                current = next(observed, None)
+
+
+def _count_matches(source: AcquiriumClient, target: AcquiriumClient, uri: str) -> tuple[int, int]:
+    total = matched = 0
+    for _, _, present in _compare(source, target, uri):
+        total += 1
+        matched += present
+    return total, matched
+
+
+def _write_batch(target: AcquiriumClient, registration: dict[str, str], batch: pl.DataFrame) -> None:
+    table = batch.with_columns(
+        pl.col("ts").cast(pl.Datetime("ns", "UTC")),
+        pl.lit(registration["stream_name"]).alias("stream_name"),
+    ).to_arrow()
+    result = target.insert_timeseries_arrow(registration["source_id"], table)
+    last = result["receipts"][-1]
+    if not last["published"]:
+        target.wait(last)
+
+
+def _copy_missing(
+    source: AcquiriumClient, target: AcquiriumClient, uri: str, registration: dict[str, str],
+) -> int:
+    # Arrow writes need a single value type per batch.
+    pending: dict[str, list[tuple[int, float | str]]] = {"numeric": [], "text": []}
+    total = 0
+    with closing(_compare(source, target, uri)) as readings:
+        for timestamp, value, matched in readings:
+            total += 1
+            if matched:
+                continue
+            batch = pending["text" if isinstance(value, str) else "numeric"]
+            batch.append((timestamp, value))
+            if len(batch) == MAX_REQUEST_ROWS:
+                _write_batch(target, registration, pl.DataFrame(batch, schema=["ts", "value"], orient="row"))
+                batch.clear()
+    for batch in pending.values():
+        if batch:
+            _write_batch(target, registration, pl.DataFrame(batch, schema=["ts", "value"], orient="row"))
+    return total
 
 
 def _check_valueless_rows(source: AcquiriumClient, uri: str, legacy_count: int, copyable: int) -> int:
@@ -129,28 +186,24 @@ def migrate_readings(
         raise ValueError("Start with a destination that has no deployed apps")
 
     legacy_streams = _catalog(source, legacy=True)
-    target_streams = _catalog(target)
+    target_streams = _catalog(target, only=legacy_streams.keys())
     source_info = source.timeseries_info_batch(list(legacy_streams)) if legacy_streams else {}
     if legacy_streams.keys() - source_info.keys():
         raise ValueError("The legacy server did not report counts for all registered streams")
     populated = target.timeseries_exists_batch(list(target_streams), view="stored") if target_streams else set()
-    if populated - legacy_streams.keys():
-        raise ValueError("The destination contains readings outside the legacy stream inventory")
-
-    copied: dict[tuple[str, str], int] = {}
+    inspected: dict[str, tuple[int, int]] = {}
     for uri, registration in legacy_streams.items():
         prior = target_streams.get(uri, {})
         for key in ("property_uri", "value_kind", "unit", "quantity_kind"):
             if key in prior and prior[key] != registration.get(key):
                 raise ValueError(f"Destination {key} differs for stream {uri}")
         if uri in populated:
-            for mode in _VALUE_MODES:
-                copied[uri, mode] = _matching_prefix(source, target, uri, mode)
+            inspected[uri] = _count_matches(source, target, uri)
 
     legacy_rows = sum(source_info[uri].row_count for uri in legacy_streams)
     report(f"Found {len(legacy_streams)} raw streams and {legacy_rows} legacy rows.")
-    if copied:
-        report(f"Verified {sum(copied.values())} already copied readings.")
+    if inspected:
+        report(f"Verified {sum(matched for _, matched in inspected.values())} already copied readings.")
     if dry_run:
         return
 
@@ -161,30 +214,30 @@ def migrate_readings(
         target.register_streams(registrations)
     verified = skipped = 0
     for uri, registration in legacy_streams.items():
-        copyable = 0
-        for mode in _VALUE_MODES:
-            remaining = copied.get((uri, mode), 0)
-            with closing(_batches(source, uri, mode)) as batches:
-                for batch in batches:
-                    copyable += len(batch)
-                    skip = min(len(batch), remaining)
-                    remaining -= skip
-                    batch = batch.slice(skip)
-                    if not batch.is_empty():
-                        table = batch.with_columns(
-                            pl.lit(registration["stream_name"]).alias("stream_name")
-                        ).to_arrow()
-                        result = target.insert_timeseries_arrow(registration["source_id"], table)
-                        last = result["receipts"][-1]
-                        if not last["published"]:
-                            target.wait(last)
-
+        checked = inspected.get(uri)
+        if checked is not None and checked[0] == checked[1]:
+            # The preflight already verified this entire stream.
+            copyable, actual = checked
+        else:
+            if uri in populated:
+                copyable = _copy_missing(source, target, uri, registration)
+            else:
+                # An empty destination can take the original Arrow batches.
+                copyable = 0
+                for mode in _VALUE_MODES:
+                    with closing(_batches(source, uri, mode)) as batches:
+                        for batch in batches:
+                            copyable += len(batch)
+                            if not batch.is_empty():
+                                _write_batch(target, registration, batch)
+            total, actual = _count_matches(source, target, uri)
+            if total != copyable:
+                raise RuntimeError(f"Legacy reading count changed during migration for {uri}")
+            if actual != copyable:
+                raise RuntimeError(
+                    f"Verification failed for {uri}: expected {copyable} readings, matched {actual}"
+                )
         valueless = _check_valueless_rows(source, uri, source_info[uri].row_count, copyable)
-        actual = sum(_matching_prefix(source, target, uri, mode) for mode in _VALUE_MODES)
-        if actual != copyable:
-            raise RuntimeError(
-                f"Verification failed for {uri}: expected {copyable} readings, found {actual}"
-            )
         verified += actual
         skipped += valueless
         if valueless:
