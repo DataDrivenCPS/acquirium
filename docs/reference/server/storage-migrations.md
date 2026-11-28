@@ -2,25 +2,31 @@
 title: Storage upgrades and backups
 ---
 
-Moving from the previous Acquirium storage engine to Escapement requires a
-**new data directory and new database locations**. The new server starts with
-empty stores. Keep the old installation and its data for export.
+For this pre-1.0 rollout, start Acquirium with **fresh Escapement storage**.
+Use a new data directory and new database locations. Keep the old
+installation and its stores for historical access.
 
-## Move to Escapement
+(move-to-escapement)=
+## Start with fresh storage
+
+For a new installation, begin at step 2.
 
 1. Stop the old server. Back up its configuration, data directory, and any
    graph or databases stored elsewhere.
-2. In the new configuration, set `data_dir` to a new path and leave
-   `recreate = false`. If you set `graph_path`, `engine_path`, or
+2. In the new configuration, set `data_dir` to an unused path, such as
+   `.acquirium-escapement`, and leave `recreate = false`. If you set
+   `graph_path`, `engine_path`, or
    `experiments_path` explicitly, give them new locations too. A fresh
    PostgreSQL deployment should use a new database.
 3. Remove the old `timeseries_backend`, `duckdb_path`, and `pg_dsn` settings
    if present. If you set them through the server's environment, remove
    `ACQUIRIUM_TIMESERIES_BACKEND`, `ACQUIRIUM_DUCKDB_PATH`, or `PG_DSN` there.
-   Then [start the server with the new configuration](cli.md#acquirium-server).
+4. [Start the server with the new configuration](cli.md#acquirium-server).
+   Load the plant model and start ingestion for the streams you want to use.
+   Verify that you can read a new sample before deploying soft sensors.
 
-If you need the old readings or experiment records, use the old Acquirium
-version with its original stores or a backup to export them.
+Use the old Acquirium version to read historical records from its original
+stores or a backup.
 
 ```{warning}
 `recreate = true` erases the configured data directory and clears the
