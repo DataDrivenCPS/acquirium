@@ -121,8 +121,16 @@ def test_migration_merges_with_live_readings_and_refuses_conflicts(tmp_path, mon
             wait_for_fresh=True,
         )["rows"] == [["unused"]]
 
-        # A complete retry publishes no additional reading writes.
+        # An older Escapement source must finish publishing before it exports readings.
         applied = client.engine_status()["applied"]
+        legacy.engine_status.side_effect = None
+        legacy.engine_status.return_value = {"accepted": 2, "applied": 1, "fault": None}
+        with pytest.raises(ValueError, match="The source has pending or failed writes"):
+            migrate_readings(legacy, client.client, dry_run=False, report=report.append)
+        assert client.engine_status()["applied"] == applied
+
+        # A published Escapement source supports the same retry without rewriting readings.
+        legacy.engine_status.return_value["applied"] = 2
         migrate_readings(legacy, client.client, dry_run=False, report=report.append)
         assert client.engine_status()["applied"] == applied
 

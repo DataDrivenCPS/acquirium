@@ -388,7 +388,7 @@ def migrate(
                                              help="Configuration for the running Escapement server.")],
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Check and count readings without writing.")] = False,
 ) -> None:
-    """Copy registered raw readings from a legacy Acquirium server."""
+    """Copy registered raw readings from an older Acquirium server."""
     from requests import RequestException
     from acquirium.Client.client import AcquiriumClient
     from acquirium.migration import migrate_readings

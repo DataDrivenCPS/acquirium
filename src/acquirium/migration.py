@@ -1,4 +1,4 @@
-"""Copy registered raw readings from a legacy server into Escapement."""
+"""Copy registered raw readings from an older Acquirium server into Escapement."""
 
 from collections.abc import Callable, Collection, Iterator
 from contextlib import closing
@@ -167,12 +167,14 @@ def migrate_readings(
 
     source.health()
     try:
-        source.engine_status()
+        source_status = source.engine_status()
     except HTTPError as error:
         if error.response is None or error.response.status_code != 404:
             raise
     else:
-        raise ValueError("The source already uses Escapement. Use an Escapement backup to move it")
+        # An older Escapement server can export its published readings over HTTP.
+        if source_status["accepted"] != source_status["applied"] or source_status["fault"]:
+            raise ValueError("The source has pending or failed writes. Wait for it to drain before migrating")
 
     try:
         status = target.engine_status()

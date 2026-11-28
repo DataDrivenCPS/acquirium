@@ -40,16 +40,17 @@ Use a new path when moving to Escapement.
 `acquirium migrate` copies registered raw streams and their current stored
 readings between two running servers. The legacy server uses the backend in
 its own configuration. The command reads its HTTP API and writes through
-the Escapement server's ingest API. This workflow was tested with Acquirium
-v0.4.1 on both DuckDB and TimescaleDB.
+the destination Escapement server's ingest API. The source can run an older
+Escapement release or a pre-Escapement release such as Acquirium v0.4.1.
 
-1. Start the legacy server using the legacy Acquirium release and its
-   storage settings. Keep ingestion paused throughout the copy so the source
-   readings stay consistent. To copy from a legacy backup, point a copy of
+1. Start the source using the Acquirium release that last wrote its storage.
+   Pause ingestion. If it uses Escapement, wait for its accepted writes
+   to publish before copying. To copy from a backup, point a copy of
    the legacy configuration at the backup and remove its `[[drivers]]`
    and `[[apps]]` entries before starting it.
-2. Use a separate TOML file for the Escapement server. You can use fresh
-   storage or reuse a destination that already has live readings. Give the
+2. Use a separate TOML file for the destination server. Use fresh storage
+   when the release requires a new Escapement layout. To resume a copy,
+   you can reuse a destination that already has live readings. Give the
    servers different ports, such as `8000` and `8001` on the same machine.
    Pause destination ingestion and keep apps undeployed until verification
    finishes.
