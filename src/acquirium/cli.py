@@ -396,7 +396,10 @@ def migrate(
     try:
         source_client = AcquiriumClient(*_config_server_address(load_config(source).data))
         target_client = AcquiriumClient(*_config_server_address(load_config(destination).data))
-        migrate_readings(source_client, target_client, dry_run=dry_run, report=typer.echo)
+        migrate_readings(
+            source_client, target_client, dry_run=dry_run, report=typer.echo,
+            progress=lambda message: typer.echo(message, err=True),
+        )
     except (OSError, RequestException, RuntimeError, ValueError) as error:
         typer.echo(f"Migration failed: {error}", err=True)
         raise typer.Exit(1) from None

@@ -6,9 +6,10 @@ ranges to avoid rereading history that already matches.
 """
 
 from collections.abc import Callable, Collection, Iterator
-from contextlib import ExitStack, closing
+from contextlib import ExitStack, closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from time import monotonic
 
 import polars as pl
 from requests import HTTPError
@@ -39,6 +40,29 @@ ORDER BY ?uri
 _VALUE_MODES = ("numeric", "text")
 _MAX_WINDOWS = 8
 _UTC_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def _quiet(_message: str) -> None:
+    pass
+
+
+@contextmanager
+def _progress(log: Callable[[str], None], label: str) -> Iterator[Callable[[int], None]]:
+    """Report the start, periodic reading counts, and successful finish of a phase."""
+    log(f"{label}...")
+    started = last_report = monotonic()
+    readings = 0
+
+    def update(count: int) -> None:
+        nonlocal readings, last_report
+        readings = count
+        now = monotonic()
+        if now - last_report >= 5:
+            log(f"  {label} ({readings:,} processed, {now - started:.1f}s elapsed)")
+            last_report = now
+
+    yield update
+    log(f"{label} done ({readings:,} processed in {monotonic() - started:.1f}s)")
 
 
 @dataclass(frozen=True)
@@ -169,7 +193,9 @@ def _compare(
             yield expected["ts"], compared.filter(~present).select("ts", "number", "text")
 
 
-def _inspect(source: AcquiriumClient, target: AcquiriumClient, uri: str) -> _Inspection:
+def _inspect(
+    source: AcquiriumClient, target: AcquiriumClient, uri: str, update: Callable[[int], None],
+) -> _Inspection:
     """Preflight one populated stream and plan the ranges to revisit."""
     total = matched = 0
     windows: list[_Window] | None = []
@@ -177,6 +203,7 @@ def _inspect(source: AcquiriumClient, target: AcquiriumClient, uri: str) -> _Ins
         for timestamps, missing in batches:
             total += len(timestamps)
             matched += len(timestamps) - len(missing)
+            update(total)
             if windows is None or missing.is_empty():
                 continue
             # Track one range per slice with gaps. Count matching rows inside
@@ -213,12 +240,14 @@ def _compare_ranges(
 
 def _count_matches(
     source: AcquiriumClient, target: AcquiriumClient, uri: str, windows: list[_Window] | None,
+    update: Callable[[int], None],
 ) -> tuple[int, int]:
     total = matched = 0
     with closing(_compare_ranges(source, target, uri, windows)) as batches:
         for timestamps, missing in batches:
             total += len(timestamps)
             matched += len(timestamps) - len(missing)
+            update(total)
     return total, matched
 
 
@@ -235,7 +264,7 @@ def _write_batch(target: AcquiriumClient, registration: dict[str, str], batch: p
 
 def _copy_missing(
     source: AcquiriumClient, target: AcquiriumClient, uri: str, registration: dict[str, str],
-    windows: list[_Window] | None,
+    windows: list[_Window] | None, update: Callable[[int], None],
 ) -> int:
     """Submit only missing rows and return the total source readings examined."""
     # Arrow writes need a single value type per batch.
@@ -245,6 +274,7 @@ def _copy_missing(
     with closing(_compare_ranges(source, target, uri, windows)) as readings:
         for timestamps, missing in readings:
             total += len(timestamps)
+            update(total)
             if missing.is_empty():
                 continue
             for column, parts in pending.items():
@@ -264,11 +294,11 @@ def _copy_missing(
     return total
 
 
-def _check_valueless_rows(source: AcquiriumClient, uri: str, legacy_count: int, copyable: int) -> int:
+def _check_valueless_rows(
+    source: AcquiriumClient, uri: str, legacy_count: int, copyable: int,
+    update: Callable[[int], None],
+) -> int:
     """Confirm that any rows missing from the typed reads really have no value."""
-    if legacy_count == copyable:
-        return 0
-
     rows = valueless = 0
     # Unlike numeric and text reads, the legacy coalesced read returns null
     # rows. Only scan it when the typed reads do not explain the legacy count.
@@ -276,6 +306,7 @@ def _check_valueless_rows(source: AcquiriumClient, uri: str, legacy_count: int, 
         for batch in batches:
             rows += len(batch)
             valueless += batch["value"].null_count()
+            update(rows)
 
     if rows != legacy_count or copyable + valueless != legacy_count:
         raise RuntimeError(
@@ -291,17 +322,20 @@ def migrate_readings(
     *,
     dry_run: bool,
     report: Callable[[str], None],
+    progress: Callable[[str], None] = _quiet,
 ) -> None:
     """Plan or copy missing raw readings using the server APIs.
 
     Dry runs stop after preflight. A copy preserves destination-only
     readings and verifies imported readings against the source. Keep
     ingestion paused on both servers so their readings stay stable across
-    passes.
+    passes. The callbacks receive summary lines and optional live progress.
     """
     if source.address == target.address:
         raise ValueError("Source and destination must be different servers")
 
+    started = monotonic()
+    progress("Checking source and destination servers...")
     source.health()
     try:
         source_status = source.engine_status()
@@ -324,6 +358,7 @@ def migrate_readings(
     if target.list_apps()["apps"]:
         raise ValueError("Start with a destination that has no deployed apps")
 
+    progress("Reading stream registrations and row counts...")
     legacy_streams = _catalog(source, legacy=True)
     target_streams = _catalog(target, only=legacy_streams.keys())
     source_info = source.timeseries_info_batch(list(legacy_streams)) if legacy_streams else {}
@@ -337,22 +372,29 @@ def migrate_readings(
             if key in prior and prior[key] != registration.get(key):
                 raise ValueError(f"Destination {key} differs for stream {uri}")
         if uri in populated:
-            inspected[uri] = _inspect(source, target, uri)
+            stream = f"{registration['source_id']}/{registration['stream_name']}"
+            label = f"Preflight ({len(inspected) + 1}/{len(populated)}) {stream}"
+            with _progress(progress, label) as update:
+                inspected[uri] = _inspect(source, target, uri, update)
 
     legacy_rows = sum(source_info[uri].row_count for uri in legacy_streams)
     report(f"Found {len(legacy_streams)} raw streams and {legacy_rows} legacy rows.")
     if inspected:
         report(f"Verified {sum(check.matched for check in inspected.values())} already copied readings.")
     if dry_run:
+        progress(f"Dry run finished ({monotonic() - started:.1f}s).")
         return
 
     # Register even empty streams. Plant topology and source-owned graphs can
     # be imported separately through the existing graph API.
     registrations = [stream for uri, stream in legacy_streams.items() if target_streams.get(uri) != stream]
     if registrations:
+        progress(f"Registering destination streams ({len(registrations):,})...")
         target.register_streams(registrations)
     verified = skipped = 0
-    for uri, registration in legacy_streams.items():
+    for index, (uri, registration) in enumerate(legacy_streams.items(), start=1):
+        stream = f"{registration['source_id']}/{registration['stream_name']}"
+        label = f"({index}/{len(legacy_streams)}) {stream}"
         checked = inspected.get(uri)
         if checked is not None and checked.total == checked.matched:
             # The preflight already verified this entire stream.
@@ -363,27 +405,39 @@ def migrate_readings(
             if checked is not None:
                 if windows is not None:
                     verified_in_preflight = checked.total - sum(window.rows for window in windows)
-                copyable = _copy_missing(source, target, uri, registration, windows)
-                if checked.total != copyable + verified_in_preflight:
-                    raise RuntimeError(f"Legacy reading count changed during migration for {uri}")
+                scope = "whole-stream scan"
+                if windows is not None:
+                    unit = "window" if len(windows) == 1 else "windows"
+                    scope = f"{len(windows)} gap {unit}"
+                with _progress(progress, f"Copying {label} ({scope})") as update:
+                    copyable = _copy_missing(source, target, uri, registration, windows, update)
+                    if checked.total != copyable + verified_in_preflight:
+                        raise RuntimeError(f"Legacy reading count changed during migration for {uri}")
             else:
                 # An empty destination can take the original Arrow batches.
                 copyable = 0
-                for mode in _VALUE_MODES:
-                    with closing(_batches(source, uri, mode)) as batches:
-                        for batch in batches:
-                            copyable += len(batch)
-                            _write_batch(target, registration, batch)
-            total, actual = _count_matches(source, target, uri, windows)
-            if total != copyable:
-                raise RuntimeError(f"Legacy reading count changed during migration for {uri}")
-            if actual != copyable:
-                raise RuntimeError(
-                    f"Verification failed for {uri}: expected {copyable} readings, matched {actual}"
-                )
+                with _progress(progress, f"Copying {label} (empty destination)") as update:
+                    for mode in _VALUE_MODES:
+                        with closing(_batches(source, uri, mode)) as batches:
+                            for batch in batches:
+                                _write_batch(target, registration, batch)
+                                copyable += len(batch)
+                                update(copyable)
+            with _progress(progress, f"Verifying {label}") as update:
+                total, actual = _count_matches(source, target, uri, windows, update)
+                if total != copyable:
+                    raise RuntimeError(f"Legacy reading count changed during migration for {uri}")
+                if actual != copyable:
+                    raise RuntimeError(
+                        f"Verification failed for {uri}: expected {copyable} readings, matched {actual}"
+                    )
             copyable += verified_in_preflight
             actual += verified_in_preflight
-        valueless = _check_valueless_rows(source, uri, source_info[uri].row_count, copyable)
+        legacy_count = source_info[uri].row_count
+        valueless = 0
+        if legacy_count != copyable:
+            with _progress(progress, f"Checking legacy rows with no value for {label}") as update:
+                valueless = _check_valueless_rows(source, uri, legacy_count, copyable, update)
         verified += actual
         skipped += valueless
         if valueless:
@@ -395,3 +449,4 @@ def migrate_readings(
     report(f"Verified {verified} readings in {len(legacy_streams)} destination streams.")
     if skipped:
         report(f"Skipped {skipped} legacy rows with no value in total.")
+    progress(f"Migration finished ({monotonic() - started:.1f}s).")
