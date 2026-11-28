@@ -206,6 +206,7 @@ def main() -> int:
             server_url=payload["server_url"],
             server_port=payload["server_port"],
             use_ssl=payload["use_ssl"],
+            insert_batch_rows=config.get("driver", {}).get("insert_batch_rows", 50_000),
         )
         runner = DriverRunner(driver_cls, config, aq, payload["interval"])
         runner.setup()

@@ -63,7 +63,7 @@ These keys can be set in `[driver]` or in a `[[drivers]]` entry.
 | `setup_timeout` | `float` | `60.0` | Seconds the server waits for the child to connect, import its driver, and finish setup. Must be finite and greater than zero |
 | `graph_poll_interval` | `float` | the larger of `interval` and `10.0` | Seconds between two checks for a change of the graph. See [`on_graph_change`](hooks.md#driveron_graph_change). Must be greater than zero |
 | `driver_id` | `str` | none | Name of the driver's [state file](state.md). Without it the file is named after the class |
-| `insert_batch_rows` | `int` | `50000` | Largest number of rows per request of `self.aq.insert_timeseries_batch`. It does not change `add` or `insert_observations` |
+| `insert_batch_rows` | `int` | `50000` | Requested rows per JSON write from the driver, capped at the server limit of 10,000. Includes calls to `self.aq.insert_timeseries_batch` and mixed observations that require JSON transport |
 
 Note that without `driver_id` the state file is `<ClassName>.json`. If the `[driver]` table itself has a `spec` key, the file is `<ClassName>_<hash of that spec>.json`.
 

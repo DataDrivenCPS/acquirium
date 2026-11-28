@@ -20,6 +20,24 @@ def test_config_deploys_the_sine_driver_and_python_threshold(tmp_path):
     for name in ("acquirium.toml", "publish.py", "sine_threshold.py"):
         shutil.copyfile(example / name, tmp_path / name)
 
+    # Record the request count from a direct batch write in the driver child.
+    driver_module = tmp_path / "publish.py"
+    driver_module.write_text(driver_module.read_text() + dedent("""\
+
+        class ConfiguredSineWaveDriver(SineWaveDriver):
+            def setup(self):
+                from pathlib import Path
+
+                super().setup()
+                self.aq.register_streams([
+                    {"source_id": "batch-probe", "stream_name": "sample", "value_kind": "numeric"},
+                ])
+                inserted = self.aq.insert_timeseries_batch(
+                    "batch-probe", {"sample": [(0, 1.0), (1000, 2.0), (2000, 3.0)]},
+                )
+                Path(__file__).with_name("batch-count").write_text(str(len(inserted["receipts"])))
+        """))
+
     # Keep the startup factory local to the test that exercises the config loader.
     (tmp_path / "configured_threshold.py").write_text(dedent("""\
         from pathlib import Path
@@ -40,7 +58,10 @@ def test_config_deploys_the_sine_driver_and_python_threshold(tmp_path):
             )
         """))
     config = tmp_path / "acquirium.toml"
-    contents = config.read_text().replace("interval = 1.0", "interval = 0.05")
+    contents = (config.read_text()
+                .replace("interval = 1.0", "interval = 0.05")
+                .replace("publish.py:SineWaveDriver", "publish.py:ConfiguredSineWaveDriver")
+                .replace("[[drivers]]", "[driver]\ninsert_batch_rows = 100\n\n[[drivers]]\ninsert_batch_rows = 2"))
     config.write_text(contents + '\n[[apps]]\nspec = "configured_threshold.py:build_app"\n')
 
     client = aq.init(config, timeout=60)
@@ -64,6 +85,7 @@ def test_config_deploys_the_sine_driver_and_python_threshold(tmp_path):
             time.sleep(0.1)
         else:
             pytest.fail("driver and Python threshold did not publish a full cycle")
+        assert (tmp_path / "batch-count").read_text() == "2"
 
         operator, = client.inspect_app("high-wave")["app"]["operators"]
         output = client.stream(operator["outputs"]["high"])
