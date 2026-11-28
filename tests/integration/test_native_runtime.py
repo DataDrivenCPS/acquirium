@@ -1,6 +1,7 @@
 """A real local server, native Python worker, and semantic DataObject client."""
 
 from pathlib import Path
+import re
 import shutil
 from textwrap import dedent
 import time
@@ -44,6 +45,15 @@ def test_config_deploys_the_sine_driver_and_python_threshold(tmp_path):
 
     client = aq.init(config, timeout=60)
     try:
+        # Each phase reports its start and duration while Uvicorn is waiting.
+        server_log = (tmp_path / ".data" / ".runtime" / "server.log").read_text()
+        startup = server_log.split("Waiting for application startup.", 1)[1]
+        startup = startup.split("Application startup complete.", 1)[0]
+        started = re.findall(r"^INFO: +\((\d+)/6\) (.+)\.\.\.$", startup, re.MULTILINE)
+        finished = re.findall(r"^INFO: +\((\d+)/6\) (.+) \(done in \d+\.\d+s\)$", startup, re.MULTILINE)
+        assert [number for number, _ in started] == ["1", "2", "3", "4", "5", "6"]
+        assert finished == started
+
         deadline = time.monotonic() + 30
         # Wait for a full cycle so the comparison exercises both sides of the threshold.
         while time.monotonic() < deadline:

@@ -40,6 +40,29 @@ def configure_logging(verbose: bool | None = None) -> None:
     logging.getLogger("acquirium").setLevel(level)
 
 
+class StartupProgress:
+    """Log each readiness phase when it starts and report its elapsed time."""
+
+    def __init__(self, logger: logging.Logger, *, total: int) -> None:
+        self._logger = logger
+        self._total = total
+        self._current = 0
+
+    @contextmanager
+    def phase(self, message: str) -> Iterator[None]:
+        self._current += 1
+        label = f"  ({self._current}/{self._total}) {message}"
+        self._logger.info("%s...", label)
+        start = time.perf_counter()
+        try:
+            yield
+        except BaseException:
+            self._logger.error("%s (failed after %.1fs)", label, time.perf_counter() - start)
+            raise
+        else:
+            self._logger.info("%s (done in %.1fs)", label, time.perf_counter() - start)
+
+
 @contextmanager
 def timed_debug(logger: logging.Logger, msg: str, *args) -> Iterator[None]:
     """DEBUG-log entry + exit (with elapsed ms) around a block.

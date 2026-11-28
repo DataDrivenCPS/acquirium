@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from contextlib import nullcontext
-from functools import wraps
+from functools import partial, wraps
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -42,7 +42,7 @@ from acquirium.TextMatch.qudt_store import QUDTStore
 from acquirium.TextMatch.resolver import ConceptResolver
 from acquirium.TextMatch.unit_key import UnitKeyIndex
 
-from acquirium.internals._log import timed_debug
+from acquirium.internals._log import StartupProgress, timed_debug
 
 logger = logging.getLogger("acquirium.manager")
 
@@ -109,10 +109,12 @@ class Manager:
         qudt_converter: QUDTUnitConverter | None = None,
         recreate: bool = False,
         exact_only: bool = False,
+        startup: StartupProgress | None = None,
     ):
         if not logging.getLogger().handlers:
             from acquirium.internals._log import configure_logging
             configure_logging()
+        phase = startup.phase if startup is not None else partial(timed_debug, logger)
 
         base = Path(data_dir) if data_dir is not None else DEFAULT_DATA_DIR
         if not recreate:
@@ -139,7 +141,7 @@ class Manager:
         if converter is None and qudt_graph is not None:
             converter = QUDTUnitConverter(qudt_graph)
 
-        with timed_debug(logger, "Manager.__init__: OxigraphGraphStore setup"):
+        with phase("Opening the graph store and loading ontologies"):
             graph = OxigraphGraphStore(
                 store_path=graph_path,
                 env_root=ontoenv_root,
@@ -152,22 +154,23 @@ class Manager:
         self._stream_refs = {}
         self._point_refs = {}
         try:
-            artifacts = base / MODULE_DIRECTORY
-            artifacts.mkdir(exist_ok=True)
-            target = engine_path or base / "escapement-epoch.duckdb"
-            if is_postgres(target) and engine_schema is None:
-                options = parse_qs(urlsplit(str(target)).query).get("options", ())
-                if not any("search_path" in option for option in options):
-                    engine_schema = "acquirium_epoch"
-            self.core = Core(
-                target,
-                schema=engine_schema,
-                workers=engine_workers,
-                epoch_requests=epoch_requests,
-                max_pending=max_pending_requests,
-                history_epochs=history_epochs,
-                module_paths=[*sys.path, str(artifacts.resolve())],
-            )
+            with phase("Opening the readings store and starting Escapement"):
+                artifacts = base / MODULE_DIRECTORY
+                artifacts.mkdir(exist_ok=True)
+                target = engine_path or base / "escapement-epoch.duckdb"
+                if is_postgres(target) and engine_schema is None:
+                    options = parse_qs(urlsplit(str(target)).query).get("options", ())
+                    if not any("search_path" in option for option in options):
+                        engine_schema = "acquirium_epoch"
+                self.core = Core(
+                    target,
+                    schema=engine_schema,
+                    workers=engine_workers,
+                    epoch_requests=epoch_requests,
+                    max_pending=max_pending_requests,
+                    history_epochs=history_epochs,
+                    module_paths=[*sys.path, str(artifacts.resolve())],
+                )
             # App deployment and experiment metadata delivery share one lock:
             # delivery may reconcile apps, while deployment may edit metadata.
             semantic_lock = RLock()
@@ -175,19 +178,20 @@ class Manager:
                 self.core, graph, base, converter=self._ensure_qudt_converter,
                 lock=semantic_lock,
             )
-            # Experiment records stay in SQL, beside Escapement: the same
-            # PostgreSQL database when Escapement uses one, else DuckDB.
-            if experiments_path is None:
-                experiments_path = engine_path if engine_path is not None and is_postgres(engine_path) \
-                    else base / "experiments.duckdb"
-            self.ledger = open_ledger(experiments_path, samples=EscapementSamples(self.core), recreate=recreate)
-            ledger_backend = "postgres" if is_postgres(experiments_path) else "duckdb"
-            self.logbook = Logbook(self.ledger, backend=ledger_backend)
-            self._logbook_lock = Lock()
-            self.experiments = ExperimentStore(
-                self.ledger, graph_store=graph, resolve=self._resolve_experiment_metadata,
-                metadata_lock=semantic_lock, on_metadata_published=self._refresh_experiment_apps,
-            )
+            with phase("Opening the experiment and logbook ledger"):
+                # Experiment records stay in SQL, beside Escapement: the same
+                # PostgreSQL database when Escapement uses one, else DuckDB.
+                if experiments_path is None:
+                    experiments_path = engine_path if engine_path is not None and is_postgres(engine_path) \
+                        else base / "experiments.duckdb"
+                self.ledger = open_ledger(experiments_path, samples=EscapementSamples(self.core), recreate=recreate)
+                ledger_backend = "postgres" if is_postgres(experiments_path) else "duckdb"
+                self.logbook = Logbook(self.ledger, backend=ledger_backend)
+                self._logbook_lock = Lock()
+                self.experiments = ExperimentStore(
+                    self.ledger, graph_store=graph, resolve=self._resolve_experiment_metadata,
+                    metadata_lock=semantic_lock, on_metadata_published=self._refresh_experiment_apps,
+                )
         except BaseException:
             if hasattr(self, "ledger"):
                 self.ledger.close()
@@ -251,7 +255,8 @@ class Manager:
 
         # Embedding corpus is the static ontoenv vocabularies; build once.
         try:
-            with timed_debug(logger, "Manager.__init__: _build_embedding_indexes"):
+            mode = "exact-only" if exact_only else "with embeddings"
+            with phase(f"Preparing text-matching indexes ({mode})"):
                 self._build_embedding_indexes()
         except BaseException:
             self.close()
@@ -259,7 +264,7 @@ class Manager:
 
     
     @classmethod
-    def from_env(cls) -> Manager:
+    def from_env(cls, *, startup: StartupProgress | None = None) -> Manager:
         _data_dir = os.getenv("ACQUIRIUM_DATA_DIR")
         # Ontology sources are read directly from acquirium.toml —
         # ACQUIRIUM_CONFIG points at it. Keeps the environment-variable
@@ -296,6 +301,7 @@ class Manager:
             ontology_sources=list(ont_cfg.sources) or None,
             recreate=os.getenv("ACQUIRIUM_RECREATE", "false").lower() == "true",
             exact_only=os.getenv("ACQUIRIUM_EXACT_ONLY", "false").lower() == "true",
+            startup=startup,
         )
 
     def _sync_stream_refs_from_graph(self) -> int:

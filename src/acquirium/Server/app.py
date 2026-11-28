@@ -575,7 +575,7 @@ class ResolveRecordRequest(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Recover server state before serving requests and close owned resources on exit."""
-    from acquirium.internals._log import configure_logging
+    from acquirium.internals._log import StartupProgress, configure_logging
     configure_logging()  # honors ACQUIRIUM_VERBOSE env var set by `acquirium server -v`
 
     loaded_config = load_active_config()
@@ -585,13 +585,17 @@ async def lifespan(app: FastAPI):
         # Appended, so a config-directory file never shadows an installed module.
         sys.path.append(config_dir)
     server_cfg = _cfg.get("server", {})
-    m = Manager.from_env()
+    # Use the same formatter as Uvicorn's readiness messages.
+    startup = StartupProgress(logging.getLogger("uvicorn.error"), total=6)
+    m = Manager.from_env(startup=startup)
     app.state.manager = m
     app.state.read_batch_size = int(server_cfg.get("read_batch_size", 50_000))
 
     try:
-        m._sync_stream_refs_from_graph()
-        m.recover_apps()
+        with startup.phase("Preparing the query graph and indexing stream references"):
+            m._sync_stream_refs_from_graph()
+        with startup.phase("Recovering deployed apps"):
+            m.recover_apps()
     except Exception as e:
         log.exception("Startup failed: %s", e)
         try:
