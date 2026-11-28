@@ -63,14 +63,17 @@ acquirium migrate --from legacy.toml --to escapement.toml
 A small test copy produced this output.
 
 ```text
-Found 2 raw streams and 2 readings.
+Found 2 raw streams and 3 legacy rows.
+Skipped 1 legacy rows with no value for gateway/temperature.
 Verified 2 readings in 2 destination streams.
+Skipped 1 legacy rows with no value in total.
 ```
 
 Each file identifies its server through `[driver]`'s `server_url` and
 `server_port`, or `[server]`'s `host` and `port`. Substitute the paths
-to your configurations. After a completed run, the command reports how
-many readings it verified in the destination. If a copy is interrupted,
+to your configurations. The initial legacy count includes rows with neither
+a numeric nor a text value. The command reports those rows as skipped and
+verifies the readings against the destination. If a copy is interrupted,
 rerun it with the same source and destination. The command checks already
 copied readings before continuing and stops if the destination has
 conflicting readings.
