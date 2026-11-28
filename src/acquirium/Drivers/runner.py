@@ -181,6 +181,20 @@ def main() -> int:
     configure_logging()
 
     payload = pickle.load(sys.stdin.buffer)
+    setup_finished = threading.Event()
+
+    def _stop_on_eof() -> None:
+        # A raw read keeps the daemon thread from holding Python's buffered
+        # stdin lock while an unsuccessful setup exits the interpreter.
+        while os.read(sys.stdin.fileno(), 1):
+            pass
+        if not setup_finished.is_set():
+            # Setup runs user code and may never return. Only a configured
+            # runner can be asked to stop cooperatively.
+            os._exit(1)
+        runner.stop()
+
+    threading.Thread(target=_stop_on_eof, name="driver-stdin", daemon=True).start()
     try:
         from acquirium.cli import _import_driver_class
         from acquirium.Client.acquirium import Acquirium
@@ -199,13 +213,8 @@ def main() -> int:
         logger.error("driver %s failed to start:\n%s", payload["spec"], traceback.format_exc())
         _report(status, ok=False, error=f"{type(exc).__name__}: {exc}")
         return 1
+    setup_finished.set()
     _report(status, ok=True)
-
-    def _stop_on_eof() -> None:
-        sys.stdin.buffer.read()
-        runner.stop()
-
-    threading.Thread(target=_stop_on_eof, name="driver-stdin", daemon=True).start()
     signal.signal(signal.SIGTERM, lambda *_: runner.stop())
     try:
         runner.run()

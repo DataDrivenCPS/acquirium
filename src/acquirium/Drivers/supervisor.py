@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import pickle
 import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import Future
 from datetime import datetime, timezone
 from typing import Any
 
@@ -23,8 +25,9 @@ class DriverSupervisor:
     and starts the tick loop. The internal lock is held across setup so two
     drivers' setup-time graph writes can never race.
 
-    A child stops when its stdin closes — on stop_driver(), or when this
-    process dies — so drivers never outlive their server.
+    Closing stdin asks a running child to stop and makes a child still in
+    setup exit immediately. During an orderly shutdown the supervisor waits
+    for cleanup and kills children that exceed the shutdown deadline.
     """
 
     def __init__(self, server_url: str, server_port: int, use_ssl: bool = False):
@@ -52,6 +55,9 @@ class DriverSupervisor:
         handshake. The returned record describes the child process.
         """
         driver_section = config.get("driver", {})
+        setup_timeout = float(driver_section.get("setup_timeout", 60.0))
+        if not math.isfinite(setup_timeout) or setup_timeout <= 0:
+            raise ValueError("driver setup_timeout must be finite and greater than zero")
         effective_interval = float(
             interval if interval is not None else driver_section.get("interval", 10.0)
         )
@@ -72,34 +78,33 @@ class DriverSupervisor:
                 start_new_session=True,
             )
             assert proc.stdin is not None and proc.stdout is not None
+            payload = {
+                "spec": spec,
+                "config": config,
+                "interval": effective_interval,
+                "server_url": self.server_url,
+                "server_port": self.server_port,
+                "use_ssl": self.use_ssl,
+            }
+            ready: Future[None] = Future()
             try:
-                pickle.dump(
-                    {
-                        "spec": spec,
-                        "config": config,
-                        "interval": effective_interval,
-                        "server_url": self.server_url,
-                        "server_port": self.server_port,
-                        "use_ssl": self.use_ssl,
-                    },
-                    proc.stdin,
-                )
-                proc.stdin.flush()
-                # The status line is the child's only stdout output.
-                line = proc.stdout.readline()
-                proc.stdout.close()
+                # Both pipe I/O and a failed child's exit are covered by
+                # the deadline before we release the setup lock.
+                threading.Thread(
+                    target=_await_setup, args=(proc, payload, driver_name, ready),
+                    name="driver-setup", daemon=True,
+                ).start()
+                try:
+                    ready.result(timeout=setup_timeout)
+                except TimeoutError as error:
+                    raise TimeoutError(
+                        f"Driver '{driver_name}' setup timed out after {setup_timeout:g}s"
+                    ) from error
             except BaseException:
                 proc.kill()
                 proc.wait()
+                _signal_stop(proc)
                 raise
-            status = json.loads(line) if line else {"ok": False, "error": None}
-            if not status["ok"]:
-                proc.stdin.close()
-                code = proc.wait()
-                raise RuntimeError(
-                    f"Driver '{driver_name}' failed to start: "
-                    f"{status['error'] or f'process exited with code {code}'}"
-                )
 
             record = {
                 "name": driver_name,
@@ -182,6 +187,26 @@ class DriverSupervisor:
             "pid": record["proc"].pid,
             "status": status,
         }
+
+
+def _await_setup(proc: subprocess.Popen, payload: dict, name: str, ready: Future[None]) -> None:
+    """Send the setup payload and deliver the child's one-line reply to the supervisor."""
+    assert proc.stdin is not None and proc.stdout is not None
+    try:
+        with proc.stdout:
+            pickle.dump(payload, proc.stdin)
+            proc.stdin.flush()
+            line = proc.stdout.readline()
+        status = json.loads(line) if line else {"ok": False, "error": None}
+        if not status["ok"]:
+            _signal_stop(proc)
+            code = proc.wait()
+            detail = status["error"] or f"process exited with code {code}"
+            raise RuntimeError(f"Driver '{name}' failed to start: {detail}")
+    except BaseException as error:
+        ready.set_exception(error)
+    else:
+        ready.set_result(None)
 
 
 def _signal_stop(proc: subprocess.Popen) -> None:
