@@ -130,7 +130,3 @@ def reset_relations() -> None:
     """Restore the default relations, dropping every registered one."""
     RELATIONS.clear()
     RELATIONS.update(_DEFAULTS)
-
-
-def relation_names() -> tuple:
-    return tuple(RELATIONS)

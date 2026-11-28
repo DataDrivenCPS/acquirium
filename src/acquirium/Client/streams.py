@@ -5,9 +5,26 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from acquirium.ExperimentValues import timestamp as _utc
 import polars as pl
+
+from acquirium.core import time_ns
+from acquirium.ExperimentValues import timestamp as _utc
 from acquirium.internals._names import accepts_old_names
+from acquirium.internals.models import compute_stream_uri
+
+
+def _after_ns(value: datetime | str) -> int:
+    """UTC nanoseconds just after the microsecond ``value`` names: a half-open
+    read up to it includes every sample within that microsecond."""
+    return time_ns(_utc(value)) + 1000
+
+
+def inclusive_bounds(start: datetime | str | None, end: datetime | str | None) -> dict[str, Any]:
+    """``timeseries_df`` arguments that read from ``start`` to ``end``,
+    inclusive. A string without an offset is UTC; reads are half-open, so
+    the read goes up to just after ``end``."""
+    return {"start": _utc(start).isoformat() if start is not None else None,
+            "end_ns": _after_ns(end) if end is not None else None}
 
 
 def samples_frame(frame: pl.DataFrame) -> pl.DataFrame:
@@ -24,10 +41,18 @@ class Stream:
 
     The handle reads the stream's current samples; it holds no data itself.
     Handles compare equal when their reference URIs do, and ``str()`` returns
-    the URI.
+    the URI. A handle returned for samples just written reads them even
+    before they publish.
     """
     stream_uri: str
     _client: Any = field(default=None, repr=False, compare=False)
+    # The request sequence of samples written through this handle.
+    _after: int | None = field(default=None, repr=False, compare=False)
+
+    @classmethod
+    def from_source(cls, source: str, name: str) -> Stream:
+        """Identify a stream by its source and name without connecting to a server."""
+        return cls(str(compute_stream_uri(source, name)))
 
     def between(self, start: datetime | str, end: datetime | str) -> "StreamInterval":
         """Select the samples from ``start`` to ``end``, inclusive."""
@@ -35,7 +60,8 @@ class Stream:
 
     def dataframe(self, *, start: datetime | str | None = None, end: datetime | str | None = None,
                   **options: Any) -> pl.DataFrame:
-        """Read the stream's samples as ``time`` and ``value`` columns.
+        """Read the stream's samples from ``start`` to ``end``, inclusive, as
+        ``time`` and ``value`` columns.
 
         Other options (``limit``, ``order``, ``timeout``, ``value_mode``) pass
         through to the time-series read.
@@ -44,8 +70,8 @@ class Stream:
             raise RuntimeError("this stream handle is not bound to a client")
         frame = self._client.timeseries_df(
             self.stream_uri,
-            start=_utc(start).isoformat() if start is not None else None,
-            end=_utc(end).isoformat() if end is not None else None,
+            **inclusive_bounds(start, end),
+            **({"after": self._after} if self._after is not None else {}),
             **options,
         )
         return samples_frame(frame)

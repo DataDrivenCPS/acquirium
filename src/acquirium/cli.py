@@ -6,7 +6,7 @@ Subcommands:
 
   acquirium server [--config FILE] [--host HOST] [--port PORT] [--reload]
       Start the Acquirium FastAPI server. [[drivers]] listed in the config
-      are started as Ray actors that connect back over the API, followed by
+      are started as child processes that connect back over the API, followed by
       deployments from [[apps]].
 
       Set ``[server] enabled = false`` in the config to submit the
@@ -20,6 +20,8 @@ Subcommands:
   acquirium app list               List deployed apps and binding status.
   acquirium app inspect NAME       Inspect schemas, settings, streams, and progress.
   acquirium config init [PATH]     Write a starter acquirium.toml.
+  acquirium migrate --from OLD --to NEW
+      Copy registered raw readings between running servers.
 """
 
 import importlib
@@ -31,15 +33,19 @@ import signal
 import sys
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Annotated, Any, Iterator, Optional
+from typing import TYPE_CHECKING, Annotated, Iterator, Optional
 
 import typer
 
 from acquirium.Server.config import (
     DEFAULT_LOCAL_CONFIG,
+    load_app_target,
     load_config,
     load_local_config,
 )
+
+if TYPE_CHECKING:
+    from acquirium.Drivers.Driver import Driver
 
 app = typer.Typer(
     name="acquirium",
@@ -59,15 +65,11 @@ def _root() -> None:
 
 def _import_driver_class(
     driver_spec: str, *, base_dir: Path | None = None
-) -> tuple[type, str | None]:
+) -> type[Driver]:
     """Resolve a ``path/to/file.py:ClassName`` or ``my.module:ClassName`` spec to a Driver subclass.
 
-    Returns the class and, for a file spec, the directory added to ``sys.path``
-    so the file's sibling modules resolve. Callers that ship the class to
-    another process must put that directory on the target's ``PYTHONPATH``:
-    siblings imported by name pickle by reference, so the receiving process has
-    to be able to import them itself. Module specs return ``None`` — already
-    importable anywhere.
+    A file spec's directory is added to ``sys.path`` so the file's sibling
+    modules resolve.
 
     Raises ``ValueError`` on any resolution failure so callers in background
     threads see a real exception rather than a silent ``SystemExit``.
@@ -81,7 +83,6 @@ def _import_driver_class(
 
     path_part, class_name = driver_spec.rsplit(":", 1)
 
-    source_dir: str | None = None
     is_file = "/" in path_part or path_part.endswith(".py") or Path(path_part).exists()
     if is_file:
         file_path = Path(path_part)
@@ -108,7 +109,7 @@ def _import_driver_class(
         raise ValueError(f"'{class_name}' not found in {path_part}")
     if not (inspect.isclass(cls) and issubclass(cls, _Driver) and cls is not _Driver):
         raise ValueError(f"'{class_name}' is not a Driver subclass")
-    return cls, source_dir
+    return cls
 
 
 def _driver_connect_cfg(
@@ -134,7 +135,7 @@ def _sigterm_as_keyboard_interrupt(*_) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Remote driver management (drivers run as Ray actors on the server)
+# Remote driver management (drivers run as processes on the server)
 # ---------------------------------------------------------------------------
 
 def _server_base_url(
@@ -173,8 +174,8 @@ def _push_drivers_to_server(
 ) -> None:
     """Submit every [[drivers]] entry in cfg to the server's /drivers/start.
 
-    The server imports the driver spec and runs it as a Ray actor, so file
-    based specs must resolve on the server host.
+    The server runs each driver spec in its own process, so file based
+    specs must resolve on the server host.
     """
     import requests
 
@@ -340,7 +341,7 @@ def app_list(
     if not result["apps"]:
         typer.echo("No apps deployed.")
     for item in result["apps"]:
-        typer.echo(f"{item['name']}  {item['status']}  grouping={item['grouping']}  bindings={item['binding_count']}")
+        typer.echo(f"{item['name']}  operators={len(item['operators'])}  plan={item['active_plan']}")
         if item["error"]:
             typer.echo(f"  Error: {item['error']}")
 
@@ -358,197 +359,51 @@ def app_inspect(
     if as_json:
         typer.echo(json.dumps(result, indent=2))
         return
-    item = result["app"]
-    definition = item["definition"]
-    typer.echo(f"{item['name']}: {item['status']}")
-    typer.echo(f"Entrypoint: {item['entrypoint']}")
-    typer.echo(f"Grouping: {item['grouping']}")
-    typer.echo(f"Plan: graph revision {item['graph_revision']}, current={item['plan_current']}")
-    for key in ("every", "lookback", "lookahead", "batch_delay", "min_interval"):
-        value = definition[key]
-        rendered = f"{value / 1_000_000:g}s" if isinstance(value, int) else value or "disabled"
-        typer.echo(f"{key}: {rendered}")
-    typer.echo(f"backfill: {definition['backfill']}")
-    typer.echo(f"parameters: {json.dumps(definition['parameters'], sort_keys=True)}")
-    if item["error"]:
-        typer.echo(f"Error: {item['error']}")
-    typer.echo("Declared outputs:")
-    for port, spec in definition["outputs"].items():
-        typer.echo(f"  {port}: {spec['value_kind']}, unit={spec['unit'] or '(unspecified)'}")
-        schema = ", ".join(f"{column}: {field['type']} (non-null)"
-                           for column, field in item["output_schemas"][port].items())
-        typer.echo(f"    schema: {schema}")
-        typer.echo(f"    metadata: {json.dumps(spec, sort_keys=True)}")
-    typer.echo(f"Bindings: {item['binding_count']}")
-    for binding in item["bindings"]:
-        typer.echo(f"  {binding['binding_signature']}: {binding['status']}")
-        typer.echo(f"    inputs: {json.dumps(binding['inputs'], sort_keys=True)}")
-        typer.echo(f"    outputs: {json.dumps(binding['outputs'], sort_keys=True)}")
-        typer.echo(f"    revision: {binding['consumed_revision']} / {binding['current_revision']}; last success: {binding['last_success']}")
-        if binding["error"]:
-            typer.echo(f"    Error: {binding['error']}")
+    typer.echo(json.dumps(result["app"], indent=2))
 
 
-def _load_app_target(spec: str) -> tuple[object, str | None]:
-    """Load ``module:Class`` or ``./file.py:Class``, with its directory.
-
-    The directory is returned so the caller can tell the server where the
-    file lives: the server imports by module name, and a path like
-    ``../app.py`` means nothing once only the name is sent.
-    """
-    if ":" not in spec:
-        raise ValueError("app spec must be module_or_file:ClassName")
-    module_part, target_name = spec.rsplit(":", 1)
-    path = Path(module_part)
-    source_dir: str | None = None
-    if "/" in module_part or path.suffix == ".py" or path.exists():
-        path = path.resolve()
-        if not path.is_file():
-            raise ValueError(f"app file not found: {module_part}")
-        if not path.stem.isidentifier():
-            raise ValueError(f"app file name must be a Python module name: {path.name}")
-        source_dir = str(path.parent)
-        if source_dir not in sys.path:
-            sys.path.insert(0, source_dir)
-        module = importlib.import_module(path.stem)
-    else:
-        module = importlib.import_module(module_part)
-    try:
-        return getattr(module, target_name), source_dir
-    except AttributeError:
-        raise ValueError(f"app {target_name!r} was not found in {module.__name__!r}") from None
-
-
-@app_app.command("check")
-def app_check(
-    spec: Annotated[str, typer.Argument(help="App class as module:ClassName or ./file.py:ClassName")],
-    params: Annotated[Optional[str], typer.Option("--params", help='Constructor parameters as JSON, e.g. \'{"threshold": 3}\'')] = None,
-    limit: Annotated[int, typer.Option("--limit", "-n", help="Show only the first N rows of each output; 0 shows every row")] = 5,
-    local: Annotated[bool, typer.Option("--local", help="Run the app in this process, so breakpoint() and tracebacks land in this terminal")] = False,
-    as_json: Annotated[bool, typer.Option("--json", help="Print the raw result document")] = False,
-    config: Annotated[Optional[Path], typer.Option("--config", "-c", help="Path to acquirium.toml (for server address)")] = None,
-    server_url: _ServerUrlOpt = None,
-    server_port: _ServerPortOpt = None,
-) -> None:
-    """Run an app against stored data and print what it computed, saving nothing.
-
-    The app is not deployed, its derived streams are not created, and no
-    progress is recorded. The server imports the class by module path, so it
-    must be importable there as it is here.
-
-    Each output prints its first 5 computed rows; pass ``-n 0`` for every row.
-
-    With ``--local`` the app runs here instead of on the server, reading its
-    inputs over the API. Use it to debug: ``breakpoint()`` opens a console in
-    this terminal, and a failing transform raises a traceback here rather
-    than being reported as a per-binding error.
-    """
-    import requests
-
-    if limit < 0:
-        typer.echo("--limit must not be negative", err=True)
-        raise typer.Exit(1)
+@app_app.command("deploy")
+def app_deploy(
+    spec: str,
+    config: Optional[Path] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Report what deploying would do.")] = False,
+):
+    """Deploy an App declaration or a factory accepting (client, parameters)."""
+    from acquirium import Acquirium, App
     cfg = load_config(config).data
-    base = _server_base_url(cfg, server_url, server_port)
-    try:
-        target, source_dir = _load_app_target(spec)
-        parameters = json.loads(params) if params else {}
-    except (ValueError, json.JSONDecodeError) as exc:
-        typer.echo(f"{exc}", err=True)
-        raise typer.Exit(1)
+    host, port, ssl = _config_server_address(cfg)
+    client = Acquirium(server_url=host, server_port=port, use_ssl=ssl)
+    target = load_app_target(spec)
+    declaration = target(client, {}) if callable(target) else target
+    if not isinstance(declaration, App):
+        raise ValueError("app target must be an App declaration or factory")
+    typer.echo(json.dumps(client.deploy_app(declaration, dry_run=dry_run), indent=2))
 
-    from acquirium.Materialization.planner import Deployment
 
-    if local:
-        # The app runs here, so the server never imports it and an exception
-        # from transform() is left to reach the terminal with its traceback.
-        from acquirium.Client.acquirium import Acquirium
-        from acquirium.Materialization import local as local_check
-
-        host, port, use_ssl = _config_server_address(cfg)
-        client = Acquirium(server_url=server_url or host, server_port=server_port or port,
-                           use_ssl=use_ssl)
-        result = local_check.check_app(client, target, parameters=parameters,
-                                       limit=None if limit == 0 else limit)
-        _render_check(result, limit, as_json=as_json)
-        raise typer.Exit(1 if _check_failures(result) else 0)
+@app.command("migrate")
+def migrate(
+    source: Annotated[Path, typer.Option("--from", exists=True, dir_okay=False,
+                                        help="Configuration for the running legacy server.")],
+    destination: Annotated[Path, typer.Option("--to", exists=True, dir_okay=False,
+                                             help="Configuration for the running Escapement server.")],
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Check and count readings without writing.")] = False,
+) -> None:
+    """Copy registered raw readings from an older Acquirium server."""
+    from requests import RequestException
+    from acquirium.Client.client import AcquiriumClient
+    from acquirium.migration import migrate_readings
 
     try:
-        definition = json.loads(Deployment.from_class(target, parameters=parameters).to_json())
-    except Exception as exc:
-        typer.echo(f"{type(exc).__name__}: {exc}", err=True)
-        raise typer.Exit(1)
-    query: dict[str, Any] = {} if limit == 0 else {"limit": limit}
-    if source_dir:
-        # The server imports by module name; tell it where the file it was
-        # named by actually lives, in case it is not otherwise importable.
-        query["search_path"] = source_dir
-    try:
-        resp = requests.post(f"{base}/apps/check", json=definition, params=query, timeout=300)
-    except requests.RequestException as exc:
-        typer.echo(f"Could not reach server at {base}: {exc}", err=True)
-        raise typer.Exit(1)
-    if not resp.ok:
-        detail = resp.json().get("detail", resp.text) if resp.text else resp.reason
-        typer.echo(f"Check failed: {detail}", err=True)
-        if "could not import" in str(detail) and source_dir:
-            typer.echo(
-                f"\nThe server could not read {source_dir}. That happens when it runs on\n"
-                f"another machine or in a container: a check runs the app on the server, so\n"
-                f"the file has to exist there. Copy it somewhere the server imports from\n"
-                f"(its config directory), or run it here with --local.",
-                err=True,
-            )
-        raise typer.Exit(1)
+        source_client = AcquiriumClient(*_config_server_address(load_config(source).data))
+        target_client = AcquiriumClient(*_config_server_address(load_config(destination).data))
+        migrate_readings(
+            source_client, target_client, dry_run=dry_run, report=typer.echo,
+            progress=lambda message: typer.echo(message, err=True),
+        )
+    except (OSError, RequestException, RuntimeError, ValueError) as error:
+        typer.echo(f"Migration failed: {error}", err=True)
+        raise typer.Exit(1) from None
 
-    _render_check(resp.json(), limit, as_json=as_json)
-    if _check_failures(resp.json()):
-        raise typer.Exit(1)
-
-
-def _render_check(result: dict, limit: int, *, as_json: bool = False) -> None:
-    """Print a check result; identical whether it ran here or on the server."""
-    if as_json:
-        typer.echo(json.dumps(result, indent=2))
-        return
-    typer.echo(f"{result['app']}: {len(result['bindings'])} input group(s) matched")
-    for index, entry in enumerate(result["bindings"], start=1):
-        typer.echo(f"\n[{index}] inputs")
-        for alias, streams in entry["inputs"].items():
-            rows = (entry.get("input_rows") or {}).get(alias)
-            count = f", {rows} rows read" if rows is not None else ""
-            typer.echo(f"      {alias}: {len(streams)} stream(s){count}")
-            shown = streams if limit == 0 else streams[:limit]
-            for item in shown:
-                typer.echo(f"        - {item.get('label') or item['stream_uri']}")
-            if len(shown) < len(streams):
-                typer.echo(f"        … {len(streams) - len(shown)} more stream(s)")
-        # Entity columns say what this call's row is about; the stream
-        # columns are already listed above.
-        row = entry.get("row") or {}
-        entities = {k: v for k, v in row.items()
-                    if v and "." not in k and not k.endswith("_ref") and f"{k}_ref" not in row}
-        if entities:
-            typer.echo("      " + "  ".join(f"[{k}] {v}" for k, v in entities.items()))
-        if entry.get("error"):
-            typer.echo(f"    error: {entry['error']}", err=True)
-            continue
-        for port, out in entry["outputs"].items():
-            typer.echo(f"    output {port!r} -> {out['stream_name']} ({out['value_kind']}, {out['rows']} rows)")
-            for row in out["values"]:
-                typer.echo(f"        {row['time']}  {row['value']}")
-            if out.get("truncated"):
-                omitted = out["rows"] - len(out["values"])
-                typer.echo(f"        … {omitted} more row(s); pass -n 0 for all of them")
-
-
-def _check_failures(result: dict) -> bool:
-    return any(entry.get("error") for entry in result.get("bindings", []))
-
-
-# ---------------------------------------------------------------------------
-# server subcommand
-# ---------------------------------------------------------------------------
 
 def _run_uvicorn(
     application: object,
@@ -562,15 +417,29 @@ def _run_uvicorn(
     """Run uvicorn for both the public CLI and aq.init()'s private mode."""
     import uvicorn
 
+    import asyncio
+
+    class _DriversFirstServer(uvicorn.Server):
+        async def shutdown(self, sockets=None) -> None:
+            # Drivers flush buffered rows over HTTP as they stop, so stop them
+            # while the server still accepts connections; uvicorn closes its
+            # listeners before the app's lifespan shutdown runs.
+            from acquirium.Server.app import app as server_app
+
+            supervisor = getattr(server_app.state, "drivers", None)
+            if supervisor is not None:
+                await asyncio.to_thread(supervisor.stop_all)
+            await super().shutdown(sockets)
+
     signal.signal(signal.SIGTERM, _sigterm_as_keyboard_interrupt)
     typer.echo(f"Starting Acquirium server on {host}:{port}")
-    if sockets is None:
+    if reload or workers > 1:
+        # uvicorn's own process managers run these; the graph store forbids
+        # workers > 1, so this is development-only --reload.
         uvicorn.run(application, host=host, port=port, reload=reload, workers=workers)
         return
 
-    server = uvicorn.Server(
-        uvicorn.Config(application, host=host, port=port, reload=reload, workers=workers)
-    )
+    server = _DriversFirstServer(uvicorn.Config(application, host=host, port=port))
     server.run(sockets=sockets)
 
 
@@ -582,15 +451,25 @@ def _local_runtime_setup(
     port: int,
     config_fingerprint: str | None,
 ) -> Iterator[tuple[object, int, list[object]]]:
-    """Prepare aq.init() discovery around the shared uvicorn runner."""
+    """Reserve the local listener and publish discovery data for aq.init().
+
+    Hold the storage directory's server lock while the listener is owned.
+    The registry and the private HTTP endpoint identify the same instance.
+    """
     import socket
     from uuid import uuid4
 
     from filelock import FileLock
 
+    # asyncio sets TCP_NODELAY on accepted connections only when the listener
+    # says it is TCP; a bare socket.socket() does not, and every response on a
+    # kept-alive connection then waits about 40 ms for the client's delayed ACK.
+    family, kind, proto, _, address = socket.getaddrinfo(
+        host, port, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP
+    )[0]
     with FileLock(directory / "server.lock", timeout=0):
-        with socket.socket() as listener:
-            listener.bind((host, port))
+        with socket.socket(family, kind, proto) as listener:
+            listener.bind(address)
             actual_port = listener.getsockname()[1]
             os.environ["ACQUIRIUM_SELF_HOST"] = host
             os.environ["ACQUIRIUM_SELF_PORT"] = str(actual_port)
@@ -679,7 +558,6 @@ def server_cmd(
         # Each worker process builds its own Manager, and every Manager opens the
         # embedded Oxigraph store at the same graph_path. RocksDB permits one
         # process per store, so N workers means N writers over the same files.
-        # This holds on the timescale backend too: it moves the timeseries store
         # out of process, but the graph store stays embedded.
         typer.echo(
             f"Refusing to start with workers={effective_workers}: the embedded Oxigraph "
@@ -749,7 +627,7 @@ def config_init(
 
 # What an Acquirium data folder holds. ``clear`` refuses a folder with none of
 # these, so a mistyped path cannot erase unrelated files.
-_DATA_DIR_MARKERS = (".oxigraph", "timeseries.duckdb", ".runtime", ".ontoenv", "embedding_cache")
+_DATA_DIR_MARKERS = (".oxigraph", "escapement-epoch.duckdb", "experiments.duckdb", ".runtime", ".ontoenv", "embedding_cache")
 _EMBEDDING_CACHE = "embedding_cache"
 
 
@@ -828,16 +706,18 @@ def clear_cmd(
         kept = " (kept the embeddings)" if (target / _EMBEDDING_CACHE).exists() else ""
         typer.echo(f"Cleared {target}{kept}")
 
-    if server.get("timeseries_backend") == "timescale":
-        typer.echo(
-            "Note: this config uses the timescale backend. The readings in "
-            "Postgres are kept; start the server once with recreate = true to erase them."
-        )
-    for key in ("duckdb_path", "graph_path"):
-        if server.get(key):
-            outside = (loaded.directory / Path(server[key]).expanduser()).resolve()
-            if target not in outside.parents and outside.exists():
-                typer.echo(f"Note: {key} is outside the data folder and was kept: {outside}")
+    from acquirium.Storage.ledger import is_postgres
+
+    for key in ("engine_path", "experiments_path", "graph_path"):
+        location = server.get(key)
+        if not location:
+            continue
+        if is_postgres(location):
+            typer.echo(f"Note: {key} uses PostgreSQL. Its data was kept.")
+            continue
+        outside = (loaded.directory / Path(location).expanduser()).resolve()
+        if not outside.is_relative_to(target) and outside.exists():
+            typer.echo(f"Note: {key} is outside the data folder and was kept: {outside}")
 
 
 # ---------------------------------------------------------------------------

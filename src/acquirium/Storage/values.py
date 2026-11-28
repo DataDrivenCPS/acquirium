@@ -1,20 +1,27 @@
+"""Stream value kinds and the number/text split of observations.
+
+Escapement stores each reading as a finite number or text. A stream's
+``value_kind`` is Acquirium graph metadata: it decides how a written value is
+stored and which readings a default read returns. The engine never sees it.
+"""
+
 from __future__ import annotations
 
-from collections import defaultdict
-from decimal import Decimal
 import logging
 import math
-from numbers import Real
-from typing import Any, Iterable, Literal, cast
+from decimal import Decimal
+from typing import Any, Literal, cast
 
 import polars as pl
 
-from acquirium.internals._log import timed_debug
-
 logger = logging.getLogger(__name__)
 
+ValueKind = Literal["numeric", "text"]
 ValueMode = Literal["default", "coalesce", "numeric", "text"]
 VALUE_MODES = {"default", "coalesce", "numeric", "text"}
+_INEXACT_INTEGER = "integer reading cannot be represented exactly as Float64"
+_MIXED_VALUE = pl.Struct({"rendered": pl.String, "integer": pl.Int64})
+
 
 # Kind of a stream registered without a ``value_kind``. It reads as text and
 # becomes numeric when its first numeric value is inserted.
@@ -22,6 +29,7 @@ UNDECLARED_VALUE_KIND = "undeclared"
 
 
 def normalize_value_kind(value_kind: Any = None) -> Literal["numeric", "text"]:
+    """Resolve declaration aliases to the effective kind used for values."""
     if value_kind is None:
         return "text"
     value = str(value_kind).strip().lower()
@@ -42,70 +50,36 @@ def stored_value_kind(value_kind: Any = None) -> str:
 
 
 def normalize_value_mode(value_mode: Any = None) -> ValueMode:
-    if value_mode is None:
-        return "default"
-    value = str(value_mode).strip().lower()
+    """Validate a read mode, using ``default`` when the caller omits it."""
+    value = "default" if value_mode is None else str(value_mode).strip().lower()
     if value in VALUE_MODES:
         return cast(ValueMode, value)
     raise ValueError(
-        "value_mode must be 'default', 'coalesce', 'numeric', or 'text', "
-        f"got {value_mode!r}"
+        f"value_mode must be 'default', 'coalesce', 'numeric', or 'text', got {value_mode!r}"
     )
 
 
-def _is_numeric_value(value: Any, *, parse_numeric_strings: bool = True) -> bool:
-    if value is None:
-        return False
-    if isinstance(value, (Real, Decimal)):  # bool included: True is 1.0
-        return True
-    if not parse_numeric_strings or not isinstance(value, str):
-        return False
-    text = value.strip()
-    if not text:
-        return False
-    try:
-        float(text)
-    except ValueError:
-        return False
-    return True
 
-
-def assign_stream_value_kind(
-    values: Iterable[Any],
-    *,
-    parse_numeric_strings: bool = True,
-) -> Literal["numeric", "text"]:
-    """Assign a stream-level ``value_kind`` from observed values.
-
-    This is the helper drivers should use when they infer stream metadata from
-    data. ``value_kind`` is the preferred/default storage column for the stream:
-    a stream with any observed numeric value is assigned ``"numeric"``, while
-    streams with only text, blank, or null values are assigned ``"text"``.
-    Unparseable rows in numeric streams are still stored in ``text_value`` by
-    the storage fallback path.
-    """
-    return "numeric" if any(
-        _is_numeric_value(value, parse_numeric_strings=parse_numeric_strings)
-        for value in values
-    ) else "text"
-
-
-def split_value(value: Any, value_kind: str | None = None) -> tuple[float | None, str | None]:
-    kind = normalize_value_kind(value_kind)
-    if value is None:
+def _split_scalar(value: Any, *, numeric: bool) -> tuple[float | None, str | None]:
+    """Normalize a value from a mixed batch with a Python object column."""
+    if value is None or (isinstance(value, str) and not value.strip()):
         return None, None
-    if kind == "numeric":
-        if isinstance(value, str) and not value.strip():
-            return None, None
-        # A boolean is the number 1 or 0 in a numeric stream, and the text
-        # "True"/"False" in a text stream (the last line of this function).
+    if numeric:
+        if isinstance(value, int):
+            try:
+                number = float(value)
+            except OverflowError as error:
+                raise ValueError(_INEXACT_INTEGER) from error
+            if number != value:
+                raise ValueError(_INEXACT_INTEGER)
+            return number, None
         try:
-            numeric_value = float(value)
+            number = float(value)
         except (TypeError, ValueError, OverflowError):
             return None, str(value)
-        if not math.isfinite(numeric_value):
-            return None, None
-        return numeric_value, None
+        return (number, None) if math.isfinite(number) else (None, None)
+    if isinstance(value, (float, Decimal)) and not math.isfinite(value):
+        return None, None
     return None, str(value)
 
 
@@ -119,6 +93,8 @@ def streams_with_numeric_values(df: pl.DataFrame) -> set[str]:
         return set()
     dtype = df.schema["value"]
     value = pl.col("value")
+    if dtype == _MIXED_VALUE:
+        value, dtype = value.struct.field("rendered"), pl.String
     if dtype == pl.String:
         numeric = value.str.strip_chars().cast(pl.Float64, strict=False).is_finite()
     elif dtype.is_numeric() or isinstance(dtype, pl.Decimal):
@@ -131,7 +107,7 @@ def streams_with_numeric_values(df: pl.DataFrame) -> set[str]:
         return {
             uri
             for uri, item in zip(df["stream_uri"].to_list(), df["value"].to_list())
-            if split_value(item, "numeric")[0] is not None
+            if isinstance(item, int) or _split_scalar(item, numeric=True)[0] is not None
         }
     return set(df.filter(numeric)["stream_uri"].unique().to_list())
 
@@ -141,28 +117,17 @@ def typed_value_series(values: list[Any]) -> pl.Series:
 
     Decides by an exact scan of the Python types rather than polars inference,
     which silently coerces bools mixed into ints (True -> 1) where
-    ``split_value`` stores text "True" under text kind, and rejects a type
+    ``_split_scalar`` stores text "True" under text kind, and rejects a type
     mismatch that falls outside its inference window.
 
-    Only homogeneous batches get a native dtype. A batch mixing scalar types —
-    e.g. one manager call spanning numeric and text streams — is stringified
-    rather than sent to Object: ``str()`` is exactly what ``split_value``
-    stores under text kind, and floats round-trip through repr under numeric
-    kind. Non-scalar types, a batch mixing booleans with other types (a boolean
-    is 1.0 under numeric kind and "True" under text kind, which no single
-    string can be), and any batch holding an int too large for Int64, take the
-    Object (row-wise) path where their semantics are preserved
-    exactly.
+    Mixed strings and floats can share a String column since floats round-trip
+    through their string representation. In a mixed scalar batch, retain the
+    original integers alongside their string representations for validation.
+    Booleans mixed with other types and integers outside Int64 use Object.
     """
     types = {type(v) for v in values}
     types.discard(type(None))
-    if int in types and any(
-        type(v) is int and not -(2**63) <= v < 2**63 for v in values
-    ):
-        # An int past Int64 has no native column to live in. Stringifying it
-        # would be lossy: one past float range parses back to inf, and the
-        # split drops non-finite values, where split_value stores the digits
-        # as text. The row-wise path keeps that behaviour.
+    if int in types and any(type(v) is int and not -(2**63) <= v < 2**63 for v in values):
         return pl.Series("value", values, dtype=pl.Object)
     if types == {int}:
         # Int64, not Float64: under text kind the cast must render "7", not "7.0".
@@ -173,133 +138,83 @@ def typed_value_series(values: list[Any]) -> pl.Series:
         return pl.Series("value", values, dtype=pl.String)
     if types == {bool}:
         return pl.Series("value", values, dtype=pl.Boolean)
-    if types <= {str, float, int}:
+    if types <= {str, float}:
         return pl.Series(
             "value",
             [None if v is None else str(v) for v in values],
             dtype=pl.String,
         )
+    if types <= {str, float, int}:
+        return pl.DataFrame({
+            "rendered": pl.Series([None if v is None else str(v) for v in values], dtype=pl.String),
+            "integer": pl.Series([v if type(v) is int else None for v in values], dtype=pl.Int64),
+        }).to_struct("value")
     return pl.Series("value", values, dtype=pl.Object)
 
 
-def prepare_value_columns(df: pl.DataFrame) -> pl.DataFrame:
-    if {"numeric_value", "text_value"}.issubset(df.columns):
-        logger.debug("prepare_value_columns: already split (%d rows)", len(df))
-        return df.select(["stream_uri", "ts", "numeric_value", "text_value"])
-
-    if "value" not in df.columns:
-        raise ValueError("timeseries dataframe must include value or numeric_value/text_value columns")
-
-    vectorized = _prepare_value_columns_vectorized(df)
-    if vectorized is not None:
-        return vectorized
-    return _prepare_value_columns_rowwise(df)
+def _validate_integers(frame: pl.DataFrame, integer: pl.Expr, numeric: pl.Expr) -> None:
+    """Raise when a numeric-stream integer changes on conversion to Float64."""
+    # Compare using Int128 because rounding may exceed the original dtype.
+    roundtrip = integer.cast(pl.Float64).cast(pl.Int128, strict=False)
+    if frame.select((numeric & integer.cast(pl.Int128).ne_missing(roundtrip)).any()).item():
+        raise ValueError(_INEXACT_INTEGER)
 
 
-def _prepare_value_columns_vectorized(df: pl.DataFrame) -> pl.DataFrame | None:
-    """Expression-based split for typed value columns; None when unsupported.
+def split_values(frame: pl.DataFrame) -> pl.DataFrame:
+    """Replace ``value`` and ``value_kind`` with the ``number`` and ``text``
+    columns Escapement stores, dropping rows that hold no reading (null,
+    blank, NaN or infinite).
 
-    Matches ``split_value`` row for row, with two accepted divergences on the
-    string path: Python's ``float()`` accepts underscores ("1_000") where the
-    cast does not (such values land in text_value), and float→string formatting
-    for numeric input under text kind is polars' rather than ``str()``'s.
+    On a numeric stream a value that parses as a number is stored as one
+    (``"12.5"`` counts) and anything else as text, so a fault code is kept.
+    On a text stream booleans retain their Python spelling. On a
+    numeric stream they are 1.0 and 0.0. An integer reading for a
+    numeric stream must round-trip through Float64 or this raises ValueError.
     """
-    dtype = df.schema["value"]
-    value = pl.col("value")
-    kind = pl.col("_kind")
-
-    if dtype == pl.Null:
-        numeric = pl.lit(None, dtype=pl.Float64)
-        text = pl.lit(None, dtype=pl.String)
+    dtype = frame.schema["value"]
+    value, numeric = pl.col("value"), pl.col("value_kind").eq("numeric")
+    integer = None
+    if dtype == _MIXED_VALUE:
+        integer = value.struct.field("integer")
+        _validate_integers(frame, integer, numeric)
+        value, dtype = value.struct.field("rendered"), pl.String
+    if dtype == pl.Object:
+        cells = [
+            _split_scalar(item, numeric=kind == "numeric")
+            for item, kind in frame.select("value", "value_kind").iter_rows()
+        ]
+        number = pl.Series("number", [item[0] for item in cells], dtype=pl.Float64)
+        text = pl.Series("text", [item[1] for item in cells], dtype=pl.String)
+    elif dtype == pl.Null:
+        number, text = pl.lit(None, pl.Float64), pl.lit(None, pl.String)
     elif dtype == pl.Boolean:
-        # 1.0/0.0 under numeric kind, str(value) ("True"/"False") under text.
-        numeric = pl.when(kind.eq("numeric")).then(value.cast(pl.Float64))
-        text = pl.when(kind.eq("text")).then(value.cast(pl.String).str.to_titlecase())
+        number = pl.when(numeric).then(value.cast(pl.Float64))
+        text = pl.when(~numeric).then(value.cast(pl.String).str.to_titlecase())
     elif dtype.is_numeric() or isinstance(dtype, pl.Decimal):
         parsed = value.cast(pl.Float64)
-        numeric = pl.when(kind.eq("numeric") & parsed.is_finite()).then(parsed)
-        # str(float('nan')) is "nan"; polars renders NaN as "NaN".
-        as_text = (
-            pl.when(parsed.is_nan()).then(pl.lit("nan")).otherwise(value.cast(pl.String))
-            if dtype.is_float()
-            else value.cast(pl.String)
-        )
-        text = pl.when(kind.eq("text")).then(as_text)
+        if dtype.is_integer() and dtype not in (pl.Int8, pl.UInt8, pl.Int16, pl.UInt16, pl.Int32, pl.UInt32):
+            _validate_integers(frame, value, numeric)
+        number = pl.when(numeric & parsed.is_finite()).then(parsed)
+        text = pl.when(~numeric & parsed.is_finite()).then(value.cast(pl.String))
     elif dtype == pl.String:
         stripped = value.str.strip_chars()
         parsed = stripped.cast(pl.Float64, strict=False)
-        numeric = pl.when(kind.eq("numeric") & parsed.is_finite()).then(parsed)
-        # Numeric-kind fallback: non-blank unparseable strings keep their
-        # original text. Parseable-but-non-finite ("inf", "nan") stays
-        # (NULL, NULL), and blanks stay (NULL, NULL), matching split_value.
+        if integer is not None:
+            parsed = pl.coalesce(integer.cast(pl.Float64), parsed)
+        number = pl.when(numeric & parsed.is_finite()).then(parsed)
+        # Unparseable values on a numeric stream are kept as text; blank
+        # values are no reading on either kind.
         text = pl.when(
-            kind.eq("text")
-            | (kind.eq("numeric") & parsed.is_null() & stripped.str.len_chars().gt(0))
+            stripped.str.len_chars().gt(0) & (~numeric | parsed.is_null())
         ).then(value)
     else:
-        return None  # Object or exotic dtypes take the row-wise path
-
-    has_value_kind = "value_kind" in df.columns
-    with timed_debug(
-        logger, "prepare_value_columns vectorized rows=%d dtype=%s", len(df), dtype
-    ):
-        if has_value_kind:
-            # Normalise/validate the handful of distinct kinds, not n rows.
-            mapping = {u: normalize_value_kind(u) for u in df["value_kind"].unique().to_list()}
-            kind_expr = pl.col("value_kind").replace_strict(mapping, return_dtype=pl.String)
-        else:
-            kind_expr = pl.lit("text", dtype=pl.String)
-        tmp = df.with_columns(kind_expr.alias("_kind")).with_columns(
-            numeric.cast(pl.Float64).alias("numeric_value"),
-            text.cast(pl.String).alias("text_value"),
-        )
-        fallbacks = (
-            tmp.filter(kind.eq("numeric") & pl.col("text_value").is_not_null())
-            .group_by("stream_uri")
-            .len()
-        )
-    for stream_uri, count in fallbacks.iter_rows():
-        logger.warning(
-            "timeseries: stored %d unparseable numeric value(s) as text for %s",
-            count,
-            stream_uri,
-        )
-    return tmp.select(["stream_uri", "ts", "numeric_value", "text_value"])
-
-
-def _prepare_value_columns_rowwise(df: pl.DataFrame) -> pl.DataFrame:
-    """Per-row split via ``split_value`` — the fallback for Object-dtype frames."""
-    has_value_kind = "value_kind" in df.columns
-    selected = ["stream_uri", "ts", "value"] + (["value_kind"] if has_value_kind else [])
-    rows = []
-    fallback_counts: defaultdict[str, int] = defaultdict(int)
-    with timed_debug(logger, "prepare_value_columns split rows=%d has_value_kind=%s", len(df), has_value_kind):
-        for row in df.select(selected).iter_rows():
-            if has_value_kind:
-                stream_uri, ts, value, value_kind = row
-                kind = normalize_value_kind(value_kind)
-                numeric_value, text_value = split_value(value, kind)
-                if kind == "numeric" and text_value is not None:
-                    fallback_counts[str(stream_uri)] += 1
-            else:
-                stream_uri, ts, value = row
-                numeric_value, text_value = split_value(value)
-            rows.append((stream_uri, ts, numeric_value, text_value))
-
-    for stream_uri, count in fallback_counts.items():
-        logger.warning(
-            "timeseries: stored %d unparseable numeric value(s) as text for %s",
-            count,
-            stream_uri,
-        )
-
-    return pl.DataFrame(
-        rows,
-        schema={
-            "stream_uri": pl.Utf8,
-            "ts": df["ts"].dtype,
-            "numeric_value": pl.Float64,
-            "text_value": pl.Utf8,
-        },
-        orient="row",
+        raise ValueError(f"unsupported value column type {dtype}")
+    result = frame.with_columns(
+        number.cast(pl.Float64).alias("number"), text.cast(pl.String).alias("text")
     )
+    fallbacks = result.filter(numeric & pl.col("text").is_not_null()).group_by("stream_uri").len()
+    for stream_uri, count in fallbacks.iter_rows():
+        logger.warning("stored %d non-numeric value(s) as text for %s", count, stream_uri)
+    return result.filter(
+        pl.col("number").is_not_null() | pl.col("text").is_not_null()
+    ).drop("value", "value_kind")

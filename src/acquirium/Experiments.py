@@ -1,4 +1,11 @@
-"""Reusable, variable-centric experiment tracking."""
+"""Track experiment runs against reusable study and variable declarations.
+
+The SQL ledger owns run state, recording order, and artifact references.
+Escapement publishes sampled readings, and the experiment metadata outbox
+delivers graph updates after the ledger commits. An observation can point
+at samples the engine has accepted but has yet to publish. Readers use the
+saved sequence to find the epoch that contains those samples.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -8,13 +15,15 @@ from hashlib import sha256
 import functools
 import math
 from copy import deepcopy
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 import base64
 from fnmatch import fnmatchcase
 import io
 import json
+import logging
 import re
 import reprlib
+import threading
 import warnings
 from pathlib import Path
 from typing import Any
@@ -23,7 +32,7 @@ import polars as pl
 from acquirium.internals.models import compute_stream_uri
 from acquirium.Storage.migrations import EXPERIMENT_MIGRATIONS, migrate
 from acquirium.Storage.metadata_outbox import enqueue, execute
-from acquirium.Storage.publication.revision import RevisionPublisher
+from acquirium.ExperimentSamples import sample_frame
 from acquirium.Client.streams import Stream, StreamInterval
 from acquirium.ExperimentValues import ARTIFACT_KINDS, TABLE_MEDIA_TYPE, check_kind, to_json, timestamp, parquet as _parquet, sample_rows as _sample_rows, value_entry, recording_entries, artifact_entry
 from acquirium.ObjectCodecs import codec_path, encode as _encode, load_codec
@@ -43,6 +52,7 @@ from acquirium.ExperimentDeclarations import (
 from acquirium.internals._names import accepts_old_names
 
 UTC = timezone.utc
+logger = logging.getLogger("acquirium.experiments")
 
 # Server receipt time is deliberately distinct from a caller's occurred_at.
 # The former answers when Acquirium learned something; the latter answers when
@@ -83,6 +93,8 @@ def _publishes(method):
 
 @dataclass
 class _PreparedObservation:
+    """One validated ledger entry and any artifact or sample write it needs."""
+
     variable_id: str
     key: tuple | None = None
     occurred_at: datetime | None = None
@@ -92,10 +104,13 @@ class _PreparedObservation:
     interval: tuple[datetime, datetime] | None = None
     attachment: tuple[dict, bytes] | None = None
     sample_ref: str | None = None
+    accepted: int | None = None
 
 
 @dataclass
 class _PreparedBatch:
+    """Validated observations and the stream registrations they depend on."""
+
     observations: list[_PreparedObservation] = field(default_factory=list)
     registrations: list[tuple] = field(default_factory=list)
     updates: list[dict] = field(default_factory=list)
@@ -109,32 +124,37 @@ ARTIFACT_CHUNK_BYTES = 4 << 20
 
 class ExperimentStore:
     """Transactional recordings and durable handoff to graph-owned metadata."""
-    def __init__(self, store: Any, *, graph_store, resolve=None) -> None:
+    def __init__(self, store: Any, *, graph_store, resolve=None,
+                 metadata_lock=None, on_metadata_published=None) -> None:
+        if store.samples is None:
+            raise ValueError("an experiment ledger needs a sample store for its time-series samples")
         self.store = store
         self._live_resolve = resolve
-        self.metadata = ExperimentMetadata(store, graph_store, self._resolve)
+        self.metadata = ExperimentMetadata(
+            store, graph_store, self._resolve,
+            lock=metadata_lock, on_publish=on_metadata_published,
+        )
         self.metadata_graph = self.metadata.writer
         # Serialize graph delivery with metadata reads and lifecycle writes.
         # The store's separate writer lock remains available during graph I/O.
-        # Keep the experiment ledger beside canonical time-series storage.  The
-        # ledger stores provenance records and artifact bytes; time-series
-        # samples continue to live in the normal Acquirium tables.
+        # The ledger stores provenance records and artifact bytes; time-series
+        # samples are Escapement streams (``store.samples``).
         with store._lock, store._write_conn() as conn:
-            self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_templates (template_id VARCHAR PRIMARY KEY, name VARCHAR UNIQUE NOT NULL, created_at TIMESTAMP NOT NULL)")
-            self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_variables (variable_id VARCHAR PRIMARY KEY, template_id VARCHAR NOT NULL, label VARCHAR NOT NULL, role VARCHAR NOT NULL, kind VARCHAR NOT NULL, metadata_json VARCHAR NOT NULL, created_at TIMESTAMP NOT NULL, UNIQUE(template_id, label))")
-            self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_runs (run_id VARCHAR PRIMARY KEY, template_id VARCHAR NOT NULL, status VARCHAR NOT NULL, metadata_json VARCHAR NOT NULL, started_at TIMESTAMP NOT NULL, finished_at TIMESTAMP, error_json VARCHAR)")
-            self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_observations (run_id VARCHAR NOT NULL, variable_id VARCHAR, sequence BIGINT NOT NULL, recorded_at TIMESTAMP NOT NULL, occurred_at TIMESTAMP, value_json VARCHAR, artifact_digest VARCHAR, stream_uri VARCHAR, range_start TIMESTAMP, range_end TIMESTAMP, PRIMARY KEY(run_id, sequence))")
-            self.metadata.preflight_legacy(conn)
             migrate(conn, backend="postgres" if conn.__class__.__module__.startswith("psycopg") else "duckdb", component="experiments",
                     migrations=EXPERIMENT_MIGRATIONS)
-            self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_artifacts (digest VARCHAR PRIMARY KEY, filename VARCHAR NOT NULL, media_type VARCHAR, byte_length BIGINT NOT NULL, created_at TIMESTAMP NOT NULL)")
-            # Artifact bytes commit with the rows that reference them.
-            self._execute(conn, "CREATE TABLE IF NOT EXISTS experiment_artifact_chunks (digest VARCHAR NOT NULL, seq INTEGER NOT NULL, data BYTEA NOT NULL, PRIMARY KEY(digest, seq))")
-            self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_variables_template_idx ON experiment_variables(template_id)")
-            self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_runs_template_idx ON experiment_runs(template_id, status, started_at)")
-            self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_observations_variable_idx ON experiment_observations(variable_id, run_id, sequence)")
-            self._execute(conn, "CREATE INDEX IF NOT EXISTS experiment_observations_stream_idx ON experiment_observations(stream_uri, range_start, range_end)")
         self._resolutions = {}
+        # A recording holds its run's lock from reserving streams to
+        # committing, so finishing the run waits for it; runs never wait on
+        # each other. Lock order: run locks, then the metadata lock, then SQL.
+        self._run_locks: dict[str, threading.RLock] = {}
+        self._run_locks_guard = threading.Lock()
+        self._cleanup_lock = threading.Lock()
+        # Finish any deletion a crash interrupted. A failure leaves the rows
+        # for the next deletion or start; it must not keep the server down.
+        try:
+            self._cleanup_streams()
+        except Exception:
+            logger.exception("could not clear the samples of deleted experiment runs")
 
     def _resolve(self, text, kind):
         key = (text, kind)
@@ -206,6 +226,7 @@ class ExperimentStore:
         return sequence, _now()
     @_publishes
     def define(self, name: str) -> dict[str, Any]:
+        """Return the existing study for a name or create it and queue its graph record."""
         if not name.strip(): raise ValueError("experiment name is required")
         item = {"template_id": str(uuid4()), "name": name, "created_at": _now()}
         update = self.metadata_graph.record_update(study_record(item))
@@ -238,6 +259,7 @@ class ExperimentStore:
             return result
 
     def _prepare_declarations(self, template_id, declarations):
+        """Return declaration results in request order and updates for new variables."""
         # Only labels in this request are compared, so a new declaration does
         # not load (or wait for graph delivery of) the rest of the Study.
         labels = list(dict.fromkeys(declaration["label"] for declaration in declarations))
@@ -268,6 +290,7 @@ class ExperimentStore:
 
     @_publishes
     def start(self, template_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
+        """Create a running experiment under an existing study."""
         # Metadata belongs to this execution, while declarations belong to the
         # reusable study. This is what lets a parameter sweep share variables.
         run = {"run_id": str(uuid4()), "template_id": template_id, "status": "running", "metadata": metadata, "started_at": _now()}
@@ -297,10 +320,17 @@ class ExperimentStore:
             entries.append({**item, "form": forms[field], field: value})
         return self.record_batch(run_id, entries)
 
+    @contextmanager
+    def _holding_run(self, run_id):
+        """Serialize recording and finishing across the run's separate transactions."""
+        with self._run_locks_guard:
+            lock = self._run_locks.setdefault(run_id, threading.RLock())
+        with lock:
+            yield
+
     def record_batch(self, run_id: str, entries: list[dict]) -> list[dict]:
-        # Sample metadata must serialize with source clears. Attachments and
-        # value-only batches queue no graph intent and need only the SQL lock.
-        with self.metadata.lock if any(e.get("form") == "samples" for e in entries) else nullcontext():
+        """Validate and record a batch for an active run, returning receipts in order."""
+        with self._holding_run(run_id):
             return self._write_recording(run_id, self._prepare_recording(run_id, entries))
 
     def _prepare_recording(self, run_id, entries):
@@ -357,7 +387,7 @@ class ExperimentStore:
                 stream_ids.add(ref)
                 point = f"{ref}__point"
                 batch.registrations.append((point, source, name, ref, "numeric"))
-                frames.append(self.store._prepare_frame(self.store._rows_frame(ref, rows, "numeric")))
+                frames.append(sample_frame(ref, rows))
                 batch.updates.append(stream_update(self.metadata_graph, source, name, template_id, run_id,
                     entry["variable_id"], label, metadata, keys, key))
                 item.stream_uri = item.sample_ref = ref
@@ -376,6 +406,8 @@ class ExperimentStore:
                 if kind not in ARTIFACT_KINDS or item.artifact_digest is None:
                     raise ValueError(f"{label!r} is a {kind} variable; attach its bytes instead")
             elif form == "reference":
+                # External streams keep their own lifecycle. Only sample
+                # entries above reserve streams for this run to clean up.
                 if kind != "timeseries":
                     raise ValueError(f"{label!r} is a {kind} variable and cannot reference a stream or file")
                 item.stream_uri = entry["stream_uri"]
@@ -395,34 +427,87 @@ class ExperimentStore:
                 except TypeError as error:
                     raise ValueError(str(error)) from error
             batch.observations.append(item)
-        batch.frame = self.store._prepare_frame(pl.concat(frames)) if frames else None
+        batch.frame = pl.concat(frames) if frames else None
         return batch
 
     def _write_recording(self, run_id, batch):
-        """Commit prepared data with authoritative SQL state checks and one revision."""
+        """Write samples, then commit the observations that point at them.
+
+        1. Reserve the recording's streams in `experiment_streams`, so a run's
+           deletion finds every stream it may have written.
+        2. Send the samples to Escapement. Its receipt means they are durable;
+           they publish shortly after, and nothing here waits for that.
+        3. Commit observations, artifacts, and graph intent in one transaction.
+
+        Each time-series observation stores the sequence Escapement had
+        accepted by step 2, which covers its samples and everything written
+        before it; readers wait for that sequence, so an observation never
+        reads as missing its samples. A failure after step 2 leaves samples
+        no observation names; a retry rewrites the same keys, and deleting
+        the run clears them.
+        """
+        if batch.frame is not None:
+            with self.store._lock, self.store._write_conn() as conn:
+                self._check_recording(conn, run_id, batch)
+                self._own_streams(conn, run_id, batch.registrations)
+        series = [item for item in batch.observations if item.stream_uri is not None]
+        if series:
+            # A batch of references writes nothing and only notes the sequence.
+            accepted = self.store.samples.write(f"experiment/{run_id}", batch.frame)
+            for item in series:
+                item.accepted = accepted
         results = []
-        with self.store._lock, self.store._write_conn() as conn:
-            self._recording_variables(conn, run_id, (item.variable_id for item in batch.observations))
-            for item in batch.observations:
-                if item.artifact_digest and item.attachment is None and self._execute(conn,
-                        "SELECT 1 FROM experiment_artifacts WHERE digest=?", [item.artifact_digest]).fetchone() is None:
-                    raise ValueError("unknown artifact digest")
-            if batch.registrations:
-                self.store._ensure_stream_refs(conn, batch.registrations)
-            if batch.frame is not None:
-                RevisionPublisher(self.store).publish_frame(conn, batch.frame)
+        # Graph intent for new streams serializes with source clears.
+        with self.metadata.lock if batch.frame is not None else nullcontext(), \
+                self.store._lock, self.store._write_conn() as conn:
+            self._check_recording(conn, run_id, batch)
             sequence, recorded = self._next_observation(conn, run_id)
             for offset, item in enumerate(batch.observations):
                 if item.attachment is not None:
                     self._store_artifact(conn, item.artifact_digest, *item.attachment, recorded)
                 self._execute(conn, "INSERT INTO experiment_observations (run_id, variable_id, sequence, recorded_at, occurred_at, value_json, artifact_digest, stream_uri, range_start, range_end, key_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [run_id, item.variable_id, sequence + offset, _database_timestamp(recorded), _database_timestamp(item.occurred_at) if item.occurred_at else None, _json(item.value) if item.value is not None else None, item.artifact_digest, item.stream_uri, _database_timestamp(item.interval[0]) if item.interval else None, _database_timestamp(item.interval[1]) if item.interval else None, _json(item.key) if item.key is not None else None])
+                if item.accepted is not None:
+                    self._execute(conn, "INSERT INTO experiment_observation_accepted VALUES (?, ?, ?)", [run_id, sequence + offset, item.accepted])
                 receipt = {"sequence": sequence + offset, "recorded_at": recorded}
                 if item.sample_ref is not None:
                     receipt["stream_uri"] = item.sample_ref
+                    receipt["accepted"] = item.accepted
                 results.append(receipt)
             for update in batch.updates:
                 self.metadata.enqueue(conn, update)
         return results
+
+    def _check_recording(self, conn, run_id, batch):
+        """Authoritative SQL state checks, repeated in each transaction."""
+        self._recording_variables(conn, run_id, (item.variable_id for item in batch.observations))
+        for item in batch.observations:
+            if item.artifact_digest and item.attachment is None and self._execute(conn,
+                    "SELECT 1 FROM experiment_artifacts WHERE digest=?", [item.artifact_digest]).fetchone() is None:
+                raise ValueError("unknown artifact digest")
+
+    def _own_streams(self, conn, run_id, registrations):
+        """Reserve the streams a recording writes, before any sample is."""
+        for _point, source, name, ref, _kind in registrations:
+            self._execute(conn, "INSERT INTO experiment_streams (stream_uri, run_id, source_id, stream_name) VALUES (?, ?, ?, ?) "
+                          "ON CONFLICT (stream_uri) DO NOTHING", [ref, run_id, source, name])
+
+    def _cleanup_streams(self) -> None:
+        """Clear the samples of streams whose run is gone, then forget them.
+
+        A stream's row outlives its run until its samples are cleared, so this
+        finishes every deletion, including one a crash interrupted. Running it
+        again does nothing new.
+        """
+        # Its own lock: a long clear must not hold up recordings.
+        with self._cleanup_lock:
+            with self.store._own_conn() as conn:
+                refs = [row[0] for row in self._execute(conn, "SELECT stream_uri FROM experiment_streams "
+                        "WHERE run_id NOT IN (SELECT run_id FROM experiment_runs)").fetchall()]
+            if not refs:
+                return
+            self.store.samples.clear(refs)
+            with self.store._lock, self.store._write_conn() as conn:
+                self._execute(conn, f"DELETE FROM experiment_streams WHERE stream_uri IN ({self._marks(refs)})", refs)
 
     def _store_artifact(self, conn, digest, artifact, data, recorded):
         # Identical bytes are stored once, under the first name they arrived with.
@@ -432,8 +517,15 @@ class ExperimentStore:
         for seq, start in enumerate(range(0, len(data), ARTIFACT_CHUNK_BYTES)):
             self._execute(conn, "INSERT INTO experiment_artifact_chunks VALUES (?, ?, ?)", [digest, seq, data[start:start + ARTIFACT_CHUNK_BYTES]])
 
-    @_publishes
     def finish(self, run_id: str, status: str, error: Any = None) -> dict[str, Any]:
+        with self._holding_run(run_id):
+            result = self._finish(run_id, status, error)
+        with self._run_locks_guard:
+            self._run_locks.pop(run_id, None)
+        return result
+
+    @_publishes
+    def _finish(self, run_id: str, status: str, error: Any = None) -> dict[str, Any]:
         if status not in {"succeeded", "failed"}: raise ValueError("status must be succeeded or failed")
         finished = _now()
         update = self.metadata_graph.fields_update(run_uri(run_id), {"status": status, "finished_at": finished})
@@ -688,6 +780,7 @@ class ExperimentStore:
         run_ids: list[str] | None = None,
         kind: str | None = None,
     ) -> list[dict[str, Any]]:
+        """Read ledger observations in run order and resolve their sample epochs."""
         if run_ids == []:
             return []
         clauses = ["r.template_id=?"]
@@ -715,11 +808,12 @@ class ExperimentStore:
                        o.value_json, o.artifact_digest, o.stream_uri,
                        o.range_start, o.range_end, v.variable_id, v.label,
                        v.role, v.kind, a.filename,
-                       a.media_type, a.byte_length, o.key_json
+                       a.media_type, a.byte_length, o.key_json, e.accepted
                 FROM experiment_observations AS o
                 JOIN experiment_runs AS r ON r.run_id=o.run_id
                 JOIN experiment_variables AS v ON v.variable_id=o.variable_id
                 LEFT JOIN experiment_artifacts AS a ON a.digest=o.artifact_digest
+                LEFT JOIN experiment_observation_accepted AS e ON e.run_id=o.run_id AND e.sequence=o.sequence
                 WHERE {' AND '.join(clauses)}
                 ORDER BY r.started_at, r.run_id, o.sequence
                 """,
@@ -749,9 +843,16 @@ class ExperimentStore:
                 "media_type": row[17],
                 "byte_length": row[18],
                 "key": json.loads(row[19]) if row[19] is not None else None,
+                "epoch": None,
             }
             for row in rows
         ]
+        # Wait for the newest data these observations name, then find the
+        # epoch each was recorded at: one lookup for the whole selection.
+        accepted = [row[20] for row in rows]
+        epochs = self.store.samples.epochs(sequence for sequence in accepted if sequence is not None)
+        for item, sequence in zip(result, accepted):
+            item["epoch"] = epochs.get(sequence)
         result = self.read_observation_metadata(result)
         return self._filter_metadata(result, EXPERIMENT.Run, "experiment_id", metadata)
 
@@ -768,20 +869,21 @@ class ExperimentStore:
         """Streams a run's recording created, as opposed to streams it used."""
         if not run_ids:
             return []
-        sources = self._run_sources(run_ids)
-        rows = self._execute(conn, f"SELECT stream_uri FROM streams WHERE source_id IN ({self._marks(sources)})", sources).fetchall()
+        rows = self._execute(conn, f"SELECT stream_uri FROM experiment_streams WHERE run_id IN ({self._marks(run_ids)})", run_ids).fetchall()
         return [row[0] for row in rows]
 
-    def _delete_runs(self, conn, run_ids, *, sweep=False) -> dict[str, Any]:
-        """Remove runs, their observations, samples, and unshared files in `conn`.
+    def _delete_runs(self, conn, run_ids, *, sweep=False) -> tuple[dict[str, Any], list[str]]:
+        """Remove runs, their observations, and unshared files in `conn`.
 
-        Returns the counts removed; graph node deletions are queued in the same
-        transaction. With `sweep`, every experiment stream and unreferenced
-        artifact goes too.
+        Returns the counts removed and the streams the runs recorded; graph
+        node deletions are queued in the same transaction. With `sweep`, every
+        unreferenced artifact goes too. The runs' stream rows stay: the caller
+        counts their samples and runs `_cleanup_streams` after the commit,
+        which clears them in Escapement and then the rows.
         """
         run_ids = list(dict.fromkeys(run_ids))
         removed = {"runs": len(run_ids), "observations": 0, "annotations": 0, "samples": 0, "files": 0}
-        keys, digests = [(EXPERIMENT.Run, run_id) for run_id in run_ids], []
+        keys, digests, refs = [(EXPERIMENT.Run, run_id) for run_id in run_ids], [], []
         if run_ids:
             marks = self._marks(run_ids)
             refs = self._owned_refs(conn, run_ids)
@@ -806,23 +908,13 @@ class ExperimentStore:
             digests = [row[0] for row in self._execute(conn, f"""
                 SELECT DISTINCT artifact_digest FROM experiment_observations
                 WHERE run_id IN ({marks}) AND artifact_digest IS NOT NULL""", run_ids).fetchall()]
+            self._execute(conn, f"DELETE FROM experiment_observation_accepted WHERE run_id IN ({marks})", run_ids)
             self._execute(conn, f"DELETE FROM experiment_observations WHERE run_id IN ({marks})", run_ids)
             self._execute(conn, f"DELETE FROM experiment_runs WHERE run_id IN ({marks})", run_ids)
-        else:
-            refs = []
         sweep_sources = []
         if sweep:
-            sweep_sources = [row[0] for row in self._execute(conn, "SELECT DISTINCT source_id FROM streams WHERE source_id LIKE ?", ["experiment/%"]).fetchall()]
-            refs = [row[0] for row in self._execute(conn, "SELECT stream_uri FROM streams WHERE source_id LIKE ?", ["experiment/%"]).fetchall()]
+            sweep_sources = [row[0] for row in self._execute(conn, "SELECT DISTINCT source_id FROM experiment_streams").fetchall()]
             digests = [row[0] for row in self._execute(conn, "SELECT digest FROM experiment_artifacts").fetchall()]
-        if refs:
-            ref_marks = self._marks(refs)
-            removed["samples"] = int(self._execute(conn, f"""
-                SELECT count(*) FROM timeseries
-                WHERE stream_id IN (SELECT stream_id FROM stream_ids WHERE stream_uri IN ({ref_marks})) AND NOT deleted
-                """, refs).fetchone()[0])
-            RevisionPublisher(self.store).reset(conn, refs)
-            self._execute(conn, f"DELETE FROM streams WHERE stream_uri IN ({ref_marks})", refs)
         if digests:
             # Identical bytes are stored once, so keep a file another run still uses.
             unused = [row[0] for row in self._execute(conn, f"""
@@ -841,11 +933,37 @@ class ExperimentStore:
             enqueue(conn, {"clear": [str(graph.source_graph_uri(source))]})
         if sweep_sources:
             enqueue(conn, {"clear": [str(graph.source_graph_uri(source)) for source in sweep_sources]})
-        return removed
+        return removed, refs
 
     def _after_delete(self, removed) -> dict[str, Any]:
-        """Deliver the deleted records' graph changes after the SQL commit."""
+        """After the SQL commit, under the metadata lock: deliver the graph
+        changes. The caller then clears the samples outside it."""
         self.sync_metadata_graph()
+        return removed
+
+    def delete_runs(self, run_ids: list[str]) -> dict[str, Any]:
+        """Delete finished runs with everything they recorded."""
+        return self._cleared(*self._delete_runs_committed(run_ids))
+
+    def delete_study(self, template_id: str) -> dict[str, Any]:
+        """Delete a Study, its declarations, and every run."""
+        return self._cleared(*self._delete_study_committed(template_id))
+
+    def clear(self) -> dict[str, Any]:
+        """Delete every Study and its records; other Acquirium data is untouched."""
+        return self._cleared(*self._clear_committed())
+
+    def _cleared(self, removed, refs):
+        """Count and clear the samples of the deleted runs' streams ``refs``.
+
+        The runs were not running and are gone, so none can still record:
+        every sample they wrote was accepted before this settles. An error
+        clearing leaves the deletion complete; the next deletion or start
+        finishes it.
+        """
+        if refs:
+            removed["samples"] = self.store.samples.count(refs, self.store.samples.settled())
+        self._cleanup_streams()
         return removed
 
     def _refuse_running(self, conn, clause, parameters) -> None:
@@ -856,11 +974,10 @@ class ExperimentStore:
             raise ValueError("finish or fail running experiments before deleting them: " + ", ".join(running))
 
     @_publishes
-    def delete_runs(self, run_ids: list[str]) -> dict[str, Any]:
-        """Delete finished runs with everything they recorded."""
+    def _delete_runs_committed(self, run_ids: list[str]) -> dict[str, Any]:
         run_ids = list(dict.fromkeys(run_ids))
         if not run_ids:
-            return {"runs": 0, "observations": 0, "annotations": 0, "samples": 0, "files": 0}
+            return {"runs": 0, "observations": 0, "annotations": 0, "samples": 0, "files": 0}, []
         with self.store._lock, self.store._write_conn() as conn:
             marks = self._marks(run_ids)
             found = {row[0] for row in self._execute(conn, f"SELECT run_id FROM experiment_runs WHERE run_id IN ({marks})", run_ids).fetchall()}
@@ -868,34 +985,32 @@ class ExperimentStore:
             if missing:
                 raise KeyError(missing[0])
             self._refuse_running(conn, f"run_id IN ({marks})", run_ids)
-            result = self._delete_runs(conn, run_ids)
-        return self._after_delete(result)
+            result, refs = self._delete_runs(conn, run_ids)
+        return self._after_delete(result), refs
 
     @_publishes
-    def delete_study(self, template_id: str) -> dict[str, Any]:
-        """Delete a Study, its declarations, and every run."""
+    def _delete_study_committed(self, template_id: str) -> dict[str, Any]:
         with self.store._lock, self.store._write_conn() as conn:
             if self._execute(conn, "SELECT 1 FROM experiment_templates WHERE template_id=?", [template_id]).fetchone() is None:
                 raise KeyError(template_id)
             self._refuse_running(conn, "template_id=?", [template_id])
             run_ids = [row[0] for row in self._execute(conn, "SELECT run_id FROM experiment_runs WHERE template_id=?", [template_id]).fetchall()]
-            result = self._delete_runs(conn, run_ids)
+            result, refs = self._delete_runs(conn, run_ids)
             variables = [row[0] for row in self._execute(conn, "SELECT variable_id FROM experiment_variables WHERE template_id=?", [template_id]).fetchall()]
             self._execute(conn, "DELETE FROM experiment_variables WHERE template_id=?", [template_id])
             self._execute(conn, "DELETE FROM experiment_templates WHERE template_id=?", [template_id])
             for uri in [study_uri(template_id), *map(variable_uri, variables)]:
                 enqueue(conn, {"operation": "delete", "subject": uri})
-        return {"studies": 1, "variables": len(variables), **self._after_delete(result)}
+        return {"studies": 1, "variables": len(variables), **self._after_delete(result)}, refs
 
     @_publishes
-    def clear(self) -> dict[str, Any]:
-        """Delete every Study and its records; other Acquirium data is untouched."""
+    def _clear_committed(self) -> dict[str, Any]:
         with self.store._lock, self.store._write_conn() as conn:
             self._refuse_running(conn, "1=1", [])
             run_ids = [row[0] for row in self._execute(conn, "SELECT run_id FROM experiment_runs").fetchall()]
             studies = int(self._execute(conn, "SELECT count(*) FROM experiment_templates").fetchone()[0])
             variables = int(self._execute(conn, "SELECT count(*) FROM experiment_variables").fetchone()[0])
-            result = self._delete_runs(conn, run_ids, sweep=True)
+            result, refs = self._delete_runs(conn, run_ids, sweep=True)
             identifiers = self._execute(conn, "SELECT variable_id FROM experiment_variables").fetchall()
             study_ids = self._execute(conn, "SELECT template_id FROM experiment_templates").fetchall()
             for uri in [*(variable_uri(row[0]) for row in identifiers), *(study_uri(row[0]) for row in study_ids)]:
@@ -903,7 +1018,7 @@ class ExperimentStore:
             for table in ("experiment_variables", "experiment_templates"):
                 self._execute(conn, f"DELETE FROM {table}")
         self._resolutions = {}
-        return {"studies": studies, "variables": variables, **self._after_delete(result)}
+        return {"studies": studies, "variables": variables, **self._after_delete(result)}, refs
 
     def usage(self, *, template_id: str | None = None, run_ids: list[str] | None = None) -> dict[str, Any]:
         """Count what the selected experiments store and estimate its size.
@@ -922,6 +1037,8 @@ class ExperimentStore:
                 clauses.append(f"run_id IN ({self._marks(run_ids)})"); parameters.extend(run_ids)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         whole_studies = run_ids is None
+        # Count every sample whose write has returned, before reading the ledger.
+        samples = self.store.samples.settled()
         with self.store._own_conn() as conn:
             if template_id is not None and self._execute(conn, "SELECT 1 FROM experiment_templates WHERE template_id=?", [template_id]).fetchone() is None:
                 raise KeyError(template_id)
@@ -961,11 +1078,7 @@ class ExperimentStore:
                 usage["files"], usage["file_bytes"] = int(files[0]), int(files[1])
                 refs = self._owned_refs(conn, selected)
                 if refs:
-                    samples = self._execute(conn, f"""
-                        SELECT count(*), coalesce(sum(8 + coalesce(length(text_value), 8)), 0) FROM timeseries
-                        WHERE stream_id IN (SELECT stream_id FROM stream_ids WHERE stream_uri IN ({self._marks(refs)})) AND NOT deleted
-                        """, refs).fetchone()
-                    usage["samples"], usage["sample_bytes"] = int(samples[0]), int(samples[1])
+                    usage["samples"], usage["sample_bytes"] = self.store.samples.usage(refs, samples)
         usage["total_bytes"] = usage["sample_bytes"] + usage["file_bytes"] + usage["ledger_bytes"]
         return usage
 
@@ -1033,10 +1146,17 @@ class Observation:
     media_type: str | None = None
     byte_length: int | None = None
     key: tuple | None = None
+    #: The Escapement epoch a time-series observation was recorded at.
+    epoch: int | None = None
     _client: Any = field(default=None, repr=False, compare=False)
 
     def dataframe(self, **kwargs: Any):
-        """Read a table, or fetch a time-series observation's samples."""
+        """Read a table, or fetch a time-series observation's samples.
+
+        Samples are read as they are now. Pass ``epoch=observation.epoch`` to
+        read them exactly as they were when recorded, even if the stream has
+        since been corrected.
+        """
         if self.variable.kind == "table":
             if kwargs:
                 raise TypeError("a table observation's dataframe() takes no options")
@@ -1119,6 +1239,7 @@ class Observation:
             "media_type": self.media_type,
             "byte_length": self.byte_length,
             "key": self.key,
+            "epoch": self.epoch,
         }
 
 class _Builder:
@@ -1291,7 +1412,7 @@ class ExperimentVariable:
         if isinstance(rows, StreamInterval):
             raise TypeError("add() records rows; use record() for a stream interval")
         entries = recording_entries(self, rows)
-        streams = {tuple(entry["key"] or ()): Stream(receipt["stream_uri"], self.study.client)
+        streams = {tuple(entry["key"] or ()): Stream(receipt["stream_uri"], self.study.client, receipt.get("accepted"))
                    for entry, receipt in zip(entries, _record_snapshot(self.study, entries))}
         return streams if self.keys else streams.get(())
 
@@ -1834,6 +1955,7 @@ class ObservationCollection:
         self.selection = selection
 
     def _rows(self) -> list[dict[str, Any]]:
+        """Apply the parent run selection before fetching persisted observations."""
         selected_ids = self.selection._selected_run_ids() if self.selection is not None else None
         if selected_ids == set():
             return []
@@ -1848,6 +1970,7 @@ class ObservationCollection:
         )
 
     def all(self) -> list[Observation]:
+        """Build observation handles with shared variable definitions and saved epochs."""
         observations = []
         rows = self._rows()
         variables = self.study._variables_by_id(item["variable_id"] for item in rows)
@@ -1872,6 +1995,7 @@ class ObservationCollection:
                 media_type=item.get("media_type"),
                 byte_length=item.get("byte_length"),
                 key=tuple(item["key"]) if item.get("key") is not None else None,
+                epoch=item.get("epoch"),
                 _client=self.study.client,
             ))
         return observations

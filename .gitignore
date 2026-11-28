@@ -1,5 +1,6 @@
 # default data location
 .acquirium
+.streaming-workload/
 examples/transformation/.data/
 examples/flexpse/.data/
 examples/flexpse-codec/.data/
@@ -230,3 +231,6 @@ scripts/performance/
 /experiments/
 
 tests/text_match_results/
+
+# macOS Finder metadata
+.DS_Store

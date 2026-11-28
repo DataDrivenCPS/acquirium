@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import math
-import json
-import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, Sequence, Callable, Mapping, Optional, TYPE_CHECKING
+from typing import Any, Iterable, Mapping, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     import polars as pl
@@ -16,21 +13,18 @@ from rdflib import URIRef
 
 from acquirium.Client.explore.core import Query
 from acquirium.Client.explore.expr import AttrProxy
-from acquirium.Materialization.api import App
-from acquirium.Materialization.planner import Deployment
+from acquirium.apps import App
 from acquirium.internals._names import accepts_old_names, new_names
+from acquirium.Client.client import AcquiriumClient, CAPACITY_RETRY_S, DEFAULT_HEALTH_REQUEST_TIMEOUT
+from acquirium.Client.streams import Stream
+from acquirium.Experiments import Point, StudyService
+from acquirium.internals.models import MAX_REQUEST_ROWS, compute_stream_uri
 
 
 def _dt_to_iso(v: "str | datetime | None") -> "str | None":
     if v is None:
         return None
     return v.isoformat() if isinstance(v, datetime) else v
-
-
-from acquirium.Client.client import AcquiriumClient, DEFAULT_HEALTH_REQUEST_TIMEOUT
-from acquirium.Client.streams import Stream
-from acquirium.Experiments import Point, StudyService
-from acquirium.internals.models import compute_stream_uri
 
 
 @accepts_old_names
@@ -68,18 +62,18 @@ class Acquirium:
         raises ``ConnectionError`` if it never does. Pass
         ``health_timeout=None`` (or 0) to skip the check.
         """
+        self.insert_batch_rows = int(insert_batch_rows)
+        if self.insert_batch_rows <= 0:
+            raise ValueError("insert_batch_rows must be greater than zero")
         self.client = AcquiriumClient(
             server_url=server_url,
             server_port=server_port,
             use_ssl=use_ssl,
             token=token,
         )
-        self.insert_batch_rows = int(insert_batch_rows)
         # Study owns user-facing declarations; the raw HTTP client remains
         # available below for ordinary Acquirium APIs.
         self.study = StudyService(self)
-        if self.insert_batch_rows <= 0:
-            raise ValueError("insert_batch_rows must be greater than zero")
         if health_timeout:
             self._wait_for_server(health_timeout)
 
@@ -121,7 +115,7 @@ class Acquirium:
         replace=True,
         *,
         source_id: str,
-    ) -> None:
+    ) -> dict[str, Any]:
         """
         Insert RDF graph into an explicitly owned deployment data graph.
 
@@ -135,7 +129,7 @@ class Acquirium:
             source_id: Data-graph owner. Use ``"plant"`` for the shared plant
                 model, or a component's stable source ID.
         """
-        self.client.insert_graph(
+        return self.client.insert_graph(
             rdf_graph,
             format=format,
             replace=replace,
@@ -149,9 +143,9 @@ class Acquirium:
         replace: bool = True,
         *,
         source_id: str,
-    ) -> None:
+    ) -> dict[str, Any]:
         """Read RDF from a file and insert it into an explicitly owned graph."""
-        self.client.insert_graph_file(
+        return self.client.insert_graph_file(
             path,
             format=format,
             replace=replace,
@@ -233,104 +227,61 @@ class Acquirium:
         stream_name: str,
         rows: list[tuple[datetime, Any]],
         *,
-        property_uri: Optional[str] = None,
+        property_uri: str | None = None,
+        request_id: str | None = None,
         replace: bool = False,
+        wait: float = 30,
+        timeout: float = 60,
+        retry_for: float = CAPACITY_RETRY_S,
     ) -> dict[str, Any]:
-        """Insert timeseries data for a single stream.
+        """Upsert observations; wait=0 returns after durable acceptance.
 
-        Args:
-            source_id: The registered datasource identifier.
-            stream_name: The source-local stream identifier. Combined with
-                ``source_id`` to derive the canonical reference URI.
-            rows: List of (timestamp, value) tuples.
-            property_uri: Compatibility field. Register the point relationship
-                with ``register_streams`` before inserting rows.
-            replace: Keep exactly the supplied rows, removing omitted timestamps.
-                An empty replacement clears the stream.
-
-        Returns:
-            dict with ``{"ok": True, "rows_inserted": N}``.
+        ``replace=True`` keeps exactly the supplied rows, removing readings at
+        other timestamps; an empty replacement clears the stream. A replacement
+        must fit in one request, with one slot reserved for the clear.
+        timeout bounds the HTTP call. A transport failure leaves acceptance
+        unknown; retry the same request ID and payload. A request the server
+        refuses with 503 is resent for up to ``retry_for`` seconds.
         """
         return self.client.insert_timeseries(
             source_id=source_id,
             stream_name=stream_name,
             rows=rows,
             property_uri=property_uri,
+            request_id=request_id,
             replace=replace,
+            wait=wait, timeout=timeout, retry_for=retry_for,
         )
 
-    def insert_timeseries_batch(
-        self,
-        source_id: str,
-        streams: dict[str, list[tuple[datetime, Any]]],
-    ) -> dict[str, Any]:
-        """Insert timeseries data for multiple streams.
-
-        Large inputs are split into bounded requests according to
-        ``insert_batch_rows``. Drivers can call this method with their natural
-        batch size; the Acquirium facade hides transport/storage chunking.
-
-        Args:
-            source_id: The registered datasource identifier.
-            streams: Mapping of stream_name → list of (timestamp, value) tuples.
-
-        Returns:
-            dict with ``{"ok": True, "rows_inserted": N}``.
-        """
-        total = 0
-        chunk_count = 0
-        for chunk in self._iter_insert_batches(streams):
-            result = self.client.insert_timeseries_batch(
-                source_id,
-                chunk,
-            )
-            total += int(result.get("rows_inserted", 0))
-            chunk_count += 1
-        return {"ok": True, "rows_inserted": total, "batches": chunk_count}
+    def insert_timeseries_batch(self, source_id, streams, *, request_id=None, replace=(), wait=30,
+                                timeout=60, retry_for=CAPACITY_RETRY_S):
+        """Upsert ``{stream_name: rows}``; each stream named in ``replace`` holds
+        exactly its supplied rows. Large inputs are split into requests of at
+        most 10,000 rows, each atomic. Each replacement must fit in one
+        request, including its clear."""
+        result = self.client.insert_timeseries_batch(
+            source_id, streams, request_id=request_id, replace=replace, wait=wait,
+            timeout=timeout, retry_for=retry_for,
+            batch_rows=min(self.insert_batch_rows, MAX_REQUEST_ROWS),
+        )
+        return {**result, "batches": len(result["receipts"])}
 
     def insert_timeseries_arrow(
-        self, source_id: str, table: "pa.Table", *, publication_id: str | None = None
+        self, source_id: str, table: "pa.Table", *, request_id: str | None = None,
+        wait: float = 30, timeout: float = 60, retry_for: float = CAPACITY_RETRY_S,
     ) -> dict[str, Any]:
-        """Insert a ``(ts, stream_name, value)`` Arrow table.
+        """Insert a ``(ts, stream_name, value)`` Arrow table. Tables over 10,000
+        rows are split into requests in order, each atomic.
 
-        ``publication_id`` is forwarded for request correlation. The current
-        revision backend does not use it to deduplicate retries; repeated rows
-        remain idempotent by stream and timestamp.
+        Reuse ``request_id`` and the exact normalized payload on retry.
+        Deduplication follows Escapement's bounded native retry window.
+        A request the server refuses with 503 is resent for up to
+        ``retry_for`` seconds.
         """
         return self.client.insert_timeseries_arrow(
-            source_id, table, publication_id=publication_id
+            source_id, table, request_id=request_id, wait=wait, timeout=timeout,
+            retry_for=retry_for,
         )
-
-    @staticmethod
-    def _json_safe_value(value: Any) -> Any:
-        if isinstance(value, float) and not math.isfinite(value):
-            return None
-        return value
-
-    def _iter_insert_batches(
-        self,
-        streams: dict[str, list[tuple[datetime, Any]]],
-    ) -> Iterable[dict[str, list[tuple[datetime, Any]]]]:
-        chunk: dict[str, list[tuple[datetime, Any]]] = {}
-        chunk_rows = 0
-
-        for stream, rows in streams.items():
-            start = 0
-            while start < len(rows):
-                capacity = self.insert_batch_rows - chunk_rows
-                end = min(start + capacity, len(rows))
-                if end > start:
-                    chunk[stream] = rows[start:end]
-                    chunk_rows += end - start
-                    start = end
-
-                if chunk_rows >= self.insert_batch_rows:
-                    yield chunk
-                    chunk = {}
-                    chunk_rows = 0
-
-        if chunk:
-            yield chunk
 
     def resolve_point_metadata(self, *args, **kwargs):
         """Alias of :meth:`resolve_property_metadata`."""
@@ -383,14 +334,31 @@ class Acquirium:
         """Return the canonical Acquirium reference URI for ``(source_id, stream_name)``."""
         return compute_stream_uri(source_id, stream_name)
 
-    def stream(self, source_id_or_uri: str | URIRef, name: str | None = None) -> Stream:
+    def stream(
+        self,
+        source: str | URIRef | None = None,
+        name: str | None = None,
+        *,
+        uri: str | URIRef | None = None,
+        source_id_or_uri: str | URIRef | None = None,
+    ) -> Stream:
         """Return a handle for one stored stream.
 
-        ``ac.stream(source_id, name)`` names a stream by the source and stream
-        name its driver writes with; ``ac.stream(stream_uri)`` wraps a reference
-        URI. Use ``stream.between(start, end)`` to select a time range.
+        Use ``client.stream(source="lab", name="flow")`` for a named stream
+        or ``client.stream(uri=stream_uri)`` for a stream URI. A single
+        positional argument is also accepted as a URI.
         """
-        stream_uri = compute_stream_uri(str(source_id_or_uri), name) if name is not None else source_id_or_uri
+        if source_id_or_uri is not None:
+            if source is not None:
+                raise TypeError("stream() received both source and source_id_or_uri")
+            source = source_id_or_uri
+        if uri is not None:
+            if source is not None or name is not None:
+                raise TypeError("stream() takes either uri or source and name")
+            return Stream(str(uri), self.client)
+        if source is None:
+            raise TypeError("stream() requires a URI or a source and name")
+        stream_uri = compute_stream_uri(str(source), name) if name is not None else source
         return Stream(str(stream_uri), self.client)
 
     def point(self, uri: str) -> Point:
@@ -446,14 +414,36 @@ class Acquirium:
         streams = [new_names(stream) for stream in streams]
         self.client.register_streams(streams)
 
-    def deploy_app(
-        self, target: object, *, parameters: Mapping[str, Any] | None = None
-    ) -> dict[str, Any]:
-        """Deploy a stateless app against the current graph."""
-        if not isinstance(target, type) or not issubclass(target, App):
-            raise ValueError("deploy_app expects an App class")
-        deployment = Deployment.from_class(target, parameters=parameters)
-        return self.client.deploy_app(json.loads(deployment.to_json()))
+    def deploy_app(self, declaration: App, *, dry_run: bool = False) -> dict[str, Any]:
+        """Compile semantic inputs and activate a complete native plan.
+
+        With ``dry_run=True`` nothing is published or activated; the result
+        reports, per app, the operators the plan would add, rebuild or rebind
+        and the groups and input rows that re-evaluates.
+        """
+        return self.client.deploy_app(declaration.to_dict(), dry_run=dry_run)
+
+    def wait(self, receipt, *, timeout=30):
+        return self.client.wait(receipt, timeout=timeout)
+
+    def engine_status(self):
+        return self.client.engine_status()
+
+    def engine_snapshot(self):
+        return self.client.engine_snapshot()
+
+    def retry_engine(self):
+        """Retry failed soft sensors after repairing their code or environment."""
+        return self.client.retry_engine()
+
+    def changes(self, *, epoch=0, ordinal=0, limit=1000, timeout=30):
+        """Page committed native changes; persist the cursor with sink updates."""
+        return self.client.changes(epoch=epoch, ordinal=ordinal, limit=limit, timeout=timeout)
+
+    def delete_timeseries(self, source_id, stream_name, timestamps, *, request_id=None, wait=30, timeout=60,
+                          retry_for=CAPACITY_RETRY_S):
+        return self.client.delete_timeseries(source_id, stream_name, timestamps, request_id=request_id,
+                                             wait=wait, timeout=timeout, retry_for=retry_for)
 
     def list_apps(self) -> dict[str, Any]:
         """List every deployment, including apps with no matches or errors."""
@@ -465,59 +455,6 @@ class Acquirium:
 
     def remove_app(self, name: str) -> dict[str, Any]:
         return self.client.remove_app(name)
-
-    def reprocess_app(self, name: str, start: "datetime | str", end: "datetime | str") -> dict[str, Any]:
-        """Recompute a retained output interval without resetting ingestion progress.
-
-        ``start`` and ``end`` are datetimes or texts such as ``"2025-01-01"``;
-        a time without a timezone is read as UTC."""
-        return self.client.reprocess_app(name, start, end)
-
-    def check_app(
-        self, target: object, *, parameters: Mapping[str, Any] | None = None,
-        limit: int | None = None, search_path: str | None = None,
-    ) -> dict[str, Any]:
-        """Run an app against stored data and return what it computed.
-
-        Nothing is saved: the app is not deployed, its derived streams are not
-        created, and the computed rows come back instead of being stored. Use
-        it to confirm a query matches the streams you expect and a transform
-        produces the values you want, before deploying anything.
-
-        Every computed row comes back unless ``limit`` keeps only the first
-        few of each output.
-
-        The directory holding ``target``'s module is sent as a search path, so
-        an app the server cannot otherwise import is still checkable when the
-        two share a filesystem. Pass ``search_path=""`` to send none.
-        """
-        if not isinstance(target, type) or not issubclass(target, App):
-            raise ValueError("check_app expects an App class")
-        deployment = Deployment.from_class(target, parameters=parameters)
-        if search_path is None:
-            module_file = getattr(sys.modules.get(target.__module__), "__file__", None)
-            search_path = str(Path(module_file).resolve().parent) if module_file else None
-        return self.client.check_app(
-            json.loads(deployment.to_json()), limit=limit, search_path=search_path or None
-        )
-
-    def app_dag(self):
-        """Return the active materialization plan as a NetworkX DiGraph."""
-        import networkx as nx
-
-        payload = self.client.materialization_dag()
-        graph = nx.DiGraph()
-        for node in payload["nodes"]:
-            attributes = dict(node)
-            signature = attributes.pop("binding_signature")
-            graph.add_node(signature, **attributes)
-        for edge in payload["edges"]:
-            source, target = edge["source"], edge["target"]
-            if graph.has_edge(source, target):
-                graph.edges[source, target]["stream_uris"].append(edge["stream_uri"])
-            else:
-                graph.add_edge(source, target, stream_uris=[edge["stream_uri"]])
-        return graph
 
     # ------------------------------------------------------------------
     # LOGGING API (plant-level convenience methods)

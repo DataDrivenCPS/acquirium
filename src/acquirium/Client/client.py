@@ -1,34 +1,82 @@
-from typing import Optional, Iterator, Iterable, Any, Callable, Mapping, TYPE_CHECKING
-from datetime import datetime, timezone
+from typing import Optional, Iterator, Iterable, Any, Mapping, TYPE_CHECKING
+from datetime import datetime
 import json
 import re
+import time
+import uuid
+import warnings
 import requests
 from requests import HTTPError
 from pathlib import Path
 from urllib.parse import quote, urlsplit
-import warnings
 import polars as pl
 import pyarrow.ipc as ipc
 from acquirium.internals.models import (
+    MAX_REQUEST_ROWS,
     Order,
-    LogEntry,
     StreamInsert,
-    compute_stream_uri,
+    LogEntry, compute_stream_uri,
     looks_like_uri,
 )
 from acquirium.internals.internals_namespaces import *
 from acquirium.Client.explore.attributes import ATTR_NS, REGISTRY, RESOLVE_MIN_SCORE, raw_predicate
 from acquirium.Client.metadata import is_uri, plan_write, update_text
 from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
-from acquirium.Storage.values import normalize_value_kind, normalize_value_mode
-from rdflib import Graph, URIRef, Literal
-from rdflib.namespace import NamespaceManager, RDF, RDFS
+from acquirium.Storage.values import normalize_value_mode
+from rdflib import Graph, URIRef
+from rdflib.namespace import NamespaceManager, RDFS
 import logging
 from acquirium.internals._names import accepts_old_names, new_names
 logger = logging.getLogger(__name__)
 
 DEFAULT_HEALTH_REQUEST_TIMEOUT = 30.0
+# Seconds a write the server refuses with 503 is resent for by default. A 503
+# means a full inbox, or the engine or its database unavailable; nothing
+# committed, so the same request can be sent again.
+CAPACITY_RETRY_S = 60.0
 _CURIE = re.compile(r"[A-Za-z_][\w.-]*:[^\s:]+")
+
+
+def _insert_chunks(streams, replace, size=MAX_REQUEST_ROWS):
+    """Split ``{stream_name: rows}`` into requests of at most ``size`` rows, as
+    ``(stream_name, rows, replace)`` items. A replaced stream's clear counts as a
+    row and is sent atomically with all of its rows. Every stream appears
+    at least once, so the server checks the name of a stream with no rows too."""
+    for name in replace:
+        if len(streams[name]) + 1 > size:
+            raise ValueError(f"replacement of {name!r} may contain at most {size - 1:,} rows")
+
+    chunk, used = [], 0
+    for name, rows in streams.items():
+        start, clear = 0, name in replace
+        while True:
+            if chunk and (used == size or (clear and used + len(rows) + 1 > size)):
+                yield chunk
+                chunk, used = [], 0
+            room = size - used - clear
+            piece = rows[start:start + room]
+            chunk.append((name, piece, clear))
+            used += len(piece) + clear
+            start, clear = start + room, False
+            if start >= len(rows):
+                break
+    if chunk:
+        yield chunk
+
+
+def _send_in_order(chunks, request_id, wait, send):
+    """Send each chunk as its own request with ``send(chunk, request_id, wait)``
+    and combine the replies. Several chunks get ``request_id:index``, so a
+    retry resends the same requests; only the last waits for publication,
+    which covers the ones before it."""
+    result = {"ok": True, "rows_inserted": 0, "receipts": []}
+    for index, chunk in enumerate(chunks):
+        last = index == len(chunks) - 1
+        reply = send(chunk, request_id if len(chunks) == 1 else f"{request_id}:{index}",
+                     wait if last else 0)
+        result["rows_inserted"] += reply["rows_inserted"]
+        result["receipts"] += reply["receipts"]
+    return result
 
 if TYPE_CHECKING:
     import pyarrow as pa
@@ -63,7 +111,7 @@ RDF_FORMATS = {
 }
 
 from acquirium.StreamMetadata import (
-    POINT_FIELD_KINDS, POINT_FIELD_PREDICATES, _add_triple, _coerce_resolved, _build_stream_triples,
+    POINT_FIELD_KINDS, POINT_FIELD_PREDICATES, _build_stream_triples, _coerce_resolved,
 )
 
 # Fields a stream registration already takes at top level; a ``metadata``
@@ -177,6 +225,7 @@ class AcquiriumClient:
     # turns them into Study/Experiment/Variable objects in Experiments.py.
     def define_experiment(self, name: str) -> dict: return self._experiment_post("/experiments/templates", {"name": name})
     def sync_experiment_metadata(self) -> dict:
+        """Ask the server to publish pending experiment metadata and reconcile apps."""
         try:
             return self._experiment_post("/experiments/metadata/sync", {})
         except HTTPError as error:
@@ -203,8 +252,11 @@ class AcquiriumClient:
         return self._experiment_get(f"/experiments/templates/{template_id}/runs", self._experiment_params(filters))
     def get_experiment(self, run_id: str) -> dict:
         return self._experiment_get(f"/experiments/runs/{run_id}")
-    def record_experiment_batch(self, run_id: str, entries: list[dict]) -> list[dict]:
-        return self._experiment_post(f"/experiments/runs/{run_id}/record", entries)
+    def record_experiment_batch(self, run_id: str, entries: list[dict], *, timeout: float = CAPACITY_RETRY_S) -> list[dict]:
+        """Record a batch, resending it for up to ``timeout`` seconds while the
+        server answers 503."""
+        return self._post_admitted(f"/experiments/runs/{run_id}/record", retry_for=timeout,
+                                   json=entries).json()
 
     def observe_experiment(self, run_id: str, variable_id: str, **body: Any) -> dict: return self._experiment_post(f"/experiments/runs/{run_id}/variables/{quote(variable_id, safe='')}/observations", body)
     def observe_experiment_batch(self, run_id: str, observations: list[dict]) -> list[dict]:
@@ -264,12 +316,12 @@ class AcquiriumClient:
         replace: bool = True,
         *,
         source_id: str,
-    ) -> None:
+    ) -> dict[str, Any]:
         """
         Insert RDF graph into an explicitly owned deployment data graph.
 
-        The server refreshes the embedding index synchronously before
-        responding, so inserted concepts are resolvable once this returns.
+        The response confirms the RDF write and includes
+        ``app_reconciliation_error`` if rebuilding the app plan failed.
 
         Args:
             rdf_graph: RDF graph content as text.
@@ -294,6 +346,7 @@ class AcquiriumClient:
         _raise_for_status(response)
         # the graph may bind new prefixes: read the list again when next needed
         self._namespaces_cache = None
+        return response.json()
 
     def insert_graph_file(
         self,
@@ -302,7 +355,7 @@ class AcquiriumClient:
         replace: bool = True,
         *,
         source_id: str,
-    ) -> None:
+    ) -> dict[str, Any]:
         """Read RDF from *path* and insert it into an explicitly owned graph."""
         source_path = Path(path)
         if not source_path.is_file():
@@ -312,7 +365,7 @@ class AcquiriumClient:
             raise ValueError(
                 f"cannot infer RDF format from {source_path.suffix!r}; pass format explicitly"
             )
-        self.insert_graph(
+        return self.insert_graph(
             source_path.read_text(),
             format=resolved_format,
             replace=replace,
@@ -329,10 +382,18 @@ class AcquiriumClient:
         timeout: float = 60.0,
         *,
         value_mode: str = "default",
+        epoch: int | None = None,
+        end_ns: int | None = None,
+        after: int | None = None,
+        view: str = "current",
     ) -> pl.DataFrame:
         """
         Fetch the full timeseries payload and return a single Polars DataFrame.
-        Best for small to medium responses.
+        Best for small to medium responses. Bounds are half-open; ``end_ns``
+        gives the end in UTC nanoseconds instead of ``end``. ``after`` is a
+        request sequence the read waits for and includes.
+        ``view`` selects the final replacement ("current"), original input
+        ("raw"), or exact physical stream ("stored") at the read's epoch.
         """
         value_mode = normalize_value_mode(value_mode)
         url = f"{self.base_url}/timeseries"
@@ -340,9 +401,13 @@ class AcquiriumClient:
             "uri": uri,
             "start": start,
             "end": end,
+            "end_ns": end_ns,
             "limit": limit,
             "order": order,
             "value_mode": value_mode,
+            "epoch": epoch,
+            "after": after,
+            "view": view,
         }
         headers = {"Accept": "application/vnd.apache.arrow.stream"}
 
@@ -362,11 +427,11 @@ class AcquiriumClient:
                 if tables:
                     return pl.concat(tables)
                 else:
-                    return pl.DataFrame()
+                    import pyarrow as pa
+                    return pl.from_arrow(pa.Table.from_batches([], schema=reader.schema))
             except Exception as e:
-                logger.error(f"Error reading Arrow IPC stream: {e}")
-                return pl.DataFrame()
-            
+                raise RuntimeError("could not read timeseries Arrow response") from e
+
 
     def timeseries_batches(
         self,
@@ -377,7 +442,10 @@ class AcquiriumClient:
         order: Order = "asc",
         *,
         value_mode: str = "default",
+        epoch: int | None = None,
         timeout: float = 60.0,
+        after: int | None = None,
+        view: str = "current",
     ) -> Iterator[pl.DataFrame]:
         """
         Stream an Arrow IPC response and yield Polars DataFrames per RecordBatch.
@@ -394,6 +462,9 @@ class AcquiriumClient:
             "limit": limit,
             "order": order,
             "value_mode": value_mode,
+            "epoch": epoch,
+            "view": view,
+            "after": after,
         }
         headers = {"Accept": "application/vnd.apache.arrow.stream"}
 
@@ -410,21 +481,27 @@ class AcquiriumClient:
             # Drain to EOF so the pooled connection is reused (see timeseries_df).
             r.raw.read()
 
-    def timeseries_info_batch(self, uris: list[str]) -> dict:
-        """Fetch lightweight stats (row_count, earliest, latest) for multiple URIs in one request."""
+    def timeseries_info_batch(self, uris: list[str], *, view="current", epoch: int | None = None) -> dict:
+        """Fetch counts and bounds for multiple URIs at one published epoch."""
         from acquirium.internals.models import TimeseriesInfo
         url = f"{self.base_url}/timeseries_info"
-        response = self._http.post(url, json={"uris": uris})
+        body = {"uris": uris, "view": view}
+        if epoch is not None:
+            body["epoch"] = epoch
+        response = self._http.post(url, json=body)
         _raise_for_status(response)
         data = response.json()
         return {uri: TimeseriesInfo.model_validate(info) for uri, info in data.items()}
 
-    def timeseries_exists_batch(self, uris: list[str]) -> set[str]:
+    def timeseries_exists_batch(self, uris: list[str], *, view="current", epoch: int | None = None) -> set[str]:
         """The URIs among ``uris`` that have at least one row, in one request.
 
         Cheaper than ``timeseries_info_batch``, which counts every row.
         """
-        response = self._http.post(f"{self.base_url}/timeseries_exists", json={"uris": uris})
+        body = {"uris": uris, "view": view}
+        if epoch is not None:
+            body["epoch"] = epoch
+        response = self._http.post(f"{self.base_url}/timeseries_exists", json=body)
         _raise_for_status(response)
         return set(response.json()["uris"])
 
@@ -496,7 +573,7 @@ class AcquiriumClient:
     def namespace_manager(self) -> NamespaceManager:
         """Return the Graph that has the ``prefix -> namespace URI`` map from the server.
 
-        Stores (caches) in a rdf Graph object for use by other methods. 
+        Stores (caches) in a rdf Graph object for use by other methods.
         """
         if self._namespaces_cache is None:
             url = f"{self.base_url}/namespace/list"
@@ -506,7 +583,7 @@ class AcquiriumClient:
             for prefix, ns_uri in response.json().items():
                 self._namespaces_cache.bind(prefix, ns_uri)
         return self._namespaces_cache.namespace_manager
-      
+
     def compact_uri(self, item: str|URIRef) -> str:
         """Return ``prefix:local`` for a URI using bound namespaces.
 
@@ -533,7 +610,7 @@ class AcquiriumClient:
         nm = self.namespace_manager()
         try:
             return str(nm.expand_curie(s))
-        except Exception as e:
+        except Exception:
             raise ValueError(f"Cannot expand '{s}': no matching namespace for CURIE and not a full URI")
 
     def node_uri(self, text: Any) -> str:
@@ -712,7 +789,7 @@ class AcquiriumClient:
         """
         url = f"{self.base_url}/embedding_status"
         response = self._http.get(url)
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json()
 
     def graph_version(self) -> int:
@@ -727,7 +804,7 @@ class AcquiriumClient:
         """Return source and derived-query cache generations from the server."""
         url = f"{self.base_url}/graph_version"
         response = self._http.get(url)
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json()
 
     # -------------------- Unit conversion --------------------
@@ -812,9 +889,11 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
-    def deploy_app(self, definition: dict) -> dict:
+    def deploy_app(self, definition: dict, *, dry_run: bool = False) -> dict:
         response = self._http.put(
-            f"{self.base_url}/apps/{definition['name']}", json=definition
+            f"{self.base_url}/apps/{definition['name']}",
+            json=definition,
+            params={"dry_run": "true"} if dry_run else None,
         )
         _raise_for_status(response)
         return response.json()
@@ -824,45 +903,22 @@ class AcquiriumClient:
         _raise_for_status(response)
         return response.json()
 
-    def reprocess_app(self, name: str, start: "datetime | str", end: "datetime | str") -> dict:
-        from acquirium.ExperimentValues import timestamp
-
-        # A text such as "2025-01-01" is accepted, as in dataframe(start=...).
-        response = self._http.post(
-            f"{self.base_url}/apps/{name}/reprocess",
-            params={"start": timestamp(start).isoformat(), "end": timestamp(end).isoformat()},
-        )
+    def stream_views(self, uris: list[str], *, epoch: int | None = None) -> dict[str, Any]:
+        """The pinned epoch and each reference's current and raw views."""
+        response = self._http.post(f"{self.base_url}/stream_views", json={"uris": uris, "epoch": epoch})
         _raise_for_status(response)
         return response.json()
 
-    def check_app(self, definition: dict, limit: int | None = None,
-                  search_path: str | None = None) -> dict:
-        params = {}
-        if limit is not None:
-            params["limit"] = limit
-        if search_path is not None:
-            params["search_path"] = search_path
-        response = self._http.post(
-            f"{self.base_url}/apps/check", json=definition, params=params
-        )
-        _raise_for_status(response)
-        return response.json()
+    def resolve_storage_keys(self, uris: list[str], *, view="current", epoch=None) -> dict[str, str]:
+        """Resolve points and streams to the requested replacement view.
 
-    def materialization_dag(self) -> dict:
-        response = self._http.get(f"{self.base_url}/materialization/dag")
-        _raise_for_status(response)
-        return response.json()
-
-    def resolve_storage_keys(self, uris: list[str]) -> dict[str, str]:
-        """Map each property URI to its canonical stream URI used by timeseries APIs.
-
-        An already-canonical stream URI passes through. The database may map the
-        returned URI to an internal integer key.
+        ``current`` selects the chain head, ``raw`` the base, and ``stored``
+        the requested stage. ``epoch`` selects a historical plan.
         """
         if not uris:
             return {}
         url = f"{self.base_url}/resolve_storage_keys"
-        response = self._http.post(url, json={"uris": uris})
+        response = self._http.post(url, json={"uris": uris, "view": view, "epoch": epoch})
         _raise_for_status(response)
         return response.json()
 
@@ -940,6 +996,23 @@ class AcquiriumClient:
                 f"({', '.join(properties)}); pass the URI of one of them"
             )
         return properties[0]
+
+    def _stream_units(self, stream_uris: Iterable[str]) -> dict[str, tuple[str | None, str | None]]:
+        """The property and external-reference units for redirected raw reads."""
+        uris = sorted(set(stream_uris))
+        found = {}
+        for i in range(0, len(uris), 500):
+            terms = " ".join(URIRef(uri).n3() for uri in uris[i:i + 500])
+            result = self.sparql_query(
+                f"SELECT DISTINCT ?s ?property_unit ?stream_unit WHERE {{ VALUES ?s {{ {terms} }} "
+                f"OPTIONAL {{ ?p <{HAS_EXTERNAL_REFERENCE}> ?s . ?p <{HAS_UNIT}> ?property_unit . }} "
+                f"OPTIONAL {{ ?s <{HAS_UNIT}> ?stream_unit . }} }}",
+            )
+            for stream_uri, property_unit, stream_unit in result.get("rows", []):
+                units = (property_unit, stream_unit)
+                if found.setdefault(stream_uri, units) != units:
+                    raise ValueError(f"raw stream {stream_uri!r} has conflicting unit metadata")
+        return found
 
     def _node_labels(self, node_uris: Iterable[str]) -> dict[str, list[str]]:
         """``{node_uri: [label, ...]}``, sorted; a node without a label is
@@ -1414,73 +1487,137 @@ class AcquiriumClient:
         _raise_for_status(response)
         return {subject: loads(document) for subject, document in response.json().items()}
 
-    def insert_timeseries(
-        self,
-        *,
-        source_id: str,
-        stream_name: str,
-        rows: list[tuple[datetime, Any]],
-        property_uri: Optional[str] = None,
-        replace: bool = False,
-        publication_id: Optional[str] = None,
-    ) -> dict:
-        url = f"{self.base_url}/insert_timeseries"
-        body = StreamInsert(
-            source_id=source_id,
-            stream_name=stream_name,
-            property_uri=property_uri,
-            replace=replace,
-            values=rows,
-            publication_id=publication_id,
-        )
-        response = self._http.post(url, json=[body.model_dump(mode="json")])
-        _raise_for_status(response)
-        return response.json()
+    def _post_admitted(self, path: str, *, retry_for: float, **kwargs: Any) -> requests.Response:
+        """POST ``path``, resending it after ``Retry-After`` while the server
+        answers 503, for up to ``retry_for`` seconds. Raises for any other
+        error, or for the last 503."""
+        deadline = time.monotonic() + retry_for
+        while True:
+            response = self._http.post(f"{self.base_url}{path}", **kwargs)
+            if response.status_code != 503 or time.monotonic() >= deadline:
+                _raise_for_status(response)
+                return response
+            delay = float(response.headers.get("Retry-After", 1))
+            logger.debug("%s refused (%s), resending in %.1f s", path, response.text[:200], delay)
+            time.sleep(delay)
 
-    def insert_timeseries_batch(
-        self,
-        source_id: str,
-        streams: dict[str, list[tuple[datetime, Any]]],
-    ) -> dict:
-        """Insert timeseries data for multiple streams in one HTTP request.
+    def insert_timeseries(self, *, source_id, stream_name, rows, property_uri=None, request_id=None, replace=False,
+                          wait=30, timeout=60, retry_for=CAPACITY_RETRY_S):
+        # property_uri is a compatibility argument. Registration owns the link.
+        return self.insert_timeseries_batch(source_id, {stream_name: rows}, request_id=request_id,
+                                            replace=[stream_name] if replace else (),
+                                            wait=wait, timeout=timeout, retry_for=retry_for)
 
-        Args:
-            source_id: The registered datasource identifier.
-            streams: Mapping of stream_name → list of (timestamp, value) tuples.
+    def insert_timeseries_batch(self, source_id, streams, *, request_id=None, replace=(), wait=30,
+                                timeout=60, retry_for=CAPACITY_RETRY_S, batch_rows=MAX_REQUEST_ROWS):
+        """Upsert ``{stream_name: rows}``. Each stream named in ``replace`` holds
+        exactly its supplied rows afterwards.
+
+        Up to ``MAX_REQUEST_ROWS`` rows go in one atomic request. Larger inputs
+        are split into several, sent in order; only the last waits for
+        publication, and the result lists every request's receipt. Large
+        replacements that cannot fit in one request are rejected. Retrying
+        with the same ``request_id`` and streams resends the same requests.
         """
-        url = f"{self.base_url}/insert_timeseries"
-        payload = [
-            StreamInsert(
-                source_id=source_id,
-                stream_name=rn,
-                values=rows,
-            )
-            for rn, rows in streams.items()
-        ]
-        response = self._http.post(url, json=[s.model_dump(mode="json") for s in payload])
+        replace = set(replace)
+        if replace - streams.keys():
+            raise ValueError(f"replace names streams not in the insert: {sorted(replace - streams.keys())}")
+        if not 0 < batch_rows <= MAX_REQUEST_ROWS:
+            raise ValueError(f"batch_rows must be between 1 and {MAX_REQUEST_ROWS}")
+        chunks = list(_insert_chunks(streams, replace, size=batch_rows))
+
+        def send(chunk, request_id, wait):
+            payload = [StreamInsert(source_id=source_id, stream_name=name, values=rows, replace=clear,
+                                    request_id=request_id).model_dump(mode="json")
+                       for name, rows, clear in chunk]
+            return self._post_admitted("/insert_timeseries", retry_for=retry_for, json=payload,
+                                       params={"wait": wait}, timeout=timeout).json()
+        return _send_in_order(chunks, request_id or str(uuid.uuid4()), wait, send)
+
+    def wait(self, receipt, *, timeout=30):
+        """Return the current engine snapshot once the receipt's sequence has applied.
+
+        Raise if a publication fault blocks the request or the wait expires.
+        """
+        import math
+        if not math.isfinite(timeout) or timeout < 0:
+            raise ValueError("timeout must be finite and nonnegative")
+        sequence = receipt["sequence"]
+        deadline = time.monotonic() + timeout
+        while True:
+            status = self.engine_status()
+            # A fault after this receipt applied still leaves its write visible.
+            if status["applied"] >= sequence:
+                return self.engine_snapshot()
+            if status["fault"]:
+                raise RuntimeError(f"accepted request {sequence} is blocked: {status['fault']}")
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"accepted request {sequence} remains pending")
+            time.sleep(min(0.05, max(0, deadline - time.monotonic())))
+
+    def engine_status(self):
+        """Read the accepted and applied sequence counters and any engine fault."""
+        response = self._http.get(f"{self.base_url}/engine/status")
         _raise_for_status(response)
         return response.json()
+
+    def engine_snapshot(self):
+        """Read the latest published epoch, its plan, and which outputs are behind."""
+        response = self._http.get(f"{self.base_url}/engine/snapshot")
+        _raise_for_status(response)
+        return response.json()
+
+    def retry_engine(self):
+        """Request another attempt for failed soft sensors after repairing the cause."""
+        response = self._http.post(f"{self.base_url}/engine/retry")
+        _raise_for_status(response)
+        return response.json()
+
+    def changes(self, *, epoch=0, ordinal=0, limit=1000, timeout=30):
+        """Read a bounded page of committed changes after an exclusive cursor."""
+        response = self._http.get(f"{self.base_url}/engine/changes",
+                                 params={"epoch": epoch, "ordinal": ordinal, "limit": limit},
+                                 timeout=timeout)
+        _raise_for_status(response)
+        return response.json()
+
+    def delete_timeseries(self, source_id, stream_name, timestamps, *, request_id=None, wait=30, timeout=60,
+                          retry_for=CAPACITY_RETRY_S):
+        """Delete the specified timestamp keys from a stream and return the write receipt."""
+        from acquirium.core import time_ns
+        return self._post_admitted("/delete_timeseries", retry_for=retry_for, json={
+            "source_id": source_id, "stream_name": stream_name,
+            "timestamps": [time_ns(value) for value in timestamps],
+            "request_id": request_id or str(uuid.uuid4())}, params={"wait": wait}, timeout=timeout).json()
 
     def insert_timeseries_arrow(
-        self, source_id: str, table: "pa.Table", *, publication_id: Optional[str] = None
+        self, source_id: str, table: "pa.Table", *, request_id: Optional[str] = None,
+        wait=30, timeout=60, retry_for=CAPACITY_RETRY_S, stored: bool = False,
     ) -> dict[str, Any]:
+        """Insert a ``(ts, stream_name, value)`` table, split into requests of at
+        most ``MAX_REQUEST_ROWS`` rows as ``insert_timeseries_batch`` splits.
+
+        Use ``stored=True`` with ``number`` and ``text`` in place of ``value``
+        to replay already typed readings without live-ingest conversion.
+        """
         import io
         import pyarrow as pa
-        table_with_sid = table.append_column("source_id", pa.repeat(source_id, len(table)))
-        buf = io.BytesIO()
-        with ipc.new_stream(buf, table_with_sid.schema) as writer:
-            writer.write_table(table_with_sid)
-        buf.seek(0)
-        headers = {"Content-Type": "application/vnd.apache.arrow.stream"}
-        if publication_id is not None:
-            headers["X-Acquirium-Publication-Id"] = publication_id
-        response = self._http.post(
-            f"{self.base_url}/insert_timeseries_arrow",
-            data=buf,
-            headers=headers,
-        )
-        response.raise_for_status()
-        return response.json()
+        chunks = [table.slice(offset, MAX_REQUEST_ROWS)
+                  for offset in range(0, len(table), MAX_REQUEST_ROWS)]
+
+        def send(chunk, request_id, wait):
+            chunk = chunk.append_column("source_id", pa.repeat(source_id, len(chunk)))
+            buf = io.BytesIO()
+            with ipc.new_stream(buf, chunk.schema) as writer:
+                writer.write_table(chunk)
+            headers = {"Content-Type": "application/vnd.apache.arrow.stream",
+                       "X-Acquirium-Request-Id": request_id}
+            # Bytes rather than the buffer, so a resend sends the whole body again.
+            params = {"wait": wait, "stored": True} if stored else {"wait": wait}
+            return self._post_admitted("/insert_timeseries_arrow", retry_for=retry_for,
+                                       data=buf.getvalue(), headers=headers,
+                                       params=params, timeout=timeout).json()
+        return _send_in_order(chunks, request_id or str(uuid.uuid4()), wait, send)
 
     def query_logs(
         self,
@@ -1533,4 +1670,3 @@ class AcquiriumClient:
         response = self._http.delete(url, params=params)
         response.raise_for_status()
         return response.json()
-

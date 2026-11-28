@@ -12,7 +12,7 @@ import logging
 from collections.abc import Iterable
 from typing import Any
 
-from rdflib.namespace import SKOS
+from rdflib.namespace import RDFS, SKOS
 
 from acquirium.internals.internals_namespaces import *  # noqa: F403
 from acquirium.TextMatch.embedding_matcher import _split_local_name

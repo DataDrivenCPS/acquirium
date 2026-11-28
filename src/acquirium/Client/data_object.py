@@ -1,12 +1,21 @@
+"""Shape query results into sensor data frames.
+
+Each binding ties one query alias to a point and the stream supplying it.
+Samples first take a common tall layout that preserves numeric and text
+values. That layout feeds both per-alias reads and wide pivots.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Iterator, Sequence, TYPE_CHECKING
 import polars as pl
 import warnings
 
-from acquirium.Client.streams import Stream
+from acquirium.Client.streams import Stream, inclusive_bounds
+from acquirium.ExperimentValues import timestamp as _utc
+from acquirium.replacements import VIEWS
 from acquirium.internals._names import accepts_old_names
 
 if TYPE_CHECKING:
@@ -254,13 +263,6 @@ def _restore_single_value_column(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(pl.col("value_numeric").alias("value"))
 
 
-def _as_utc_datetime(v: "datetime | str | None") -> datetime | None:
-    if v is None:
-        return None
-    dt = v if isinstance(v, datetime) else datetime.fromisoformat(str(v))
-    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
-
-
 def _apply_window(
     tall: pl.DataFrame,
     start: "datetime | str | None",
@@ -273,8 +275,8 @@ def _apply_window(
     Mirrors the server-side fetch bounds: ``limit`` keeps the first
     ``limit`` rows *per stream* in ``order`` direction.
     """
-    start = _as_utc_datetime(start)
-    end = _as_utc_datetime(end)
+    start = _utc(start) if start is not None else None
+    end = _utc(end) if end is not None else None
     if start is not None:
         tall = tall.filter(pl.col("time") >= start)
     if end is not None:
@@ -302,6 +304,11 @@ def _with_mapped_column(tall: pl.DataFrame, keys: list[str], fn, name: str) -> p
 
 
 def _pivot_split_values(tall: pl.DataFrame, pivot_key: str) -> pl.DataFrame:
+    """Pivot numeric and text readings separately to retain their dtypes.
+
+    A key with both kinds keeps its numeric column and gets a second column
+    with the ``_text`` suffix. Join both pivots on the full set of timestamps.
+    """
     parts: list[pl.DataFrame] = []
     numeric_rows = tall.filter(pl.col("value_numeric").is_not_null())
     if not numeric_rows.is_empty():
@@ -358,6 +365,7 @@ class BindingInfo:
     property_label: str | None = None      # rdfs:label on the property (display name)
     source_id: str | None = None        # acq:sourceId on the ext reference (the datasource)
     stream_name: str | None = None         # acq:refName on the ext reference (the driver's stream name)
+    view: str = "current"
 
 
 def _graph_data_aliases(qg: QueryGraph | None) -> list[str]:
@@ -382,34 +390,42 @@ class _StreamStats:
 
     The root ``DataObject`` owns one and hands the same instance to the
     sub-objects ``by()`` and ``convert_to()`` derive, so whichever of them
-    reads a statistic first fetches the whole family's in one batch request
-    and the rest read from that snapshot. ``exists`` is the cheaper answer
+    reads a statistic first fetches the whole family's in batches per read view,
+    and the rest share those results. ``exists`` is the cheaper answer
     ``is_empty()`` needs, which streams have any row, cached the same way.
     ``refresh()`` forgets both.
     """
     client: AcquiriumClient | None
-    stream_uris: list[str]
-    info: dict[str, Any] | None = None
-    exists: set[str] | None = None
+    targets: list[tuple[str, str]]  # (physical/logical reference, read view)
+    epoch: int | None = None
+    info: dict[tuple[str, str], Any] | None = None
+    exists: set[tuple[str, str]] | None = None
 
-    def get(self) -> dict[str, Any]:
+    def _groups(self):
+        for view in sorted({view for _, view in self.targets}):
+            yield view, sorted({ref for ref, mode in self.targets if mode == view})
+
+    def get(self):
         if self.info is None:
-            self.info = (
-                self.client.timeseries_info_batch(list(self.stream_uris))
-                if self.stream_uris and self.client is not None else {}
-            )
+            result = {}
+            if self.client is not None:
+                for view, refs in self._groups():
+                    info = self.client.timeseries_info_batch(refs, view=view, epoch=self.epoch)
+                    result.update({(ref, view): value for ref, value in info.items()})
+            self.info = result
         return self.info
 
-    def with_rows(self) -> set[str]:
-        """The stream URIs that have any row: from the statistics when they are
-        loaded, else one existence request covering every stream."""
+    def with_rows(self) -> set[tuple[str, str]]:
+        """The stream and view pairs that have any row."""
         if self.info is not None:
-            return {uri for uri, info in self.info.items() if info.row_count > 0}
+            return {target for target, info in self.info.items() if info.row_count > 0}
         if self.exists is None:
-            self.exists = (
-                self.client.timeseries_exists_batch(list(self.stream_uris))
-                if self.stream_uris and self.client is not None else set()
-            )
+            result = set()
+            if self.client is not None:
+                for view, refs in self._groups():
+                    found = self.client.timeseries_exists_batch(refs, view=view, epoch=self.epoch)
+                    result.update((ref, view) for ref in found)
+            self.exists = result
         return self.exists
 
     def refresh(self) -> None:
@@ -422,8 +438,9 @@ class _StreamStats:
 class DataObject:
     """Lazy, alias-driven structured access to sensor data.
 
-    On construction only SPARQL metadata is fetched. The per-stream
-    statistics (row count, time range) are fetched in one batch request the
+    Construction resolves SPARQL bindings and pins an epoch for replacement
+    resolution, units and sample reads.
+    Per-stream statistics (row count, time range) are fetched in batches per view the
     first time ``total_rows``, ``time_range``, or ``bindings`` needs them;
     ``is_empty()`` (before materialization) asks only which streams have a
     row, a cheaper request. Each request covers every stream of the
@@ -492,9 +509,17 @@ class DataObject:
         include_dependencies: bool = True,
         cast_value: str | None = None,
         value_mode: str = "default",
+        view: str | None = None,
     ) -> DataObject:
+        """Resolve a metadata query to stream bindings and record their engine epoch.
+
+        Lazy sample reads request the same epoch as the plan that selected
+        the stream views.
+        """
         qg = query.query_graph
         _validate_cast_value(cast_value)
+        if view is not None and view not in VIEWS:
+            raise ValueError("view must be 'current', 'raw', or 'stored'")
 
         if not getattr(qg, "data_nodes", None):
             return cls._empty(qg, cast_value=cast_value, client=query.client)
@@ -514,7 +539,8 @@ class DataObject:
                 all_entity_cols.update(ctx.keys())
         entity_columns = sorted(all_entity_cols)
 
-        # Build BindingInfo for each binding
+        # By default, app and explicit reference selectors read the stored
+        # stage. Other selectors follow the replacement chain.
         bindings: list[BindingInfo] = []
         for nid, property_uri, stream_uri in property_stream_uris:
             alias = qg.aliases_reverse.get(nid, str(nid))
@@ -532,7 +558,44 @@ class DataObject:
                 property_label=property_labels.get(key),
                 source_id=stream_ids.get(key, (None, None))[0],
                 stream_name=stream_ids.get(key, (None, None))[1],
+                view=view or ("stored" if (
+                    "app" in qg.data_nodes[nid].filters
+                    or qg.data_nodes[nid].refs is not None
+                    or any("app" in expr.attributes() for expr in qg.data_nodes[nid].exprs)
+                ) else "current"),
             ))
+
+        resolved = query.client.stream_views(sorted({b.stream_uri for b in bindings}))
+        epoch, streams = resolved["epoch"], resolved["streams"]
+        redirected_raw = {
+            streams[b.stream_uri]["raw"] for b in bindings
+            if b.view == "raw" and streams[b.stream_uri]["raw"] != b.stream_uri
+        }
+        raw_units = query.client._stream_units(redirected_raw) if redirected_raw else {}
+
+        # Prefer the base stream when a chain contributes multiple stages to
+        # a context. Each property linked to the chosen stage remains distinct.
+        preferred_stage = {}
+        merged = {}
+        for binding in sorted(bindings, key=lambda b: b.stream_uri != streams[b.stream_uri]["raw"]):
+            stream = streams[binding.stream_uri]
+            ref = binding.stream_uri if binding.view == "stored" else stream["raw"]
+            # A current read returns the final stage's values, in that stage's unit.
+            unit = stream["unit"] if binding.view == "current" else None
+            units = dict(property_unit=unit, stream_unit=unit) if unit else {}
+            if binding.view == "raw" and ref != binding.stream_uri:
+                property_unit, stream_unit = raw_units.get(ref, (None, None))
+                units = dict(property_unit=property_unit, stream_unit=stream_unit)
+            for context in binding.entity_contexts or [{}]:
+                chain = (binding.nid, ref, binding.view, tuple(sorted(context.items())))
+                if preferred_stage.setdefault(chain, binding.stream_uri) != binding.stream_uri:
+                    continue
+                key = (binding.nid, binding.property_uri, ref, binding.view)
+                if key in merged:
+                    merged[key].entity_contexts.append(context)
+                else:
+                    merged[key] = replace(binding, stream_uri=ref, entity_contexts=[context], **units)
+        bindings = list(merged.values())
 
         return cls(
             _bindings=bindings,
@@ -546,10 +609,11 @@ class DataObject:
                 "order": order,
                 "cast_value": cast_value,
                 "value_mode": value_mode,
+                "epoch": epoch,
             },
             _tall=None,
             _materialized=False,
-            _stats=_StreamStats(query.client, sorted({b.stream_uri for b in bindings})),
+            _stats=_StreamStats(query.client, sorted({(b.stream_uri, b.view) for b in bindings}), epoch),
         )
 
     def _stats_bindings(self) -> list[BindingInfo]:
@@ -565,7 +629,7 @@ class DataObject:
         stats = self._shared_stats().get()
         filled: list[BindingInfo] = []
         for b in self._bindings:
-            info = stats.get(b.stream_uri)
+            info = stats.get((b.stream_uri, b.view))
             filled.append(replace(
                 b,
                 row_count=info.row_count if info else 0,
@@ -577,7 +641,10 @@ class DataObject:
     def _shared_stats(self) -> _StreamStats:
         """The statistics cache, made from this object's bindings if it has none."""
         if self._stats is None:
-            self._stats = _StreamStats(self._client, sorted({b.stream_uri for b in self._bindings}))
+            self._stats = _StreamStats(
+                self._client, sorted({(b.stream_uri, b.view) for b in self._bindings}),
+                self._query_params.get("epoch"),
+            )
         return self._stats
 
     @property
@@ -589,8 +656,8 @@ class DataObject:
         """Forget the cached stream statistics.
 
         The next read of ``total_rows``, ``time_range``, ``bindings`` or
-        ``is_empty()`` asks the server again. The cache is shared with the
-        sub-objects of the same ``data()`` call, so they see the refresh too.
+        ``is_empty()`` asks the server again at the sample epoch. Sub-objects
+        of the same ``data()`` call share the refreshed cache.
         """
         if self._stats is not None:
             self._stats.refresh()
@@ -678,9 +745,10 @@ class DataObject:
     ) -> pl.DataFrame:
         """Fetch ``bindings``' rows into a tall frame.
 
-        One request per binding, bounded by the given window. Values are
-        auto-converted from the external reference's unit to the annotated
-        unit, then the conversions recorded by ``convert_to()`` are applied.
+        Bindings with the same stream URI and view share one sample request,
+        bounded by the given window. Values are auto-converted from the
+        external reference's unit to the annotated unit, then the
+        conversions recorded by ``convert_to()`` are applied.
         The frame has one row per observation and entity context, in the
         standard tall layout. Does not touch ``self``.
         """
@@ -696,25 +764,32 @@ class DataObject:
                 _factors_cache[key] = self._client.get_conversion_factors(from_u, to_u)
             return _factors_cache[key]
 
+        # Read the epoch used to select the replacement and its units.
+        epoch = self._query_params.get("epoch")
+        if epoch is None:
+            epoch = self._client.engine_snapshot()["epoch"]
+        bounds = inclusive_bounds(start, end)
         # One request per stream. A stream matched by several data nodes
         # (a pump's measurement node and its connection point's, say) has one
         # binding per node; they share the fetched frame and differ only in
         # alias, point, unit and entity columns below.
-        fetched: dict[str, pl.DataFrame] = {}
+        fetched: dict[tuple[str, str], pl.DataFrame] = {}
         for binding in bindings:
-            if binding.stream_uri not in fetched:
-                fetched[binding.stream_uri] = self._client.timeseries_df(
+            key = (binding.stream_uri, binding.view)
+            if key not in fetched:
+                fetched[key] = self._client.timeseries_df(
                     binding.stream_uri,
-                    start=start,
-                    end=end,
+                    **bounds,
                     limit=limit,
                     order=order,
                     value_mode=value_mode,
+                    epoch=epoch,
+                    view=binding.view,
                 )
 
         frames: list[pl.DataFrame] = []
         for binding in bindings:
-            df = fetched[binding.stream_uri]
+            df = fetched[(binding.stream_uri, binding.view)]
             if df.is_empty():
                 continue
 
@@ -1002,7 +1077,7 @@ class DataObject:
         point's ``rdfs:label`` when it has one, else by their compacted
         point-local name. In this mode the narrow layout is
         ``["data_alias", "property_id", "time", "value_numeric", "value_text"]``
-        and ``include_stream=True`` adds the compacted ``ref`` column.
+        and ``include_stream=True`` adds the compacted ``stream`` column.
 
         ``compact=False`` returns the raw layout: narrow is the internal
         tall frame (every ``(data_alias, property_uri, stream_uri, time)`` row
@@ -1052,6 +1127,7 @@ class DataObject:
 
     def _build_dataframe(self, shape, *, start, end, limit, order, include_stream, compact,
                          streams=None) -> pl.DataFrame:
+        """Select streams and apply the read window before reshaping the sampled rows."""
         refs = self._resolve_streams(streams)
         self._materialize()
 
@@ -1283,7 +1359,7 @@ class DataObject:
         if not self._bindings:
             return True
         with_rows = self._shared_stats().with_rows()
-        return not any(b.stream_uri in with_rows for b in self._bindings)
+        return not any((b.stream_uri, b.view) in with_rows for b in self._bindings)
 
     # ------------------------------------------------------------------
     # Stats (fetched on first use, no materialization needed)
@@ -1339,13 +1415,7 @@ class DataObject:
         stored, annotated = b.stream_unit, b.property_unit
         if not stored or not annotated or stored == annotated:
             return
-        try:
-            compatible = bool(
-                self._client.get_conversion_factors(stored, annotated).get("compatible", False)
-            )
-        except Exception:
-            compatible = False
-        if not compatible:
+        if not self._client._units_compatible(stored, annotated):
             raise ValueError(
                 f"convert_to: point <{b.property_uri}> (alias '{b.alias}') is annotated "
                 f"{annotated} but its stream is stored in {stored}, which does not convert, "

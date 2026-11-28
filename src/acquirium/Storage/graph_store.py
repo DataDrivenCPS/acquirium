@@ -1,14 +1,24 @@
+"""Store asserted RDF by owner and publish inferred RDF for queries.
+
+Source writes advance the generation. A background worker builds a query
+view from one source and ontology snapshot, then publishes it if both
+generations are still current. App selection can infer a temporary view
+with proposed app output graphs before publishing those graphs to the
+source dataset.
+"""
+
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
-import os
 import re
 from collections.abc import Callable, Iterable
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Condition, RLock, Thread
+from threading import Condition, Event, Lock, RLock, Thread
+from typing import Any
+from urllib.parse import unquote
 
 from ontoenv import OntoEnv
 import pyoxigraph as ox
@@ -30,7 +40,9 @@ from acquirium._ontologies import (
     rename_ontology_iri,
 )
 from acquirium.Server.config import OntologySource
-from acquirium.Storage.graph_registry import ACQUIRIUM_GRAPH_URI, METADATA_SOURCE_ID, PLANT_SOURCE_ID, SOURCE_GRAPH_PREFIX
+from acquirium.Storage.graph_registry import (
+    ACQUIRIUM_GRAPH_URI, DERIVED_SOURCE_PREFIX, METADATA_SOURCE_ID, PLANT_SOURCE_ID, SOURCE_GRAPH_PREFIX,
+)
 from acquirium.Storage.graph_registry import source_graph_uri as _compute_source_graph_uri
 
 _logger = logging.getLogger("acquirium.graph_store")
@@ -123,6 +135,13 @@ def prune_orphan_metadata(dataset: Dataset, metadata_graph_uri: URIRef) -> None:
 # ``inferred + dependencies`` cache instead of leaving it in the query dataset.
 _DEPENDENCY_QUERY_GRAPH = URIRef(str(ACQUIRIUM_NS.ImportsUnionGraph))
 _INFERRED_DATA_GRAPH = URIRef(str(ACQUIRIUM_NS.InferredDataGraph))
+# A query's default graph: inferred deployment data, then the ontology closure.
+_QUERY_DEFAULT_GRAPHS = (
+    NamedNode(str(_INFERRED_DATA_GRAPH)), NamedNode(str(_DEPENDENCY_QUERY_GRAPH)),
+)
+# Deployment data inferred with an app compilation's staged output graphs.
+_SELECTION_GRAPH = URIRef(str(ACQUIRIUM_NS.SelectionDataGraph))
+_SELECTION_DEFAULT_GRAPHS = (NamedNode(str(_SELECTION_GRAPH)), NamedNode(str(_DEPENDENCY_QUERY_GRAPH)))
 
 
 def _replace_named_graph(dataset: Dataset, graph: Graph, graph_uri: URIRef) -> None:
@@ -147,6 +166,107 @@ def _replace_named_graph(dataset: Dataset, graph: Graph, graph_uri: URIRef) -> N
     dataset.store._inner.load(
         input=nt, format=RdfFormat.N_TRIPLES, to_graph=NamedNode(str(graph_uri)),
     )
+
+
+def _query_result(result):
+    """Convert native ASK, SELECT, and graph answers to the client row shape."""
+    if isinstance(result, ox.QueryBoolean):
+        return {"columns": [], "rows": [[bool(result)]]}
+    if isinstance(result, ox.QuerySolutions):
+        return {
+            "columns": [str(v.value) for v in result.variables],
+            "rows": [[from_ox(cell) for cell in row] for row in result],
+        }
+    if isinstance(result, ox.QueryTriples):
+        triples = Graph()
+        triples += (from_ox(t) for t in result)
+        return {"columns": ["triple"], "rows": [[triple] for triple in triples]}
+    raise ValueError(f"Unexpected query result: {result!r}")
+
+
+def _cell_datatype(cell: dict[str, Any] | None) -> str | None:
+    """``"iri"`` for a node, the XSD IRI of a typed literal, else ``None``."""
+    if not cell:
+        return None
+    if cell.get("type") == "uri":
+        return "iri"
+    return cell.get("datatype")
+
+
+def sparql_results_to_rows(serialized: bytes) -> dict[str, Any]:
+    """Decode SPARQL results into rows of text and their RDF datatypes."""
+    payload = json.loads(serialized)
+    if "boolean" in payload:
+        return {"columns": [], "rows": [[bool(payload["boolean"])]]}
+    columns = payload["head"].get("vars", [])
+    bindings = payload["results"].get("bindings", [])
+    rows = [[binding.get(column, {}).get("value") for column in columns] for binding in bindings]
+    datatypes = [[_cell_datatype(binding.get(column)) for column in columns] for binding in bindings]
+    return {"columns": columns, "rows": rows, "datatypes": datatypes}
+
+
+def _stored_triples(graph):
+    # Oxigraph normalizes simple literals to xsd:string.
+    return {
+        (s, p, Literal(str(o), datatype=XSD.string)
+         if isinstance(o, Literal) and not (o.datatype or o.language) else o)
+        for s, p, o in graph
+    }
+
+
+def _same_triples(a, b):
+    """Whether two graphs hold the same triples once stored in Oxigraph."""
+    return _stored_triples(a) == _stored_triples(b)
+
+
+class _SelectionSnapshot:
+    """The store's query view, with app-owned source graphs replaced.
+
+    Until a staged graph differs from the one the store holds, queries read
+    the store's own view. Once one differs, the snapshot infers deployment
+    data from the store's other sources and the staged ones, and holds it in
+    a graph of the store's query dataset, queried beside the dependency
+    closure already published there; the closure is neither copied nor
+    loaded again. One snapshot exists at a time; leaving it drops that graph.
+    """
+
+    def __init__(self, store, revision, sources):
+        self._store, self.revision, self._sources = store, revision, sources
+        self._diverged = self._inferred = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        try:
+            if self._diverged:
+                self._store._drop_selection()
+        finally:
+            self._store._selection_lock.release()
+
+    def data_graph(self, source_id):
+        return self._sources.get(source_id, Graph())
+
+    def stage(self, changes):
+        """Replace staged graphs by source ID and report any triple changes.
+
+        A real change invalidates this snapshot's inferred graph. Equivalent
+        graphs can reuse the view already available to the snapshot.
+        """
+        changed = any(not _same_triples(graph, self.data_graph(source)) for source, graph in changes.items())
+        self._sources.update(changes)
+        if changed:
+            self._diverged, self._inferred = True, False
+        return changed
+
+    def sparql_query(self, query, *, wait_for_fresh=False):
+        """Query the freshest published view or infer a view for staged data."""
+        if not self._diverged:
+            return self._store.sparql_query(query, wait_for_fresh=True)
+        if not self._inferred:
+            self._store._publish_selection(self._sources)
+            self._inferred = True
+        return self._store._query_selection(query)
 
 
 def select_values(
@@ -203,6 +323,7 @@ class _OntoenvOxigraphStore:
         self._is_data_graph = is_data_graph
 
     def add_graph(self, iri: str, graph: Graph, overwrite: bool = False) -> None:
+        """Install an ontology and invalidate the owner's cache on change."""
         ctx = self._ds.graph(URIRef(iri))
         if len(ctx) and not overwrite:
             _logger.debug("add_graph skip (already populated): %s (%d triples)", iri, len(ctx))
@@ -212,6 +333,7 @@ class _OntoenvOxigraphStore:
         self._on_change()
 
     def get_graph(self, iri: str) -> Graph:
+        """Return a detached ontology graph for ontoenv to use in memory."""
         return Graph() + self._ds.graph(URIRef(iri))
 
     def remove_graph(self, iri: str) -> None:
@@ -240,16 +362,14 @@ class _OntoenvOxigraphStore:
 
 
 class OxigraphGraphStore:
-    """Oxigraph-backed source store with an in-memory imports-closure cache.
+    """Own the asserted RDF, inferred query data, and cached import closure.
 
-    There are two distinct representations in play:
-
-    - The persisted source dataset is the system of record. Driver/API writes
+    - The source dataset is authoritative. Driver/API writes
       and ontoenv-managed ontology graphs all land there.
-    - The dependency cache is an in-memory rdflib graph containing only the
-      triples introduced by owl:imports closure expansion. It exists for
-      export-style "data plus dependencies" views, not for normal SPARQL
-      reads.
+    - The query dataset holds the last published inferred data and a separate
+      named graph for imported ontology triples.
+    - The in-memory dependency cache holds the owl:imports closure delta.
+      Rebuilds use it as shapes, and exports can add it to the asserted data.
     """
 
     def __init__(
@@ -270,6 +390,9 @@ class OxigraphGraphStore:
         # fresh readers wait for its complete publication.
         self._lock = RLock()
         self._rebuild_condition = Condition(self._lock)
+        self._query_watchers: set[Event] = set()
+        # Held by the one selection snapshot that may exist at a time.
+        self._selection_lock = Lock()
         self._query_rebuild_in_progress = False
         self._query_rebuild_error: Exception | None = None
         self.store_path = Path(store_path)
@@ -316,9 +439,8 @@ class OxigraphGraphStore:
         self._saved_prefixes = self._load_saved_prefixes()
         self._bind_prefixes(self._saved_prefixes.items(), override=False)
 
-        # ontoenv shares this Oxigraph store via the graph-store protocol,
-        # over the authoritative source dataset. SPARQL reads query that
-        # dataset directly; only export-time dependency closure is cached.
+        # ontoenv writes to the authoritative source dataset. Its callback
+        # invalidates the derived views when an ontology changes.
         self._ontoenv_store = _OntoenvOxigraphStore(
             self.source_dataset,
             self._mark_ontology_graph_changed,
@@ -372,6 +494,88 @@ class OxigraphGraphStore:
         )
 
     # -------------------- ontoenv named-graph access --------------------
+    def data_graph(self, source_id: str) -> Graph:
+        """Copy one source-owned deployment graph, including an empty graph."""
+        with self._lock:
+            return Graph() + self.source_dataset.graph(self.source_graph_uri(source_id))
+
+    def app_sources(self):
+        """Source IDs of the published app output graphs."""
+        prefix = str(self.source_graph_uri(DERIVED_SOURCE_PREFIX))
+        with self._lock:
+            return {
+                unquote(str(graph.identifier).removeprefix(SOURCE_GRAPH_PREFIX))
+                for graph in self.source_dataset.graphs()
+                if str(graph.identifier).startswith(prefix) and len(graph)
+            }
+
+    def selection_snapshot(self, sources):
+        """A query view in which the app-owned ``sources`` can be replaced,
+        to use as a context manager; ``sources`` start as stored."""
+        self._selection_lock.acquire()
+        try:
+            with self._lock:
+                revision = self._source_version
+                staged = {source: self.data_graph(source) for source in sources}
+        except BaseException:
+            self._selection_lock.release()
+            raise
+        return _SelectionSnapshot(self, revision, staged)
+
+    def _publish_selection(self, sources):
+        """Infer deployment data with ``sources`` in place of the stored ones
+        and hold it in the query dataset's selection graph."""
+        from acquirium.Metadata import overlay_documents
+
+        with self._lock:
+            closure_current = self._dependency_query_graph_closure_version == self._closure_version
+        if not closure_current:
+            # The selection is queried beside the published dependency graph.
+            self._ensure_query_cache_current(wait_for_fresh=True)
+        with self._lock:
+            data = self._merge_source_data({self.source_graph_uri(source) for source in sources})
+            metadata = self.data_graph(METADATA_SOURCE_ID)
+            # The cache is replaced, never changed, so inference may read it unlocked.
+            shapes = self._ensure_dependency_cache_current()
+        for graph in sources.values():
+            data += graph
+        overlay_documents(data, metadata)
+        inferred = self._build_query_views(data, shapes)
+        with self._lock:
+            _replace_named_graph(self.query_dataset, inferred, _SELECTION_GRAPH)
+
+    def _query_selection(self, query):
+        """Query inferred staged data alongside the published import closure."""
+        with self._lock:
+            result = self.query_dataset.store._inner.query(
+                query, use_default_graph_as_union=False, default_graph=list(_SELECTION_DEFAULT_GRAPHS),
+            )
+        return _query_result(result)
+
+    def _drop_selection(self):
+        with self._lock:
+            _replace_named_graph(self.query_dataset, Graph(), _SELECTION_GRAPH)
+
+    def project_app_sources(self, sources):
+        """Install the active plan's output graphs and drop obsolete outputs.
+
+        Return the source generation before and after projection. Equal
+        generations mean the projected graphs already matched storage.
+        """
+        with self._lock:
+            revision = self._source_version
+            changed = False
+            for source in sorted(self.app_sources() | sources.keys()):
+                old = self.data_graph(source)
+                new = sources.get(source, Graph())
+                if not _same_triples(old, new):
+                    _replace_named_graph(self.source_dataset, new, self.source_graph_uri(source))
+                    changed = True
+            if changed:
+                self._prune_orphan_metadata()
+                self._finalize_source_write(affects_closure=False)
+            return revision, self._source_version
+
     def named_graph(self, iri: str) -> Graph:
         """One ontology's own graph, materialized in memory (owl:imports NOT
         followed). Cached per IRI until an ontology graph changes.
@@ -499,6 +703,7 @@ class OxigraphGraphStore:
         )
 
     def _load_source_version(self) -> int:
+        """Restore the source generation, defaulting to zero without usable state."""
         path = self._source_state_path()
         if not path.exists():
             return 0
@@ -562,13 +767,6 @@ class OxigraphGraphStore:
         merged += self._ensure_dependency_cache_current()
         return merged
 
-    def _dependency_query_graph(self) -> Graph:
-        """The query-dataset graph containing only import dependencies."""
-        return self.query_dataset.graph(self.dependency_query_graph_uri)
-
-    def _inferred_data_graph(self) -> Graph:
-        return self.query_dataset.graph(self.inferred_data_graph_uri)
-
     def _query_cache_is_current(self) -> bool:
         return (
             self._query_cache_source_version == self._source_version
@@ -627,6 +825,8 @@ class OxigraphGraphStore:
             self._commit_dataset(self.query_dataset)
         self._query_cache_source_version = self._source_version
         self._query_cache_closure_version = self._closure_version
+        for watcher in self._query_watchers:
+            watcher.set()
 
     def _start_query_rebuild_locked(self) -> None:
         """Start the sole background rebuild owner. Caller holds ``_lock``."""
@@ -812,20 +1012,6 @@ class OxigraphGraphStore:
                 "rebuild_in_progress": self._query_rebuild_in_progress,
             }
 
-    def published_query_digest(self) -> str:
-        """Return a stable digest of the complete published inferred graph.
-
-        This deliberately waits for the query-cache publication boundary, so
-        runtime SQL never records a revision for a partial graph rebuild.
-        """
-        result = self.sparql_query(
-            "SELECT ?s ?p ?o WHERE { ?s ?p ?o } ORDER BY ?s ?p ?o",
-            include_dependencies=False,
-            wait_for_fresh=True,
-        )
-        payload = json.dumps(result["rows"], ensure_ascii=False, separators=(",", ":"), default=str)
-        return hashlib.sha256(payload.encode()).hexdigest()
-
     def refresh_union(self, snapshot_path: str | Path | None = None) -> dict[str, int]:
         """Refresh inferred query views from all data graphs and shape graphs."""
         # Do not hold the store lock while inference runs: the single-flight
@@ -847,17 +1033,30 @@ class OxigraphGraphStore:
             }
 
     # -------------------- SPARQL surface --------------------
+    @contextmanager
+    def watch_query_revisions(self, wake: Event):
+        """Signal the worker when a complete query view is published."""
+        with self._lock:
+            self._query_watchers.add(wake)
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._query_watchers.remove(wake)
+
+    @contextmanager
+    def current_query_view(self):
+        """Keep successive queries on one fresh inferred graph revision."""
+        with self._lock:
+            self._ensure_query_cache_current(wait_for_fresh=True)
+            yield self._query_cache_source_version
+
     def _query_default_graphs(
         self, include_dependencies: bool, *, wait_for_fresh: bool
     ) -> list[NamedNode]:
         """Select current named graphs for a query's default graph."""
         self._ensure_query_cache_current(wait_for_fresh=wait_for_fresh)
-        if include_dependencies:
-            return [
-                NamedNode(str(self.inferred_data_graph_uri)),
-                NamedNode(str(self.dependency_query_graph_uri)),
-            ]
-        return [NamedNode(str(self.inferred_data_graph_uri))]
+        return list(_QUERY_DEFAULT_GRAPHS if include_dependencies else _QUERY_DEFAULT_GRAPHS[:1])
 
     def sparql_query(
         self,
@@ -866,6 +1065,7 @@ class OxigraphGraphStore:
         *,
         wait_for_fresh: bool = False,
     ) -> dict:
+        """Return rows from the published query view as Python values and RDF terms."""
         _logger.debug("sparql_query dependencies=%s query=%s", include_dependencies, query)
         # Take Oxigraph's repeatable-read snapshot while publication is locked.
         # Publication clears then reloads its named graph, so starting a
@@ -884,18 +1084,7 @@ class OxigraphGraphStore:
                         default_graph=default_graphs,
                     )
             with timed_debug(_logger,"sparql_query--output processing:"):
-                if isinstance(result, ox.QueryBoolean):
-                    out = {"columns": [], "rows": [[bool(result)]]}
-                elif isinstance(result, ox.QuerySolutions):
-                    cols = [str(v.value) for v in result.variables]
-                    rows = [[from_ox(cell) for cell in row] for row in result]
-                    out = {"columns": cols, "rows": rows}
-                elif isinstance(result, ox.QueryTriples):
-                    triples = Graph()
-                    triples += (from_ox(t) for t in result)
-                    out = {"columns": ["triple"], "rows": [[triple] for triple in triples]}
-                else:
-                    raise ValueError(f"Unexpected query result: {result!r}")
+                out = _query_result(result)
         _logger.debug("sparql_query: %d rows", len(out["rows"]))
         return out
 
@@ -960,6 +1149,7 @@ class OxigraphGraphStore:
         raise ValueError(f"Unexpected query result: {result!r}")
 
     def sparql_update(self, update: str, *, graph_uri: URIRef | None = None) -> dict:
+        """Apply an update to a registered source graph and schedule inference."""
         _logger.debug("sparql_update: %s", update.replace("\n", " ")[:200])
         with self._lock, timed_debug(_logger, "sparql_update"):
             target = self._registered_data_graph(graph_uri)
@@ -1101,20 +1291,14 @@ class OxigraphGraphStore:
     def export_graph(self, *, include_dependencies: bool = True, format: str = "turtle") -> str:
         """Serialize all deployment data, optionally with ontology dependencies.
 
-        ``include_dependencies=False`` never means the legacy plant graph alone: it
-        includes every registered source-owned graph and Acquirium's managed
-        deployment data. ``True`` adds the resolved ontology/shape closure.
+        ``include_dependencies=False`` includes every registered source-owned
+        graph and Acquirium's managed deployment data. ``True`` adds the resolved
+        ontology/shape closure.
         """
         fmt = (format or "turtle").lower()
         with self._lock:
             graph = self._source_graph_with_dependencies() if include_dependencies else self._source_data_graph()
             return graph.serialize(format=fmt)
-
-    def export_dependency_graph(self, *, format: str = "trig") -> str:
-        """Serialize only the imported triples (closure minus instance data)."""
-        fmt = (format or "trig").lower()
-        with self._lock:
-            return self._ensure_dependency_cache_current().serialize(format=fmt)
 
     def insert_graph(self, content: str | bytes | Graph, *, format: str = "turtle", replace: bool = False, graph_uri: URIRef | None = None) -> dict[str, int | bool]:
         """Parse incoming graph data and merge (or replace) into one data graph.
@@ -1170,11 +1354,16 @@ class OxigraphGraphStore:
         """Materialize deployment data with explicit user metadata overrides."""
         from acquirium.Metadata import overlay_documents
 
+        merged = self._merge_source_data()
+        overlay_documents(merged, self.source_dataset.graph(self.source_graph_uri(METADATA_SOURCE_ID)))
+        return merged
+
+    def _merge_source_data(self, exclude=()) -> Graph:
+        """Copy the asserted data graphs, leaving selected owners out for staging."""
         merged = Graph()
         for context in self.source_dataset.graphs():
-            if self._is_registered_data_graph_uri(context.identifier):
+            if context.identifier not in exclude and self._is_registered_data_graph_uri(context.identifier):
                 merged += context
-        overlay_documents(merged, self.source_dataset.graph(self.source_graph_uri(METADATA_SOURCE_ID)))
         return merged
 
     @staticmethod
@@ -1186,6 +1375,7 @@ class OxigraphGraphStore:
             pass
 
     def close(self) -> None:
+        """Wait for an active rebuild before closing ontology and store handles."""
         _logger.debug("OxigraphGraphStore.close")
         # A rebuild owns snapshots only while it is running, but its final
         # publication writes the query dataset. Do not close that dataset out

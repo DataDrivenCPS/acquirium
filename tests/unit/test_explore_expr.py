@@ -261,8 +261,6 @@ class TestPathsAsColumnNames:
 
 
 class TestBindings:
-    def test_acquirium_and_facade_expose_attr(self):
+    def test_acquirium_exposes_attr(self):
         from acquirium.Client.acquirium import Acquirium
-        from acquirium.Materialization.planner import _QueryFacade
         assert isinstance(Acquirium.attr, property)
-        assert isinstance(_QueryFacade(client=None).attr, AttrProxy)

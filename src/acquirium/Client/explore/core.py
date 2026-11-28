@@ -30,7 +30,6 @@ from acquirium.Client.explore.attributes import (
     normalize_value,
 )
 from acquirium.Client.explore.compile import attr_var, compile_parts, compile_sparql
-from acquirium.Client.explore.directions import EQUIPMENT_STEPS, PROPERTY_STEPS
 from acquirium.Client.explore.expr import ORDERING, BoolOp, Compare, Expr
 from acquirium.Client.explore.expr import attr_name as _path_name
 from acquirium.Client.explore.relations import RELATIONS
@@ -65,9 +64,13 @@ def _iso(v: "datetime | str | None") -> "str | None":
 @accepts_old_names
 @dataclass(frozen=True)
 class Query:
-    """Immutable explore query bound to an Acquirium client."""
+    """Immutable explore query, bound to an Acquirium client when it runs.
 
-    client: "AcquiriumClient | None"
+    An actor or app declaration can build one with ``aq.Query()``. The server
+    supplies the client when it resolves the query.
+    """
+
+    client: "AcquiriumClient | None" = None
     query_graph: QueryGraph = field(default_factory=QueryGraph)
     cache: Dict[str, Any] = field(default_factory=dict, compare=False)
 
@@ -103,6 +106,7 @@ class Query:
         return uri
 
     def _normalize_instance_uri(self, uri: str | URIRef | None, *, param: str = "uri") -> str | None:
+        """Accept an explicit node URI or expand a CURIE using the client namespaces."""
         if uri is None:
             return None
         if isinstance(uri, URIRef) or _is_uri(uri):
@@ -1087,6 +1091,89 @@ class Query:
 
     # ---------- writes ----------
 
+    def _log_targets(self, alias: Optional[str], *, verb: str) -> List[str]:
+        """URIs a logbook call addresses: the current node's matches, one
+        alias's matches, or every node's with ``alias="*"``."""
+        g = self.query_graph
+        if alias == "*":
+            return self.resolved_nodes()
+        if alias is None:
+            if g.current_pointer is None:
+                raise ValueError(
+                    f"{verb}: the query has no nodes; pass alias= or use "
+                    "Acquirium.insert_log()/read_logs() for plant-level notes"
+                )
+            alias = g.aliases_reverse.get(g.current_pointer, str(g.current_pointer))
+        if g.resolve_alias(alias) is None:
+            raise KeyError(f"{verb}: alias {alias!r} not in query; available: {sorted(g.aliases)}")
+        return self.resolved_nodes(alias=alias)
+
+    def insert_log(
+        self,
+        message: str,
+        *,
+        alias: Optional[str] = None,
+        observation_start: "datetime | str | None" = None,
+        observation_end: "datetime | str | None" = None,
+    ) -> List[str]:
+        """Write a logbook note on every entity the query matches.
+
+        The note goes to the current node's matches, to ``alias``'s, or to
+        every node's with ``alias="*"``. Returns the URIs written to; a
+        query that matches nothing raises ``ValueError`` rather than
+        logging to no one.
+        """
+        uris = self._log_targets(alias, verb="insert_log")
+        if not uris:
+            raise ValueError("insert_log: the query matches no entities")
+        now = datetime.now(timezone.utc).isoformat()
+        for uri in uris:
+            self.client.insert_log(
+                property_uri=uri,
+                log_message=message,
+                log_time=now,
+                observation_start=_iso(observation_start),
+                observation_end=_iso(observation_end),
+            )
+        return uris
+
+    def read_logs(
+        self,
+        *,
+        alias: Optional[str] = None,
+        log_time_start: "datetime | str | None" = None,
+        log_time_end: "datetime | str | None" = None,
+        observation_start: "datetime | str | None" = None,
+        observation_end: "datetime | str | None" = None,
+    ) -> pl.DataFrame:
+        """Read the logbook notes of every entity the query matches.
+
+        Same targeting as :meth:`insert_log`. Returns a frame with
+        ``property_uri``, ``message``, ``log_time``, ``observation_start`` and
+        ``observation_end``, oldest first.
+        """
+        schema = {
+            "property_uri": pl.Utf8,
+            "message": pl.Utf8,
+            "log_time": pl.Datetime(time_zone="UTC"),
+            "observation_start": pl.Datetime(time_zone="UTC"),
+            "observation_end": pl.Datetime(time_zone="UTC"),
+        }
+        rows: list[dict] = []
+        for uri in self._log_targets(alias, verb="read_logs"):
+            for entry in self.client.query_logs(
+                property_uri=uri,
+                log_time_start=_iso(log_time_start),
+                log_time_end=_iso(log_time_end),
+                observation_start=_iso(observation_start),
+                observation_end=_iso(observation_end),
+            ):
+                rows.append(entry.to_dict())
+        if not rows:
+            return pl.DataFrame(schema=schema)
+        return (pl.concat([pl.DataFrame(r, schema=schema) for r in rows], how="vertical")
+                .select(list(schema)).sort("log_time"))
+
     def insert_metadata(self, values: Dict[str, Any], *, of: Optional[str] = None,
                         include_dependencies: bool = True) -> dict:
         """Attach the same metadata to every node the pattern matches.
@@ -1352,11 +1439,11 @@ class Query:
     def execute(self, include_dependencies: bool = True) -> dict:
         """Execute the compiled SPARQL against the metadata graph (cached).
 
-        Traversal-program edges (via expressions / ``via="any"``) are
-        resolved first by client-side BFS (see ``explore.traverse``) —
-        nearest edges keep only the closest matches, others all reachable
-        matches. The final result always comes from one SPARQL query with
-        the matches injected as paired VALUES.
+        Resolve traversal-program edges (via expressions or ``via="any"``)
+        with a client-side breadth-first search, then bind the resulting
+        source-target pairs in SPARQL. For a nearest directional edge,
+        query candidates in distance order and keep the first place that
+        satisfies the complete query for each source.
         """
         cache_key = f"execute_{include_dependencies}"
         if self.cache.get(cache_key) is None:
@@ -1437,91 +1524,6 @@ class Query:
                 for nid, info in g.data_nodes.items()
             ],
         }
-
-    # ---------- logbook ----------
-
-    def _log_targets(self, alias: Optional[str], *, verb: str) -> List[str]:
-        """URIs a logbook call addresses: the current node's matches, one
-        alias's matches, or every node's with ``alias="*"``."""
-        g = self.query_graph
-        if alias == "*":
-            return self.resolved_nodes()
-        if alias is None:
-            if g.current_pointer is None:
-                raise ValueError(
-                    f"{verb}: the query has no nodes; pass alias= or use "
-                    "Acquirium.insert_log()/read_logs() for plant-level notes"
-                )
-            alias = g.aliases_reverse.get(g.current_pointer, str(g.current_pointer))
-        if g.resolve_alias(alias) is None:
-            raise KeyError(f"{verb}: alias {alias!r} not in query; available: {sorted(g.aliases)}")
-        return self.resolved_nodes(alias=alias)
-
-    def insert_log(
-        self,
-        message: str,
-        *,
-        alias: Optional[str] = None,
-        observation_start: "datetime | str | None" = None,
-        observation_end: "datetime | str | None" = None,
-    ) -> List[str]:
-        """Write a logbook note on every entity the query matches.
-
-        The note goes to the current node's matches, to ``alias``'s, or to
-        every node's with ``alias="*"``. Returns the URIs written to; a
-        query that matches nothing raises ``ValueError`` rather than
-        logging to no one.
-        """
-        uris = self._log_targets(alias, verb="insert_log")
-        if not uris:
-            raise ValueError("insert_log: the query matches no entities")
-        now = datetime.now(timezone.utc).isoformat()
-        for uri in uris:
-            self.client.insert_log(
-                property_uri=uri,
-                log_message=message,
-                log_time=now,
-                observation_start=_iso(observation_start),
-                observation_end=_iso(observation_end),
-            )
-        return uris
-
-    def read_logs(
-        self,
-        *,
-        alias: Optional[str] = None,
-        log_time_start: "datetime | str | None" = None,
-        log_time_end: "datetime | str | None" = None,
-        observation_start: "datetime | str | None" = None,
-        observation_end: "datetime | str | None" = None,
-    ) -> pl.DataFrame:
-        """Read the logbook notes of every entity the query matches.
-
-        Same targeting as :meth:`insert_log`. Returns a frame with
-        ``property_uri``, ``message``, ``log_time``, ``observation_start`` and
-        ``observation_end``, oldest first.
-        """
-        schema = {
-            "property_uri": pl.Utf8,
-            "message": pl.Utf8,
-            "log_time": pl.Datetime(time_zone="UTC"),
-            "observation_start": pl.Datetime(time_zone="UTC"),
-            "observation_end": pl.Datetime(time_zone="UTC"),
-        }
-        rows: list[dict] = []
-        for uri in self._log_targets(alias, verb="read_logs"):
-            for entry in self.client.query_logs(
-                property_uri=uri,
-                log_time_start=_iso(log_time_start),
-                log_time_end=_iso(log_time_end),
-                observation_start=_iso(observation_start),
-                observation_end=_iso(observation_end),
-            ):
-                rows.append(entry.to_dict())
-        if not rows:
-            return pl.DataFrame(schema=schema)
-        return (pl.concat([pl.DataFrame(r, schema=schema) for r in rows], how="vertical")
-                .select(list(schema)).sort("log_time"))
 
     def resolved_nodes(
         self,
@@ -1761,8 +1763,13 @@ class Query:
         include_dependencies: bool = True,
         cast_value: str | None = None,
         value_mode: str = "default",
+        view: str | None = None,
     ) -> "DataObject":
-        """Return a lazy DataObject with alias-driven access to the matched streams."""
+        """Return a lazy DataObject for the matched measurements.
+
+        ``view`` selects "current", "raw", or "stored". By default normal
+        discovery reads the final replacement; app/ref filters read that stage.
+        """
         from acquirium.Client.data_object import DataObject
         return DataObject._from_query(
             self,
@@ -1773,6 +1780,7 @@ class Query:
             include_dependencies=include_dependencies,
             cast_value=cast_value,
             value_mode=value_mode,
+            view=view,
         )
 
     def dataframe(
@@ -1786,6 +1794,7 @@ class Query:
         include_dependencies: bool = True,
         cast_value: str | None = None,
         value_mode: str = "default",
+        view: str | None = None,
         include_stream: bool = False,
         compact: bool = True,
     ) -> pl.DataFrame:
@@ -1808,6 +1817,7 @@ class Query:
             include_dependencies=include_dependencies,
             cast_value=cast_value,
             value_mode=value_mode,
+            view=view,
         ).dataframe(shape=shape, include_stream=include_stream, compact=compact)
 
     # ---------- display helpers ----------
@@ -2058,6 +2068,7 @@ class Query:
         return names
 
     def _col_name_to_alias(self, col_name: str) -> str:
+        """Translate a compiled SPARQL variable into its public result column."""
         if col_name.startswith("attr"):
             head, _, attr_name = col_name[4:].partition("_")
             try:

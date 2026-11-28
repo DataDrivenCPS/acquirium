@@ -10,6 +10,228 @@ change in any release.
 
 ## [Unreleased]
 
+### Removed
+- **Breaking:** Apps use `PythonFunction` for all calculations. On servers
+  with older `aq.Native` declarations, redeploy those apps as Python functions
+  before upgrading. Use dataframe returns such as `emit(context, value)` on
+  the earlier version. Keep the app and output names to keep their stream URIs.
+  Functions read each group's parameters from `context["parameters"]`.
+- The legacy materializer and its `check_app()`, `reprocess_app()`, and
+  `app_dag()` interfaces. Preview a deployment with `deploy_app(dry_run=True)`.
+  Escapement repairs affected windows as readings or definitions change.
+- Upgrades of experiment ledgers from earlier releases. The ledger schema is
+  now a single baseline migration. Earlier stores require a fresh data
+  directory and database locations. Startup rejects legacy storage settings
+  and legacy DuckDB stores in the data directory.
+- **Breaking:** `acquirium.functions.previous_rows` and
+  `context["previous"]["rows"]`. Escapement does not keep a window's input
+  rows; a sequential calculation reads its earlier results with
+  `previous_outputs` or `previous_value`, and stores any input state it
+  needs on an output port.
+- **Breaking:** the `python_pool_size` server setting and
+  `ACQUIRIUM_PYTHON_POOL_SIZE`. `engine_workers` sets the Python worker count.
+- **Breaking:** the `instances`, `desired_plan` and `graph_revision` fields of
+  `inspect_app`. `operators` describes each instance, and `active_plan` is the
+  plan the app runs under.
+- The `examples/profiling` and `examples/model_workload` benchmarks, which
+  measured the previous engine's Python worker pool. Their recorded results
+  link to revision `8ae4694`, which still has them.
+- The `--batch-requests` option of the sustained-ingest harness. Concurrent
+  senders still share admission transactions.
+
+### Fixed
+- `inspect_app` and `list_apps` no longer wait up to 30 seconds while a
+  deployment is still publishing; they report the app as `pending`. A server
+  restarting with accepted requests still to publish starts without waiting
+  for them.
+- Deleting experiment runs no longer holds the experiment ledger lock while
+  waiting for their samples to publish.
+- `retry_engine()` after a failed calculation never reached a corrected
+  deployment accepted more than `epoch_requests` writes behind the failure.
+- `AcquiriumClient` inserts without a `request_id` failed with
+  `NameError: name 'uuid' is not defined`, which broke every driver insert.
+- A driver's `source_id` from its `[[drivers]]` config is set before `setup()`
+  runs, as the error for a missing `source_id` said. Drivers had to read it
+  from `self.config` themselves. A value assigned in `setup()` still wins.
+
+### Added
+- Per-window app functions can return numbers, strings, or `None` directly
+  under the output name. Acquirium timestamps values at the window output time.
+- Replacement outputs: `aq.ReplacementOutput(of=None, unit=None, label=None)`
+  continues the measurement an input selects instead of describing a new one.
+  Normal reads, and app inputs that select that measurement, return the final
+  stage of the chain of replacements; `view="raw"` returns the original
+  samples and `view="stored"` one stage. A replacement inherits its input's
+  quantity kind, value kind and unit, and may change the unit to a compatible
+  one. Adding or removing the last stage rebinds consumers and recalculates
+  their history. The turbidity tutorial's cleaner replaces the analyser
+  readings, and its alarm reads them.
+- `acquirium.functions` provides the calculation helpers (`emit`, `empty`,
+  `emit_windows`, `previous_value` and the rest), so calculation files no
+  longer import `escapement` directly.
+- `examples/streaming/alarm_webhook.py`, a short change-feed consumer that posts
+  to a webhook when an alarm is raised or cleared.
+- Sequential Python functions:
+  `aq.PythonFunction.from_file(path, entrypoint, sequential=True)` runs once
+  per window in time order with the previous window's outputs as
+  `context["previous"]`, for filters and recursive estimators. Escapement
+  evaluates runs of windows in one worker call, so a 3,000-window rebuild of
+  a simple filter takes about half a second.
+  `examples/membrane_monitoring` smooths conductivity, detects its drift with
+  a CUSUM, and re-estimates membrane permeability by recursive least squares.
+- As-of inputs: `aq.Selection(..., as_of=max_age_ns)` and
+  `Selection.outputs_of(..., as_of=max_age_ns)` give each window the latest
+  reading of a slower stream at or before its timestamp, within the maximum
+  age, such as an hourly fit applied to every reading. A correction repairs
+  the windows that read it. The membrane example computes a flux residual
+  this way.
+- Text values are back on the Escapement core. Each reading is a number or
+  text, stored as its stream's `value_kind`: a fault code such as `"Bad"` on a
+  numeric stream is kept as text. `value_mode` takes `numeric`, `text` and
+  `coalesce` again. App functions get `value` and `text` columns and can return
+  text on a port declared with
+  `Output(value_kind="text")`. Null, blank and non-finite values are dropped.
+- `[server] engine_path` accepts a `postgres://` URL to keep the engine's store
+  in PostgreSQL; the tables go in the URL's `search_path` schema.
+  `examples/bulk_ingest` takes `--engine-path` to benchmark it.
+- `deploy_app(app, dry_run=True)`, `PUT /apps/{name}?dry_run=true` and
+  `acquirium app deploy --dry-run` report what a deploy would do, per app:
+  operators new, redefined, rebound or unchanged, groups to re-evaluate, input
+  rows read, rows cleared, and apps downstream of a change. Nothing is published
+  or activated. Uses Escapement `Engine.preview`.
+- Soft-sensor functions can be declared with
+  `PythonFunction.from_file(path, entrypoint, batch=True)` to receive every
+  affected window in one call (Escapement batch functions). `examples/bulk_ingest
+  --batch` runs its six apps this way: 7.6 s instead of 47.1 s.
+- `[server] drain_timeout` (default 10 seconds, `ACQUIRIUM_DRAIN_TIMEOUT`)
+  bounds how long shutdown waits for Escapement to publish pending writes. A
+  function still running at the deadline is left to the process's exit, and
+  the unpublished writes are processed at the next start.
+- `engine_status()` includes Escapement's per-operator totals under
+  `stats.operators` and rolls them up per app under `apps` (groups, input rows,
+  changed rows, compute time).
+- `examples/bulk_ingest`: a CSV backfill through a six-app turbidity chain, with
+  throughput, per-app work, and a full recomputation check.
+- `Selection.outputs_of(app, port, combine=False, parameters=None)` selects
+  one output port of an upstream app. Deploy rejects it while that app or port
+  is missing, and removing an upstream app with dependents fails. Output points
+  record `acq:outputPort` and `acq:outputGroup`.
+- App state reports `matches` (streams selected per input) and a warning for
+  each input that selected no streams.
+- `Selection(parameters={group: {name: value}})` gives each listed group's
+  operator typed JSON parameters, read as `context["parameters"]`, and selects
+  only the listed groups; skipped groups appear in warnings. Parameters are part
+  of the operator version, so a new value repairs that group's history.
+- Apps accept `aq.Rolling(lookback, step, lookahead=timedelta(0), origin=0)`
+  windows. Each output at `t` on the fixed grid reads
+  `[t - lookback, t + lookahead]` and a correction repairs every window that
+  read it. Requires the Escapement rolling-window release.
+
+### Changed
+- **Breaking:** app windows and as-of inputs take durations as
+  `datetime.timedelta` values, such as `pd.Timedelta("5m")`, instead of
+  integer nanoseconds. `FixedBucket(width, origin=0)`,
+  `Rolling(lookback, step, lookahead, origin)`, and `Selection(as_of=...)`
+  replace the `_ns` parameters. Stored Python app declarations keep the same format.
+- `aq.Query()` no longer needs `client=None` in an actor or app declaration.
+- Plant and property logbook entries use the same SQL store as experiment
+  records. Logbook client methods and HTTP endpoints stay available.
+- Acquirium depends on `escapement-db`, imported as `escapement`, in place of
+  `escapement-next`.
+- Acquirium requires DuckDB 2.0 (`duckdb>=2.0.0`) for the experiment ledger. An
+  new DuckDB ledger uses the 2.0 storage format.
+- **Breaking:** an app's `inputs` map input names to selections,
+  `inputs={"raw": selection}`, or to a list of selections that feed one input.
+  `Selection` no longer takes `role=`, and `Selection.from_query` takes
+  `measurement=` (was `alias=`). The function's frame carries the name in an
+  `input` column (was `role`).
+- `examples/transformation` is a sine-wave polling driver and a Python
+  threshold app, deployed from Python or from `[[apps]]` in the config. The
+  first-app tutorial builds it step by step.
+- The MQTT driver no longer loses messages it had received but not stored. It
+  connects with MQTT 5 and a persistent session under a client ID that stays
+  the same across restarts, subscribes at QoS 1 by default (was 0), and
+  acknowledges each message only once the server has accepted it. A crash or
+  restart redelivers the rest. New settings: `mqtt_client_id`,
+  `mqtt_receive_maximum` (default 65535, the protocol's maximum, so one
+  driver keeps up with about 20,000 messages a second) and
+  `mqtt_session_expiry` (default 7 days).
+- The MQTT driver logs `mqtt falling behind` when a broker's receive window
+  stays full for most of 30 seconds, meaning the broker is queueing its
+  messages, and `mqtt caught up` once it recovers.
+- `max_pending_requests` defaults to 100,000 instead of 10,000, so the inbox
+  absorbs a longer stall in publication before inserts get 503.
+- The bundled Mosquitto config saves its queues every 60 s instead of every
+  30 min, and holds up to a million messages or 256 MiB per session instead of
+  1000 messages. The driver reference lists the broker settings to check.
+- Driver inserts return once the server accepts them, without waiting for
+  publication. Event drivers send readings within 0.1 s of arrival instead of
+  at the next tick. `IngestDriver.when_accepted(callback)` runs a callback once
+  everything added before it is accepted.
+- Reads take readings from Escapement as Arrow batches (`query_arrow`) instead
+  of one Python object per reading. Reading 1M numbers over HTTP takes 0.08 s
+  instead of 0.41 s. Requires the Escapement Arrow-query release.
+- **Breaking:** soft-sensor functions read the window timestamp as
+  `context["window_ns"]` (was `context["group"]`), and batch frames name the
+  column `window_ns` (was `group`). `escapement.emit`, `empty` and
+  `emit_windows` build output frames, and `context["operator"]["window"]` gives
+  the window sizes. Requires the Escapement function-contract release.
+- Drivers send the requests of a large insert without waiting for each to
+  publish; only the last waits. Escapement can then apply many requests in one
+  epoch: the bulk-ingest example drops from 102 epochs to 4 (25.5 requests per
+  epoch). Requests refused at engine capacity (HTTP 503) are resent after
+  `Retry-After` for up to 5 minutes.
+- `insert_timeseries`, `insert_timeseries_batch`, `insert_timeseries_arrow` and
+  `delete_timeseries` resend a request refused with 503 after `Retry-After`,
+  for up to `retry_for` seconds (default 60), as experiment recordings do.
+- **Drivers run as plain child processes; Ray is no longer a dependency.**
+  Each `[[drivers]]` entry runs as `python -m acquirium.Drivers.runner`, which
+  imports the driver itself and reports setup success or failure back to the
+  server. A driver stops when its server stops, including when the server is
+  killed. `/drivers/list` now includes each driver's `pid`. The `[ray]`
+  config section is gone.
+- A write request carries at most 10,000 rows. `insert_timeseries_batch`,
+  `insert_timeseries_arrow` and driver inserts split larger inputs into
+  requests in order, each atomic, and list every request's receipt; only the
+  last waits for publication.
+- `insert_timeseries(replace=True)` keeps only the supplied rows, removing the
+  stream's readings at other timestamps, in the same request as the new rows.
+- Client HTTP errors include the server's error message for every endpoint
+  (previously some, including `insert_timeseries_arrow`, reported only the
+  status code).
+- `_import_driver_class` returns only the class.
+- Experiments keep their records (Studies, variables, runs, observations,
+  artifact bytes, and the graph-metadata outbox) in a SQL ledger, DuckDB or
+  PostgreSQL, set with `[server] experiments_path`; it defaults to the engine's
+  PostgreSQL database, or `data_dir/experiments.duckdb`. Samples a run records
+  are Escapement streams, published before the observations that point at
+  them; deleting runs clears their samples after the deletion commits.
+  Experiment data recorded with development builds of main, which kept
+  samples in SQL, is not migrated.
+- Time-series observations record the Escapement epoch they were recorded
+  at, as `observation.epoch`; it includes everything written to Escapement
+  before the recording. `observation.dataframe(epoch=observation.epoch)`
+  reads the samples as recorded, after later corrections.
+- Recording samples does not wait for Escapement to publish them: the
+  observation commits with the receipt, and reading observations waits for
+  it instead. Runs record without waiting on each other.
+- `GET /timeseries` accepts `after=<sequence>` to wait for a receipt; a
+  stream handle returned by `add()` uses it to read its own samples.
+- A recording refused because Escapement's inbox is full returns 503 before
+  anything commits, and the client resends it.
+- Deleting runs reports only their own samples and clears them with one
+  Escapement range delete per stream; `usage()` counts samples without
+  reading them. A failed clear at
+  server start is logged and retried later instead of stopping the server.
+- `Stream.dataframe(end=...)` and stream intervals include samples at `end`
+  again; reads are half-open underneath, so the client reads up to just after
+  it.
+- Query and `DataObject` reads include readings at `end` again, and read a
+  bound without an offset as UTC, as `Stream.dataframe` does.
+- The test suite runs with plain `pytest`, starting servers in-process with
+  `aq.init()`; `compose.testing.yaml`, `acquirium.testing.toml` and the
+  `testing-up`, `testing-down` and `integration-test` Make targets are gone.
+
 ## [0.4.1] - 2026-11-25
 
 ### Added

@@ -72,6 +72,7 @@ class SystemMetricsDriver(PollingIngestDriver):
         psutil.cpu_percent(interval=None)  # first call always returns 0.0; discard it
 
     def collect(self) -> pl.DataFrame:
+        """Read host metrics at one timestamp and keep network bytes as counters."""
         ts = datetime.now(tz=timezone.utc)
         mem  = psutil.virtual_memory()
         disk = psutil.disk_usage("/")
@@ -105,7 +106,7 @@ class SystemMetricsDriver(PollingIngestDriver):
 
         g = Graph()
         g.add((ACQUIRIUM_DB_URI, RDF.type,   DATABASE))
-        g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium TimescaleDB")))
+        g.add((ACQUIRIUM_DB_URI, RDFS.label, Literal("Acquirium engine store")))
         g.add((self._host_uri, RDF.type,                   S223.Computer))
         g.add((self._host_uri, RDFS.label,                 Literal(hostname)))
         g.add((self._host_uri, HOST_NS.hasHostname,        Literal(hostname)))

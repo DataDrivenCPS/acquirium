@@ -42,6 +42,7 @@ def _server_key(client) -> str:
 
 
 def _adjacency(client, key: tuple, body: str) -> Dict[str, Set[str]]:
+    """Fetch unique neighbors for one step and cache them at the caller's graph version."""
     cached = _ADJ_CACHE.get(key)
     if cached is not None:
         return cached
@@ -91,6 +92,7 @@ def _placed_edge(graph: QueryGraph) -> QueryEdge:
 
 
 def _with_pairs(graph: QueryGraph, edge: QueryEdge, pairs: List[Tuple[str, str]], *, undrop: bool) -> QueryGraph:
+    """Bind candidates for one directional step into a copy of the query."""
     nodes = dict(graph.nodes)
     if undrop:
         node = nodes[edge.source_id]
@@ -151,6 +153,8 @@ def execute_placed(graph: QueryGraph, client, include_dependencies: bool = True,
             columns = list(cols)
         rows = res.get("rows", [])
         if src_col in cols:
+            # A source retires only after the full query returns a match.
+            # Candidates at this distance can fail constraints elsewhere.
             si = cols.index(src_col)
             hit = {r[si] for r in rows if r[si] is not None}
             pending.difference_update(hit)

@@ -1,3 +1,10 @@
+"""Search ontology concepts by exact spelling and embedding similarity.
+
+Each index entry represents a spelling of a concept. Exact lookup can use
+every spelling, while semantic search only sees the entries with vectors.
+Both stages rank distinct concept URIs for callers.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -174,7 +181,6 @@ class EmbeddingMatcher:
         # E rows are the embedded surfaces, parallel to _vectors; the rows
         # after them are exact-only surfaces, which have no vector.
         self._meta: list[dict[str, Any]] = []
-        self._index_hash: str | None = None
         # surface -> meta row indices, derived from _meta. Two keyings:
         # _cs preserves case (QUDT symbols are case-significant: "kg" vs "kG"),
         # the other is case-folded as a fallback.
@@ -185,7 +191,6 @@ class EmbeddingMatcher:
         self,
         vectors: np.ndarray | None,
         meta: list[dict[str, Any]],
-        index_hash: str | None,
     ) -> None:
         """Swap the index under the lock and rebuild the surface map.
 
@@ -201,11 +206,11 @@ class EmbeddingMatcher:
         with self._lock:
             self._vectors = vectors
             self._meta = meta
-            self._index_hash = index_hash
             self._surface_index = surface_index
             self._surface_index_cs = surface_index_cs
 
     def _ensure_model(self) -> None:
+        """Load the model on first use so an exact lookup needs no model setup."""
         if self._model is not None:
             return
         cache_dir = str(self._model_cache_dir) if self._model_cache_dir else None
@@ -232,6 +237,7 @@ class EmbeddingMatcher:
 
     @staticmethod
     def _concepts_hash(concepts: list[dict[str, Any]]) -> str:
+        """Derive the disk cache key from the canonicalized concept payload."""
         canonical = json.dumps(
             sorted(
                 (_canonicalize_jsonish(concept) for concept in concepts),
@@ -307,7 +313,7 @@ class EmbeddingMatcher:
         """
         if self.exact_only:
             _surfaces, meta = self._build_surfaces_and_meta(concepts)
-            self._set_index(None, meta, None)
+            self._set_index(None, meta)
             logger.info(
                 "[%s] exact-only index built with %d entries from %d concepts",
                 self.name, len(meta), len(concepts),
@@ -328,13 +334,13 @@ class EmbeddingMatcher:
 
         if not surfaces:
             logger.warning("[%s] no surfaces to embed; index will be empty", self.name)
-            self._set_index(np.empty((0, 1), dtype=np.float32), [], new_hash)
+            self._set_index(np.empty((0, 1), dtype=np.float32), [])
             return
 
         logger.info("[%s] embedding %d surfaces from %d concepts...", self.name, len(surfaces), len(concepts))
         # Embed outside the lock (expensive I/O)
         vectors = self._embed(surfaces)
-        self._set_index(vectors, meta, new_hash)
+        self._set_index(vectors, meta)
 
         # Save to disk cache
         if self._cache_dir:
@@ -480,6 +486,7 @@ class EmbeddingMatcher:
         if n_candidates >= len(scores):
             top_indices = np.argsort(-scores)
         else:
+            # Partition first so only the candidate pool needs a full sort.
             top_indices = np.argpartition(-scores, n_candidates)[:n_candidates]
             top_indices = top_indices[np.argsort(-scores[top_indices])]
 
@@ -570,7 +577,7 @@ class EmbeddingMatcher:
             new_hash = self._concepts_hash(unique)
 
         # 4. Atomic swap (also rebuilds the exact-match surface index)
-        self._set_index(vectors, meta, new_hash)
+        self._set_index(vectors, meta)
 
         if self._cache_dir:
             self._save_cache(new_hash)
@@ -583,11 +590,6 @@ class EmbeddingMatcher:
         with self._lock:
             return len(self._meta) > 0
 
-    def get_indexed_uris(self) -> set[str]:
-        """Return the set of URIs currently in the index (thread-safe)."""
-        with self._lock:
-            return {m["uri"] for m in self._meta}
-
     # --- Disk caching ---
 
     def _cache_path(self, prefix: str) -> tuple[Path, Path]:
@@ -599,19 +601,21 @@ class EmbeddingMatcher:
         )
 
     def _try_load_cache(self, hash_val: str) -> bool:
+        """Install a saved index when both the vector and metadata files load."""
         try:
             vec_path, meta_path = self._cache_path(hash_val)
             if not vec_path.exists() or not meta_path.exists():
                 return False
             vectors = np.load(vec_path)["vectors"]
             meta = json.loads(meta_path.read_text())
-            self._set_index(vectors, meta, hash_val)
+            self._set_index(vectors, meta)
             return True
         except Exception:
             logger.warning("[%s] failed to load embedding cache, will rebuild", self.name)
             return False
 
     def _save_cache(self, hash_val: str) -> None:
+        """Write the current vectors and metadata as a best-effort cache."""
         try:
             with self._lock:
                 vectors = self._vectors

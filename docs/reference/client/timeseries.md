@@ -14,8 +14,10 @@ The three methods share these rules:
 
 - A stream holds one value per timestamp. Inserting a value at a timestamp that already has one overwrites it, so sending the same rows twice is safe.
 - A timestamp without a time zone is taken as UTC.
-- A value is a number, a string or `None`. In a numeric stream a string is stored as text and reads back as null by default. In a text stream a number is stored as text.
-- A stream registered without a `value_kind` becomes numeric when it receives its first number.
+- A value is a number, a string or `None`. Numeric-looking strings become numbers in a numeric stream. Other text is preserved and available through `value_mode="text"` or `"coalesce"`. A text stream stores numbers as text.
+- A stream registered without a `value_kind` becomes numeric when it receives its first number. Booleans count as numbers and travel as `1.0` or `0.0` on numeric streams, and as `"True"` or `"False"` on text streams.
+- A response includes `rows_inserted` and one item in `receipts` per request. By default the client waits up to 30 seconds for publication. Pass `wait=0` for durable acceptance, then call `acq.wait(receipt)` to wait for publication.
+- Pass a stable `request_id` to retry the same payload. Escapement deduplicates requests within its retry window. The client retries requests refused with HTTP 503 for up to `retry_for` seconds (60 by default).
 
 The examples on this page use the streams registered on the [Streams](streams.md) page and these two timestamps:
 
@@ -30,7 +32,7 @@ t1 = datetime(2026, 1, 1, 1, 0, tzinfo=timezone.utc)
 
 ```python
 Acquirium.insert_timeseries(source_id, stream_name, rows, *, property_uri=None,
-                            replace=False)
+                            replace=False, request_id=None, wait=30, timeout=60, retry_for=60)
 ```
 
 Inserts values into one stream.
@@ -45,11 +47,7 @@ Inserts values into one stream.
 
 **Returns**
 
-A `dict` with the number of rows written:
-
-```python
-{'ok': True, 'rows_inserted': 3}
-```
+A dict with `ok`, `rows_inserted`, and `receipts`.
 
 **Raises**
 
@@ -60,19 +58,19 @@ A `dict` with the number of rows written:
 
 ```python
 flow = acq.stream("lab", "flow")
-print(acq.insert_timeseries("lab", "flow", [(t0, 1.5), (t1, 2.5)]))
-print(acq.insert_timeseries("lab", "flow", [(t0, 9.0)], replace=True))
+print(acq.insert_timeseries("lab", "flow", [(t0, 1.5), (t1, 2.5)])["rows_inserted"])
+print(acq.insert_timeseries("lab", "flow", [(t0, 9.0)], replace=True)["rows_inserted"])
 print(flow.dataframe())
 ```
 
 ```text
-{'ok': True, 'rows_inserted': 2}
-{'ok': True, 'rows_inserted': 1}
+2
+1
 shape: (1, 2)
 ┌─────────────────────────┬───────┐
 │ time                    ┆ value │
 │ ---                     ┆ ---   │
-│ datetime[μs, UTC]       ┆ f64   │
+│ datetime[ns, UTC]       ┆ f64   │
 ╞═════════════════════════╪═══════╡
 │ 2026-01-01 00:00:00 UTC ┆ 9.0   │
 └─────────────────────────┴───────┘
@@ -91,10 +89,11 @@ requests.exceptions.HTTPError: 400 Client Error: Bad Request for url: http://127
 ## `Acquirium.insert_timeseries_batch`
 
 ```python
-Acquirium.insert_timeseries_batch(source_id, streams)
+Acquirium.insert_timeseries_batch(source_id, streams, *, request_id=None,
+                                  replace=(), wait=30, timeout=60, retry_for=60)
 ```
 
-Inserts values into several streams of one source. Large inputs are split into several requests of at most `insert_batch_rows` rows each (50,000 unless the client was created with another value).
+Inserts values into several streams of one source. Large inputs are split into several requests of at most 10,000 rows each. Set `insert_batch_rows` on the client to impose a smaller limit.
 
 **Parameters**
 
@@ -103,11 +102,7 @@ Inserts values into several streams of one source. Large inputs are split into s
 
 **Returns**
 
-A `dict` with the number of rows written and the number of requests sent:
-
-```python
-{'ok': True, 'rows_inserted': 5, 'batches': 1}
-```
+A dict with `ok`, `rows_inserted`, `receipts`, and the number of requests in `batches`.
 
 **Raises**
 
@@ -121,17 +116,17 @@ print(acq.insert_timeseries_batch("lab", {
     "flow": [(t0, 1.0), (t1, 2.0)],
     "temp": [(t0, 20.5)],
     "state": [(t0, "on"), (t1, "off")],
-}))
+})["rows_inserted"])
 print(acq.stream("lab", "state").dataframe())
 ```
 
 ```text
-{'ok': True, 'rows_inserted': 5, 'batches': 1}
+5
 shape: (2, 2)
 ┌─────────────────────────┬───────┐
 │ time                    ┆ value │
 │ ---                     ┆ ---   │
-│ datetime[μs, UTC]       ┆ str   │
+│ datetime[ns, UTC]       ┆ str   │
 ╞═════════════════════════╪═══════╡
 │ 2026-01-01 00:00:00 UTC ┆ on    │
 │ 2026-01-01 01:00:00 UTC ┆ off   │
@@ -141,10 +136,11 @@ shape: (2, 2)
 ## `Acquirium.insert_timeseries_arrow`
 
 ```python
-Acquirium.insert_timeseries_arrow(source_id, table, *, publication_id=None)
+Acquirium.insert_timeseries_arrow(source_id, table, *, request_id=None,
+                                  wait=30, timeout=60, retry_for=60)
 ```
 
-Inserts a PyArrow table that holds values of one or more streams of one source. The table is sent in one request in a binary format, which is faster than the other two methods for large amounts of data.
+Inserts a PyArrow table that holds values of one or more streams of one source. The table is sent in batches of up to 10,000 rows using Arrow IPC.
 
 **Parameters**
 
@@ -153,19 +149,15 @@ Inserts a PyArrow table that holds values of one or more streams of one source. 
   - `ts`: the timestamp.
   - `stream_name`: the name of the stream the row belongs to.
   - `value`: the value. The column has one type, so numbers and strings go in separate tables.
-- `publication_id` (`str`, optional): an identifier sent along with the request for tracing. It does not prevent a repeated request from being applied again.
+- `request_id` (`str`, optional): a retry identity for the input. Each chunk receives its own derived identity.
 
 **Returns**
 
-A `dict` with the number of rows written:
-
-```python
-{'ok': True, 'rows_inserted': 2}
-```
+A dict with `ok`, `rows_inserted`, and `receipts`.
 
 **Raises**
 
-- `requests.exceptions.HTTPError`: when a stream is not registered or a column is missing. The message does not include the reason.
+- `requests.exceptions.HTTPError`: when a stream is not registered or a column is missing.
 
 **Example**
 
@@ -178,17 +170,17 @@ table = pa.table({
     "stream_name": ["flow", "temp"],
     "value": [3.0, 21.0],
 })
-print(acq.insert_timeseries_arrow("lab", table))
+print(acq.insert_timeseries_arrow("lab", table)["rows_inserted"])
 print(flow.dataframe())
 ```
 
 ```text
-{'ok': True, 'rows_inserted': 2}
+2
 shape: (3, 2)
 ┌─────────────────────────┬───────┐
 │ time                    ┆ value │
 │ ---                     ┆ ---   │
-│ datetime[μs, UTC]       ┆ f64   │
+│ datetime[ns, UTC]       ┆ f64   │
 ╞═════════════════════════╪═══════╡
 │ 2026-01-01 00:00:00 UTC ┆ 1.0   │
 │ 2026-01-01 01:00:00 UTC ┆ 2.0   │

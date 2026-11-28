@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -14,13 +15,16 @@ from acquirium.Drivers.BuiltInDrivers.xlsx_ingest import XLSXIngestDriver
 
 def make_driver(cfg_overrides: dict | None = None, tmp_path: Path | None = None) -> XLSXIngestDriver:
     aq = MagicMock()
-    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0}
+    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0, "receipts": []}
     watch = str(tmp_path) if tmp_path else "/tmp/xlsx_test_watch"
+    # Per-test driver state: the default <cwd>/.acquirium is shared across runs,
+    # and a stale cursor for a reused tmp path makes tick() skip the file.
+    state = tmp_path / ".state" if tmp_path else Path(tempfile.mkdtemp())
     driver = XLSXIngestDriver(aq, {"driver": {
         "watch_dir": watch, "glob": "*.xlsx",
         "source_id": "xlsx_files", "format": "wide",
         **(cfg_overrides or {}),
-    }})
+    }, "server": {"data_dir": str(state)}})
     driver.setup()
     return driver
 
@@ -107,7 +111,7 @@ def test_csv_driver_does_not_glob_xlsx(tmp_path):
     from acquirium.Drivers.BuiltInDrivers.csv_ingest import CSVIngestDriver
 
     aq = MagicMock()
-    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0}
+    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0, "receipts": []}
     driver = CSVIngestDriver(aq, {"driver": {
         "watch_dir": str(tmp_path), "glob": ["*.csv", "*.tsv"],
         "source_id": "csv_files", "format": "wide",

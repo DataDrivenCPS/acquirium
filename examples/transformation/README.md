@@ -1,25 +1,17 @@
-# Water-temperature app
+# Sine-wave driver and Python threshold
 
-This example supplies water-temperature readings from a treatment tank. The app
-selects all measurement streams with unit `DEG_F` and publishes a separate
-Celsius stream for each match. The example has three files:
+Start the server and its driver from the repository root.
 
-- `temperature_conversion.py` declares the app.
-- `acquirium.toml` deploys it when the server starts.
-- `publish.py` registers an input stream, publishes samples, and prints the
-  derived output.
-
-Start an isolated local server in one terminal:
-
-```bash
-uv run acquirium server --config examples/transformation/acquirium.toml
+```sh
+uv run --locked acquirium server --config examples/transformation/acquirium.toml
 ```
 
-Then run the example in another terminal:
+Follow [Build your first soft sensor](../../docs/tutorials/advanced/first-app.md)
+to read the signal, declare the threshold app, and deploy it. The
+[polling driver](publish.py) produces one reading per second. The
+[threshold function](sine_threshold.py) keeps values above 0.5.
 
-```bash
-uv run python examples/transformation/publish.py
-```
+Stop the server with Ctrl-C. It stores readings under `.data/`.
 
-The server writes its local graph and DuckDB data to
-`examples/transformation/.data/`.
+[temperature_conversion.py](temperature_conversion.py) is a separate Python
+calculation converting a registered Fahrenheit stream to Celsius.

@@ -16,7 +16,9 @@ def test_config_init_writes_a_loadable_starter_config(tmp_path, monkeypatch):
     written = tmp_path / "acquirium.toml"
     assert written.read_text(encoding="utf-8") == starter_config()
     server = load_config(written).data["server"]
-    assert server["timeseries_backend"] == "duckdb"
+    # Readings go to the default Escapement store under data_dir.
+    assert server["data_dir"] == ".acquirium"
+    assert not {"timeseries_backend", "pg_dsn", "engine_path"} & server.keys()
     assert server["host"] == "127.0.0.1"
 
 

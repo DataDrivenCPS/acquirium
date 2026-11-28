@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -30,13 +31,16 @@ def make_driver(cfg_overrides: dict | None = None, tmp_path: Path | None = None)
     aq.client._stream_properties.return_value = {}
     aq.client._node_labels.return_value = {}
     aq.register_streams.side_effect = lambda streams: AcquiriumClient.register_streams(aq.client, streams)
-    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0}
+    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0, "receipts": []}
     watch = str(tmp_path) if tmp_path else "/tmp/csv_test_watch"
+    # Per-test driver state: the default <cwd>/.acquirium is shared across runs,
+    # and a stale cursor for a reused tmp path makes tick() skip the file.
+    state = tmp_path / ".state" if tmp_path else Path(tempfile.mkdtemp())
     driver = CSVIngestDriver(aq, {"driver": {
         "watch_dir": watch, "glob": ["*.csv", "*.tsv"],
         "source_id": "csv_files", "format": "wide",
         **(cfg_overrides or {}),
-    }})
+    }, "server": {"data_dir": str(state)}})
     driver.setup()
     return driver
 
@@ -380,9 +384,9 @@ def test_loop_registers_streams_before_insert(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     _wide_csv(tmp_path)
 
-    def assert_registered_first(source_id, table):
+    def assert_registered_first(source_id, table, **_):
         assert driver.aq.client.insert_graph.called
-        return {"ok": True, "rows_inserted": table.num_rows}
+        return {"ok": True, "rows_inserted": table.num_rows, "receipts": []}
 
     driver.aq.insert_timeseries_arrow.side_effect = assert_registered_first
     driver.tick()

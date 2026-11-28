@@ -127,3 +127,7 @@ print(acq.read_logs().shape)
 ```text
 (0, 5)
 ```
+
+Logbook entries are stored in the SQL ledger selected by
+[`experiments_path`](../server/configuration.md). Times shown in query results
+are UTC.

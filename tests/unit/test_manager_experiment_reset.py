@@ -1,61 +1,67 @@
+from contextlib import closing
 from datetime import datetime, timezone
-from importlib import import_module
-from unittest.mock import Mock
 
 import pytest
 
 from acquirium.Server.manager import Manager
+from acquirium.Storage import graph_store
 
 
-@pytest.mark.parametrize("recreate", [False, True])
-def test_manager_recreation_resets_experiments_in_external_duckdb(tmp_path, monkeypatch, recreate):
-    # Exercise the real storage/reset path without loading ontology indexes.
-    module = import_module("acquirium.Server.manager")
-    from tests.unit.test_experiment_metadata import MemoryGraphStore
-    source = MemoryGraphStore()
-    graph = Mock()
-    for name in ("sparql_query", "sparql_update", "source_graph_uri", "clear_graphs", "graph_status", "metadata_documents", "metadata_triples", "metadata_update", "flush_metadata"):
-        setattr(graph, name, getattr(source, name))
-    graph.namespace_manager = lambda: source.dataset.namespace_manager
-    monkeypatch.setattr(module, "OxigraphGraphStore", Mock(return_value=graph))
+def test_manager_refuses_legacy_duckdb_before_creating_new_store(tmp_path):
+    legacy = tmp_path / "timeseries.duckdb"
+    legacy.write_bytes(b"legacy data")
+    with pytest.raises(ValueError, match="Legacy Acquirium storage"):
+        Manager(data_dir=tmp_path, exact_only=True)
+    assert list(tmp_path.iterdir()) == [legacy]
+    assert legacy.read_bytes() == b"legacy data"
+
+
+def test_manager_refuses_legacy_location_from_active_config(tmp_path, monkeypatch):
+    config = tmp_path / "acquirium.toml"
+    config.write_text('[server]\ntimeseries_backend = "timescale"\n')
+    monkeypatch.setenv("ACQUIRIUM_CONFIG", str(config))
+    with pytest.raises(ValueError, match="Legacy DuckDB or TimescaleDB storage settings"):
+        Manager.from_env()
+
+
+def test_external_experiment_ledger_persists_until_manager_recreates_it(tmp_path, monkeypatch):
+    # The external ledger and graph are real. This reset requires no ontology.
+    monkeypatch.setattr(graph_store, "BUNDLED_FILES", ())
     monkeypatch.setattr(Manager, "_build_embedding_indexes", lambda self: None)
-    data_dir = tmp_path / "server-data"
-    db_path = tmp_path / "external-storage" / "data.duckdb"
-    manager = Manager(data_dir=data_dir, duckdb_path=db_path, exact_only=True)
+    options = {
+        "data_dir": tmp_path / "server-data",
+        "experiments_path": tmp_path / "external-storage" / "experiments.duckdb",
+        "exact_only": True,
+    }
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    try:
+    with closing(Manager(**options)) as manager:
         ledger = manager.experiments
         study = ledger.define("retained study")
         variable = ledger.declare(study["template_id"], "file", "input", "file", {})
         run = ledger.start(study["template_id"], {})
         artifact = ledger.attach_file(run["run_id"], variable["variable_id"], "input.txt", "text/plain", b"input")
         ledger.annotate_stream(run["run_id"], "urn:plant:flow", now)
-        manager.timeseries_store.upsert_rows("urn:plant:flow", [(now, 42)], value_kind="numeric")
-    finally:
-        manager.close()
 
-    reopened = Manager(data_dir=data_dir, duckdb_path=db_path, exact_only=True, recreate=recreate)
-    try:
+    # A normal reopen keeps records even though their ledger is outside data_dir.
+    with closing(Manager(**options)) as reopened:
         ledger = reopened.experiments
-        if recreate:
-            assert ledger.studies() == []
-            assert ledger.stream_annotations() == []
-            with reopened.timeseries_store._own_conn() as conn:
-                for table in ("experiment_templates", "experiment_variables", "experiment_runs", "experiment_observations", "experiment_artifacts", "experiment_artifact_chunks"):
-                    assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
-            with pytest.raises(KeyError):
-                ledger.artifact(artifact["digest"])
-            assert reopened.timeseries_store.timeseries_info("urn:plant:flow").row_count == 0
-            # The recreated ledger is ready for new runs.
-            fresh = ledger.define("fresh study")
-            result = ledger.declare(fresh["template_id"], "cost", "output", "scalar", {})
-            new_run = ledger.start(fresh["template_id"], {})
-            assert ledger.observe(new_run["run_id"], result["variable_id"], value=12.5)["sequence"] == 1
-        else:
-            assert ledger.study("retained study")["template_id"] == study["template_id"]
-            assert len(ledger.observations(study["template_id"])) == 1
-            assert len(ledger.stream_annotations()) == 1
-            assert ledger.artifact(artifact["digest"])["data"] == b"input"
-            assert reopened.timeseries_store.timeseries_info("urn:plant:flow").row_count == 1
-    finally:
-        reopened.close()
+        assert ledger.study("retained study")["template_id"] == study["template_id"]
+        assert len(ledger.observations(study["template_id"])) == 1
+        assert len(ledger.stream_annotations()) == 1
+        assert ledger.artifact(artifact["digest"])["data"] == b"input"
+
+    # An explicit recreate clears that external ledger and leaves it ready for new runs.
+    with closing(Manager(**options, recreate=True)) as cleared:
+        ledger = cleared.experiments
+        assert ledger.studies() == []
+        assert ledger.stream_annotations() == []
+        with cleared.ledger._own_conn() as conn:
+            for table in ("experiment_templates", "experiment_variables", "experiment_runs",
+                          "experiment_observations", "experiment_artifacts", "experiment_artifact_chunks"):
+                assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+        with pytest.raises(KeyError):
+            ledger.artifact(artifact["digest"])
+        fresh = ledger.define("fresh study")
+        result = ledger.declare(fresh["template_id"], "cost", "output", "scalar", {})
+        new_run = ledger.start(fresh["template_id"], {})
+        assert ledger.observe(new_run["run_id"], result["variable_id"], value=12.5)["sequence"] == 1

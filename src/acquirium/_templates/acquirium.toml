@@ -15,19 +15,15 @@ host = "127.0.0.1"
 port = 8000
 
 ### Everything the server stores lives under this directory: the graph store,
-### the DuckDB timeseries file and the embedding cache.
+### the readings and experiment records (DuckDB files) and the embedding cache.
 
 data_dir = ".acquirium"
 
-### Where timeseries data is stored. "duckdb" is a local file under data_dir and
-### needs nothing else installed. 
+### Readings are kept in a DuckDB file under data_dir, which needs nothing else
+### installed. To keep readings and experiment records in PostgreSQL instead,
+### uncomment and edit:
 
-timeseries_backend = "duckdb"
-
-### For TimescaleDB, edit pg_dsn, comment the line above and uncomment the lines below:
-
-# timeseries_backend = "timescale"
-# pg_dsn = "postgresql://user:password@localhost:5432/acquirium"
+# engine_path = "postgresql://user:password@localhost:5432/acquirium"
 
 ### How free text such as "pressure" or "psi" is matched to ontology terms.
 ### true matches labels exactly and doesn't rely on an embedding model. 

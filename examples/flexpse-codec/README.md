@@ -76,4 +76,4 @@ against.
 ## See also
 
 - [Object variables and codecs](../../docs/reference/experiments.md#object-variables-and-codecs)
-- [Save objects to restore later](../../docs/how-to/record-experiments.md#save-objects-to-restore-later)
+- [Save objects to restore later](../../docs/how-to/record-experiments.md#object-storage-and-restoration)

@@ -1,24 +1,27 @@
-"""The app of the tutorial page "Declaring and deploying Apps"."""
+"""Declaration for the pump power example."""
 
-import polars as pl
+from pathlib import Path
 
 import acquirium as aq
 
 
-class PumpPowerKW(aq.App):
-    name = "pump-power-kw"
-    grouping = "per_match"      # one output stream per pump
-    backfill = True             # also calculate for the data already stored
-    outputs = {
-        "power": aq.output.stream(
-            value_kind="numeric",
+def pump_power_kw(acq):
+    query = acq.query().entity("pump", alias="pump").measurement(alias="power", quantity_kind="power")
+    return aq.App(
+        name="pump-power-kw",
+        inputs={"power": aq.Selection.from_query(
+            query, measurement="power", group="pump", exclude_app="pump-power-kw",
+        )},
+        outputs={"power": aq.Output(
             unit="http://qudt.org/vocab/unit/KiloW",
-        )
-    }
+            quantity_kind="http://qudt.org/vocab/quantitykind/Power",
+            on_group=True,
+        )},
+        function=aq.PythonFunction.from_file(Path(__file__), "watts_to_kilowatts"),
+        window=aq.Pointwise(),
+    )
 
-    def build_query(self, plant):
-        return plant.query().entity("pump").measurement(alias="power", quantity_kind="power")
 
-    def transform(self, inputs, output, context):
-        df = inputs["power"].df()
-        output["power"] = df.select("time", pl.col("value") / 1000)
+def watts_to_kilowatts(frame, context):
+    watts = frame["value"].first()
+    return {"power": None if watts is None else watts / 1000}

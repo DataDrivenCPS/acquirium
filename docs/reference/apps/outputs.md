@@ -1,206 +1,132 @@
 ---
-title: Outputs
+title: App outputs
 ---
 
-An app declares its output streams in the class attribute `outputs` and fills them inside `transform`. Each entry of `outputs` has a port name, which is the key used in `transform`, and a declaration made with `aq.output.stream(...)` or `aq.output.named(...)`.
+## Outputs of another app
 
-| Item | Purpose |
-|---|---|
-| [`output.stream`](#outputstream) | Declare an output whose stream name is generated |
-| [`output.named`](#outputnamed) | Declare an output with a stream name you choose |
-| [`OutputSpec`](#outputspec) | The declaration object both functions return |
-| [`OutputBuilder`](#outputbuilder) | The `output` argument of `transform` |
-| [How output streams are stored](#how-output-streams-are-stored) | `source_id`, `stream_name`, label |
+`Selection.outputs_of(app, port, combine=False)` selects an upstream
+output. By default it preserves the upstream groups. `combine=True` feeds every
+upstream group into one calculation. The upstream app and port must exist before
+deployment, and the upstream app cannot be removed while a deployed app selects it.
 
-```python
-import acquirium as aq
+Output points also carry `acq:producedBy`, `acq:outputPort`, and `acq:outputGroup`
+for selection through SPARQL.
 
+### Group parameters
 
-class Example(aq.App):
-    grouping = "all_matches"
-    outputs = {
-        "celsius": aq.output.stream(value_kind="numeric", unit="http://qudt.org/vocab/unit/DEG_C"),
-        "total": aq.output.named("plant-total", value_kind="numeric"),
-    }
-```
-
-## `output.stream`
+A selection's `parameters` maps group IDs to JSON values:
 
 ```python
-output.stream(**kwargs)
+aq.Selection.outputs_of(fill, "turbidity", parameters={
+    "urn:bulk/loc-2": {"limit": 0.5},
+    "urn:bulk/loc-3": {"limit": 0.3},
+})
 ```
 
-Declares an output whose `stream_name` is generated from the app name, the port name and the input streams of the call. With `grouping = "per_match"` every match gets its own output stream.
+Only the listed groups are selected; skipped groups appear in deployment
+warnings. The function reads the values from `context["parameters"]`. A changed
+parameter recalculates that group's history. Two selections giving the same
+group conflicting values for a parameter fail deployment.
 
-**Parameters**
+Acquirium always includes the selected group key as
+`context["parameters"]["group"]`, including when no settings are configured.
+In Python this key is always a tuple. Grouping by tank gives `(tank_uri,)`;
+grouping by stream gives `(stream_reference_uri,)`;
+`Selection(..., group=None)` gives `(app_name,)`. These keys have one item
+because a selection currently groups by one column. JSON deployment responses
+represent the tuple as an array. The keys in the selection's `parameters`
+mapping remain group ID strings. The name `group` is reserved and cannot be
+configured to a different value.
 
-- `value_kind` (`str`): required. `"numeric"` or `"text"`.
-- `property_uri` (`str`, optional): URI of an existing property in the graph that the output belongs to. When omitted, a property is created for the output.
-- `label` (`str`, optional): readable name. When omitted, a label is generated, see [How output streams are stored](#how-output-streams-are-stored).
-- `unit` (`str`, optional): unit, as a URI.
-- `quantity_kind` (`str`, optional): quantity kind, as a URI.
-- `medium` (`str`, optional): medium, as a URI.
-- `substance` (`str`, optional): substance, as a URI.
-- `data_source` (`str`, optional): a tag that queries can filter on with `measurement(data_source=...)`.
-- `properties` (`dict`, optional): extra graph statements for the output, as a mapping of a predicate URI to a tuple of object URIs.
+## Outputs
 
-Note that `unit`, `quantity_kind`, `medium` and `substance` are written to the graph as given. Unlike [`declare`](../drivers/helpers.md#ingestdriverdeclare) in a driver, plain text such as `"psi"` is not matched to a URI.
+`Output(unit=None, quantity_kind=None, label=None, on_group=False, value_kind="numeric")` describes a
+new measurement. The port name is the key in the app's `outputs` mapping and in
+the function's return value.
 
-**Returns**
+`on_group=True` attaches the output point to its group using `s223:hasProperty`.
+The group must be a URI. Queries can then find the derived measurement through
+the entity it describes, alongside its source measurements.
 
-[`OutputSpec`](#outputspec).
+Output references depend on app name, group, and port. Changing the group's
+membership keeps that identity. Derived source IDs are reserved as
+`derived:<app-name>`. Membership applies to the whole stored history; see
+[Derived stream updates](../../explanation/apps.md).
 
-**Raises**
+### Replacement outputs
 
-- `TypeError`: when `stream_name` is passed. Use `output.named` for that.
-- `TypeError`: when `value_kind` is missing.
-- `ValueError`: when `value_kind` is not `"numeric"` or `"text"`.
-
-**Example**
+`ReplacementOutput(of=None, unit=None, label=None)` continues the measurement
+an input selects, instead of describing a new one. Reads and other apps'
+inputs that select that measurement then find the replacement's values.
 
 ```python
-aq.output.stream(value_kind="numeric", unit="http://qudt.org/vocab/unit/DEG_C")
+aq.App(
+    name="turbidity-clean",
+    inputs={"raw": aq.Selection.from_query(turbidity, measurement="turbidity", group="location")},
+    outputs={"turbidity": aq.ReplacementOutput()},
+    ...
+)
 ```
+
+`of` names the input replaced; it may be omitted when the app has one input.
+That input must select exactly one physical stream per group and must drive
+execution, rather than use `as_of`. The replacement inherits the input's
+quantity kind and value kind. It inherits the unit too, unless `unit` names
+another unit of the same dimension; a cleaner can convert degrees Fahrenheit to
+Celsius, but not to NTU. Reads and consumers then see the new unit, and a
+consumer's `target_unit` converts from it. A replacement is not attached to its
+group; it is found through the measurement it replaces.
+
+One input can have one replacement. A second replacement app selects the first
+one's output and replaces it in turn, without naming the original input. An
+ordinary diagnostic output may branch from any stage.
 
 ```text
-OutputSpec(value_kind='numeric', property_uri=None, label=None, unit='http://qudt.org/vocab/unit/DEG_C', quantity_kind=None, medium=None, substance=None, data_source=None, properties=None, stream_name=None)
+raw ──replaced by──> cleaned ──replaced by──> filled
+                        └──> diagnostic
 ```
 
-## `output.named`
+The function returns the complete series it calculated over its input frame,
+including unchanged rows that should survive. Acquirium selects rows at the
+call's `output_time`, or at the scheduled times in a batch call. The declared
+window still determines which timestamps the app maintains. An empty selected
+result retracts that timestamp; it does not fall back to raw data. Other output
+ports retain their normal timestamp checks.
+
+Read methods accept `view`:
+
+- `current` follows the chain to its final stage. This is the default for normal
+  measurement queries and direct stream reads.
+- `raw` follows the chain to its original input.
+- `stored` reads the exact physical stream requested.
 
 ```python
-output.named(stream_name, **kwargs)
+measurement.dataframe()                # Final replacement stage.
+measurement.dataframe(view="raw")      # Original samples.
+client.stream(clean_ref).dataframe(view="stored")  # This particular stage.
 ```
 
-Declares an output with a fixed `stream_name`. The stream keeps this name when the inputs of the app change. This is useful for a single result such as a plant total.
+Queries restricted by `app` or an explicit `ref` use `stored` by default.
+Normal discovery collapses replacement stages into one logical measurement per
+query node and entity context. An explicit `view` overrides the query default.
+App input selections take the same `view`, as `Selection(..., view=...)` or
+`Selection.from_query(..., view=...)`. Unset, a query selection binds
+`current`: each matched identity binds the chain's final stage, once per
+group, however many of its stages the query matched. `raw` binds the original
+input, and `stored` binds exactly the stream selected. `Selection.outputs_of`
+binds `stored`, because it names one stage. An input that a replacement
+replaces always binds the stream it selects, and rejects `view="current"` or
+`"raw"`; that is how chain stages are ordered. An input that would follow the
+chain to its own app's output is rejected.
 
-**Parameters**
+Adding a stage at the end of a chain rebinds every `current` selection of that
+identity and recalculates its history, as any other input change does.
+Removing the last stage rebinds them to the stage before it.
 
-- `stream_name` (`str`): name of the output stream under the `source_id` `derived:<app name>`.
-- `**kwargs`: the same keyword arguments as [`output.stream`](#outputstream). `value_kind` is required.
-
-**Returns**
-
-[`OutputSpec`](#outputspec).
-
-**Raises**
-
-- `ValueError`: when `stream_name` is empty, or `value_kind` is not `"numeric"` or `"text"`.
-- `TypeError`: when `value_kind` is missing.
-
-Note that a named output is one stream with one writer. Two ports of an app cannot use the same name. An app with `grouping = "per_match"` and a named output cannot be deployed when its query has more than one match. Compute such a result in a second app with `grouping = "all_matches"`.
-
-**Example**
-
-```python
-aq.output.named("plant-total", value_kind="numeric")
-```
-
-```text
-OutputSpec(value_kind='numeric', property_uri=None, label=None, unit=None, quantity_kind=None, medium=None, substance=None, data_source=None, properties=None, stream_name='plant-total')
-```
-
-## `OutputSpec`
-
-```python
-OutputSpec(value_kind, property_uri=None, label=None, unit=None,
-           quantity_kind=None, medium=None, substance=None,
-           data_source=None, properties=None, stream_name=None)
-```
-
-The declaration of one output stream. `output.stream` and `output.named` create it; calling the class directly gives the same result. Instances cannot be changed after creation.
-
-**Parameters**
-
-The parameters are described under [`output.stream`](#outputstream). `stream_name` is described under [`output.named`](#outputnamed).
-
-The old name `point_uri` is accepted for `property_uri`.
-
-**Raises**
-
-- `ValueError`: when `value_kind` is not `"numeric"` or `"text"`, or `stream_name` is an empty string.
-
-## `OutputBuilder`
-
-```python
-output[port] = table
-```
-
-The `output` argument of [`transform`](app-class.md#apptransform). Assign one table to each port that this call computes. The app does not create this object.
-
-**Parameters**
-
-- `port` (`str`): a key of the class attribute `outputs`.
-- `table`: a Polars dataframe, a pandas dataframe, a PyArrow table, a PyArrow record batch, or a list of record batches. It must have exactly two columns, `time` and `value`.
-
-Rules for the table:
-
-| Column | Rule |
-|---|---|
-| `time` | Timestamps with a time zone. No empty values. No repeated times |
-| `value` | No empty values. Numbers for a `"numeric"` output, strings for a `"text"` output |
-
-What an assignment does when the app is deployed:
-
-| In `transform` | Effect on the stored output |
-|---|---|
-| A table with rows is assigned | Stored values in [`context.output_window`](app-class.md#time-windows-of-a-call) are replaced by the rows. Rows outside the window are dropped |
-| An empty table is assigned | Stored values in the window are removed |
-| The port is not assigned | Stored values are left as they are |
-
-**Raises**
-
-- `KeyError`: when `port` is not declared in `outputs`.
-- `ValueError`: when the same port is assigned twice in one call.
-- `TypeError`: when the value is not a table with exactly the columns `time` and `value`, or the values do not fit the declared `value_kind`.
-- `ValueError`: when a time is missing, has no time zone or is repeated, or a value is missing.
-
-**Example**
-
-```python
-def transform(self, inputs, output, context):
-    df = inputs["temp"].df()
-    output["celsius"] = df.select("time", "value")
-```
-
-Assigning a wrong table raises inside `transform`. The message names the port, for example:
-
-```text
-TypeError: output 'doubled': numeric output requires numeric values
-ValueError: output 'doubled': output timestamps must be unique
-KeyError: "output 'nope' is not declared in this app's outputs (declared: 'sum')"
-```
-
-## How output streams are stored
-
-Output streams are ordinary streams. They can be read and queried like any other, see [Streams](../client/streams.md) and [Building queries](../query/building.md).
-
-| Property of the stream | Value |
-|---|---|
-| `source_id` | `derived:<app name>` |
-| `stream_name`, from `output.named` | The name given |
-| `stream_name`, from `output.stream` | `<app name>:<port>:<hash of the input streams>`. It stays the same when the code of the app changes, and changes when the input streams change |
-| Label, when `label` is given | That label |
-| Label, when `property_uri` is given without `label` | None is written; the property keeps the label it has |
-| Label of a named output without `label` | The stream name |
-| Label, when a call has one input stream that has a label | `<input label> (<app name>[<port>])` |
-| Label, otherwise | `<app name>[<port>]` |
-| Stored type | Numeric values as 64-bit floats, text values as strings. Times in UTC |
-
-Each output is tagged with the name of its app. A query selects the outputs of one app with `measurement(app="<app name>")`:
-
-```python
-acq.query().measurement(app="doubler").metadata()
-```
-
-```text
-shape: (2, 2)
-┌─────────────────────────────────┬─────────────────────────────────┐
-│ data                            ┆ data.label                      │
-│ ---                             ┆ ---                             │
-│ str                             ┆ str                             │
-╞═════════════════════════════════╪═════════════════════════════════╡
-│ ns1:3f944465-d988-5dde-9466-ca… ┆ Tank temperature (doubler[doub… │
-│ ns1:49a59b2a-533d-5475-a281-c3… ┆ flow (doubler[doubled])         │
-└─────────────────────────────────┴─────────────────────────────────┘
-```
+The active plan chooses the final stage. If it fails, its last successful
+values remain visible with the app's stale status. A new stage that has never
+succeeded has no values. A successful empty result is authoritative too. Raw
+and earlier stages remain explicitly readable. Removing a middle stage
+requires rebinding the stage that replaces it, and any `stored` selection of
+it; removing the last stage exposes its input.
+Historical reads resolve the chain from the plan active at their epoch.

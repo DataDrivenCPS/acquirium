@@ -72,6 +72,7 @@ def _running(directory: Path) -> bool:
 
 
 def _discover(directory: Path) -> dict | None:
+    """Find the local server whose discovery endpoint confirms the stored record."""
     try:
         info = json.loads((directory / "server.json").read_text())
         # Only contact loopback; never treat arbitrary registry contents as a URL.
@@ -82,6 +83,8 @@ def _discover(directory: Path) -> dict | None:
             http.trust_env = False
             response = http.get(f"http://127.0.0.1:{port}/_local_runtime", timeout=0.5)
             response.raise_for_status()
+            # Confirm the instance as well as the port so a stale record
+            # cannot attach the client to a different server.
             if response.json() == info:
                 return info
     except (OSError, ValueError, KeyError, TypeError, requests.RequestException):

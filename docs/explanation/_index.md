@@ -17,10 +17,11 @@ They are background reading. For step-by-step instructions, see the [tutorial](.
 
 - [How drivers work](drivers.md): what the server does when a driver runs.
 - [How apps work](apps.md): how the calculated streams are kept up to date.
+- [Soft sensor actors](soft-sensor-actors.md) shows scheduled alarms and model fitting.
 - [How experiments work](experiments.md): studies, runs and what is stored.
 
 ## Inside the server
 
 - [Server internals](server-internals.md): the data folder, the stores and the startup order.
 - [The graph store](graph-backend.md): the graphs of each source, what a query reads and when it is rebuilt.
-- [Materialization internals](materialization-internals.md): how the progress of apps is stored and resumed.
+- [Escapement core](escapement-core.md): how the progress of apps is stored and resumed.

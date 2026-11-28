@@ -108,6 +108,11 @@ def scan_subject_triples(store, subjects, graph_uri):
 
 
 def decode_document_rows(subjects, rows):
+    """Decode fields with explicit edits taking precedence over source documents.
+
+    Conflicting values from equal-priority graphs raise. A subject with no
+    saved fields still gets an empty document.
+    """
     from acquirium.Storage.graph_registry import source_graph_uri, METADATA_SOURCE_ID
 
     metadata_graph = str(source_graph_uri(METADATA_SOURCE_ID))
@@ -247,12 +252,14 @@ def batch_update(operations, graph_uri):
     for operation in operations:
         subject = operation["subject"]
         if operation["operation"] in {"replace", "delete"}:
+            # A full replacement supersedes buffered fields for this subject.
             replacements.add(subject)
             nodes[subject] = {}
             predicates = {pair for pair in predicates if pair[0] != subject}
         else:
             for predicate in operation["predicates"]:
                 nodes.setdefault(subject, {}).pop(predicate, None)
+                # A pending subject delete already covers this predicate.
                 if subject not in replacements:
                     predicates.add((subject, predicate))
         for triple_subject, predicate, value in operation.get("triples", []):

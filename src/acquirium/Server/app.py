@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import importlib
-import importlib.util
+import functools
+import inspect
 import io
 import json
 import logging
@@ -14,38 +13,33 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Iterator, Optional, Literal
 
-# When the server is launched via `uv run`, Ray's uv hook would give every
-# worker a fresh env resolved from pyproject.toml — dropping optional extras
-# like watertap/pyomo. Disable it so actors inherit this process's environment.
-# Ray reads this flag once at import time, so it must be set before `import ray`.
-os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
-import ray
 import pyoxigraph as ox
 
 from urllib.parse import quote, unquote
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse, Response
-from dateutil import parser as dtparser
 from pydantic import BaseModel, Field
 from datetime import datetime
+import uuid
 
-from acquirium.Server.config import load_active_config
+from acquirium.Server.config import load_active_config, load_app_target
+from acquirium.Server.actors import ActorSupervisor
 from acquirium.Server.manager import Manager
-from acquirium.Materialization import App as MaterializationApp
-from acquirium.Materialization.planner import Deployment
+from acquirium.Storage.graph_store import sparql_results_to_rows as _sparql_results_to_rows
+from acquirium.apps import App
+from escapement import Capacity, Closed, Fault, NotFound, Refused, Timeout
 
 from acquirium.internals.models import (
-    LogEntry,
-    TimeIntervalModel,
     StreamInsert,
-    AppRegistration,
+    LogEntry, TimeIntervalModel,
 )
-from acquirium.internals.internals_namespaces import PLANT_URI
 
 import pyarrow.ipc as ipc
 import pyarrow as pa
 import polars as pl
 
+from acquirium.ExperimentValues import timestamp
+from acquirium.internals.internals_namespaces import PLANT_URI
 from acquirium.Storage.values import normalize_value_mode
 from acquirium.Server.insert_stats import insert_stats, start_insert_summary_thread
 from acquirium.Drivers.supervisor import DriverSupervisor
@@ -53,15 +47,46 @@ from acquirium.Drivers.supervisor import DriverSupervisor
 
 
 log = logging.getLogger("acquirium.api")
+# A read view: the replacement chain head, its base, or the selected stage.
+View = Literal["current", "raw", "stored"]
 
 
-def _cell_datatype(cell: dict[str, Any] | None) -> str | None:
-    """``"iri"`` for a node, the XSD IRI of a typed literal, else ``None``."""
-    if not cell:
-        return None
-    if cell.get("type") == "uri":
-        return "iri"
-    return cell.get("datatype")
+def _engine_http_error(error: Exception) -> HTTPException:
+    """Bad input is the client's to fix (400). A full inbox, or an engine or
+    database failure, may clear, so clients retry it (503). Anything else is a
+    server bug (500)."""
+    if isinstance(error, (Capacity, Closed, Fault, Timeout, OSError)):
+        return HTTPException(status_code=503, detail=str(error), headers={"Retry-After": "1"})
+    if isinstance(error, (ValueError, KeyError, NotFound, Refused)):
+        return HTTPException(status_code=400, detail=str(error))
+    log.exception("engine request failed")
+    return HTTPException(status_code=500, detail=str(error))
+
+
+def _engine_errors(route):
+    """Map the errors a route raises with ``_engine_http_error``; an
+    ``HTTPException`` the route raises itself passes through."""
+    if inspect.iscoroutinefunction(route):
+        @functools.wraps(route)
+        async def mapped(*args, **kwargs):
+            try:
+                return await route(*args, **kwargs)
+            except HTTPException:
+                raise
+            except Exception as error:
+                raise _engine_http_error(error) from error
+    else:
+        @functools.wraps(route)
+        def mapped(*args, **kwargs):
+            try:
+                return route(*args, **kwargs)
+            except HTTPException:
+                raise
+            except Exception as error:
+                raise _engine_http_error(error) from error
+    return mapped
+
+
 class ExperimentTemplateRequest(BaseModel):
     """Transport names retain template/run wording; the Python API says Study."""
     name: str
@@ -278,12 +303,14 @@ def observe_experiment_batch(run_id: str, request: list[ExperimentBatchObservati
     except KeyError: raise HTTPException(status_code=404, detail="unknown experiment run or variable")
     except Exception as error: raise HTTPException(status_code=400, detail=str(error))
 
+# A full inbox fails before the observations commit, so a retry is safe.
+@_engine_errors
 def record_experiment_batch(run_id: str, request: list[ExperimentRecordEntry]):
     try:
         return app.state.manager.experiments.record_batch(run_id, [item.model_dump(exclude_unset=True) for item in request])
     except KeyError:
         raise HTTPException(status_code=404, detail="unknown experiment run or variable")
-    except (TypeError, ValueError) as error:
+    except TypeError as error:
         raise HTTPException(status_code=400, detail=str(error))
 
 def annotate_experiment_stream(run_id: str, request: ExperimentStreamAnnotationRequest):
@@ -354,24 +381,6 @@ def experiment_usage(request: ExperimentUsageRequest):
     except KeyError: raise HTTPException(status_code=404, detail="unknown study")
 
 
-def _sparql_results_to_rows(serialized: bytes) -> dict[str, Any]:
-    """Preserve Acquirium's SPARQL response contract without RDFLib terms.
-
-    ``rows`` holds every cell as text, as it always has. ``datatypes`` is a
-    matrix of the same shape saying what each cell is: ``"iri"`` for a node,
-    the XSD datatype IRI of a typed literal, ``None`` for a plain string or
-    an unbound cell. The client parses typed values back from it.
-    """
-    payload = json.loads(serialized)
-    if "boolean" in payload:
-        return {"columns": [], "rows": [[bool(payload["boolean"])]]}
-    columns = payload["head"].get("vars", [])
-    bindings = payload["results"].get("bindings", [])
-    rows = [[binding.get(column, {}).get("value") for column in columns] for binding in bindings]
-    datatypes = [[_cell_datatype(binding.get(column)) for column in columns] for binding in bindings]
-    return {"columns": columns, "rows": rows, "datatypes": datatypes}
-
-
 _SPARQL_RESULT_FORMATS = {
     "application/sparql-results+json": ox.QueryResultsFormat.JSON,
     "application/sparql-results+xml": ox.QueryResultsFormat.XML,
@@ -417,7 +426,7 @@ def _accepted_sparql_formats(accept: str) -> tuple[ox.QueryResultsFormat, ox.Rdf
 
 
 def _self_connect_cfg(cfg: dict) -> tuple[str, int, bool]:
-    """Return (host, port, use_ssl) that driver actors use to reach this server."""
+    """Return (host, port, use_ssl) that driver processes use to reach this server."""
     if local_host := os.environ.get("ACQUIRIUM_SELF_HOST"):
         port = int(
             os.environ.get("ACQUIRIUM_SELF_PORT")
@@ -441,7 +450,7 @@ def _self_connect_cfg(cfg: dict) -> tuple[str, int, bool]:
 
 async def _wait_until_healthy(base_url: str) -> bool:
     """Poll /health until the server answers. The lifespan startup hook runs
-    before uvicorn begins serving, so startup work whose actors connect back
+    before uvicorn begins serving, so startup work whose drivers connect back
     over HTTP must wait for this first."""
     import requests
 
@@ -458,10 +467,10 @@ async def _wait_until_healthy(base_url: str) -> bool:
 
 
 async def _start_config_drivers(supervisor: DriverSupervisor, cfg: dict) -> None:
-    """Start every [[drivers]] entry from the config as a Ray actor.
+    """Start every [[drivers]] entry from the config as a driver process.
 
     The caller must wait for /health first (_wait_until_healthy) — driver
-    actors talk to this server over HTTP. Setup ordering stays serial because
+    processes talk to this server over HTTP. Setup ordering stays serial because
     DriverSupervisor.start_driver holds its lock across setup.
     """
     entries = cfg.get("drivers", [])
@@ -489,57 +498,16 @@ async def _start_config_drivers(supervisor: DriverSupervisor, cfg: dict) -> None
             log.exception("Config driver %s failed to start", spec)
 
 
-def _load_config_app_target(spec: str, *, base_dir: Path) -> object:
-    """Load a transformation class or registrar from a config ``spec``."""
-    if ":" not in spec:
-        raise ValueError("app spec must be module_or_file:target")
-    module_part, target_name = spec.rsplit(":", 1)
-    file_path = Path(module_part)
-    is_file = "/" in module_part or file_path.suffix == ".py" or file_path.exists()
-    if is_file:
-        # Config files may name a project-local module without packaging it.
-        # Resolve relative paths against the config, never the server's cwd.
-        if not file_path.is_absolute():
-            file_path = (base_dir / file_path).resolve()
-        if not file_path.is_file():
-            raise ValueError(f"app file not found: {module_part}")
-        module_name = file_path.stem
-        if not module_name.isidentifier():
-            raise ValueError(f"app file name must be a Python module name: {file_path.name}")
-        # Deployments re-import the class by module name, so the file stem
-        # must name this file and nothing else: not a loaded or installed
-        # module, and not a same-named file in another directory.
-        importlib.invalidate_caches()
-        try:
-            found = importlib.util.find_spec(module_name)
-        except (ImportError, ValueError):
-            found = False
-        origin = getattr(found, "origin", None)
-        if found is not None and (origin is None or Path(origin).resolve() != file_path):
-            raise ValueError(f"app file {file_path} would import as {module_name!r}, which is already "
-                             f"{origin or 'another module'}; rename the file or install it as a package")
-        module_dir = str(file_path.parent)
-        if module_dir not in sys.path:
-            # Appended, so app directories never shadow installed modules.
-            sys.path.append(module_dir)
-        module = importlib.import_module(module_name)
-    else:
-        module = importlib.import_module(module_part)
-    try:
-        return getattr(module, target_name)
-    except AttributeError as error:
-        raise ValueError(f"app target {target_name!r} was not found in {module.__name__!r}") from error
-
-
-def _deploy_config_apps(cfg: dict) -> None:
-    """Deploy the materialization applications declared in ``[[apps]]``."""
+def _deploy_config_apps(cfg: dict, actors: ActorSupervisor) -> None:
+    """Start configured actors before deploying apps that may read them."""
     entries = cfg.get("apps", [])
-    if not entries:
+    if not entries and not cfg.get("actors"):
         return
     from acquirium.Client.acquirium import Acquirium
 
     host, port, use_ssl = _self_connect_cfg(cfg)
     aq = Acquirium(server_url=host, server_port=port, use_ssl=use_ssl)
+    actors.start_configured(aq, cfg)
     base_dir = Path(cfg.get("__config_dir", Path.cwd()))
     for entry in entries:
         spec = entry.get("spec")
@@ -547,28 +515,12 @@ def _deploy_config_apps(cfg: dict) -> None:
             log.warning("[[apps]] entry missing 'spec'; skipping")
             continue
         try:
-            target = _load_config_app_target(spec, base_dir=base_dir)
-            # Only non-reserved fields become constructor parameters. ``name``
-            # remains display/config metadata and cannot alter binding identity.
+            target = load_app_target(spec, base_dir=base_dir)
             parameters = {key: value for key, value in entry.items() if key not in {"spec", "name"}}
-            if isinstance(target, type) and issubclass(target, MaterializationApp):
-                deployments = (target,)
-                deployment_parameters = parameters
-            elif callable(target):
-                result = target(aq, parameters)
-                if result is None:
-                    deployments = ()
-                elif isinstance(result, type) and issubclass(result, MaterializationApp):
-                    deployments = (result,)
-                else:
-                    deployments = tuple(result)
-                    if not all(isinstance(item, type) and issubclass(item, MaterializationApp) for item in deployments):
-                        raise TypeError("an app registrar must return App classes or None")
-                deployment_parameters = {}
-            else:
-                raise TypeError("app spec target must be an App class or callable registrar")
-            for app_class in deployments:
-                aq.deploy_app(app_class, parameters=deployment_parameters)
+            result = target(aq, parameters) if callable(target) else target
+            deployments = [result] if isinstance(result, App) else list(result or [])
+            for declaration in deployments:
+                aq.deploy_app(declaration)
             log.info("Deployed config app '%s' (%s): %d app(s)", entry.get("name", spec), spec, len(deployments))
         except Exception:
             log.exception("Config app %s failed to deploy", spec)
@@ -605,6 +557,8 @@ class InsertGraphRequest(BaseModel):
 
 class TimeseriesInfoRequest(BaseModel):
     uris: list[str]
+    view: View = "current"
+    epoch: int | None = Field(default=None, ge=0)
 
 
 class RecordFieldSpec(BaseModel):
@@ -621,7 +575,8 @@ class ResolveRecordRequest(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from acquirium.internals._log import configure_logging
+    """Recover server state before serving requests and close owned resources on exit."""
+    from acquirium.internals._log import StartupProgress, configure_logging
     configure_logging()  # honors ACQUIRIUM_VERBOSE env var set by `acquirium server -v`
 
     loaded_config = load_active_config()
@@ -631,23 +586,17 @@ async def lifespan(app: FastAPI):
         # Appended, so a config-directory file never shadows an installed module.
         sys.path.append(config_dir)
     server_cfg = _cfg.get("server", {})
-    idle_seconds = float(server_cfg.get("materialization_poll_seconds", 0.25))
-    error_log_seconds = float(server_cfg.get("materialization_error_log_seconds", 30.0))
-    worker_count = int(server_cfg.get("materialization_workers", 2))
-    if idle_seconds <= 0 or error_log_seconds <= 0:
-        raise ValueError("materialization polling and error log intervals must be positive")
-    if worker_count < 1:
-        raise ValueError("server.materialization_workers must be positive")
-
-    # Materialization runs through one coordinator and a bounded local pool.
-    m = Manager.from_env()
-    m.materializer.configure_workers(worker_count)
+    # Use the same formatter as Uvicorn's readiness messages.
+    startup = StartupProgress(logging.getLogger("uvicorn.error"), total=6)
+    m = Manager.from_env(startup=startup)
     app.state.manager = m
     app.state.read_batch_size = int(server_cfg.get("read_batch_size", 50_000))
 
     try:
-        m._sync_stream_refs_from_graph()
-        m.recover_materialization_state()
+        with startup.phase("Preparing the query graph and indexing stream references"):
+            m._sync_stream_refs_from_graph()
+        with startup.phase("Recovering deployed apps"):
+            m.recover_apps()
     except Exception as e:
         log.exception("Startup failed: %s", e)
         try:
@@ -659,66 +608,40 @@ async def lifespan(app: FastAPI):
     summary_stop = threading.Event()
     start_insert_summary_thread(summary_stop, interval=10.0)
 
-    # Drivers run as Ray actors that connect back over HTTP.
+    # Drivers run as child processes that connect back over HTTP.
     _host, _port, _use_ssl = _self_connect_cfg(_cfg)
     supervisor = DriverSupervisor(server_url=_host, server_port=_port, use_ssl=_use_ssl)
     app.state.drivers = supervisor
-
-    async def _durable_worker(label: str, operation) -> None:
-        """Run one failure-isolated durable control-plane worker."""
-        next_error_log = 0.0
-        while True:
-            try:
-                ran = await asyncio.to_thread(operation)
-                errors = m.materializer.failures()
-                if errors and asyncio.get_running_loop().time() >= next_error_log:
-                    log.error("Materialization failures: %s", errors)
-                    next_error_log = asyncio.get_running_loop().time() + error_log_seconds
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                # A bad deployment must not stop ingestion or other durable
-                # workers. Rate-limit repeats until its configuration changes.
-                now = asyncio.get_running_loop().time()
-                if now >= next_error_log:
-                    log.exception("%s worker failed", label)
-                    next_error_log = now + error_log_seconds
-                ran = False
-            await asyncio.sleep(0 if ran else idle_seconds)
-
-    durable_tasks = [
-        asyncio.create_task(_durable_worker(
-            "materialization", m.run_materialization_once,
-        ))
-    ]
-    app.state.durable_tasks = durable_tasks
+    actors = ActorSupervisor(m.core, m.graph_store)
 
     # Once the server answers /health, start configured drivers, then deploy
     # configured transformations. Drivers load their plant models during setup,
     # so application queries resolve against the intended graph.
-    async def _startup_actors() -> None:
+    async def _startup_drivers() -> None:
         if not await _wait_until_healthy(supervisor.base_url):
             log.error("Server never became healthy at %s; skipping configured drivers", supervisor.base_url)
             return
         await _start_config_drivers(supervisor, _cfg)
-        await asyncio.to_thread(_deploy_config_apps, _cfg)
+        await asyncio.to_thread(_deploy_config_apps, _cfg, actors)
 
-    startup_task = asyncio.create_task(_startup_actors())
+    startup_task = asyncio.create_task(_startup_drivers())
 
     try:
         yield
     finally:
         summary_stop.set()
         startup_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
+        try:
             await startup_task
-        for task in durable_tasks:
-            task.cancel()
-        await asyncio.gather(*durable_tasks, return_exceptions=True)
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            log.exception("Configured startup failed")
         try:
             await asyncio.to_thread(supervisor.stop_all)
         except Exception:
             log.exception("Error stopping drivers during shutdown")
+        await asyncio.to_thread(actors.close, m.drain_timeout)
         try:
             m.close()
         except Exception:
@@ -810,13 +733,13 @@ def graph_version() -> dict[str, int | bool]:
 @app.post("/insert_graph")
 def insert_graph(req: InsertGraphRequest) -> dict[str, Any]:
     try:
-        app.state.manager.insert_graph(
+        reconciliation = app.state.manager.insert_graph(
             rdf_graph=req.rdf_graph,
             format=req.format,
             replace=req.replace,
             source_id=req.source_id,
         )
-        return {"ok": True, "embedding_ready": True}
+        return {"ok": True, "embedding_ready": True, **reconciliation}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -867,76 +790,88 @@ def list_namespaces() -> dict[str, str]:
         raise HTTPException(status_code=400, detail=str(e))
     
 \
-#### MATERIALIZATION API ENDPOINTS ####
+#### APP API ENDPOINTS ####
 
 
 @app.get("/apps")
 def list_apps() -> dict[str, Any]:
     """List all deployments, including unmatched and failed apps."""
-    return {"ok": True, "apps": app.state.manager.materializer.list_apps()}
+    return {"ok": True, "apps": app.state.manager.apps.list()}
 
 
 @app.get("/apps/{name}")
 def inspect_app(name: str) -> dict[str, Any]:
     """Read a deployment's declarations, output schemas, and binding progress."""
     try:
-        return {"ok": True, "app": app.state.manager.materializer.inspect_app(name)}
+        return {"ok": True, "app": app.state.manager.apps.inspect(name)}
     except KeyError:
         raise HTTPException(status_code=404, detail=f"unknown app {name!r}")
 
 
 @app.put("/apps/{name}")
-def deploy_app(name: str, request: AppRegistration) -> dict[str, Any]:
-    """Validate and select an immutable definition for a named deployment."""
+def deploy_app(
+    name: str, definition: Annotated[dict, Body()], dry_run: bool = False
+) -> dict[str, Any]:
+    """Deploy an app, or with ``dry_run`` report what deploying it would do."""
     try:
-        if name != request.name:
-            raise ValueError("deployment name must match the definition name")
-        deployment = Deployment.from_json(request.model_dump_json())
-        return {"ok": True, **app.state.manager.deploy_app(deployment)}
-    except Exception as error:
-        raise HTTPException(status_code=400, detail=str(error))
-
-
-@app.post("/apps/check")
-def check_app(request: AppRegistration, limit: int | None = None,
-              search_path: str | None = None) -> dict[str, Any]:
-    """Run an app against stored data and return its output without saving it.
-
-    Every computed row is returned unless ``limit`` keeps only the first few
-    of each output. ``search_path`` is a directory on the server's filesystem
-    to look in for the app's module, letting a file that is not otherwise
-    importable be checked; deployment has no such escape hatch.
-    """
-    try:
-        deployment = Deployment.from_json(request.model_dump_json())
-        return {"ok": True, **app.state.manager.check_app(
-            deployment, limit=limit, search_path=search_path)}
+        if definition.get("name") != name:
+            raise ValueError("app name must match the route")
+        declaration = App.from_dict(definition)
+        if dry_run:
+            return {"ok": True, "app": app.state.manager.apps.preview(declaration)}
+        return {"ok": True, "app": app.state.manager.deploy_app(declaration)}
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error))
 
 
 @app.delete("/apps/{name}")
-def remove_app(name: str) -> dict[str, Any]:
+def remove_app(name: str):
     try:
         return {"ok": True, **app.state.manager.remove_app(name)}
     except KeyError:
         raise HTTPException(status_code=404, detail=f"unknown app {name!r}")
 
 
-@app.post("/apps/{name}/reprocess")
-def reprocess_app(name: str, start: datetime, end: datetime) -> dict[str, Any]:
+@app.get("/engine/status")
+def engine_status():
+    status = app.state.manager.core.engine.status()
     try:
-        return {"ok": True, **app.state.manager.materializer.reprocess(name, start, end)}
-    except KeyError:
-        raise HTTPException(status_code=404, detail=f"unknown app {name!r}")
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error))
+        import resource
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        peak_bytes = int(peak if sys.platform == "darwin" else peak * 1024)
+    except ImportError:
+        peak_bytes = None
+    status["process"] = {"pid": os.getpid(), "peak_rss_bytes": peak_bytes}
+    return status
 
 
-@app.get("/materialization/dag")
-def materialization_dag() -> dict[str, Any]:
-    """Observational node-link representation of the active compiled DAG."""
-    return {"ok": True, **app.state.manager.materializer.dag()}
+@app.get("/engine/snapshot")
+def engine_snapshot():
+    # plan_current: the plan reflects the metadata graph as of this request.
+    snapshot, current = app.state.manager.engine_snapshot()
+    core = app.state.manager.core
+    failures = {item["stream"]: item["behind"] for item in core.failures(snapshot)}
+    return {
+        "epoch": snapshot.epoch, "applied": snapshot.applied,
+        "plan": snapshot.plan(), "failures": failures, "plan_current": current,
+    }
+
+
+@app.post("/engine/retry")
+@_engine_errors
+def engine_retry():
+    app.state.manager.core.engine.retry(uuid.uuid4().hex)
+    return engine_status()
+
+
+@app.get("/engine/changes")
+@_engine_errors
+def engine_changes(
+    epoch: int = Query(0, ge=0, lt=2**64),
+    ordinal: int = Query(0, ge=0, lt=2**64),
+    limit: int = Query(1000, ge=1, le=10_000),
+):
+    return app.state.manager.core.changes(epoch=epoch, ordinal=ordinal, limit=limit)
 
 
 #### DRIVERS API ENDPOINTS ####
@@ -955,7 +890,7 @@ class DriverStopRequest(BaseModel):
 
 @app.post("/drivers/start")
 def start_driver(req: DriverStartRequest) -> dict[str, Any]:
-    """Start a driver as a Ray actor on this server.
+    """Start a driver as a child process of this server.
 
     The driver spec must be importable/resolvable on the server host; file
     paths are resolved against the config's __config_dir. Setup runs before
@@ -1019,100 +954,118 @@ def metadata_asserted(subjects: Annotated[list[str], Body()]) -> dict[str, list[
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
-class ResolveStorageKeysRequest(BaseModel):
+class StreamViewsRequest(BaseModel):
     uris: list[str]
+    epoch: int | None = Field(default=None, ge=0)
 
 
 @app.post("/resolve_storage_keys")
-def resolve_storage_keys(req: ResolveStorageKeysRequest) -> dict[str, str]:
+def resolve_storage_keys(req: TimeseriesInfoRequest) -> dict[str, str]:
     """Map each semantic property_uri (or already-canonical stream_uri) in *uris*
     to its canonical stream_uri. Callers do this before reading or subscribing;
     the database's internal integer stream_id is never exposed."""
     try:
-        return app.state.manager.timescale.resolve_storage_keys(req.uris)
+        return app.state.manager.resolve_storage_keys(req.uris, view=req.view, epoch=req.epoch)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/stream_views")
+@_engine_errors
+def stream_views(req: StreamViewsRequest) -> dict[str, Any]:
+    """The pinned epoch, resolved views, and replacement head units."""
+    return app.state.manager.stream_views(req.uris, epoch=req.epoch)
+
+
+
+def _receipt(receipt, source_id, request_id, wait):
+    """Report an admitted request and whether publication has caught up.
+
+    A timeout or engine fault during the wait is reported on the receipt.
+    The admitted request remains available for later publication.
+    """
+    core = app.state.manager.core
+    error = None
+    try:
+        if wait > 0:
+            core.wait(receipt, timeout=wait)
+    except (Fault, Timeout) as exception:
+        error = str(exception)
+    status = core.engine.status()
+    applied, fault = status["applied"], status["fault"]
+    return {"source_id": source_id, "request_id": request_id, "sequence": receipt.sequence,
+            "accepted": True, "published": applied >= receipt.sequence, "error": error or fault}
 
 
 @app.post("/insert_timeseries")
-def insert_timeseries(streams: Annotated[list[StreamInsert], Body()]) -> dict[str, Any]:
-    """Insert timeseries data for one or more streams.
-
-    Each element specifies ``source_id``/``stream_name``, an optional semantic
-    ``property_uri``, an optional ``replace`` flag, and a list of
-    ``[timestamp, value]`` pairs. A single-stream insert is a one-element list.
-    """
-    try:
-        total = 0
-        bulk_streams: dict[str, dict[str, list[tuple[datetime, Any]]]] = {}
-        individual_streams: list[StreamInsert] = []
-        for s in streams:
-            # A stream needing its own publication_id, property_uri registration,
-            # or replace semantics can't share one bulk publication with its
-            # source-id siblings, so it always takes the individual path.
-            if s.property_uri is None and not s.replace and s.publication_id is None:
-                bulk_streams.setdefault(s.source_id, {})[s.stream_name] = s.values
-            else:
-                individual_streams.append(s)
-
-        for source_id, source_streams in bulk_streams.items():
-            total += app.state.manager.insert_timeseries_batch(source_id, source_streams).row_count
-        for s in individual_streams:
-            total += app.state.manager.insert_timeseries(
-                source_id=s.source_id,
-                stream_name=s.stream_name,
-                rows=s.values,
-                property_uri=s.property_uri,
-                replace=s.replace,
-                publication_id=s.publication_id,
-            ).row_count
-        insert_stats.record(
-            origin="http",
-            rows=sum(len(s.values) for s in streams),
-            streams=[s.stream_name or str(s.property_uri) for s in streams],
+@_engine_errors
+def insert_timeseries(streams: Annotated[list[StreamInsert], Body()], wait: float = Query(30, ge=0)):
+    receipts, total = [], 0
+    groups, replaced = {}, {}
+    # All streams sharing the source and request ID form one engine request.
+    for stream in streams:
+        key = (stream.source_id, stream.request_id)
+        groups.setdefault(key, {}).setdefault(stream.stream_name, []).extend(stream.values)
+        if stream.replace:
+            replaced.setdefault(key, set()).add(stream.stream_name)
+    for (source_id, request_id), observations in groups.items():
+        result = app.state.manager.insert_timeseries_batch(
+            source_id, observations, request_id=request_id,
+            replace=replaced.get((source_id, request_id), ()),
         )
-        return {"ok": True, "rows_inserted": total}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        total += result.rows_inserted
+        receipts.append(_receipt(result.receipt, source_id, request_id, wait))
+    insert_stats.record(origin="http", rows=sum(len(s.values) for s in streams),
+                        streams=[s.stream_name for s in streams])
+    return {"ok": True, "rows_inserted": total, "receipts": receipts}
 
 
 @app.post("/insert_timeseries_arrow")
-async def insert_timeseries_arrow(request: Request):
-    try:
-        body = await request.body()
-        log.debug("/insert_timeseries_arrow: received %d bytes", len(body))
-        reader = ipc.RecordBatchStreamReader(pa.BufferReader(body))
-        df = pl.from_arrow(reader.read_all())
-        log.debug("/insert_timeseries_arrow: parsed Arrow stream into df rows=%d", len(df))
-
-        # Preserve a caller-supplied publication identifier on each per-source
-        # publication. The revision publisher currently records no receipt
-        # ledger, so this identifier does not deduplicate retried requests.
-        base_publication_id = request.headers.get("X-Acquirium-Publication-Id")
-
-        total = 0
-        for key, source_df in df.partition_by("source_id", as_dict=True).items():
-            sid = key[0] if isinstance(key, tuple) else key
-            log.debug("/insert_timeseries_arrow: dispatching source=%s rows=%d", sid, len(source_df))
-            pub_id = f"{base_publication_id}:{sid}" if base_publication_id else None
-            total += app.state.manager.insert_timeseries_arrow(
-                str(sid), source_df.drop("source_id").to_arrow(), publication_id=pub_id
-            ).row_count
-
-        return {"ok": True, "rows_inserted": total}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+@_engine_errors
+async def insert_timeseries_arrow(request: Request, wait: float = Query(30, ge=0), stored: bool = False):
+    request_id = request.headers.get("X-Acquirium-Request-Id")
+    if not request_id:
+        raise ValueError("X-Acquirium-Request-Id is required")
+    return await asyncio.to_thread(_insert_arrow_body, await request.body(), request_id, wait, stored=stored)
 
 
-def _parse_dt(s: Optional[str]) -> Optional[datetime]:
-    if s is None:
-        return None
-    # Accept ISO strings like "2025-12-17T10:30:00Z" or "2025-12-17 10:30:00"
-    return dtparser.isoparse(s)
+def _insert_arrow_body(body: bytes, request_id: str, wait: float, *, stored=False):
+    """Submit the Arrow rows as one request per source under the supplied ID."""
+    with ipc.open_stream(body) as reader:
+        frame = pl.from_arrow(reader.read_all())
+    if not {"source_id", "stream_name"}.issubset(frame.columns):
+        raise ValueError("Arrow ingest requires source_id and stream_name columns")
+    receipts, total = [], 0
+    for (source,), source_frame in frame.partition_by("source_id", as_dict=True).items():
+        source_id = str(source)
+        result = app.state.manager.insert_timeseries_frame(
+            source_id, source_frame, request_id=request_id, stored=stored,
+        )
+        total += result.rows_inserted
+        receipts.append(_receipt(result.receipt, source_id, request_id, wait))
+    insert_stats.record(origin="arrow", rows=len(frame),
+                        streams=frame["stream_name"].unique().to_list())
+    return {"ok": True, "rows_inserted": total, "receipts": receipts}
+
+
+class DeleteObservations(BaseModel):
+    source_id: str
+    stream_name: str
+    timestamps: list[int]
+    request_id: str
+
+
+@app.post("/delete_timeseries")
+@_engine_errors
+def delete_timeseries(request: DeleteObservations, wait: float = Query(30, ge=0)):
+    result = app.state.manager.delete_timeseries(request.source_id, request.stream_name,
+        request.timestamps, request_id=request.request_id)
+    return _receipt(result.receipt, request.source_id, request.request_id, wait)
 
 
 #### TIMESERIES API ENDPOINTS ####
 @app.get("/timeseries")
+@_engine_errors
 def get_timeseries(
     request: Request,
     uri: str,
@@ -1121,79 +1074,68 @@ def get_timeseries(
     limit: Optional[int] = None,
     order: str = "asc",
     value_mode: str = "default",
+    epoch: int | None = None,
+    start_ns: int | None = None,
+    end_ns: int | None = None,
+    after: int | None = None,
+    view: View = "current",
     ):
-    try:
-        if order not in ("asc", "desc"):
-            raise ValueError("order must be 'asc' or 'desc'")
-        # Checked here, before the response starts. The store checks it too,
-        # but only once the stream is being read, where an error can no
-        # longer become a 400 and cuts the response instead.
-        normalize_value_mode(value_mode)
+    if order not in ("asc", "desc"):
+        raise ValueError("order must be 'asc' or 'desc'")
 
-        start_dt = _parse_dt(start)
-        end_dt = _parse_dt(end)
+    normalize_value_mode(value_mode)
+    batches: Iterator[pa.RecordBatch] = app.state.manager.timeseries_batch(
+        uri=uri,
+        start=start_ns if start_ns is not None else start,
+        end=end_ns if end_ns is not None else end,
+        epoch=epoch,
+        after=after,
+        view=view,
+        limit=limit,
+        order=order,        # type: ignore[arg-type]
+        batch_size=request.app.state.read_batch_size,
+        value_mode=value_mode,
+    )
 
-        batches: Iterator[pa.RecordBatch] = app.state.manager.timeseries_batch(
-            uri=uri,
-            start=start_dt,
-            end=end_dt,
-            limit=limit,
-            order=order,        # type: ignore[arg-type]
-            batch_size=request.app.state.read_batch_size,
-            value_mode=value_mode,
-        )
-
-        accept = request.headers.get("accept", "")
-
-        def arrow_stream() -> Iterator[bytes]:
-            buf = io.BytesIO()
-            writer: ipc.RecordBatchStreamWriter | None = None
-            try:
-                for batch in batches:
-                    if writer is None:
-                        writer = ipc.new_stream(buf, batch.schema)
-                    writer.write_batch(batch)
-                    data = buf.getvalue()
-                    if data:
-                        yield data
-                        buf.seek(0)
-                        buf.truncate(0)
+    def arrow_stream() -> Iterator[bytes]:
+        # Keep the writer for the whole response so each chunk belongs to
+        # the same Arrow stream. Reuse the buffer after yielding its bytes.
+        buf = io.BytesIO()
+        writer: ipc.RecordBatchStreamWriter | None = None
+        try:
+            for batch in batches:
                 if writer is None:
-                    empty_schema = pa.schema([
-                        ("ts", pa.timestamp("us", tz="UTC")),
-                        ("value", pa.float64()),
-                        ("uri", pa.string()),
-                    ])
-                    writer = ipc.new_stream(buf, empty_schema)
-            finally:
-                if writer is not None:
-                    writer.close()
-            data = buf.getvalue()
-            if data:
-                yield data
+                    writer = ipc.new_stream(buf, batch.schema)
+                writer.write_batch(batch)
+                data = buf.getvalue()
+                if data:
+                    yield data
+                    buf.seek(0)
+                    buf.truncate(0)
+        finally:
+            if writer is not None:
+                writer.close()
+        data = buf.getvalue()
+        if data:
+            yield data
 
-        return StreamingResponse(
-            arrow_stream(),
-            media_type="application/vnd.apache.arrow.stream",
-        )
+    return StreamingResponse(
+        arrow_stream(),
+        media_type="application/vnd.apache.arrow.stream",
+    )
 
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/timeseries_info")
+@_engine_errors
 def timeseries_info(req: TimeseriesInfoRequest) -> dict[str, Any]:
-    try:
-        result = app.state.manager.timeseries_info_batch(req.uris)
-        return {uri: info.model_dump() for uri, info in result.items()}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    return app.state.manager.timeseries_info_batch(req.uris, view=req.view, epoch=req.epoch)
 
 
 @app.post("/timeseries_exists")
 def timeseries_exists(req: TimeseriesInfoRequest) -> dict[str, Any]:
     try:
-        return {"uris": app.state.manager.timeseries_exists_batch(req.uris)}
+        return {"uris": app.state.manager.timeseries_exists_batch(req.uris, view=req.view, epoch=req.epoch)}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1316,6 +1258,14 @@ def resolve_record(req: ResolveRecordRequest) -> dict[str, Any]:
     return {"matches": matches}
 
 
+
+
+
+
+def _parse_dt(value: str | None) -> datetime | None:
+    return timestamp(value) if value is not None else None
+
+
 @app.post("/insert_log")
 def insert_log(
         property_uri: Optional[str] = None,
@@ -1326,7 +1276,7 @@ def insert_log(
     ) -> dict[str, Any]:
     try:
         uri = property_uri if property_uri else PLANT_URI
-        log_time = dtparser.isoparse(log_timestamp)
+        log_time = timestamp(log_timestamp)
         obs_start = _parse_dt(observation_start)
         obs_end = _parse_dt(observation_end)
         log_entry = LogEntry(

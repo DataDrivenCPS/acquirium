@@ -1,103 +1,138 @@
 ---
-title: How apps work
+title: Derived stream updates
 ---
 
-In this article we'll describe what the server does with an app: how it runs the app, how the outputs are kept up to date, and what is stored.
-[Declaring and deploying Apps](../tutorials/advanced/first-app.md) shows how to write and deploy one.
+For an illustrated introduction to grouping, time windows, and the dataframe a
+function receives, see [Soft sensor inputs](soft-sensor-inputs.md).
 
-## What the server does with an app
+Most derived data in a treatment plant is computed once and then quietly goes
+stale. Someone exports a month of turbidity, averages it in a spreadsheet, and
+emails the result. A week later the lab corrects two readings, and the
+spreadsheet still holds the old average. Nobody knows which reports used it.
 
-An app is deployed with `deploy_app()`.
-The server does not receive the code of the app.
-It receives the name of the module and the class, the parameters and the settings of the app, and it imports the module itself.
-This is why the file of the app has to be in a folder the server can import from.
+Acquirium takes a different approach. An app does not describe a computation
+to run once. It describes a relationship that should always hold: *this stream
+is the one-minute mean of those readings*. Acquirium's job is to keep that
+relationship true as the inputs change, including when they change in the
+past.
 
-The server then runs `build_query()` on the plant model.
-The matches of the query decide how the app is called:
+## Recalculation after input changes
 
-- With `grouping = "per_match"` each match is calculated on its own. Each match has its own input stream and its own output streams.
-- With `grouping = "all_matches"` all matches are calculated together, and there is one set of output streams.
+When a reading arrives or is corrected, recomputing everything would be
+correct but wasteful. The app's window says exactly which results a reading can
+affect. A pointwise calculation reads one timestamp, so a reading changes only
+the result at its own timestamp. A one-minute bucket reads one minute, so only
+that minute's result changes. A rolling window reads a span of time, so a
+reading changes every window whose span covers it, which can mean several
+results at later timestamps.
 
-The server calls each of these a binding.
-The `binding_count` of `list_apps()` is the number of bindings of an app.
+Those revised results are inputs to any app downstream, and the same rule
+applies there. In the [turbidity tutorial](../tutorials/turbidity.md), two late
+readings change one minute of the clean stream, which changes every window of
+the sustained alarm whose fifteen minutes include it. Nothing else is
+recomputed.
 
-The query is run again when the plant model changes.
-For instance, when a third pump with a power stream is added to the model, a `per_match` app over the pump power streams gets a third binding and a third output stream.
+This is also why apps cannot choose arbitrary output timestamps or run on a
+clock. If an app could emit whenever it liked, there would be no way to know
+which of its results a given reading had influenced.
 
-## How the outputs are kept up to date
+## Replacement chains
 
-Every write to the stored data gets a number, the revision.
-For each binding the server remembers the revision it has processed.
-A few times per second the server compares the two.
-When an input stream has values that were written after the processed revision, the server does the following:
+A cleaning app can declare an `aq.ReplacementOutput()`. Instead of describing
+a new measurement, its output continues the identity of the one physical stream
+its input selects, with that stream's quantity kind and, unless it converts
+it, unit. A second replacement selects the first one's output and continues
+the identity further. Each stage has at most one replacement, so the chain has
+one final stage.
 
-- It finds the time range of the values that changed.
-- It reads the inputs for this time range. The settings `every`, `lookback` and `lookahead` make the range wider, see [Time windows of a call](../reference/apps/app-class.md#time-windows-of-a-call).
-- It calls `transform()` with these inputs.
-- It replaces the stored output values of this time range with the result, and saves the new revision of the binding. Both are saved together.
+Normal measurement reads select that final stage. `view="raw"` selects the
+original samples; `view="stored"` selects a particular physical stage. App
+queries remain specific to that app.
 
-New values, late values and corrected values all take this path.
-For instance, an app has `lookback = "10m"` for a ten-minute average, and a reading of 12:00 is corrected.
-The correction changes the averages from 12:00 to 12:10, and these averages need the readings from 11:50 on.
-The server reads the inputs from 11:50 to 12:10 and replaces the outputs from 12:00 to 12:10.
+App inputs follow the same authority. An alarm that selects a filter's
+turbidity reads the final stage, so adding a stage moves the alarm to it and
+recalculates its history. The stage being replaced is the exception: a
+replacement binds exactly the stream it selects, which keeps each stage's
+place in the chain explicit. An app that needs the original samples or one
+particular stage asks for `view="raw"` or `view="stored"`.
 
-The result of `transform()` replaces what was stored in the time range:
+A replacement is a complete maintained result. A filtered reading stays absent;
+an empty result does not reveal the original value underneath. Each function
+call returns its calculated series, and Acquirium keeps the result at that
+call's scheduled timestamp. The existing window rules still determine which
+results a late reading repairs.
 
-- A value that was stored and is not in the new result is removed.
-- An empty table removes all values of the output in the time range.
-- An output that `transform()` does not assign is left as it is.
+The active plan records the chain. A historical read uses that epoch's chain
+as well as its values. If the final stage fails, its last successful values
+remain stale. A new stage that has never succeeded has no values; it does not
+silently fall back to an earlier stage. See
+[replacement outputs](../reference/apps/outputs.md#replacement-outputs).
 
-The calculation uses the values that are stored at that moment.
-The server does not wait until all inputs have reported.
-When a late value arrives, the same time range is calculated again.
+## Group identity and membership
 
-**Note:** When a stream is written again with `replace=True`, the apps that read it calculate all of their outputs again.
+The input selection decides which streams feed a calculation. Grouped by tank,
+a selection produces one calculation per tank, each with its own output stream.
+That output's identity comes from the app's name, the group and the output
+port, and not from the particular streams that happen to be in the group.
 
-### Data that was stored before the deployment
+So when someone adds a second temperature probe to a tank, the tank's group
+gains an input, its results are recomputed, and its output stream keeps the
+same identity. Apps downstream that read it never notice the change, and
+neither do the queries that find it.
 
-With `backfill = True` the first run of an app also processes the data that was already stored.
-A long time range is processed in pieces of about one day, and the server remembers which pieces are done.
-With `backfill = False` the app only processes values that are written after the deployment.
+Group membership follows the plant model as it is now, across the whole stored
+history. If a probe is moved to another tank in the model, both tanks are
+recomputed as though the probe had always belonged to its new tank. That is the
+right answer when the model was wrong. It is the wrong answer when the probe
+really moved on a particular date, and Acquirium has no way yet to record a
+move that takes effect only from a point in time.
 
-### Apps that read other apps
+## Function repeatability
 
-The outputs of an app are streams, so another app can select them, for instance with `measurement(app="ro-recovery")`.
-The server runs an app before the apps that read its outputs.
-A deployment is rejected when two apps would write the same stream, or when apps read the outputs of each other in a circle.
+Because a correction can reach back weeks, an app's function may run again on
+old data at any time, and it must produce the same result for the same inputs.
+That rules out anything the function could observe that is not part of its
+input: the current time, a file that may have changed, a live web service, a
+global variable left over from an earlier call. Everything a function needs
+arrives in its frame and its context.
 
-## When a calculation fails
+The same reasoning applies to the code itself. Acquirium saves a copy of the
+calculation file under its content hash when you deploy. Editing the original
+file leaves the running calculation unchanged. To use the edit, rebuild its
+`PythonFunction.from_file(...)` declaration and deploy the app again. Acquirium
+recomputes history with the new code. The source path can stay the same.
 
-When `transform()` raises an error, nothing is saved for this binding.
-The stored outputs and the processed revision stay as they were, and the status of the binding becomes `failed`.
-The server tries the binding again in its next round.
-The other apps keep running.
-An app that reads the outputs of a failed binding waits until that binding succeeds.
+## Published snapshots and failure recovery
 
-Be aware that the server can call `transform()` more than once for the same data, for instance after a failure or a restart.
-`transform()` should only calculate.
-It should not write files or send messages.
+A correction to a source reading and the synchronous results computed from it
+become visible together, in one published snapshot called an epoch. For a
+healthy synchronous chain, the average and its alarm update together.
 
-## What is stored
+An [asynchronous app](../reference/apps/deploying.md#background-refresh)
+computes in the background while epochs continue publishing. Its readers use
+the last published results. A successful refresh and the synchronous updates
+it causes become visible together in a later epoch.
 
-- **The output values.** They are in the same store as all other streams, under the `source_id` `derived:<app name>`. Only the current values are kept. Earlier results are overwritten.
-- **The description of the output streams.** The label, the unit and the name of the app are written to the graph. This is what `where(app=...)` uses.
-- **The deployment.** The module and class name, the parameters and the settings. With this the server starts the app again after a restart.
-- **The progress.** The processed revision of each binding, and the unfinished pieces of a long time range. With this the server continues after a restart where it stopped.
+Earlier snapshots stay readable. That is what lets you look at an alarm as it
+was when someone acted on it, even after later data withdrew it.
 
-The code of the app is not stored.
-The server keeps a fingerprint of the file of the app and compares it each time it loads the app.
-When the file was changed after the deployment, the app stops with a `digest mismatch` error until it is deployed again.
+If a function fails, Acquirium retains its last successful outputs. A failed
+synchronous function also holds its downstream consumers until recovery. Raw
+readings and independent branches continue updating.
 
-Deploying an app again keeps the progress.
-The new code is used for the values that are written from then on, and the stored outputs are not calculated again.
-`reprocess_app()` calculates a time range again with the new code.
+App inspection reports `failed` for a calculation error, `blocked` for
+consumers held by an upstream failure, and `refreshing` for normal background
+lag. Each sets `stale=True` and reports the reason by operator.
 
-`remove_app()` deletes the deployment and the progress.
-The output values stay in the store.
+After a corrected deployment or an explicit retry, Acquirium recomputes the
+affected branch from current inputs. It includes changes received while the
+branch was blocked and clears the failure status on success. The retained
+values and failure status survive restart. See
+[recovering from a failed calculation](../how-to/check-deploy-apps.md#recovery-from-a-failed-calculation).
 
-## Next
+A failure to commit the database still stops publication: no part of an epoch
+can become visible without a successful transaction.
 
-- [Calculate derived streams](../how-to/calculate-derived-streams.md) has apps with several inputs, parameters and a rolling window.
-- [Check, deploy, and repair an app](../how-to/check-deploy-apps.md) shows what to do when a check or a deployment fails.
-- [Materialization internals](materialization-internals.md) describes the tables, the scheduling and the storage backends.
-- The [app reference](../reference/apps/_index.md) lists every setting.
+[Escapement core](escapement-core.md) describes how the engine implements all
+this: how deployments become plans, how epochs commit, and what happens on
+restart.

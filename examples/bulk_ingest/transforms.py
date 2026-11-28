@@ -1,0 +1,93 @@
+"""Turbidity soft-sensor calculations; this self-contained file is pinned by its digest.
+
+Each function receives one window's input readings as a polars frame and
+returns one value per output, stamped at ``context["output_time"]``, or ``None``.
+"""
+
+from datetime import timedelta
+
+import json
+
+import polars as pl
+
+# High-turbidity thresholds in NTU per location.
+THRESHOLDS_NTU = {
+    "urn:bulk/loc-0": 5.0,
+    "urn:bulk/loc-1": 5.0,
+    "urn:bulk/loc-2": 0.5,
+    "urn:bulk/loc-3": 0.3,
+}
+
+def snap_to_minute(frame, context):
+    """Average the raw readings in one 1-minute bucket."""
+    if frame.is_empty():
+        return {"turbidity": None}
+    return {"turbidity": frame["value"].mean()}
+
+
+def fill_gaps(frame, context):
+    """Keep the snapped value at this minute, or interpolate across a gap
+    shorter than the app's rolling window looks back."""
+    t = context["output_time"]
+    max_gap = context["operator"]["window"]["lookback"]
+    readings = frame.sort("time")
+
+    exact = readings.filter(pl.col("time") == t)
+    if not exact.is_empty():
+        return {"turbidity": exact["value"][0]}
+
+    before = readings.filter(pl.col("time") < t).tail(1)
+    after = readings.filter(pl.col("time") > t).head(1)
+    if before.is_empty() or after.is_empty():
+        return {"turbidity": None}
+
+    t0, v0 = before["time"][0], before["value"][0]
+    t1, v1 = after["time"][0], after["value"][0]
+    if t1 - t0 >= max_gap:
+        return {"turbidity": None}
+
+    value = v0 + (v1 - v0) * (t - t0) / (t1 - t0)
+    return {"turbidity": value}
+
+
+def plant_turbidity(frame, context):
+    """Combine every location's filled turbidity at the same minute."""
+    if frame.is_empty():
+        return {"mean": None, "max": None, "reporting": None}
+    return {
+        "mean": frame["value"].mean(),
+        "max": frame["value"].max(),
+        "reporting": frame.height,
+    }
+
+
+def high_turbidity(frame, context):
+    """1 when turbidity is above this location's threshold, otherwise 0."""
+    if frame.is_empty():
+        return {"alarm": None}
+    # The input's context holds the selected upstream group: the location URI.
+    location = json.loads(frame["context"][0])["group"]
+    threshold = THRESHOLDS_NTU.get(location)
+    if threshold is None:
+        return {"alarm": None}
+    return {"alarm": 1 if frame["value"][0] > threshold else 0}
+
+
+def sustained_high_turbidity(frame, context):
+    """1 when the high alarm was on for every minute of the last `sustained_minutes`."""
+    t = context["output_time"]
+    # Only report at minutes that have an alarm value, so output stops with the data.
+    if frame.filter(pl.col("time") == t).is_empty():
+        return {"alarm": None}
+    # Set per location by the app's `parameters`.
+    minutes = context["parameters"]["sustained_minutes"]
+    span = frame.filter(pl.col("time") >= t - timedelta(minutes=minutes))
+    # Both ends are included, so N minutes holds N + 1 samples.
+    every_minute_high = span.height == minutes + 1 and span["value"].min() == 1
+    return {"alarm": 1 if every_minute_high else 0}
+
+
+def plant_alarms(frame, context):
+    """Count locations in sustained alarm at this minute."""
+    values = frame["value"].drop_nulls()
+    return {"locations": None if values.is_empty() else values.sum()}

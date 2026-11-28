@@ -1,0 +1,80 @@
+"""Sequential and as-of calculations; this self-contained file is pinned by its content digest.
+
+The first three are declared with ``sequential=True``. Their windows are
+evaluated in event-time order, and ``context["previous"]`` holds the latest
+earlier window that wrote outputs. Those outputs are the function's state:
+whatever a function carries forward, it writes. ``residual`` reads the
+permeability estimate as of each reading instead.
+"""
+
+import math
+
+import polars as pl
+
+from acquirium.functions import previous_value
+
+
+def smoothed(frame, context):
+    """Exponentially weighted mean with time constant ``tau_seconds``, weighted by
+    the time since the previous reading."""
+    values = frame["value"].drop_nulls()
+    if values.is_empty():
+        return {"smoothed": None}
+    value = values.mean()
+    previous = context.get("previous")
+    if previous is not None:
+        elapsed = context["output_time"] - previous["output_time"]
+        weight = math.exp(-elapsed.total_seconds() / context["parameters"]["tau_seconds"])
+        value = weight * previous_value(context, "smoothed") + (1 - weight) * value
+    return {"smoothed": value}
+
+
+def drift(frame, context):
+    """Upper CUSUM of conductivity above ``target`` plus ``slack``, and an
+    alarm carrying the statistic while it exceeds ``limit``.
+
+    The statistic returns to zero in normal operation, and a repair stops at
+    the first window where it does."""
+    values = frame["value"].drop_nulls()
+    if values.is_empty():
+        return {"cusum": None, "alarm": None}
+    parameters = context["parameters"]
+    excess = values.mean() - parameters["target"] - parameters["slack"]
+    statistic = max(0.0, previous_value(context, "cusum", 0.0) + excess)
+    alarm = statistic if statistic > parameters["limit"] else None
+    return {"cusum": statistic, "alarm": alarm}
+
+
+def permeability(frame, context):
+    """Recursive least-squares estimate of permeability in flux = A x TMP,
+    from each window's mean flux and TMP. ``forgetting`` below 1 discounts
+    older windows so the estimate follows fouling; the estimate's variance
+    is state too, so it is written beside it."""
+    flux = frame.filter(pl.col("input") == "flux")["value"].drop_nulls()
+    tmp = frame.filter(pl.col("input") == "tmp")["value"].drop_nulls()
+    if flux.is_empty() or tmp.is_empty() or tmp.mean() <= 0:
+        return {"permeability": None, "variance": None}
+    parameters = context["parameters"]
+    forgetting = parameters["forgetting"]
+    estimate = previous_value(context, "permeability", parameters["initial"])
+    variance = previous_value(context, "variance", parameters["initial_variance"])
+    x, y = tmp.mean(), flux.mean()
+    gain = variance * x / (forgetting + x * variance * x)
+    estimate += gain * (y - x * estimate)
+    variance = (1 - gain * x) * variance / forgetting
+    return {"permeability": estimate, "variance": variance}
+
+
+def residual(frame, context):
+    """Expected flux from the latest permeability estimate, read as of each
+    reading, and the measured flux's departure from it. Not sequential."""
+    flux = frame.filter(pl.col("input") == "flux")["value"].drop_nulls()
+    tmp = frame.filter(pl.col("input") == "tmp")["value"].drop_nulls()
+    estimate = frame.filter(pl.col("input") == "permeability")["value"].drop_nulls()
+    if flux.is_empty() or tmp.is_empty() or estimate.is_empty():
+        return {"expected": None, "residual": None}
+    expected = estimate[-1] * tmp.mean()
+    return {
+        "expected": expected,
+        "residual": flux.mean() - expected,
+    }

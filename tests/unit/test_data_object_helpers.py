@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 
 import polars as pl
+import pytest
 
 from acquirium.Client.data_object import _pivot_split_values
 
@@ -15,6 +16,30 @@ def _tall(keys):
         "value_numeric": [1.0] * len(keys),
         "value_text": [None] * len(keys),
     })
+
+
+@pytest.mark.parametrize("getter, route", [
+    ("get", "timeseries_info_batch"),
+    ("with_rows", "timeseries_exists_batch"),
+])
+def test_stream_statistics_retry_all_views_after_failure(getter, route):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from acquirium.Client.data_object import _StreamStats
+
+    client = Mock()
+    targets = [("a", "current"), ("b", "raw")]
+    stats = _StreamStats(client, targets)
+    values = [{"a": SimpleNamespace(row_count=1)}, {"b": SimpleNamespace(row_count=1)}]
+    if getter == "with_rows":
+        values = [{"a"}, {"b"}]
+    request = getattr(client, route)
+    request.side_effect = [values[0], RuntimeError("HTTP failure"), *values]
+    with pytest.raises(RuntimeError, match="HTTP failure"):
+        getattr(stats, getter)()
+    assert set(getattr(stats, getter)()) == set(targets)
+    assert request.call_count == 4
 
 
 class TestWideColumnOrder:
@@ -338,6 +363,11 @@ class TestLazyStats:
             "rows": [[entities[0], "urn:t#p1", self.R1, "urn:unit#m"],
                      [entities[1], "urn:t#p2", self.R2, "urn:unit#m"]],
         }
+        # No replacements: every stream reads as itself.
+        client.stream_views.side_effect = lambda uris: {
+            "epoch": 1,
+            "streams": {uri: {"current": uri, "raw": uri, "unit": None} for uri in uris},
+        }
         client.timeseries_info_batch.return_value = {
             self.R1: SimpleNamespace(row_count=3, earliest=self.T0, latest=self.T1),
         }
@@ -519,7 +549,11 @@ class TestConvertToStoredUnitMismatch:
                          entity_contexts=[{}], property_unit=annotated, stream_unit=stored)],
             [("p", "urn:t#p1", "urn:t#r1")],
         )
+        from acquirium.Client.client import AcquiriumClient
+
         client = data._client
+        # The real check, over the mocked conversion factors.
+        client._units_compatible = lambda a, b: AcquiriumClient._units_compatible(client, a, b)
         client.get_conversion_factors.return_value = {"compatible": compatible}
         client.resolve_conversion.side_effect = lambda src, tgt: {
             "factors": {"from_uri": src, "to_uri": tgt, "from_multiplier": 2.0,

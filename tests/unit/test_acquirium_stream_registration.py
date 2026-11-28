@@ -130,7 +130,7 @@ def test_register_streams_without_point_uri_mint_one_dummy_point_each():
 
 def _registered_labels(client: AcquiriumClient) -> list[str]:
     g = Graph().parse(data=client.insert_graph.call_args[0][0], format="turtle")
-    return sorted(str(label) for label in g.objects(None, RDFS.label) if str(label) != "Acquirium TimescaleDB")
+    return sorted(str(label) for subject, label in g.subject_objects(RDFS.label) if subject != ACQUIRIUM_DB_URI)
 
 
 def test_register_again_with_a_label_replaces_the_old_label():
@@ -254,33 +254,22 @@ def test_register_streams_matching_unit_lands_on_reference():
     assert (point, HAS_MEDIUM, URIRef(_WATER)) in g
 
 
-def test_insert_timeseries_batch_chunks_at_acquirium_facade():
+def test_insert_timeseries_batch_delegates_chunking_to_receipt_aware_client():
     aq = Acquirium.__new__(Acquirium)
     aq.client = MagicMock()
     aq.insert_batch_rows = 3
-    aq.client.insert_timeseries_batch.side_effect = lambda source_id, streams: {
-        "ok": True,
-        "rows_inserted": sum(len(rows) for rows in streams.values()),
-    }
-
+    aq.client.insert_timeseries_batch.return_value = {"ok": True, "rows_inserted": 4, "receipts": [{}, {}]}
     ts = datetime(2026, 4, 28, tzinfo=timezone.utc)
-    result = aq.insert_timeseries_batch(
-        "source-a",
-        {
-            "temp": [(ts, 1.0), (ts, 2.0)],
-            "rh": [(ts, 3.0), (ts, 4.0)],
-        },
-    )
+    streams = {"temp": [(ts, 1.0), (ts, 2.0)], "rh": [(ts, 3.0), (ts, 4.0)]}
 
-    assert result == {"ok": True, "rows_inserted": 4, "batches": 2}
-    assert aq.client.insert_timeseries_batch.call_count == 2
-    first_source, first_chunk = aq.client.insert_timeseries_batch.call_args_list[0].args
-    second_source, second_chunk = aq.client.insert_timeseries_batch.call_args_list[1].args
-    assert first_source == second_source == "source-a"
-    assert sum(len(rows) for rows in first_chunk.values()) == 3
-    assert sum(len(rows) for rows in second_chunk.values()) == 1
-    assert set(first_chunk) == {"temp", "rh"}
-    assert set(second_chunk) == {"rh"}
+    reply = aq.insert_timeseries_batch("source-a", streams, request_id="readings")
+
+    aq.client.insert_timeseries_batch.assert_called_once()
+    call = aq.client.insert_timeseries_batch.call_args
+    assert call.args == ("source-a", streams)
+    assert call.kwargs["request_id"] == "readings"
+    assert call.kwargs["batch_rows"] == 3
+    assert reply == {"ok": True, "rows_inserted": 4, "batches": 2, "receipts": [{}, {}]}
 
 
 _BAR = "http://qudt.org/vocab/unit/BAR"

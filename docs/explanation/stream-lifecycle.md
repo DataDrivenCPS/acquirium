@@ -32,12 +32,12 @@ This is why an insert only needs the `source_id` and the `stream_name`, and why 
 The stream is a node with its two names:
 
 ```text
-acq:d19c4dbc-0ecd-5223-819c-dd7caba3f790 ref:storedAt acq:TimescaleDB
+acq:d19c4dbc-0ecd-5223-819c-dd7caba3f790 ref:storedAt acq:Escapement
 acq:d19c4dbc-0ecd-5223-819c-dd7caba3f790 acq:refName 'P1-mechanical-power'
 acq:d19c4dbc-0ecd-5223-819c-dd7caba3f790 acq:sourceId 'csv-data'
 ```
 
-**Note:** `acq:TimescaleDB` is the name of the timeseries store in the graph. It is the same when the data is stored in DuckDB.
+`acq:Escapement` identifies Acquirium’s readings store.
 
 A stream is always linked to a property, because queries find streams through properties.
 
@@ -82,10 +82,10 @@ The rules for the metadata that moves are in the [streams reference](../referenc
 Note that registration only adds.
 Registering a connected stream again without `property_uri` keeps the connection.
 
-## Registration and the streams table
+## Registration and storage
 
 The graph is where streams are defined.
-For fast checks the server also keeps a `streams` table next to the timeseries data, with one row per stream: `stream_uri`, `property_uri`, `source_id`, `stream_name` and `value_kind`.
+The server builds a lookup from RDF registrations and refreshes it when the graph changes. Escapement uses the stream URI as its storage key.
 The table is filled from the graph after every graph insert, and again when the server starts.
 
 An insert is checked against this table.

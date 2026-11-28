@@ -113,7 +113,7 @@ REGISTRY: dict[str, Attr] = {
         Attr("data_source", (str(DATA_SOURCE),), "any", DATA, literal=True,
              doc='origin tag literal, matched verbatim ("Lab", "SCADA")'),
         # Name of the app that derived this measurement, recorded by the
-        # materializer. Absent on measurements that came from a driver.
+        # app compiler. Absent on measurements that came from a driver.
         Attr("app", (str(PRODUCED_BY),), "any", DATA, literal=True,
              doc='app that derived the measurement ("normalize-temperatures")'),
         # true on the property generated for a stream that was registered
@@ -308,6 +308,7 @@ class Registry(Mapping):
         self._found: Optional[Dict[str, Attr]] = None
 
     def _discovered(self) -> Dict[str, Attr]:
+        """Load user attributes once and share discovery results at the same graph version."""
         if self.client is None:
             return {}
         if self._found is not None:
@@ -326,6 +327,7 @@ class Registry(Mapping):
                 [str(r[pi]) for r in rows],
                 [r[di] if di is not None and di < len(r) else None for r in rows],
             )
+            # Existing registries hold their own references to older results.
             for stale in [k for k in _DISCOVERED_CACHE if k[0] == key[0]]:
                 del _DISCOVERED_CACHE[stale]
             _DISCOVERED_CACHE[key] = found

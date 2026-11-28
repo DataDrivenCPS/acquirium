@@ -106,6 +106,7 @@ class CSVIngestDriver(FileIngestDriver):
         self.declare(stream_name)
 
     def read(self, path: Path, cursor: Any) -> FileBatch:
+        """Read and declare streams from the rows after the saved CSV offset."""
         offset = cursor or 0
         cfg = self.config.get("driver", {})
         separator = "\t" if path.suffix.lower() == ".tsv" else ","
@@ -169,6 +170,8 @@ class CSVIngestDriver(FileIngestDriver):
         )
         for name in observations["stream_name"].unique():
             self.declare_stream(name)
+        # One input row can produce several observations. Move the cursor
+        # by frame rows so it stays in the units used by the CSV reader.
         return FileBatch(observations, offset + len(df))
 
 

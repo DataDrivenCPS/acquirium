@@ -5,7 +5,6 @@ import polars as pl
 import pytest
 
 from acquirium.Client.streams import Stream
-from acquirium.Materialization.models import OutputSpec, StreamDescriptor
 from acquirium.internals._names import accepts_old_names, new_names
 from acquirium.internals.models import compute_ref_uri, compute_stream_uri
 
@@ -14,15 +13,13 @@ def test_point_names_are_plain_aliases():
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         assert new_names({"point_uri": "urn:p", "label": "x"}) == {"property_uri": "urn:p", "label": "x"}
-        assert OutputSpec(value_kind="numeric", point_uri="urn:p").property_uri == "urn:p"
-        assert StreamDescriptor("urn:s", property_uri="urn:p").point_uri == "urn:p"
 
 
 def test_ref_names_warn_and_map_to_stream_names():
     with pytest.warns(FutureWarning, match="'ref_name' is deprecated.*use 'stream_name'"):
         assert new_names({"source_id": "s", "ref_name": "flow"}) == {"source_id": "s", "stream_name": "flow"}
     with pytest.warns(FutureWarning, match="use 'stream_uri'"):
-        assert StreamDescriptor(ref_uri="urn:s").stream_uri == "urn:s"
+        assert Stream(ref_uri="urn:s").stream_uri == "urn:s"
     with pytest.warns(FutureWarning, match="use 'stream_uri'"):
         assert Stream("urn:s").ref_uri == "urn:s"
     with pytest.warns(FutureWarning, match="use 'compute_stream_uri'"):

@@ -232,8 +232,10 @@ BindingInfo(nid=1, property_uri='urn:swro/P2-mechanical-power', stream_uri='urn:
 DataObject.refresh_stats()
 ```
 
-Forgets the cached statistics. The next read of `total_rows`, `time_range`, `bindings` or `is_empty()` asks the server again. Use it after new data was inserted.
-The objects returned by `by()` and `convert_to()` share the cache, so they are refreshed too.
+Forgets the cached statistics. The next read of `total_rows`, `time_range`,
+`bindings`, or `is_empty()` asks the server again at the object's sample
+epoch. The objects returned by `by()` and `convert_to()` share the cache.
+Call `query.data()` again to read samples and statistics at a newer epoch.
 
 **Parameters**
 

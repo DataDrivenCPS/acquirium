@@ -5,30 +5,21 @@ FROM ghcr.io/astral-sh/uv:python${PYTHON_VERSION}-bookworm-slim
 
 WORKDIR /app
 
-# Copy dependency manifest first — this layer is only invalidated when
-# pyproject.toml changes, so source edits don't trigger a full dep reinstall.
-# Deliberately NOT copying .python-version: it pins 3.12 and would override
-# the base image's interpreter, defeating the PYTHON_VERSION build arg.
-COPY pyproject.toml uv.lock README.md ./
+# Cache the locked dependencies separately from the application source.
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked --extra mqtt --no-dev --no-install-project
 
-# Install dependencies but not the project itself.
-RUN uv sync --locked --no-dev --no-install-project
-
-# Now copy source. Bundled ontologies live under src/acquirium/_ontologies/
-# and are installed with the package — no separate ontologies/ copy needed.
+COPY README.md LICENSE ./
 COPY src ./src
-
-# Install the project itself into the already-populated venv.
-RUN uv sync --locked --no-dev
-
-# Copy config last so edits don't invalidate the layers above.
-COPY acquirium.docker.toml ./acquirium.toml
-
+RUN uv sync --locked --extra mqtt --no-dev --no-editable
 
 # Pre-warm the embedding model so the first request isn't slow.
-ENV FASTEMBED_CACHE_PATH=/app/.fastembed_cache
-RUN uv run python -c "from acquirium.TextMatch.embedding_matcher import load_embedding_model; load_embedding_model()"
+ENV PATH="/app/.venv/bin:${PATH}" \
+    FASTEMBED_CACHE_PATH=/app/.fastembed_cache
+RUN python -c "from acquirium.TextMatch.embedding_matcher import load_embedding_model; load_embedding_model()"
+
+COPY acquirium.docker.toml ./acquirium.toml
 
 EXPOSE 8000
 
-CMD ["uv", "run", "acquirium", "server", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["acquirium", "server", "--host", "0.0.0.0", "--port", "8000"]

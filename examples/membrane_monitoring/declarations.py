@@ -1,0 +1,129 @@
+"""Membrane-skid apps whose results build on the results before them."""
+
+from pathlib import Path
+
+import pandas as pd
+
+import acquirium as aq
+
+DIRECTORY = Path(__file__).resolve().parent
+SOURCE = "membrane-skids"
+SMOOTHED = "permeate-conductivity-smoothed"
+DRIFT = "permeate-conductivity-drift"
+PERMEABILITY = "membrane-permeability"
+RESIDUAL = "permeate-flux-residual"
+SKIDS = ("urn:membrane:skid-1", "urn:membrane:skid-2")
+MINUTE = 60_000_000_000
+HOUR = 60 * MINUTE
+CONDUCTIVITY_UNIT = "http://qudt.org/vocab/unit/MicroS-PER-CentiM"
+PRESSURE_UNIT = "http://qudt.org/vocab/unit/BAR"
+PREFIXES = """
+PREFIX ex: <urn:membrane:>
+PREFIX s223: <http://data.ashrae.org/standard223#>
+PREFIX ref: <https://brickschema.org/schema/Brick/ref#>
+PREFIX acq: <urn:acquirium#>
+"""
+# Per skid: the smoothing time constant, the drift detector's normal level,
+# allowance and alarm limit (uS/cm), and the permeability fit's forgetting
+# factor per hourly window and starting estimate (L/m2/h/bar). The estimate
+# trails a steady decline by about forgetting / (1 - forgetting) windows.
+SMOOTHING = {skid: {"tau_seconds": 30 * 60} for skid in SKIDS}
+DRIFT_LIMITS = {
+    "urn:membrane:skid-1": {"target": 50.0, "slack": 2.0, "limit": 40.0},
+    "urn:membrane:skid-2": {"target": 60.0, "slack": 2.0, "limit": 40.0},
+}
+FIT = {
+    skid: {"forgetting": 0.8, "initial": 3.0, "initial_variance": 100.0} for skid in SKIDS
+}
+
+
+def register(client):
+    streams = []
+    for skid in ("skid-1", "skid-2"):
+        for measurement, unit in (
+            ("flux", None),
+            ("tmp", PRESSURE_UNIT),
+            ("conductivity", CONDUCTIVITY_UNIT),
+        ):
+            streams.append(
+                {
+                    "source_id": SOURCE,
+                    "stream_name": f"{skid}-{measurement}",
+                    "property_uri": f"urn:membrane:{skid}-{measurement}",
+                    "unit": unit,
+                    "value_kind": "numeric",
+                }
+            )
+    client.register_streams(streams)
+    client.insert_graph_file(DIRECTORY / "metadata.ttl", source_id="membrane-layout")
+
+
+def measured(kind, parameters=None):
+    """Each skid's point of class ``kind``, grouped by skid."""
+    return aq.Selection(
+        PREFIXES
+        + f"""
+        SELECT ?stream ?group WHERE {{
+            ?group a ex:MembraneSkid ; s223:hasProperty ?point .
+            ?point a ex:{kind} ; ref:hasExternalReference ?stream .
+            ?stream acq:sourceId "{SOURCE}" .
+        }}
+        """,
+        parameters=parameters,
+    )
+
+
+def declarations(*, module=None):
+    module = Path(module) if module is not None else DIRECTORY / "functions.py"
+
+    def function(entrypoint, sequential=True):
+        return aq.PythonFunction.from_file(module, entrypoint, sequential=sequential)
+
+    def output(unit=None):
+        return aq.Output(unit=unit, on_group=True)
+
+    permeability = aq.App(
+        name=PERMEABILITY,
+        inputs={
+            "flux": measured("PermeateFlux", FIT),
+            "tmp": measured("TransmembranePressure"),
+        },
+        outputs={"permeability": output(), "variance": output()},
+        function=function("permeability"),
+        # One estimate per hour, from that hour's mean flux and TMP.
+        window=aq.FixedBucket(pd.Timedelta("1h")),
+    )
+    return [
+        aq.App(
+            name=SMOOTHED,
+            inputs={"conductivity": measured("PermeateConductivity", SMOOTHING)},
+            outputs={"smoothed": output(CONDUCTIVITY_UNIT)},
+            function=function("smoothed"),
+        ),
+        aq.App(
+            name=DRIFT,
+            inputs={"conductivity": measured("PermeateConductivity", DRIFT_LIMITS)},
+            outputs={"cusum": output(CONDUCTIVITY_UNIT), "alarm": output(CONDUCTIVITY_UNIT)},
+            function=function("drift"),
+        ),
+        permeability,
+        aq.App(
+            name=RESIDUAL,
+            inputs={
+                "flux": measured("PermeateFlux"),
+                "tmp": measured("TransmembranePressure"),
+                # Each reading reads the latest hourly estimate at or before
+                # it, and none once the fit is two hours stale.
+                "permeability": aq.Selection.outputs_of(permeability, "permeability", as_of=pd.Timedelta("2h")),
+            },
+            outputs={"expected": output(), "residual": output()},
+            function=function("residual", sequential=False),
+        ),
+    ]
+
+
+def deploy(client, *, module=None):
+    for declaration in declarations(module=module):
+        state = client.deploy_app(declaration)["app"]
+        if state["status"] != "active" or state["error"]:
+            raise RuntimeError(f"{declaration.name}: {state}")

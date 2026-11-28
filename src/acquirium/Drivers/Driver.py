@@ -1,3 +1,11 @@
+"""Driver lifecycle and observation admission.
+
+Drivers declare streams before sending observations. Polling and event
+drivers can buffer individual readings, while file and polling drivers can
+submit whole frames. The lifetime of a buffered batch ends when the server
+accepts it into the inbox, and the engine publishes it separately.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -5,12 +13,13 @@ import json
 import logging
 import os
 import threading
+import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from rdflib import URIRef
 
@@ -20,6 +29,10 @@ from acquirium.internals._log import timed_debug
 from acquirium.internals._names import accepts_old_names, warn_deprecated
 
 logger = logging.getLogger("acquirium.driver")
+
+# How long a request refused with HTTP 503 (a full inbox, or the engine or its
+# database unavailable) is retried.
+CAPACITY_RETRY_S = 300
 
 
 class UndeclaredStreamError(ValueError):
@@ -37,25 +50,72 @@ class FileBatch:
     observations: "pl.DataFrame | None"
     next_cursor: Any
 
+
+@dataclass(frozen=True)
+class _IngestBatch:
+    """Rows and callbacks detached for sending under a stable request ID."""
+
+    request_id: str
+    rows: list[tuple[str, datetime, str, Any]]
+    callbacks: list[Callable[[], None]]
+
+
 if TYPE_CHECKING:
     import polars as pl
 
     from acquirium.Client.acquirium import Acquirium
 
 
-def _cast_value_to_utf8(col: "pl.Series") -> "pl.Expr":
+def _value_column(col: "pl.Series") -> "pl.Expr":
+    """Keep native column types and preserve Python integers for the JSON path.
+
+    An Object column containing integers stays typed when a single Arrow
+    dtype cannot carry its values. The upload then uses JSON numbers.
+    """
     import math
+    from numbers import Integral
     import polars as pl
 
     name = col.name
+    if col.dtype in (pl.Int128, getattr(pl, "UInt128", None)):
+        return pl.lit(pl.Series(name, col.to_list(), dtype=pl.Object))
+    if col.dtype.is_numeric():
+        return pl.col(name)
+    if col.dtype == pl.Boolean:
+        return pl.col(name).cast(pl.Utf8).str.to_titlecase()
     if col.dtype == pl.Object:
+        values = col.to_list()
+        present = [v for v in values if v is not None]
+        integers = [v for v in present if isinstance(v, Integral) and not isinstance(v, bool)]
+        if integers:
+            if len(integers) == len(present) and all(-(2**63) <= v < 2**63 for v in integers):
+                return pl.lit(pl.Series(name, values, dtype=pl.Int64))
+            return pl.col(name)
+        if present and all(isinstance(v, float) for v in present):
+            return pl.lit(pl.Series(name, values, dtype=pl.Float64))
         return pl.col(name).map_elements(
-            lambda v: None if (v is None or (isinstance(v, float) and math.isnan(v))) else str(v),
+            lambda v: None if isinstance(v, float) and not math.isfinite(v) else str(v),
             return_dtype=pl.Utf8,
         )
-    if col.dtype in (pl.Float32, pl.Float64):
-        return pl.col(name).fill_nan(None).cast(pl.Utf8)
     return pl.col(name).cast(pl.Utf8)
+
+
+def _json_observations(frame: "pl.DataFrame") -> dict:
+    """Group mixed values by stream with UTC nanosecond keys and JSON scalars."""
+    import math
+    from numbers import Integral
+    import polars as pl
+
+    streams = {}
+    for name, timestamp, value in frame.select("stream_name", pl.col("ts").dt.epoch("ns"), "value").iter_rows():
+        if isinstance(value, Integral):
+            value = int(value)
+        elif isinstance(value, float):
+            value = value if math.isfinite(value) else None
+        elif value is not None:
+            value = str(value)
+        streams.setdefault(name, []).append((timestamp, value))
+    return streams
 
 
 @accepts_old_names
@@ -93,7 +153,8 @@ class Driver(ABC):
         self.config = config
         # Persistent state storage
         self.state = self._init_state(config)
-        self._source_id: str | None = None
+        source = config.get("driver", {}).get("source_id")
+        self._source_id: str | None = str(source) if source is not None else None
 
     @property
     def source_id(self) -> str:
@@ -290,15 +351,11 @@ class IngestDriver(Driver):
         # Event drivers add from broker callback threads, so the buffer is
         # guarded even though polling drivers only touch it from the tick.
         self._pending: list[tuple[str, datetime, str, Any]] = []
+        # Callbacks waiting for the rows added before them to be accepted.
+        self._on_accepted: list[Callable[[], None]] = []
         self._pending_lock = threading.Lock()
         self._flush_lock = threading.Lock()
-        self._inflight_rows = 0
-        # (publication_id, rows) of the most recent flush that failed and was
-        # put back unmodified. A retry of exactly that batch keeps the same
-        # request identifier for correlation. The server's revision publisher
-        # currently relies on row upserts, rather than an id receipt ledger,
-        # for retry-safe final values.
-        self._last_failed_batch: tuple[str, list[tuple[str, datetime, str, Any]]] | None = None
+        self._active_batch: _IngestBatch | None = None
         self._declaration_lock = threading.Lock()
         self._declarations: dict[tuple[str, str], dict[str, Any]] = {}
         self._registered: set[tuple[str, str]] = set()
@@ -434,49 +491,73 @@ class IngestDriver(Driver):
             ts = ts.replace(tzinfo=timezone.utc)
 
         with self._pending_lock:
-            if len(self._pending) + self._inflight_rows >= self.max_buffered_rows:
+            if self._buffered_rows() >= self.max_buffered_rows:
                 raise DriverBufferFull(
                     f"{type(self).__name__} buffer is full "
                     f"(max_buffered_rows={self.max_buffered_rows})"
                 )
             self._pending.append((source, ts, str(stream_name), value))
 
+    def when_accepted(self, callback: Callable[[], None]) -> None:
+        """Call ``callback`` once the server has accepted every observation
+        added before it, from the thread that flushed them.
+
+        Acceptance means the rows are durable in the server's inbox, though not
+        yet published. A source that can redeliver, such as a broker, should
+        acknowledge its messages here, never on receipt: a driver that dies
+        holding unaccepted rows then loses nothing the source cannot resend.
+        """
+        with self._pending_lock:
+            self._on_accepted.append(callback)
+
+    def _buffered_rows(self) -> int:
+        """Count queued and in-flight rows with the pending lock held."""
+        active = len(self._active_batch.rows) if self._active_batch is not None else 0
+        return len(self._pending) + active
+
     def flush(self) -> dict[str, Any]:
         """Insert everything buffered by :meth:`add` and clear the buffer.
 
-        Called for you at the end of every tick. On insert failure the rows are
-        put back and the exception propagates; they are not retried until the
-        next tick, so a failing server is polled at the driver's interval rather
-        than on every :meth:`add`.
+        Called for you at the end of every tick. It returns once the server has
+        accepted the rows, without waiting for them to publish. On insert
+        failure the exception propagates. The next flush retries the same
+        batch with its original request ID before sending new rows.
         """
+        result = {"ok": True, "rows_inserted": 0, "receipts": []}
         with self._flush_lock:
+            if self._active_batch is not None:
+                self._send_batch(self._active_batch, result)
             with self._pending_lock:
-                if not self._pending:
-                    return {"ok": True, "rows_inserted": 0}
-                rows, self._pending = self._pending, []
-                self._inflight_rows = len(rows)
+                if not self._pending and not self._on_accepted:
+                    return result
+                # Swap the queues under the lock so producers can keep adding
+                # rows while the HTTP request is in flight.
+                batch = _IngestBatch(str(uuid.uuid4()), self._pending, self._on_accepted)
+                self._pending, self._on_accepted = [], []
+                self._active_batch = batch
+            self._send_batch(batch, result)
+        return result
 
-            if self._last_failed_batch is not None and self._last_failed_batch[1] == rows:
-                publication_id = self._last_failed_batch[0]
-            else:
-                publication_id = str(uuid.uuid4())
+    def _send_batch(self, batch: _IngestBatch, result: dict[str, Any]) -> None:
+        """Retire the active batch after admission and run its callbacks."""
+        if batch.rows:
+            reply = self.insert_observations(self._pending_frame(batch.rows), request_id=batch.request_id)
+            result["rows_inserted"] += reply["rows_inserted"]
+            result["receipts"].extend(reply["receipts"])
+        with self._pending_lock:
+            self._active_batch = None
+        self._accepted(batch.callbacks)
 
-            frame = self._pending_frame(rows)
+    def _accepted(self, callbacks: list[Callable[[], None]]) -> None:
+        """Run each callback even if an earlier acknowledgment failed."""
+        for callback in callbacks:
             try:
-                result = self.insert_observations(frame, publication_id=publication_id)
+                callback()
             except Exception:
-                with self._pending_lock:
-                    self._pending[:0] = rows
-                    self._inflight_rows = 0
-                self._last_failed_batch = (publication_id, rows)
-                raise
-
-            self._last_failed_batch = None
-            with self._pending_lock:
-                self._inflight_rows = 0
-            return result
+                logger.exception("%s: acceptance callback failed", type(self).__name__)
 
     def _pending_frame(self, rows: list[tuple[str, datetime, str, Any]]) -> "pl.DataFrame":
+        """Build the frame without coercing mixed Python values during inference."""
         import polars as pl
 
         return pl.DataFrame({
@@ -487,62 +568,68 @@ class IngestDriver(Driver):
         })
 
     def insert_observations(
-        self, observations: "pl.DataFrame | None", *, publication_id: str | None = None
+        self, observations: "pl.DataFrame | None", *, request_id: str | None = None
     ) -> dict[str, Any]:
-        """Normalize and publish buffered observations.
+        """Normalize observations, register their streams, and submit them for admission.
 
-        ``publication_id`` is a request-correlation identifier set by
-        :meth:`flush`. A frame spanning multiple ``source_id`` values makes
-        one publication per source, so the identifier is namespaced per
-        source. The current revision publisher does not deduplicate by this
-        identifier; repeated stream/timestamp pairs upsert to the same rows.
+        ``request_id`` is set by :meth:`flush` and identifies the request, so
+        a resent one is deduplicated within Escapement's retry window. A frame
+        spanning multiple ``source_id`` values makes one insert per source, so
+        the identifier is namespaced accordingly. The client splits a large
+        frame (a whole file, say) into requests the server accepts.
         """
+
         import polars as pl
 
         with timed_debug(logger, "%s.normalize_observations", self.__class__.__name__):
             df = self.normalize_observations(observations)
         if df.is_empty():
             logger.debug("%s.insert_observations: empty after normalize, skipping", self.__class__.__name__)
-            return {"ok": True, "rows_inserted": 0}
+            return {"ok": True, "rows_inserted": 0, "receipts": []}
 
         self.register_declared(df)
 
         if "source_id" not in df.columns:
-            logger.debug(
-                "%s.insert_observations source=%s rows=%d",
-                self.__class__.__name__, self.source_id, len(df),
-            )
-            with timed_debug(logger, "%s.aq.insert_timeseries_arrow source=%s rows=%d",
-                             self.__class__.__name__, self.source_id, len(df)):
-                if publication_id is None:
-                    result = self.aq.insert_timeseries_arrow(self.source_id, df.to_arrow())
-                else:
-                    result = self.aq.insert_timeseries_arrow(
-                        self.source_id, df.to_arrow(), publication_id=publication_id
-                    )
-            return self._coerce_insert_result(result, len(df))
+            batches = [(self.source_id, df, request_id)]
+        else:
+            batches = [
+                (
+                    str(source),
+                    source_df.drop("source_id"),
+                    f"{request_id}:{source}" if request_id else None,
+                )
+                for (source,), source_df in df.partition_by("source_id", as_dict=True).items()
+            ]
 
-        total = 0
-        for source_id, source_df in df.partition_by("source_id", as_dict=True).items():
-            source = source_id[0] if isinstance(source_id, tuple) else source_id
-            payload = source_df.drop("source_id")
-            logger.debug(
-                "%s.insert_observations source=%s rows=%d (multi-source)",
-                self.__class__.__name__, source, len(payload),
-            )
-            source_publication_id = f"{publication_id}:{source}" if publication_id else None
-            with timed_debug(logger, "%s.aq.insert_timeseries_arrow source=%s rows=%d",
+        total, receipts = 0, []
+        for source, payload, source_request_id in batches:
+            # A stable ID lets a request refused for capacity be resent as-is.
+            # Acceptance is durable; a full inbox pushes back with 503.
+            with timed_debug(logger, "%s.submit_observations source=%s rows=%d",
                              self.__class__.__name__, source, len(payload)):
-                if source_publication_id is None:
-                    result = self.aq.insert_timeseries_arrow(str(source), payload.to_arrow())
+                request_id = source_request_id or str(uuid.uuid4())
+                if payload.schema["value"] == pl.Object:
+                    result = self.aq.insert_timeseries_batch(
+                        source, _json_observations(payload), request_id=request_id, wait=0, retry_for=CAPACITY_RETRY_S,
+                    )
                 else:
                     result = self.aq.insert_timeseries_arrow(
-                        str(source), payload.to_arrow(), publication_id=source_publication_id
+                        source, payload.to_arrow(), request_id=request_id, wait=0, retry_for=CAPACITY_RETRY_S,
                     )
-            total += self._coerce_insert_result(result, len(payload))["rows_inserted"]
-        return {"ok": True, "rows_inserted": total}
+            if not result.get("ok", True):
+                raise RuntimeError(f"observation insertion reported failure: {result!r}")
+            total += int(result.get("rows_inserted", len(payload)))
+            receipts += result["receipts"]
+        # Drivers do not wait for publication; client.wait(receipts[-1]) does.
+        return {"ok": True, "rows_inserted": total, "receipts": receipts}
 
     def normalize_observations(self, observations: "pl.DataFrame | None") -> "pl.DataFrame":
+        """Build the upload frame with UTC timestamps and preserved value types.
+
+        Drop rows missing a stream name or a usable timestamp. The server
+        decides which remaining values to store using each stream's kind.
+        Mixed or wide integer values may use an Object column for JSON transport.
+        """
         import polars as pl
 
         schema = {
@@ -576,7 +663,7 @@ class IngestDriver(Driver):
         exprs = [
             self.to_timestamp(df["ts"]).alias("ts"),
             pl.col("stream_name").cast(pl.Utf8),
-            _cast_value_to_utf8(df["value"]),
+            _value_column(df["value"]).alias("value"),
         ]
         if "source_id" in df.columns:
             exprs.insert(0, pl.col("source_id").cast(pl.Utf8))
@@ -638,21 +725,11 @@ class IngestDriver(Driver):
             day_first=day_first,
         )
 
-    def _coerce_insert_result(self, result: Any, fallback_rows: int) -> dict[str, Any]:
-        if isinstance(result, dict):
-            coerced = {
-                "ok": bool(result.get("ok", True)),
-                "rows_inserted": int(result.get("rows_inserted", fallback_rows)),
-            }
-            if not coerced["ok"]:
-                raise RuntimeError(f"observation insertion reported failure: {result!r}")
-            return coerced
-        return {"ok": True, "rows_inserted": int(result)}
-
     def _after_setup(self) -> None:
         self.register_declared()
 
     def _shutdown(self) -> None:
+        """Stop the driver and attempt a final flush even when its stop hook fails."""
         stop_error: BaseException | None = None
         try:
             self.stop()
@@ -662,7 +739,7 @@ class IngestDriver(Driver):
             self.flush()
         except Exception:
             with self._pending_lock:
-                unsent = len(self._pending) + self._inflight_rows
+                unsent = self._buffered_rows()
             logger.exception("%s: final flush failed with %d unsent row(s)", type(self).__name__, unsent)
             raise
         if stop_error is not None:
@@ -692,6 +769,7 @@ class PollingIngestDriver(IngestDriver):
             )
 
     def tick(self) -> None:
+        """Retry buffered work, sample once, and send this tick's observations."""
         # Retry any batch retained from a previous failed flush before sampling
         # again; a full retry backlog must not prevent the driver recovering.
         self.flush()
@@ -782,6 +860,7 @@ class FileIngestDriver(IngestDriver):
         self._cursors: dict[str, Any] = self.state.get("cursors", {})
 
     def tick(self) -> None:
+        """Read one page from each matching file and checkpoint its cursor."""
         # Declarations made during setup() reach the graph even before any file
         # shows up, so a model's bindings are complete from the first tick.
         self.register_declared()
@@ -806,6 +885,8 @@ class FileIngestDriver(IngestDriver):
             if next_cursor == cursor:
                 continue
 
+            # A failed insert leaves the cursor at the start of this page,
+            # so the next tick reads it again.
             if observations is not None and not observations.is_empty():
                 result = self.insert_observations(observations)
                 if not result.get("ok", False):
@@ -822,10 +903,65 @@ class FileIngestDriver(IngestDriver):
 class EventIngestDriver(IngestDriver):
     """Ingest driver whose data arrives asynchronously and is pushed by callbacks.
 
-    Callbacks report values with ``self.add(...)``; the buffer is flushed on
-    each tick, so observations are batched at the driver's configured interval
-    rather than inserted one round-trip at a time.
+    Callbacks report values with ``self.add(...)``. A background thread sends
+    them as soon as they stop arriving (``flush_idle`` seconds without an
+    ``add``) or ``flush_delay`` seconds after the first, whichever is sooner,
+    so the server's inbox, not this process, holds them. Ticks flush too.
     """
+
+    #: Seconds without a new observation after which the buffer is sent.
+    flush_idle: float = 0.02
+    #: Longest an observation waits in memory before it is sent.
+    flush_delay: float = 0.1
+    #: Seconds to wait after a failed flush before trying again.
+    flush_retry: float = 1.0
+
+    def __init__(self, aq: "Acquirium", config: dict) -> None:
+        super().__init__(aq, config)
+        self._added = threading.Event()
+        self._stopping = threading.Event()
+        self._flusher: threading.Thread | None = None
+
+    def add(self, *args: Any, **kwargs: Any) -> None:
+        super().add(*args, **kwargs)
+        self._added.set()
+
+    def when_accepted(self, callback: Callable[[], None]) -> None:
+        super().when_accepted(callback)
+        self._added.set()
 
     def tick(self) -> None:
         self.flush()
+
+    def _after_setup(self) -> None:
+        super()._after_setup()
+        self._flusher = threading.Thread(
+            target=self._flush_promptly, name=f"{type(self).__name__}-flush", daemon=True,
+        )
+        self._flusher.start()
+
+    def _flush_promptly(self) -> None:
+        """Coalesce arriving rows until the buffer goes quiet or the deadline expires."""
+        while not self._stopping.is_set():
+            if not self._added.wait(0.5):
+                continue
+            deadline = time.monotonic() + self.flush_delay
+            # Gather a burst: send once observations stop arriving.
+            while True:
+                self._added.clear()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not self._added.wait(min(self.flush_idle, remaining)):
+                    break
+            try:
+                self.flush()
+            except Exception:
+                logger.warning("%s: flush failed; retrying", type(self).__name__, exc_info=True)
+                self._added.set()
+                self._stopping.wait(self.flush_retry)
+
+    def _shutdown(self) -> None:
+        """Join the background flusher before running the driver's final flush."""
+        self._stopping.set()
+        if self._flusher is not None:
+            self._flusher.join()
+        super()._shutdown()

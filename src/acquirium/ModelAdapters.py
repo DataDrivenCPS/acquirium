@@ -13,6 +13,12 @@ UNSET = object()
 
 
 class ModelAdapter(Protocol):
+    """Describe named components and read them from a live model.
+
+    Ordinary reads supply a whole value. Sampling supplies one reading per
+    key for a time-series component at the current or requested model time.
+    """
+
     def components(self) -> Iterable[Component]: ...
     def read(self, component: Component) -> Any: ...
     def sample(self, component: Component, *, model_time: Any = UNSET) -> Any: ...
@@ -99,7 +105,12 @@ class AdapterDefinition(_Declarations):
         return self.add(component, read=read)
 
     def add(self, component: Component, *, read=None, read_at=None) -> Component:
-        """Low-level registration, also supporting explicitly keyed components."""
+        """Register a validated component and exactly one reader.
+
+        A ``read`` callback inspects the model's current state. A ``read_at``
+        callback takes a model index and is available for time-series
+        components, including keyed components.
+        """
         if self._frozen:
             raise RuntimeError("this declared adapter is frozen; build a new adapter to change declarations")
         component = validate_declaration(component, model=True)
@@ -124,10 +135,13 @@ class AdapterDefinition(_Declarations):
         return binding.read()
 
     def sample(self, component, *, model_time=UNSET):
+        """Read one time-series sample from the component's bound callback."""
         binding = self._bindings[component.label]
         if component.kind != "timeseries":
             raise TypeError("sample() reads time-series declarations")
         if binding.read_at is not None:
+            # The caller supplies a model index independently of the time
+            # it will assign to the sample in the experiment.
             if model_time is UNSET:
                 raise ValueError("this reader requires model_time")
             return binding.read_at(model_time)

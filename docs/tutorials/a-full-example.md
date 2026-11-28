@@ -97,10 +97,10 @@ times = data["time"].to_list()
 
 acq.insert_timeseries_batch("csv-data", {
     name: list(zip(times, data[name].to_list())) for name in stream_names
-})
+})["rows_inserted"]
 ```
 ```text
-{'ok': True, 'rows_inserted': 280320, 'batches': 6}
+280320
 ```
 
 [`read_csv()`](https://docs.pola.rs/api/python/stable/reference/api/polars.read_csv.html) and [`to_list()`](https://docs.pola.rs/api/python/stable/reference/series/api/polars.Series.to_list.html) are described in the Polars documentation.
@@ -370,7 +370,7 @@ This is the end of the tutorial that shows the core of Acquirium.
 From here, there are three advanced features of Acquirium:
 
 - [Writing a driver](advanced/writing-a-driver.md): set up a driver to continuously insert data.
-- [Your first app](advanced/first-app.md): create soft sensors or compute derived streams from the existing ones.
+- [Build your first soft sensor](advanced/first-app.md) with a live threshold detector, or [derive a power stream for each pump in this plant](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/documentation/advanced_apps.py).
 - [Running experiments](advanced/experiments.md): record the inputs and results of simulations and tests in Acquirium.
 
 Every method used in this tutorial is described in the [reference](../reference/_index.md).

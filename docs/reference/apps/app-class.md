@@ -1,199 +1,187 @@
 ---
-title: The App class
+title: App declarations, windows, and functions
 ---
 
-An app is a subclass of `acquirium.App`. The class attributes say when and on what the app runs. Two methods do the work: `build_query` selects the input streams and `transform` computes the output tables.
+## Windows
 
-| Item | Purpose |
-|---|---|
-| [`App`](#app) | Base class and its settings |
-| [`App.build_query`](#appbuild_query) | Select the input streams |
-| [`App.transform`](#apptransform) | Compute the outputs |
-| [`App.output_window`](#appoutput_window) | Optional: choose which output times a change affects |
-| [Durations](#durations) | How `every`, `lookback` and the other time settings are written |
-| [Time windows of a call](#time-windows-of-a-call) | Which input rows a call reads and which output rows it replaces |
+Window declarations take durations as `datetime.timedelta` values, such as
+`pd.Timedelta("5m")`. An origin is a timestamp: a `datetime`, an ISO string, or
+UTC nanoseconds, with the Unix epoch as the default. In a Python function's
+context, durations are `datetime.timedelta` values and timestamps are
+timezone-aware UTC `datetime` values.
 
-## `App`
+`Pointwise()` supplies readings at one timestamp and emits there. It is the
+default. Asynchronous streams are not automatically forward-filled.
 
-```python
-App()
-```
+`FixedBucket(width, origin=0)` supplies a half-open bucket and emits at its
+start. Results can change before or after the bucket ends; there is no wait for
+wall-clock completion.
 
-Base class of every app. Subclass it, set the class attributes below, and implement [`build_query`](#appbuild_query) and [`transform`](#apptransform). The server creates the instance.
+`Rolling(lookback, step, lookahead=timedelta(0), origin=0)` emits at grid points
+`origin + k * step`. At time `t` it reads `[t - lookback, t + lookahead]`, including
+both endpoints. A correction repairs every window that reads the changed time.
+Empty spans produce no results. Overlapping windows reread their shared history.
 
-**Class attributes**
+Apps do not choose arbitrary output timestamps or run on a wall-clock schedule.
 
-| Attribute | Type | Default | Meaning |
-|---|---|---|---|
-| `name` | `str` | the class name | Name of the deployed app. The output streams get the `source_id` `derived:<name>` |
-| `grouping` | `str` | required | `"per_match"`: one call for each match of the query. `"all_matches"`: one call that receives every match |
-| `outputs` | `dict` | required | Output streams, as a mapping of a port name to [`aq.output.stream(...)`](outputs.md#outputstream) or [`aq.output.named(...)`](outputs.md#outputnamed). At least one |
-| `every` | duration | `None` | Size of the time buckets the app works in, for example `"1m"`. A call then always covers whole buckets. Required by [`align`](inputs.md#align) |
-| `lookback` | duration or `"all"` | `"0s"` | How far before an output time the app reads its inputs. `"all"` reads everything that is stored |
-| `lookahead` | duration | `"0s"` | How far after an output time the app reads its inputs |
-| `backfill` | `bool` | `False` | `True`: the first run also processes values stored before the app was deployed. `False`: only values that arrive afterwards |
-| `batch_delay` | duration | `"0s"` | Wait this long after a change before running, so that changes arriving close together are handled in one call |
-| `min_interval` | duration | `None` | Shortest time between two successful calls for the same inputs |
+## Python functions
 
-**Constructor parameters**
+`PythonFunction.from_file(path, entrypoint, batch=False, sequential=False)` pins
+a function's file content. The entrypoint has signature `function(frame, context)`.
+The [calculation guide](../../how-to/write-soft-sensors.md#python-functions) walks through one.
 
-An app may define `__init__` with parameters of its own. The `parameters` given at deployment are passed as keyword arguments. They must be JSON values.
+For diagrams connecting stream groups, windows, timestamps, and function calls,
+see [Soft sensor inputs](../../explanation/soft-sensor-inputs.md).
 
-```python
-class Scale(aq.App):
-    grouping = "per_match"
-    outputs = {"scaled": aq.output.stream(value_kind="numeric")}
+### Dataframe type
 
-    def __init__(self, factor=2.0):
-        self.factor = factor
-```
+The first parameter's annotation selects the input dataframe:
 
-Note that one instance serves every call of the app, and calls may run at the same time. Do not store results of a call on `self`.
+- `frame: pandas.DataFrame`: pandas 2.x, with Arrow-backed columns.
+- `frame: polars.DataFrame`: Polars.
+- No annotation: Polars.
 
-Note that the server may run `transform` again for the same data. Keep it free of side effects such as writing files or sending messages.
+Imports such as `import pandas as pd`, aliases, string annotations, and
+`from __future__ import annotations` work. Acquirium resolves the annotation
+once when a worker loads the function. Other frame annotations are rejected.
+Deployment syntax stays the same.
 
-**Raises**
+pandas inputs use `table.to_pandas(types_mapper=pd.ArrowDtype)`. Numeric, text,
+and timestamp columns retain Arrow storage and nulls. Numeric nulls appear as
+`pd.NA`; timestamps have dtype `timestamp[us, tz=UTC][pyarrow]`. Context
+timestamps remain Python datetimes. pandas operations may allocate new buffers
+or convert individual columns; Arrow-backed input does not guarantee that
+every pandas operation is zero-copy.
 
-- `ValueError`: when an instance is created and `grouping` is not `"per_match"` or `"all_matches"`.
+During a calculation, `empty` and `previous_outputs` use the selected
+library. A returned pandas missing scalar, such as `pd.NA`, clears the port
+like `None`.
+`emit_windows` accepts either library and returns that same
+kind of dataframe. Outside a calculation, helpers default to Polars.
 
-### Grouping
+An app may return pandas or Polars dataframes, including different types on
+different output ports. Return timestamps in a `time` column; use
+`reset_index()` when a pandas result has a time index. Apps using different
+libraries can feed each other. The [turbidity tutorial](../../tutorials/turbidity.md#cleaning-steps)
+uses a pandas cleaner followed by a Polars alarm.
 
-| | `"per_match"` | `"all_matches"` |
-|---|---|---|
-| Calls | One for each distinct match of the query | One for all matches |
-| `inputs[alias]` | Holds one stream | Holds every matched stream of that alias |
-| `context.row` | The match of this call | Raises, unless the query has exactly one match |
-| Output streams | One set for each match | One set |
+### Inputs and outputs
 
-A [named output](outputs.md#outputnamed) is one stream, so it cannot be used with `"per_match"` when the query has more than one match. Deploying such an app fails.
+The input frame has `input`, `stream`, `time`,
+`value`, `text`, and JSON `context` columns. Each reading has either a
+numeric `value` or `text`. Selected graph columns are strings in the row context.
 
-## `App.build_query`
+`time` is the input sample's timestamp, in UTC microseconds. In Polars its
+type is `Datetime("us", "UTC")`; in pandas it is an Arrow timestamp column.
+It is the timestamp supplied when the sample was inserted. `input` is the
+row's [input name](#inputs), and `stream` identifies the input stream.
 
-```python
-App.build_query(plant)
-```
+The function's context describes the calculation. `output_time` is its output
+timestamp; `window_start` and `window_end` bound the window. `parameters`
+holds the group key and configured parameter values, and `operator` holds its declaration,
+including `operator["window"]`.
 
-Returns the query that selects the input streams. Write this method in the subclass. The server calls it when the app is deployed and again whenever the graph changes, so new matching streams are picked up.
+`context["operator"]["outputs"]` maps each declared output name to its full
+stream URI for the current group. Acquirium routes the function's results to
+those streams by output name.
 
-**Parameters**
+Context timestamps are timezone-aware Python datetimes. Function timestamps
+and window declarations must align to microseconds; finer values are rejected
+without rounding. All context window bounds are half-open: start included,
+end excluded. For a pointwise window, the end is one microsecond after its
+timestamp. For a rolling window, it is one microsecond after the last included
+timestamp.
 
-- `plant`: an object with `plant.query()`, which starts a query, and `plant.attr`. They work like `acq.query()` and `acq.attr` of the client. See [Building queries](../query/building.md).
+Within `operator["window"]`, `width`, `lookback`, `lookahead`, and `step` are
+timedeltas; `origin` is a UTC datetime. Input validity and span bounds are UTC
+datetimes, with `None` for an unbounded validity interval. As-of ages in
+`operator["as_of"]` are timedeltas. The app declaration and deployment reports
+retain the engine's integer representation.
 
-**Returns**
+For `Pointwise()`, `output_time` is the input timestamp. For `Rolling()`, it is
+the output's grid point, and the frame can contain samples before or after
+that point, as allowed by the declared window.
 
-A `Query`. Every alias of the query that has a stream becomes a key of `inputs` in `transform`.
+Context also lists the declared inputs, including those with no readings. Each
+input's `span_start` and `span_end` describe the part of the window it
+covers, as a half-open span.
 
-**Raises**
-
-Deployment fails when the method returns something that is not a `Query`.
-
-**Example**
-
-```python
-def build_query(self, plant):
-    return plant.query().measurement(alias="temp", quantity_kind="temperature")
-```
-
-Note that output streams of apps are streams too, so a broad query can match them. To read the output of one app on purpose, select it with `measurement(app="<name>")`.
-
-## `App.transform`
-
-```python
-App.transform(inputs, output, context)
-```
-
-Computes the output tables for one call. Write this method in the subclass.
-
-**Parameters**
-
-- `inputs` (`dict[str, StreamSet]`): the input data, keyed by query alias. See [`StreamSet`](inputs.md#streamset).
-- `output` ([`OutputBuilder`](outputs.md#outputbuilder)): assign one table to each port with `output["port"] = table`.
-- `context` ([`InputBatch`](inputs.md#inputbatch)): what this call is about: the matched row and the time windows.
-
-**Returns**
-
-`None`. The results are the tables assigned to `output`.
-
-**Raises**
-
-An exception stops this call. The app's status for these inputs becomes `failed` and the error text is shown by [`inspect_app`](deploying.md#acquiriuminspect_app).
-
-**Example**
+Return a mapping keyed by output port. A per-window function can return a
+number or string at `context["output_time"]`. Return `None` or omit a port to
+clear its result for that window.
 
 ```python
-def transform(self, inputs, output, context):
-    df = inputs["temp"].df()
-    output["scaled"] = df.select("time", (df["value"] * self.factor).alias("value"))
+def mean(frame, context):
+    return {"mean": frame["value"].mean()}
 ```
 
-## `App.output_window`
+Return a dataframe when the result needs multiple rows or explicit timestamps.
+Batch functions always return dataframes. The types below are Polars types.
+Pandas frames use equivalent Arrow types or compatible numeric and
+timezone-aware datetime types.
+
+| Column | Type |
+| --- | --- |
+| `time` | `Datetime("us", "UTC")` |
+| `value` | `Float64` |
+| `text` | `String` |
+
+Numeric results set `value` and may omit `text`. Use finite numbers.
+`acquirium.functions.empty()` builds an empty frame. Return the complete
+result for the window, including unchanged rows.
+
+Functions use only their declared inputs and frozen context. Do not query the
+live graph, fetch undeclared history, or depend on wall-clock time. Results must
+be independent of process lifetime and invocation order; mutable globals are
+not persistent calculation state.
+
+### Batch functions
+
+With `batch=True`, one call receives a batch of affected windows. The frame gains a
+`output_time` UTC datetime column, and `context["windows"]` lists their contexts,
+including empty windows. A reading shared by overlapping windows appears once
+per window.
 
 ```python
-App.output_window(changed)
+import polars as pl
+from acquirium.functions import emit_windows
+
+def bucket_mean(frame, context):
+    means = frame.group_by("output_time").agg(pl.col("value").mean())
+    return {"mean": emit_windows(means)}
 ```
 
-Optional. Returns the span of output times that a change of the inputs affects. Override it only when `every`, `lookback` and `lookahead` cannot describe the app. When it is not overridden, the span is computed from those settings, see [Time windows of a call](#time-windows-of-a-call).
+`emit_windows` accepts `output_time` and `value` or `text` columns.
+Omitting a window removes its old result. A row at an undeclared window timestamp
+fails the computation. Switching batch mode recalculates the app's history. The
+[bulk-ingest example](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/bulk_ingest) compares both modes.
 
-**Parameters**
+### Sequential functions
 
-- `changed` ([`TimeWindow`](inputs.md#timewindow)): the span of input times that changed.
+With `sequential=True`, the function runs in time order, once per window.
+`context["previous"]` holds the latest earlier output window's `output_time`
+and the latest reading on each port from that window. Store any input values
+needed by a later window on an output port.
 
-**Returns**
+`acquirium.functions.previous_value(context, port, default)` reads an earlier output.
+`acquirium.functions.same_period(context, width)` takes a positive
+`datetime.timedelta` and helps restart state at period boundaries. A repair
+continues until state and outputs stop changing.
+`batch=True` does not apply to sequential functions. The
+[membrane-monitoring example](https://github.com/DataDrivenCPS/acquirium/tree/main/examples/membrane_monitoring)
+uses this interface for drift detection and parameter estimation.
+The [daily flow totalizer](https://github.com/DataDrivenCPS/acquirium/blob/main/examples/soft_sensors/transforms.py)
+stores the previous rate on a second port and uses it to integrate the next
+interval. It restarts the carried volume at each UTC day boundary.
 
-[`TimeWindow`](inputs.md#timewindow). An override must return one for every call and must return the same result for the same input.
+### As-of inputs
 
-**Raises**
+`Selection(..., as_of=max_age)` reads each selected stream's latest reading
+at or before the window timestamp, no older than the maximum age, such as
+`pd.Timedelta("2h")`. It retains
+that reading's own `time`. `outputs_of` accepts the same argument.
 
-- `TypeError`: raised by the server when an override returns something that is not a `TimeWindow`.
-
-**Example**
-
-An app that writes one value per day at midnight.
-
-```python
-from datetime import timedelta
-from acquirium.Materialization import TimeWindow
-
-def output_window(self, changed):
-    start = changed.start.replace(hour=0, minute=0, second=0, microsecond=0)
-    end = changed.end.replace(hour=0, minute=0, second=0, microsecond=0)
-    return TimeWindow(start, end + timedelta(days=1) - timedelta(microseconds=1))
-```
-
-## Durations
-
-`every`, `lookback`, `lookahead`, `batch_delay` and `min_interval` take a `datetime.timedelta` or a string. A string is a number followed by a unit.
-
-| Unit | Meaning | Example |
-|---|---|---|
-| `ms` | milliseconds | `"500ms"` |
-| `s` | seconds | `"30s"` |
-| `m` | minutes | `"1m"` |
-| `h` | hours | `"1.5h"` |
-| `d` | days | `"7d"` |
-
-A negative duration raises `ValueError`. `every` must be greater than zero. `lookback` also accepts `"all"`.
-
-## Time windows of a call
-
-A call is started by a change: new, corrected or removed input values. Three spans of time describe it. All three include both of their ends.
-
-| Window | In `context` | Computed as |
-|---|---|---|
-| Changed | `context.changed_window` | From the earliest to the latest input time that changed |
-| Output | `context.output_window` | From `changed.start - lookahead` to `changed.end + lookback`. With `every`, widened to whole buckets. Buckets are counted from 1970-01-01 00:00 UTC |
-| Read | `context.read_window` | From `output.start - lookback` to `output.end + lookahead` |
-
-The inputs passed to `transform` hold every stored value in the read window. A table assigned to an output replaces the stored values of that output in the output window. Rows outside the output window are dropped.
-
-With `lookback = "all"` the read window is everything that is stored for the inputs and outputs, and the output window is the same span.
-
-**Example**
-
-An app with `every = "1m"` whose inputs changed between 00:00:00 and 00:01:30 was called with these windows:
-
-```text
-changed_window  2026-01-01 00:00:00 .. 2026-01-01 00:01:30
-output_window   2026-01-01 00:00:00 .. 2026-01-01 00:01:59.999999
-read_window     2026-01-01 00:00:00 .. 2026-01-01 00:01:59.999999
-```
+An as-of input creates no windows; other inputs determine when to calculate.
+A correction repairs the windows that read the value, up to its next reading or
+maximum age. All selections of one input must use the same age. Changing it
+recalculates history.

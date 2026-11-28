@@ -66,7 +66,7 @@ def _uniform(micros: np.ndarray, seed: int, channel: int) -> np.ndarray:
 
 
 def _normal(micros: np.ndarray, seed: int, channel: int) -> np.ndarray:
-    """A standard normal number per timestamp."""
+    """Use Box-Muller with two hash channels to generate normal noise per timestamp."""
     u1 = _uniform(micros, seed, 2 * channel)
     u2 = _uniform(micros, seed, 2 * channel + 1)
     return np.sqrt(-2.0 * np.log(u1)) * np.cos(2.0 * np.pi * u2)

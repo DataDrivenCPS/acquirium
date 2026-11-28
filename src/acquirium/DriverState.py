@@ -49,7 +49,7 @@ class DriverState:
         self._load()
 
     def _load(self) -> None:
-        """Load state from JSON file."""
+        """Populate the in-memory cache, starting empty if the state file is unusable."""
         if not self._state_file.exists():
             self._cache = {}
             return
@@ -74,7 +74,10 @@ class DriverState:
             self._cache = {}
 
     def _save(self) -> None:
-        """Save state to JSON file."""
+        """Write the entire cache with the lock held and log any write failure.
+
+        The caller's mutation remains in memory if the write fails.
+        """
         try:
             self._state_file.parent.mkdir(parents=True, exist_ok=True)
             content = json.dumps(self._cache, indent=2, default=str)

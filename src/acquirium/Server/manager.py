@@ -2,36 +2,39 @@ from __future__ import annotations
 
 import uuid
 from contextlib import nullcontext
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from functools import partial, wraps
+from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 import os
 import logging
-from threading import Lock
+from threading import Lock, RLock
 import pyoxigraph as ox
 from time import perf_counter
-from rdflib import Graph, URIRef, Literal, RDF, RDFS, SKOS
+from rdflib import Graph, Literal, RDF, URIRef
 from rdflib.namespace import NamespaceManager
-from acquirium.Storage import (
-    OxigraphGraphStore,
-    TimeseriesStore,
-    create_timeseries_store,
-)
+from acquirium.Storage.graph_store import OxigraphGraphStore
+import sys
+
+from acquirium.core import Core, IngestResult
+from acquirium.apps import MODULE_DIRECTORY, Apps, output_value_kind
 from acquirium.Storage.graph_store import select_values
 from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
-from acquirium.Storage.publication.types import PublicationReceipt, PublicationRequest, PublicationStore
-from acquirium.Storage.values import UNDECLARED_VALUE_KIND, stored_value_kind
+from acquirium.Storage.ledger import is_postgres, open_ledger
+from acquirium.Storage.logbook import Logbook
+from acquirium.Storage.values import (
+    UNDECLARED_VALUE_KIND, normalize_value_kind, normalize_value_mode,
+    stored_value_kind, streams_with_numeric_values, typed_value_series,
+)
 from acquirium.Experiments import ExperimentStore
+from acquirium.ExperimentSamples import EscapementSamples
 from acquirium.internals.qudt_units import QUDTUnitConverter
 from acquirium.Server.config import OntologySource
-from acquirium.internals.models import LogEntry, Order, TimeIntervalModel, compute_stream_uri
+from acquirium.internals.models import LogEntry, TimeIntervalModel, compute_stream_uri
 from acquirium.internals.internals_namespaces import *
 
-from typing import TYPE_CHECKING, Any, Iterable
-
-if TYPE_CHECKING:
-    import pyarrow as pa
-    import polars as pl
+from typing import Any
+from urllib.parse import parse_qs, urlsplit
 import shutil
 from acquirium.TextMatch.embedding_matcher import DEFAULT_MODEL, EmbeddingMatcher
 from acquirium.TextMatch.graph_concepts import GraphConcepts
@@ -39,12 +42,11 @@ from acquirium.TextMatch.qudt_store import QUDTStore
 from acquirium.TextMatch.resolver import ConceptResolver
 from acquirium.TextMatch.unit_key import UnitKeyIndex
 
-from acquirium.internals._log import timed_debug
+from acquirium.internals._log import StartupProgress, timed_debug
 
 logger = logging.getLogger("acquirium.manager")
 
 DEFAULT_DATA_DIR = Path(".acquirium")
-DEFAULT_DB_NAME = "acquirium"
 RECREATE_WARNING = (
     "SERVER STARTED WITH recreate=True. Existing Acquirium data will be erased now. "
     "Restarting this server with recreate=True will erase data again."
@@ -77,21 +79,29 @@ def _wipe_dir_contents(base: Path) -> None:
 
 
 
-@dataclass
+def semantic_operation(method):
+    @wraps(method)
+    def locked(self, *args, **kwargs):
+        with self.apps.lock:
+            return method(self, *args, **kwargs)
+    return locked
+
+
 class Manager:
-    timeseries_store: TimeseriesStore
-    graph_store: OxigraphGraphStore
-    publication: PublicationStore
     qudt_converter: QUDTUnitConverter | None = None
-    backend: str = "timescale"
 
     def __init__(
         self,
         data_dir: str | Path | None = None,
         *,
-        pg_dsn: str | None = None,
-        duckdb_path: str | Path | None = None,
-        timeseries_backend: str = "duckdb",
+        engine_path: str | Path | None = None,
+        engine_schema: str | None = None,
+        experiments_path: str | Path | None = None,
+        engine_workers: int = 2,
+        epoch_requests: int = 128,
+        max_pending_requests: int = 100_000,
+        history_epochs: int | None = None,
+        drain_timeout: float | None = 10,
         graph_path: str | Path | None = None,
         ontoenv_root: str | Path | None = None,
         ontology_sources: list["OntologySource"] | None = None,
@@ -99,17 +109,21 @@ class Manager:
         qudt_converter: QUDTUnitConverter | None = None,
         recreate: bool = False,
         exact_only: bool = False,
+        startup: StartupProgress | None = None,
     ):
         if not logging.getLogger().handlers:
             from acquirium.internals._log import configure_logging
             configure_logging()
-        start = perf_counter()
-        logger.debug(
-            "Manager.__init__: backend=%s data_dir=%s recreate=%s",
-            timeseries_backend, data_dir, recreate,
-        )
+        phase = startup.phase if startup is not None else partial(timed_debug, logger)
 
         base = Path(data_dir) if data_dir is not None else DEFAULT_DATA_DIR
+        if not recreate:
+            for name in ("timeseries.duckdb", "timeseries.duckdb.wal"):
+                if (legacy := base / name).exists():
+                    raise ValueError(
+                        f"Legacy Acquirium storage at {legacy} cannot be opened by Escapement. "
+                        "Choose a fresh data directory and keep the original store for export."
+                    )
         if recreate:
             logger.warning(RECREATE_WARNING)
             if base.exists():
@@ -119,24 +133,6 @@ class Manager:
         graph_path = Path(graph_path) if graph_path is not None else base / ".oxigraph"
         ontoenv_root = Path(ontoenv_root) if ontoenv_root is not None else base
 
-        _backend = timeseries_backend.lower()
-        with timed_debug(logger, "Manager.__init__: timeseries backend setup (%s)", _backend):
-            if _backend == "duckdb":
-                timeseries_store: TimeseriesStore = create_timeseries_store(
-                    "duckdb", duckdb_path=duckdb_path or (base / "timeseries.duckdb"), recreate=recreate
-                )
-            elif _backend == "timescale":
-                effective_dsn = pg_dsn or os.getenv("PG_DSN")
-                if not effective_dsn:
-                    raise ValueError("PG_DSN required for the timescale backend. Set pg_dsn or PG_DSN.")
-                timeseries_store = create_timeseries_store(
-                    "timescale", pg_dsn=effective_dsn, recreate=recreate
-                )
-            else:
-                raise ValueError("timeseries_backend must be 'duckdb' or 'timescale'")
-            from acquirium.Storage.publication.revision import RevisionPublisher
-            publication: PublicationStore = RevisionPublisher(timeseries_store)
-
         # Caller-supplied converter or graph wins; otherwise the converter
         # is built lazily in _ensure_qudt_converter from the QUDT unit
         # named graph that ontoenv loads at startup — no separate file
@@ -145,32 +141,67 @@ class Manager:
         if converter is None and qudt_graph is not None:
             converter = QUDTUnitConverter(qudt_graph)
 
-        with timed_debug(logger, "Manager.__init__: OxigraphGraphStore setup"):
+        with phase("Opening the graph store and loading ontologies"):
             graph = OxigraphGraphStore(
                 store_path=graph_path,
                 env_root=ontoenv_root,
                 extra_ontology_sources=ontology_sources,
             )
 
-        self.timeseries_store = timeseries_store
-        self.timescale = timeseries_store
         self.graph_store = graph
-        self.publication = publication
-        self.experiments = ExperimentStore(
-            timeseries_store, graph_store=graph, resolve=self._resolve_experiment_metadata,
-        )
-        from acquirium.Materialization.runtime import Materializer
-        self.materializer = Materializer(timeseries_store, graph,
-            query_resolver=self.resolve_text, record_resolver=self.resolve_record,
-            unit_converter=self._ensure_qudt_converter)
-        # Published graph revision seen by the last stream-ref resync. It gates
-        # the expensive rebuild in _registered_value_kind so repeated writes to
-        # an unregistered ref do not each trigger a full inferred-graph rebuild.
-        self._refs_synced_revision = None
         self.qudt_converter = converter
-        self.backend = _backend
+        self._refs_revision = -1
+        self._stream_refs = {}
+        self._point_refs = {}
+        try:
+            with phase("Opening the readings store and starting Escapement"):
+                artifacts = base / MODULE_DIRECTORY
+                artifacts.mkdir(exist_ok=True)
+                target = engine_path or base / "escapement-epoch.duckdb"
+                if is_postgres(target) and engine_schema is None:
+                    options = parse_qs(urlsplit(str(target)).query).get("options", ())
+                    if not any("search_path" in option for option in options):
+                        engine_schema = "acquirium_epoch"
+                self.core = Core(
+                    target,
+                    schema=engine_schema,
+                    workers=engine_workers,
+                    epoch_requests=epoch_requests,
+                    max_pending=max_pending_requests,
+                    history_epochs=history_epochs,
+                    module_paths=[*sys.path, str(artifacts.resolve())],
+                )
+            # App deployment and experiment metadata delivery share one lock:
+            # delivery may reconcile apps, while deployment may edit metadata.
+            semantic_lock = RLock()
+            self.apps = Apps(
+                self.core, graph, base, converter=self._ensure_qudt_converter,
+                lock=semantic_lock,
+            )
+            with phase("Opening the experiment and logbook ledger"):
+                # Experiment records stay in SQL, beside Escapement: the same
+                # PostgreSQL database when Escapement uses one, else DuckDB.
+                if experiments_path is None:
+                    experiments_path = engine_path if engine_path is not None and is_postgres(engine_path) \
+                        else base / "experiments.duckdb"
+                self.ledger = open_ledger(experiments_path, samples=EscapementSamples(self.core), recreate=recreate)
+                ledger_backend = "postgres" if is_postgres(experiments_path) else "duckdb"
+                self.logbook = Logbook(self.ledger, backend=ledger_backend)
+                self._logbook_lock = Lock()
+                self.experiments = ExperimentStore(
+                    self.ledger, graph_store=graph, resolve=self._resolve_experiment_metadata,
+                    metadata_lock=semantic_lock, on_metadata_published=self._refresh_experiment_apps,
+                )
+        except BaseException:
+            if hasattr(self, "ledger"):
+                self.ledger.close()
+            if hasattr(self, "core"):
+                self.core.close(drain=False)
+            graph.close()
+            raise
 
         self.data_dir = base
+        self.drain_timeout = drain_timeout
 
         # exact_only builds the same indexes over the same concepts but
         # never embeds them: resolution keeps working on exact names, units
@@ -215,9 +246,6 @@ class Manager:
             unit_keys_provider=lambda: self._unit_key_index,
         )
 
-        # Kept for backward compat — points to graph matcher
-        self.embedding_matcher = self._graph_matcher
-
         # Embedding index status tracking
         self._embedding_status_lock = Lock()
         self._embedding_status: dict[str, dict[str, Any]] = {
@@ -226,58 +254,72 @@ class Manager:
         }
 
         # Embedding corpus is the static ontoenv vocabularies; build once.
-        with timed_debug(logger, "Manager.__init__: _build_embedding_indexes"):
-            self._build_embedding_indexes()
-        logger.debug("Manager.__init__: complete in %.2fs", perf_counter() - start)
+        try:
+            mode = "exact-only" if exact_only else "with embeddings"
+            with phase(f"Preparing text-matching indexes ({mode})"):
+                self._build_embedding_indexes()
+        except BaseException:
+            self.close()
+            raise
 
     
     @classmethod
-    def from_env(cls) -> Manager:
-        _backend = os.getenv("ACQUIRIUM_TIMESERIES_BACKEND", "duckdb").lower()
+    def from_env(cls, *, startup: StartupProgress | None = None) -> Manager:
         _data_dir = os.getenv("ACQUIRIUM_DATA_DIR")
         # Ontology sources are read directly from acquirium.toml —
         # ACQUIRIUM_CONFIG points at it. Keeps the environment-variable
         # surface small.
-        from acquirium.Server.config import load_ontology_config
+        from acquirium.Server.config import load_active_config, load_ontology_config
 
-        ont_cfg = load_ontology_config()
+        loaded = load_active_config()
+        server = loaded.data.get("server", {})
+        legacy = (
+            server.get("duckdb_path") or server.get("pg_dsn")
+            or str(server.get("timeseries_backend", "")).lower() == "timescale"
+            or os.getenv("ACQUIRIUM_DUCKDB_PATH")
+            or os.getenv("ACQUIRIUM_TIMESERIES_BACKEND", "").lower() == "timescale"
+        )
+        if legacy:
+            raise ValueError(
+                "Legacy DuckDB or TimescaleDB storage settings are still configured. "
+                "Remove those settings and choose a fresh data directory and storage locations."
+            )
+        ont_cfg = load_ontology_config(loaded)
         return cls(
             data_dir=_data_dir,
-            pg_dsn=os.getenv("PG_DSN"),
-            duckdb_path=os.getenv("ACQUIRIUM_DUCKDB_PATH"),
-            timeseries_backend=_backend,
+            engine_path=os.getenv("ACQUIRIUM_ENGINE_PATH"),
+            engine_schema=os.getenv("ACQUIRIUM_ENGINE_SCHEMA"),
+            experiments_path=os.getenv("ACQUIRIUM_EXPERIMENTS_PATH"),
+            engine_workers=int(os.getenv("ACQUIRIUM_ENGINE_WORKERS", "2")),
+            epoch_requests=int(os.getenv("ACQUIRIUM_EPOCH_REQUESTS", "128")),
+            max_pending_requests=int(os.getenv("ACQUIRIUM_MAX_PENDING_REQUESTS", "100000")),
+            history_epochs=(int(os.environ["ACQUIRIUM_HISTORY_EPOCHS"])
+                            if "ACQUIRIUM_HISTORY_EPOCHS" in os.environ else None),
+            drain_timeout=float(os.getenv("ACQUIRIUM_DRAIN_TIMEOUT", "10")),
             graph_path=os.getenv("ACQUIRIUM_GRAPH_PATH"),
             ontoenv_root=os.getenv("ACQUIRIUM_ONTOENV_ROOT"),
             ontology_sources=list(ont_cfg.sources) or None,
             recreate=os.getenv("ACQUIRIUM_RECREATE", "false").lower() == "true",
             exact_only=os.getenv("ACQUIRIUM_EXACT_ONLY", "false").lower() == "true",
+            startup=startup,
         )
 
     def _sync_stream_refs_from_graph(self) -> int:
-        """Sync the streams reference table from Acquirium-managed timeseries refs.
-
-        Matches every Acquirium-managed reference node:
-            ?ref_node  acq:sourceId  ?source_id ;
-                       acq:refName   ?stream_name .
-        If a semantic point links to the reference with ``ref:hasExternalReference``,
-        ``property_uri`` is stored too. Standalone source-local references are
-        recorded with a null ``property_uri``.
-        The reference-node URI is the canonical stream identity and should be
-        equal to ``compute_stream_uri(source_id, stream_name)``. We upsert into the
-        streams table using the graph's actual reference URI as its canonical
-        identity. The timeseries table maps that URI to an integer stream_id.
-        References without sourceId/refName are skipped; drivers are responsible
-        for ingesting external data into managed streams.
-        """
+        """Rebuild the reference lookup from a fresh inferred RDF view."""
         q = f"""
         SELECT ?point ?ref_node ?source_id ?stream_name ?value_kind
         WHERE {{
           ?ref_node <{ACQUIRIUM_SOURCE_ID}> ?source_id .
           ?ref_node <{ACQUIRIUM_REF_NAME}> ?stream_name .
-          OPTIONAL {{ ?ref_node <{ACQUIRIUM_VALUE_KIND}> ?value_kind . }}
+          OPTIONAL {{ ?ref_node <{ACQUIRIUM_VALUE_KIND}> ?declared_kind . }}
+          OPTIONAL {{ ?ref_node <{INFERRED_VALUE_KIND}> ?inferred_kind . }}
+          BIND(COALESCE(?declared_kind, ?inferred_kind) AS ?value_kind)
           OPTIONAL {{ ?point <{HAS_EXTERNAL_REFERENCE}> ?ref_node . }}
         }}
         """
+        # Read the revision first: a change landing during the query leaves
+        # it behind, so the next check syncs again.
+        revision = self.graph_store.graph_status()["source_version"]
         # Stream registrations may be completed by ontology rules, so query the
         # fresh inferred deployment graph with shapes rather than only asserted
         # source data. The graph store coalesces concurrent rebuilds.
@@ -289,39 +331,28 @@ class Manager:
             )
         rows = res.get("rows", [])
         logger.debug("_sync_stream_refs_from_graph: %d candidate rows", len(rows))
-        # Validate every row first, then hand the whole batch to the store in one
-        # statement. Upserting row by row costs a round trip each, which grows with
-        # the graph: ~3.6s for 1000 refs versus ~16ms batched.
-        refs: list[tuple[str | None, str, str, URIRef, str | None]] = []
+        # Built aside and swapped in whole, so readers never see a partial map.
+        stream_refs: dict[str, dict[str, str]] = {}
+        point_refs: dict[str, set[str]] = {}
         for property_uri, ref_node, source_id, stream_name, value_kind in rows:
+            sid, name, ref = str(source_id), str(stream_name), str(ref_node)
+            expected = str(compute_stream_uri(sid, name))
+            if ref != expected:
+                raise ValueError(
+                    f"Managed reference URI mismatch for point {property_uri}: "
+                    f"graph has {ref}, expected {expected} from "
+                    f"source_id={sid!r}, stream_name={name!r}"
+                )
             try:
-                sid = str(source_id).strip('"')
-                rn  = str(stream_name).strip('"')
-                expected = compute_stream_uri(sid, rn)
-                actual = URIRef(str(ref_node))
-                if actual != expected:
-                    raise ValueError(
-                        f"Managed reference URI mismatch for point {property_uri}: "
-                        f"graph has {actual}, expected {expected} from "
-                        f"source_id={sid!r}, stream_name={rn!r}"
-                    )
-                point = str(property_uri) if property_uri is not None else None
-                refs.append((
-                    point,
-                    sid,
-                    rn,
-                    actual,
-                    # None when the stream declared no kind; the store then
-                    # keeps the kind it has, which may be inferred from data.
-                    str(value_kind).strip('"') if value_kind is not None else None,
-                ))
-            except Exception:
-                logger.warning("Failed to ensure stream ref %s / %s → %s", property_uri, source_id, stream_name, exc_info=True)
-                raise
-        count = len(self.timeseries_store.ensure_stream_refs(refs)) if refs else 0
-        if count:
-            logger.info("Synced %d stream ref(s) from graph", count)
-        return count
+                kind = stored_value_kind(value_kind)
+            except ValueError as error:
+                raise ValueError(f"stream {ref}: {error}") from error
+            stream_refs[ref] = {"source_id": sid, "stream_name": name, "value_kind": kind}
+            if property_uri is not None:
+                point_refs.setdefault(str(property_uri), set()).add(ref)
+        self._stream_refs, self._point_refs = stream_refs, point_refs
+        self._refs_revision = revision
+        return len(stream_refs)
 
     # ----- Embedding index methods -----
 
@@ -501,6 +532,7 @@ class Manager:
         self.experiments.publish_queued_metadata()
         return self.graph_store.graph_status()
 
+    @semantic_operation
     def insert_graph(
         self,
         rdf_graph: str,
@@ -508,12 +540,15 @@ class Manager:
         replace: bool = True,
         *,
         source_id: str,
-    ) -> None:
+    ) -> dict[str, str]:
         """
         Insert RDF graph into one explicitly owned deployment data graph.
 
         The embedding indexes cover the bundled ontologies only, so an insert
         does not rebuild them.
+
+        The RDF commits before app reconciliation. Return any reconciliation
+        error separately so callers can repair the graph against the published plan.
 
         Args:
             :param rdf_graph: An `xml.sax.xmlreader.InputSource`, file-like object,
@@ -537,8 +572,7 @@ class Manager:
 
         try:
             with timed_debug(logger, "insert_graph format=%s replace=%s", format, replace):
-                owned_metadata = source_id in {METADATA_SOURCE_ID, "experiments"} or source_id.startswith("experiment/")
-                with self.experiments.metadata.edit() if owned_metadata else nullcontext():
+                with self._editing_source(source_id):
                     graph_uri = self.graph_store.source_graph_uri(source_id)
                     self.graph_store.insert_graph(
                         rdf_graph,
@@ -547,400 +581,289 @@ class Manager:
                         graph_uri=graph_uri,
                     )
             logging.info("acquirium: inserted graph into store")
+            # Embedding corpus is the static ontoenv vocabularies, not
+            # inserted data — no per-insert reindex. Syncing here reports a
+            # bad stream registration to the caller that made it.
             with timed_debug(logger, "insert_graph: _sync_stream_refs_from_graph"):
                 self._sync_stream_refs_from_graph()
-            self._record_materialization_graph_revision()
-            # Embedding corpus is the static ontoenv vocabularies, not
-            # inserted data — no per-insert reindex. Stream-reference sync
-            # below requires a fresh inferred view; concurrent callers share
-            # its single-flight rebuild.
         except Exception as e:
             logging.error("acquirium: failed to insert graph: %s", e)
             raise
+        return self.apps.reconcile()
 
-    def _record_materialization_graph_revision(self) -> None:
-        """A graph change invalidates only the compiled in-memory plan."""
-        self.materializer._graph_revision = -1
+    def _editing_source(self, source_id: str):
+        """Hold the experiment metadata edit while writing a source graph it
+        owns; any other source needs nothing."""
+        owned = source_id in {METADATA_SOURCE_ID, "experiments"} or source_id.startswith("experiment/")
+        return self.experiments.metadata.edit() if owned else nullcontext()
 
-    def recover_materialization_state(self) -> None:
-        """Recompile deployed bindings; pending rows are rediscovered by revision."""
-        self.materializer.refresh()
+    # App changes write derived stream metadata to the graph, which the next
+    # _current_refs() call picks up.
+    def recover_apps(self) -> None:
+        self.apps.recover()
 
-    def deploy_app(self, deployment) -> dict[str, Any]:
-        """Persist and compile one durable app deployment."""
-        self.materializer.deploy(deployment)
-        self.materializer.refresh()
-        return {"name": deployment.name, "status": "deployed"}
+    def _refresh_experiment_apps(self) -> None:
+        with self.apps.lock:
+            # Delivery without deployed apps must not submit an empty plan:
+            # it would consume capacity reserved for experiment samples.
+            if self.apps.state["apps"]:
+                self.apps.refresh()
 
-    def remove_app(self, name: str) -> dict[str, Any]:
-        self.materializer.remove(name)
-        return {"name": name, "status": "removed"}
+    def deploy_app(self, app):
+        result = self.apps.deploy(app)
+        # Deployment projects new output metadata. Publish the matching query
+        # view before a client can query those outputs using the result.
+        self._current_refs()
+        return result
 
-    def check_app(self, deployment, limit: int | None = None,
-                  search_path: str | None = None) -> dict[str, Any]:
-        """Dry-run an app against stored data; nothing is written."""
-        return self.materializer.check(deployment, limit=limit, search_path=search_path)
+    def remove_app(self, name):
+        result = self.apps.remove(name)
+        self._current_refs()
+        return result
 
-    def run_materialization_once(self) -> bool:
-        """Run at most one coherent batch for every currently compiled binding."""
-        return self.materializer.run_once()
+    def _current_refs(self) -> None:
+        """Resync the reference maps if the graph changed since the last sync.
 
-    def timeseries_batch(
-        self,
-        uri: str,
-        start: datetime | None = None,
-        end: datetime | None = None,
-        limit: int | None = None,
-        order: Order = "asc",
-        batch_size: int = 50_000,
-        value_mode: str = "default",
-    ) :
+        No apps lock: a deploy can hold it for seconds, and ingest and reads
+        must not wait on that. The maps are replaced whole, never mutated, so
+        a reader sees either the old or the new registrations.
         """
-        Retrieve time series data for a given property URI within an optional time range.
+        if self._refs_revision != self.graph_store.graph_status()["source_version"]:
+            self._sync_stream_refs_from_graph()
 
-        Returns:
-            An iterator that yields batches of time series data as Arrow RecordBatches.
-        """
-        storage_key = self.timeseries_store.resolve_storage_key(uri)
-        logger.debug(
-            "timeseries_batch uri=%s storage_key=%s start=%s end=%s limit=%s",
-            uri, storage_key, start, end, limit,
-        )
-        return self.timeseries_store.timeseries(
-            stream_uri=storage_key,
-            start=start,
-            end=end,
-            limit=limit,
-            order=order,
-            batch_size=batch_size,
-            value_mode=value_mode,
-        )
+    def resolve_storage_keys(self, uris, *, view="current", epoch=None):
+        """Resolve points and stream references against one published plan."""
+        from acquirium.replacements import resolve
 
-    def timeseries_info_batch(self, uris: list[str]) -> dict:
-        """Fetch stats for multiple stream or property URIs."""
-        if not uris:
-            return {}
-        uri_to_key = self.timeseries_store.resolve_storage_keys(uris)
-        key_to_uri = {v: k for k, v in uri_to_key.items()}
-        raw = self.timeseries_store.timeseries_info_batch(list(key_to_uri.keys()))
-        return {key_to_uri[k]: v for k, v in raw.items()}
+        self._current_refs()
+        result = {}
+        for uri in uris:
+            refs = self._point_refs.get(uri, {uri})
+            if len(refs) != 1:
+                raise ValueError(f"point {uri!r} has multiple references; select an explicit stream_uri")
+            result[uri] = next(iter(refs))
+        plan = self.apps.plan_at(epoch)
+        resolved = resolve(plan, result.values(), view=view)
+        return {uri: resolved[ref] for uri, ref in result.items()}
 
-    def timeseries_exists_batch(self, uris: list[str]) -> list[str]:
-        """The stream or property URIs among ``uris`` that have any row."""
-        if not uris:
-            return []
-        uri_to_key = self.timeseries_store.resolve_storage_keys(uris)
-        key_to_uri = {v: k for k, v in uri_to_key.items()}
-        found = self.timeseries_store.timeseries_exists_batch(list(key_to_uri.keys()))
-        return sorted(key_to_uri[k] for k in found)
+    def timeseries_batch(self, uri, start=None, end=None, limit=None, order="asc",
+                         batch_size=10_000, value_mode="default", epoch=None, after=None,
+                         view="current"):
+        """Read one view at one epoch; ``after`` waits for a published request."""
+        if after is not None:
+            self.core.wait_for(after)
+            if epoch is not None and epoch < self.core.epochs_of([after])[0]:
+                raise ValueError("epoch precedes the after receipt")
+        if epoch is None:
+            epoch = self.core.engine.snapshot().epoch
+        stream = self.resolve_storage_keys([uri], view=view, epoch=epoch)[uri]
+        mode = normalize_value_mode(value_mode)
+        if mode == "default":
+            mode = normalize_value_kind(self._reading_value_kind(stream, epoch))
+        return self.core.batches(stream, start=start, end=end, limit=limit, order=order,
+                                 batch_size=batch_size, epoch=epoch, mode=mode)
 
-    @staticmethod
-    def _sparql_value(value: Any) -> str | None:
-        if value is None:
-            return None
-        return str(value).strip('"')
+    def _reading_value_kind(self, stream: str, epoch: int) -> str:
+        """Recover a removed output's kind from the plan at the read epoch."""
+        from acquirium.replacements import resolve
 
-    def publish(
-        self, mutations: "pa.Table", *, publication_id: str | None = None
-    ) -> PublicationReceipt:
-        """Atomically publish canonical upserts under a request identifier.
+        if stream in self._stream_refs:
+            return self._stream_refs[stream]["value_kind"]
+        plan = self.apps.plan_at(epoch)
+        kind = output_value_kind(plan, stream)
+        if kind is not None:
+            return kind
+        # Removed replacement stages can inherit the kind from the raw stream.
+        raw = resolve(plan, [stream], view="raw")[stream]
+        if raw != stream:
+            if raw in self._stream_refs:
+                return self._stream_refs[raw]["value_kind"]
+            return output_value_kind(plan, raw) or "numeric"
+        return "numeric"
 
-        Driver ingestion goes through this revision-writing path. A fresh UUID
-        is assigned when the caller supplies no ``publication_id``. The
-        current revision publisher does not persist receipts or deduplicate a
-        retry that reuses an identifier; row upserts remain idempotent by
-        ``(stream_uri, timestamp)``.
-        """
-        pub_id = publication_id or str(uuid.uuid4())
-        receipt = self.publication.publish(PublicationRequest(pub_id, mutations))
-        return self._after_canonical_publish(receipt)
+    def stream_views(self, uris, *, epoch=None):
+        """Pin an epoch and resolve each stream's views at that snapshot."""
+        from acquirium.replacements import resolve, units
 
-    def _after_canonical_publish(self, receipt: PublicationReceipt) -> PublicationReceipt:
-        """Writes need no durable notification: revisions are scanned by workers."""
-        return receipt
-
-    @staticmethod
-    def _empty_receipt(publication_id: str | None) -> PublicationReceipt:
-        return PublicationReceipt(
-            publication_id=publication_id or str(uuid.uuid4()),
-            payload_hash="", row_count=0, versions={},
-        )
-
-    @staticmethod
-    def _mutation_table(df: "Any", *, operation: str = "upsert") -> "pa.Table":
-        """Split ``value``/``value_kind`` columns and tag every row with
-        *operation*, producing a table matching MUTATION_SCHEMA's column set."""
-        import polars as pl
-        from acquirium.Storage.values import prepare_value_columns
-
-        split = prepare_value_columns(df)
-        return (
-            split.with_columns(pl.lit(operation).alias("operation"))
-            .select(["operation", "stream_uri", "ts", "numeric_value", "text_value"])
-            .to_arrow()
-        )
-
-    def insert_timeseries(
-        self,
-        *,
-        source_id: str,
-        stream_name: str,
-        rows: list[tuple[datetime, Any]],
-        property_uri: str | None = None,
-        replace: bool = False,
-        publication_id: str | None = None,
-    ) -> PublicationReceipt:
-        import polars as pl
-        from acquirium.Storage.values import typed_value_series
-
-        stream_uri = str(compute_stream_uri(source_id, stream_name))
-        kinds = self._registered_value_kinds([stream_uri])
-        logger.debug(
-            "insert_timeseries source=%s stream_name=%s rows=%d kind=%s replace=%s",
-            source_id, stream_name, len(rows), kinds[stream_uri], replace,
-        )
-        n = len(rows)
-        if n == 0 and not replace:
-            return self._empty_receipt(publication_id)
-        df = self._with_value_kinds(pl.DataFrame(
-            {
-                "stream_uri": pl.Series("stream_uri", [stream_uri] * n, dtype=pl.Utf8),
-                "ts": pl.Series("ts", [ts for ts, _ in rows], dtype=pl.Datetime("us", "UTC")),
-                "value": typed_value_series([v for _, v in rows]),
-            }
-        ), kinds)
-        if replace:
-            request = PublicationRequest(publication_id or str(uuid.uuid4()), self._mutation_table(df))
-            return self._after_canonical_publish(self.publication.replace(request, stream_uri))
-        return self.publish(self._mutation_table(df), publication_id=publication_id)
-
-    def insert_timeseries_batch(
-        self,
-        source_id: str,
-        streams: dict[str, list[tuple[datetime, Any]]],
-        *,
-        publication_id: str | None = None,
-    ) -> PublicationReceipt:
-        """Publish multiple source-local streams as one atomic mutation set."""
-        import polars as pl
-
-        stream_uris: list[str] = []
-        timestamps: list[datetime] = []
-        values: list[Any] = []
-        with timed_debug(logger, "insert_timeseries_batch source=%s streams=%d", source_id, len(streams)):
-            for stream_name, stream_rows in streams.items():
-                stream_uri = str(compute_stream_uri(source_id, stream_name))
-                for ts, value in stream_rows:
-                    stream_uris.append(stream_uri)
-                    timestamps.append(ts)
-                    values.append(value)
-        kinds = self._registered_value_kinds(
-            str(compute_stream_uri(source_id, stream_name)) for stream_name in streams
-        )
-        logger.debug(
-            "insert_timeseries_batch source=%s built %d total rows across %d streams",
-            source_id, len(stream_uris), len(streams),
-        )
-        if not stream_uris:
-            return self._empty_receipt(publication_id)
-
-        from acquirium.Storage.values import typed_value_series
-
-        df = self._with_value_kinds(pl.DataFrame(
-            {
-                "stream_uri": pl.Series("stream_uri", stream_uris, dtype=pl.Utf8),
-                "ts": pl.Series("ts", timestamps, dtype=pl.Datetime("us", "UTC")),
-                "value": typed_value_series(values),
-            }
-        ), kinds)
-        # Unit-level callers can supply only the storage seam. Production
-        # managers publish through the revision store created at startup.
-        if not hasattr(self, "publication"):
-            return self.timeseries_store.bulk_insert_polars(df)
-        return self.publish(self._mutation_table(df), publication_id=publication_id)
-
-    def insert_timeseries_arrow(
-        self, source_id: str, table: "pa.Table", *, publication_id: str | None = None
-    ) -> PublicationReceipt:
-        """Publish a melted (ts, stream_name, value) Arrow table as one atomic mutation set."""
-        import polars as pl
-
-        logger.debug("insert_timeseries_arrow source=%s arrow_rows=%d", source_id, len(table))
-        if len(table) == 0:
-            return self._empty_receipt(publication_id)
-        df = pl.from_arrow(table)
-        stream_count = df["stream_name"].n_unique()
-        logger.info(
-            "acquirium: insert_timeseries_arrow received %d row(s) across %d stream(s) for source_id=%s",
-            len(df),
-            stream_count,
-            source_id,
-        )
-        stream_uri_map = {
-            name: str(compute_stream_uri(source_id, name)) for name in df["stream_name"].unique().to_list()
+        if epoch is None:
+            snapshot, _ = self.engine_snapshot()
+        else:
+            snapshot = self.core.engine.snapshot(epoch)
+        plan = snapshot.plan()
+        heads = resolve(plan, uris, view="current")
+        bases = resolve(plan, uris, view="raw")
+        stage_units = units(plan)
+        streams = {
+            uri: {"current": heads[uri], "raw": bases[uri], "unit": stage_units.get(heads[uri])}
+            for uri in uris
         }
-        kinds = self._registered_value_kinds(stream_uri_map.values())
-        logger.debug("insert_timeseries_arrow source=%s unique_streams=%d", source_id, len(stream_uri_map))
-        df = self._with_value_kinds(
-            df.with_columns(pl.col("stream_name").replace(stream_uri_map).alias("stream_uri"))
-            .select(["stream_uri", "ts", "value"]),
-            kinds,
-        )
-        if not hasattr(self, "publication"):
-            return self.timeseries_store.bulk_insert_polars(df)
-        receipt = self.publish(self._mutation_table(df), publication_id=publication_id)
-        logger.info(
-            "acquirium: insert_timeseries_arrow wrote %d row(s) for source_id=%s",
-            receipt.row_count,
-            source_id,
-        )
-        return receipt
+        return {"epoch": snapshot.epoch, "streams": streams}
 
-    def delete_timeseries(
-        self,
-        stream_uri: str,
-        *,
-        timestamps: list[datetime] | None = None,
-        start: datetime | None = None,
-        end: datetime | None = None,
-        publication_id: str | None = None,
-    ) -> PublicationReceipt:
-        """Deletion is intentionally unsupported in v1: the incremental
-        materializer has no tombstone write path. Kept as an explicit,
-        documented rejection so the API surface fails fast and clearly."""
-        raise ValueError("deletion is not supported by incremental materialization")
+    def engine_snapshot(self, *, timeout: float = 30.0):
+        """The latest snapshot, once its plan reflects the metadata graph as
+        of this call, and whether it does.
 
-    def _with_value_kinds(self, df: "pl.DataFrame", kinds: dict[str, str]) -> "pl.DataFrame":
-        """Add the ``value_kind`` column each row of *df* is written with.
+        Readers that resolve streams in the graph and then pin an epoch take
+        it here. They wait only while a graph write is ahead of the published
+        plan, and at most ``timeout`` seconds for an install under way."""
+        current = self.apps.catch_up(timeout)
+        if not current:
+            logger.warning(
+                "engine snapshot: the published plan does not reflect the latest "
+                "metadata yet; reads at it may miss or include app outputs"
+            )
+        return self.core.engine.snapshot(), current
 
-        A stream that declared no kind becomes numeric when it receives its
-        first numeric value. Until then its values are written as text.
-        """
+    def timeseries_info_batch(self, uris, *, view="current", epoch=None):
+        """Resolve and count streams at the requested epoch or the latest snapshot."""
+        snapshot = self.core.engine.snapshot(epoch)
+        keys = self.resolve_storage_keys(uris, view=view, epoch=snapshot.epoch)
+        info = self.core.info(set(keys.values()), snapshot=snapshot)
+        return {uri: info[key] for uri, key in keys.items()}
+
+    def timeseries_exists_batch(self, uris: list[str], *, view="current", epoch=None) -> list[str]:
+        """The stream or point URIs among ``uris`` that have any row."""
+        info = self.timeseries_info_batch(uris, view=view, epoch=epoch)
+        return sorted(uri for uri, stats in info.items() if stats["row_count"])
+
+    def insert_timeseries(self, *, source_id, stream_name, rows, request_id=None) -> IngestResult:
+        return self.insert_timeseries_batch(source_id, {stream_name: rows}, request_id=request_id)
+
+    def insert_timeseries_batch(self, source_id, streams, *, request_id=None, replace=()) -> IngestResult:
+        """Upsert ``{stream_name: rows}`` in one request; each stream named in
+        ``replace`` holds exactly its supplied rows afterwards."""
         import polars as pl
-        from acquirium.Storage.values import streams_with_numeric_values
+        from acquirium.core import time_ns
+        refs, times, values = [], [], []
+        for name, rows in streams.items():
+            ref = str(compute_stream_uri(source_id, name))
+            for timestamp, value in rows:
+                refs.append(ref)
+                times.append(time_ns(timestamp))
+                values.append(value)
+        frame = pl.DataFrame({"stream_uri": pl.Series(refs, dtype=pl.String),
+                              "ts": pl.Series(times, dtype=pl.Int64).cast(pl.Datetime("ns", "UTC")),
+                              "value": typed_value_series(values)})
+        replaced = {str(compute_stream_uri(source_id, name)) for name in replace}
+        return self._ingest(source_id, frame, request_id, replace=replaced)
 
+    def insert_timeseries_frame(self, source_id, frame, *, request_id=None, stored=False) -> IngestResult:
+        """Resolve Arrow stream names to references and preserve the value column's dtype."""
+        import polars as pl
+
+        names = frame["stream_name"].unique().to_list()
+        if any(not isinstance(name, str) or not name for name in names):
+            raise ValueError("stream_name must be a nonempty string")
+        refs = {name: str(compute_stream_uri(source_id, name)) for name in names}
+        value_columns = ("number", "text") if stored else ("value",)
+        if not {"ts", *value_columns}.issubset(frame.columns):
+            raise ValueError(f"Arrow ingest requires ts and {', '.join(value_columns)} columns")
+        frame = frame.select(pl.col("stream_name").replace_strict(refs).alias("stream_uri"), "ts", *value_columns)
+        if stored:
+            self._validate_refs(source_id, set(refs.values()))
+            return self.core.ingest_stored(source_id, request_id or str(uuid.uuid4()), frame)
+        return self._ingest(source_id, frame, request_id)
+
+    def _ingest(self, source_id, frame, request_id, *, replace=()) -> IngestResult:
+        """Submit ``stream_uri``/``ts``/``value`` rows, each value stored as its
+        stream's declared kind."""
+        import polars as pl
+        refs = set(frame["stream_uri"].unique().to_list()) | set(replace)
+        kinds = self._validate_refs(source_id, refs)
         undeclared = [uri for uri, kind in kinds.items() if kind == UNDECLARED_VALUE_KIND]
         if undeclared:
-            numeric = streams_with_numeric_values(
-                df.filter(pl.col("stream_uri").is_in(undeclared))
-            )
-            if numeric:
-                self.timeseries_store.mark_streams_numeric(sorted(numeric))
-            kinds = {
-                **kinds,
-                **{uri: "numeric" if uri in numeric else "text" for uri in undeclared},
-            }
-        return df.with_columns(
-            pl.col("stream_uri").replace_strict(kinds, return_dtype=pl.Utf8).alias("value_kind")
+            observed = frame.filter(pl.col("stream_uri").is_in(undeclared))
+            inferred = streams_with_numeric_values(observed)
+            if inferred:
+                # A first numeric observation changes registration metadata.
+                # Serialize that transition with other graph edits.
+                with self.apps.lock:
+                    # Registrations may have changed while acquiring the lock.
+                    kinds = self._validate_refs(source_id, refs)
+                    inferred = {uri for uri in inferred if kinds[uri] == UNDECLARED_VALUE_KIND}
+                    kinds.update(dict.fromkeys(inferred, "numeric"))
+                    result = self._submit_readings(source_id, frame, request_id, kinds, replace)
+                    if inferred:
+                        # Record the inferred kind only after admission succeeds.
+                        graph = Graph()
+                        for uri in inferred:
+                            graph.add((URIRef(uri), INFERRED_VALUE_KIND, Literal("numeric")))
+                        self.graph_store.insert_graph(
+                            graph, graph_uri=self.graph_store.source_graph_uri(source_id),
+                        )
+                    return result
+        return self._submit_readings(source_id, frame, request_id, kinds, replace)
+
+    def _submit_readings(self, source_id, frame, request_id, kinds, replace) -> IngestResult:
+        """Attach the registered kinds so the engine adapter can normalize readings."""
+        import polars as pl
+
+        frame = frame.with_columns(
+            pl.col("stream_uri").replace_strict(kinds, return_dtype=pl.String).alias("value_kind")
         )
+        return self.core.ingest(source_id, request_id or str(uuid.uuid4()), frame, replace=replace)
 
-    def _registered_value_kind(self, stream_uri: str) -> str:
-        return self._registered_value_kinds([stream_uri])[stream_uri]
+    def _validate_refs(self, source, references):
+        """Each registered reference's value kind; unregistered or foreign
+        references fail."""
+        self._current_refs()
+        kinds = {}
+        for reference in references:
+            declaration = self._stream_refs.get(reference)
+            if declaration is None:
+                raise ValueError(f"stream {reference!r} is not registered")
+            if declaration["source_id"] != source:
+                raise ValueError("stream source mismatch")
+            kinds[reference] = declaration["value_kind"]
+        return kinds
 
-    def _registered_value_kinds(self, stream_uris: Iterable[str]) -> dict[str, str]:
-        """Stored value kind of every stream in *stream_uris*; one store query per call.
+    def delete_timeseries(self, source_id, stream_name, timestamps, *, request_id=None) -> IngestResult:
+        import polars as pl
+        from acquirium.core import time_ns
+        reference = str(compute_stream_uri(source_id, stream_name))
+        self._validate_refs(source_id, {reference})
+        frame = pl.DataFrame({"stream_uri": [reference] * len(timestamps),
+                              "ts": pl.Series([time_ns(value) for value in timestamps], dtype=pl.Int64).cast(pl.Datetime("ns", "UTC")),
+                              "value": pl.Series([None] * len(timestamps), dtype=pl.Float64),
+                              "operation": ["delete"] * len(timestamps)})
+        return self.core.ingest(source_id, request_id or str(uuid.uuid4()), frame)
 
-        The kind is ``"numeric"``, ``"text"`` or ``"undeclared"``.
+    def insert_log(self, entry: LogEntry) -> None:
+        property_uri = URIRef(entry.property_uri)
+        log_uri = URIRef(f"{property_uri}_log")
+        graph = Graph()
+        graph.add((property_uri, HAS_LOG, log_uri))
+        graph.add((log_uri, RDF.type, LOGBOOK))
+        with self._logbook_lock:
+            self.logbook.insert(entry)
+            self.graph_store.insert_graph(graph, graph_uri=self.graph_store.acquirium_graph_uri)
 
-        Graph writes and Arrow ingestion may be issued back-to-back by a
-        client. Ensure the derived stream registry has observed the graph
-        write before rejecting the first data batch. The resync rebuilds the
-        inferred graph, so only run it when the graph actually advanced since
-        the last sync; otherwise repeated writes to an unregistered ref would
-        each pay the full rebuild cost.
-        """
-        wanted = list(dict.fromkeys(stream_uris))
-        kinds = self.timeseries_store.stream_value_kinds(wanted)
-        missing = [uri for uri in wanted if uri not in kinds]
-        if missing:
-            published = int(self.graph_store.graph_status()["published_version"])
-            if published != self._refs_synced_revision:
-                self._sync_stream_refs_from_graph()
-                self._refs_synced_revision = published
-            kinds.update(self.timeseries_store.stream_value_kinds(missing))
-            missing = [uri for uri in wanted if uri not in kinds]
-        if missing:
-            raise ValueError(f"stream {missing[0]} is not registered")
-        return {uri: stored_value_kind(kinds[uri]) for uri in wanted}
-
-    def insert_log(self, log_message: LogEntry):
-        logger.debug("insert_log property_uri=%s ts=%s", log_message.property_uri, log_message.timestamp)
-        self.timeseries_store.insert_log(log_message)
-        G = Graph()
-        log_uri = URIRef(f"{str(log_message.property_uri)}_log")
-        G.add((URIRef(log_message.property_uri), HAS_LOG, log_uri))
-        G.add((log_uri, RDF.type, LOGBOOK))
-        # Log writes still change the store-owned graph version, but no
-        # manager-local counter needs to be maintained.
-        self.graph_store.insert_graph(
-            G,
-            format="turtle",
-            replace=False,
-            graph_uri=self.graph_store.acquirium_graph_uri,
-        )
-
-
-    def query_logs(
-        self,
-        property_uri: str,
-        log_time_interval: TimeIntervalModel | None = None,
-        obs_time_interval: TimeIntervalModel | None = None
-    ) -> list[LogEntry]:
-        """
-        Query log entries for a given property URI within an optional time interval.
-
-        Args:
-            property_uri: The URI of the time series point.
-            log_time_interval: Optional TimeIntervalModel object specifying start and end times for log entries.
-            obs_time_interval: Optional TimeIntervalModel object specifying start and end times for observation entries.
-
-        Returns:
-            A list of LogEntry objects.
-        """
-        return self.timeseries_store.query_logs(
-            property_uri=property_uri,
-            log_time_interval=log_time_interval,
-            obs_time_interval=obs_time_interval
-        )
+    def query_logs(self, property_uri: str, log_time_interval: TimeIntervalModel | None = None,
+                   obs_time_interval: TimeIntervalModel | None = None) -> list[LogEntry]:
+        return self.logbook.query(property_uri, log_time_interval, obs_time_interval)
 
     def delete_logs(self, property_uri: str) -> bool:
-        """
-        Delete all log entries for a given property URI.
-
-        Args:
-            property_uri: The URI of the time series point.
-        """
-        if not self.timeseries_store.delete_logs(property_uri):
-            logger.warning("Failed to delete log entries for point %s from database", property_uri)
-            return False
-        logger.info("Deleted all log entries for point %s from database", property_uri)
-        # Optionally, remove log references from the graph
-        q = f"""
-        DELETE WHERE {{
-          <{property_uri}> <{HAS_LOG}> ?log .
-          ?log a <{LOGBOOK}> .
-        }}
-        """
-        result = self.graph_store.sparql_update(
-            q,
-            graph_uri=self.graph_store.acquirium_graph_uri,
-        )
-        logger.info("Deleted all log references for point %s from graph", property_uri)
+        uri = URIRef(property_uri).n3()
+        with self._logbook_lock:
+            self.logbook.delete(property_uri)
+            self.graph_store.sparql_update(
+                f"DELETE WHERE {{ {uri} <{HAS_LOG}> ?log . ?log a <{LOGBOOK}> . }}",
+                graph_uri=self.graph_store.acquirium_graph_uri,
+            )
         return True
 
+    @semantic_operation
     def sparql_update(self, update: str, source_id: str) -> dict[str, Any]:
         """Execute a SPARQL UPDATE against one explicitly owned data graph.
 
         It lets a component remove exactly the triples it registered without
         granting updates to ontology graphs.
         """
-        owned_metadata = source_id in {METADATA_SOURCE_ID, "experiments"} or source_id.startswith("experiment/")
-        with self.experiments.metadata.edit() if owned_metadata else nullcontext():
+        with self._editing_source(source_id):
             graph_uri = self.graph_store.source_graph_uri(source_id)
             result = self.graph_store.sparql_update(update, graph_uri=graph_uri)
         self._sync_stream_refs_from_graph()
-        self._record_materialization_graph_revision()
-        return result
+        return {**result, **self.apps.reconcile()}
 
     def validate_graph(self) -> dict[str, str | bool]:
         """Validate all registered deployment data against ontology shapes."""
@@ -1143,7 +1066,7 @@ class Manager:
         converter = self._ensure_qudt_converter()
         src = converter.resolve_unit(from_unit)
         tgt = converter.resolve_unit(to_unit)
-        compatible = converter._check_compatible(src, tgt)
+        compatible = converter.check_compatible(src, tgt)
         return {
             "from_uri": str(src.uri),
             "to_uri": str(tgt.uri),
@@ -1158,22 +1081,26 @@ class Manager:
         """Release every owned resource; one component failing must not leak the rest.
 
         Each step is isolated so a component that raises during shutdown (for
-        example a Ray executor killed after its runtime is gone) cannot skip
+        example a worker pool killed after its runtime is gone) cannot skip
         the stores that still need closing.
         """
         logger.debug("Manager.close: shutting down")
         steps = [
-            ("materializer", getattr(self, "materializer", None)),
-            ("publication store", self.publication),
-            ("timeseries store", self.timeseries_store),
-            ("graph store", self.graph_store),
+            ("experiment ledger", self.ledger.close),
+            ("Escapement", self._close_engine),
+            ("graph store", self.graph_store.close),
         ]
-        for label, component in steps:
-            close = getattr(component, "close", None)
-            if not callable(close):
-                continue
+        for label, close in steps:
             try:
                 close()
             except Exception:
                 logger.exception("Manager.close: failed to close %s", label)
         logger.debug("Manager.close: done")
+
+    def _close_engine(self) -> None:
+        if not self.core.close(timeout=self.drain_timeout):
+            logger.warning(
+                "Manager.close: Escapement did not drain within %ss; leaving %d "
+                "pending request(s) for the next start",
+                self.drain_timeout, self.core.pending_at_close,
+            )

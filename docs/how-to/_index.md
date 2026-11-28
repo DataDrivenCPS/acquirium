@@ -15,10 +15,10 @@ The guides assume that you followed the [tutorial](../tutorials/_index.md), and 
 
 - [Access data on a shared server](access-a-shared-server.md): connect with an address and an access token, and read data from a server that someone else runs.
 
-## Apps
+## Soft sensors and apps
 
-- [Calculate derived streams](calculate-derived-streams.md): apps with several inputs, parameters, and apps that read other apps.
-- [Check, deploy, and repair an app](check-deploy-apps.md): read a check result, deploy, repair a failed app, apply a code change to old data, and remove an app.
+- [Write a soft sensor](write-soft-sensors.md) by choosing inputs, windows, outputs, and per-group settings.
+- [Check, deploy, and repair an app](check-deploy-apps.md) to preview changes, inspect status, and recover a failed calculation.
 
 ## Experiments
 

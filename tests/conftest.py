@@ -1,56 +1,42 @@
-"""Shared fixtures for integration tests.
+"""Shared fixtures.
 
-These fixtures require running services (TimescaleDB, Mosquitto, acquirium server).
-Start services with `make testing-up` before running integration tests.
+Every test runs with plain ``pytest``: servers are started in-process with
+aq.init(), as scripts start them. Tests that need PostgreSQL skip unless
+ACQUIRIUM_TEST_PG_DSN is set, and MQTT tests unless ACQUIRIUM_TEST_MQTT is.
 """
-
-import os
 
 import polars as pl
 import pytest
 
-from acquirium import Acquirium
-from acquirium.Storage.timescale_store import TimescaleStore
-from acquirium.Storage.values import assign_stream_value_kind
 from tests.local_server import acquirium_without_experiments, local_server_storage
-
-
-PG_DSN = os.getenv(
-    "ACQUIRIUM_TEST_PG_DSN",
-    "postgresql://acquirium:acquirium@localhost:5432/acquirium_test",
-)
-ACQUIRIUM_TEST_SERVER_HOST = os.getenv("ACQUIRIUM_TEST_SERVER_HOST", "localhost")
-ACQUIRIUM_TEST_SERVER_PORT = int(os.getenv("ACQUIRIUM_TEST_SERVER_PORT", "8000"))
-TEST_POINT_URI = "urn:test:integration_point"
-TEST_REF_URI = "urn:test:integration_ref"
-SAMPLE_SOURCE_ID = "LAB"
-
-
-@pytest.fixture(scope="session")
-def pg_dsn():
-    return PG_DSN
-
-
-@pytest.fixture(scope="session")
-def acquirium_server_url():
-    return f"http://{ACQUIRIUM_TEST_SERVER_HOST}:{ACQUIRIUM_TEST_SERVER_PORT}"
-
-
-@pytest.fixture(scope="session")
-def acquirium_client_kwargs():
-    return {
-        "server_url": ACQUIRIUM_TEST_SERVER_HOST,
-        "server_port": ACQUIRIUM_TEST_SERVER_PORT,
-        "use_ssl": False,
-    }
 
 
 _CSV_SOURCE_ID = "test-csv-data"
 
 
 @pytest.fixture(scope="module")
-def acquirium_client_csv(acquirium_client_kwargs):
-    acq = Acquirium(**acquirium_client_kwargs)
+def own_acquirium(tmp_path_factory):
+    """A server for this module alone, on empty storage.
+
+    For tests that query the whole model or use fixed URIs, which would see
+    or clobber other tests' data on the shared server. aq.init() runs one
+    server per process, so this stops the shared one; the next test that uses
+    it starts it again on the same data.
+    """
+    import acquirium as aq
+
+    aq.shutdown()
+    with local_server_storage(tmp_path_factory.mktemp("module")) as (options, _):
+        try:
+            yield aq.init(**options)
+        finally:
+            aq.shutdown()
+
+
+@pytest.fixture(scope="module")
+def acquirium_client_csv(own_acquirium):
+    """The module's own server with the CSV test model and its readings."""
+    acq = own_acquirium
     acq.insert_graph_file("tests/test_model_csv.ttl", source_id="plant")
     acq.register_streams([
         {
@@ -75,84 +61,64 @@ def acquirium_client_csv(acquirium_client_kwargs):
     return acq
 
 
-@pytest.fixture(scope="module")
-def ts_store(pg_dsn):
-    """Direct TimescaleStore connection for storage-layer tests."""
-    store = TimescaleStore(dsn=pg_dsn, connect_timeout=10, recreate=False)
-    yield store
-    store.close()
+@pytest.fixture
+def open_source_graph(tmp_path_factory):
+    """Open real source graphs for storage tests that need no bundled ontologies."""
+    from contextlib import ExitStack
+    from acquirium.Storage import graph_store
+
+    with ExitStack() as opened:
+        def open_graph():
+            directory = tmp_path_factory.mktemp("source-graph")
+            with pytest.MonkeyPatch.context() as patch:
+                patch.setattr(graph_store, "BUNDLED_FILES", ())
+                graph = graph_store.OxigraphGraphStore(
+                    store_path=directory / "graph", env_root=directory / "ontoenv",
+                )
+            opened.callback(graph.close)
+            return graph
+
+        yield open_graph
 
 
 @pytest.fixture
-def clean_point(ts_store):
-    """Provides a test property URI and cleans up its data after each test."""
-    yield TEST_POINT_URI
-    with ts_store.conn.cursor() as cur:
-        cur.execute(
-            "DELETE FROM timeseries WHERE stream_id = (SELECT stream_id FROM stream_ids WHERE stream_uri = %s)",
-            [TEST_POINT_URI],
-        )
-        cur.execute("DELETE FROM stream_ids WHERE stream_uri = %s", [TEST_POINT_URI])
-        cur.execute("DELETE FROM streams WHERE property_uri = %s", [TEST_POINT_URI])
-        cur.execute("DELETE FROM logs WHERE property_uri = %s", [TEST_POINT_URI])
+def source_graph(open_source_graph):
+    return open_source_graph()
 
 
-def insert_sample_csv_streams(acq, *, source_id: str = SAMPLE_SOURCE_ID) -> None:
-    """Insert the sample CSV rows through the public timeseries API."""
-    import polars as pl
+@pytest.fixture
+def samples(tmp_path):
+    """Experiment samples sent to an in-memory Escapement."""
+    from acquirium.core import Core
+    from acquirium.ExperimentSamples import EscapementSamples
 
-    df = pl.read_csv("tests/sample_data.csv", try_parse_dates=True)
-    stream_specs = []
-    stream_rows: dict = {}
-    for i in range(1, 11):
-        stream_name = f"point_{i}"
-        rows = list(df.select("Timestamp", stream_name).iter_rows())
-        stream_specs.append({
-            "source_id": source_id,
-            "stream_name": stream_name,
-            "property_uri": f"urn:ex/point_{i}",
-            "value_kind": assign_stream_value_kind(value for _, value in rows),
-        })
-        stream_rows[stream_name] = rows
-    acq.register_streams(stream_specs)
-    acq.insert_timeseries_batch(source_id, stream_rows)
+    core = Core(":memory:", module_paths=[str(tmp_path)])
+    try:
+        yield EscapementSamples(core)
+    finally:
+        core.close(drain=False)
 
 
-@pytest.fixture(params=["duckdb", "timescale"])
-def materialization_store(request, tmp_path):
-    import uuid
-    import psycopg
-    from psycopg.conninfo import make_conninfo
-    from acquirium.Storage.duckdb_store import DuckDBStore
+@pytest.fixture(params=["duckdb", "postgres"])
+def experiment_ledger(request, tmp_path, samples):
+    """An experiment ledger on each SQL backend, sending samples to an
+    in-memory Escapement."""
+    from acquirium.Storage.ledger import open_ledger
+    from tests.local_server import postgres_schema
 
     if request.param == "duckdb":
-        store = DuckDBStore(tmp_path / "contract.duckdb")
+        ledger = open_ledger(tmp_path / "experiments.duckdb", samples=samples)
+        try:
+            yield ledger
+        finally:
+            ledger.close()
     else:
-        dsn = os.getenv("ACQUIRIUM_TEST_PG_DSN")
-        if not dsn:
-            pytest.skip("ACQUIRIUM_TEST_PG_DSN is required for the Timescale contract target")
-        # The API integration suite shares its database with the server.  Use
-        # an isolated schema so ``recreate`` cannot drop the server's tables.
-        schema = f"materialization_contract_{uuid.uuid4().hex}"
-        with psycopg.connect(dsn, autocommit=True) as conn:
-            conn.execute(f'CREATE SCHEMA "{schema}"')
-        # Use only the private schema.  Including ``public`` would cause
-        # ``CREATE TABLE IF NOT EXISTS`` to reuse the live server's tables.
-        # TimescaleStore qualifies the extension function it needs from public.
-        isolated_dsn = make_conninfo(dsn, options=f"-c search_path={schema}")
-        store = TimescaleStore(dsn=isolated_dsn, recreate=True)
-        # Historical contract samples must not race automatic chunk compression
-        # while exercising transaction rollback. Only this test schema is affected.
-        store.conn.execute("SELECT public.alter_job(job_id, scheduled => false) "
-                           "FROM timescaledb_information.jobs WHERE hypertable_schema = %s "
-                           "AND proc_name = 'policy_compression'", [schema])
-    try:
-        yield store
-    finally:
-        store.close()
-        if request.param == "timescale":
-            with psycopg.connect(dsn, autocommit=True) as conn:
-                conn.execute(f'DROP SCHEMA "{schema}" CASCADE')
+        with postgres_schema() as url:
+            ledger = open_ledger(url, samples=samples)
+            try:
+                yield ledger
+            finally:
+                ledger.close()
 
 
 @pytest.fixture(scope="session")
@@ -165,6 +131,14 @@ def local_acquirium(tmp_path_factory):
             yield options
         finally:
             aq.shutdown()
+
+
+@pytest.fixture
+def ledger(experiment_ledger, source_graph):
+    """The experiment store on a test ledger with a real source graph."""
+    from acquirium.Experiments import ExperimentStore
+
+    return ExperimentStore(experiment_ledger, graph_store=source_graph)
 
 
 @pytest.fixture

@@ -1,15 +1,26 @@
-# acquirium/mqtt_ingestion.py
+"""Map MQTT topics to registered streams and acknowledge accepted readings.
+
+One message can produce readings for several streams. The acknowledgment
+travels with the final buffered reading, keeping the message's QoS receive
+slot occupied until Acquirium accepts the rows.
+"""
+
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from threading import Lock
-from typing import Any
+from typing import Any, Callable
 import ast
+import hashlib
 import json
 import logging
+import time
 
 import paho.mqtt.client as mqtt
+from paho.mqtt.packettypes import PacketTypes
+from paho.mqtt.properties import Properties
 
 from acquirium.Drivers.Driver import DriverBufferFull, EventIngestDriver
 from acquirium.Storage.values import normalize_value_kind
@@ -54,6 +65,54 @@ class MQTTStreamSpec:
     value_kind: str
 
 
+@dataclass
+class _PendingMessage:
+    observations: deque[tuple[str, datetime, Any]]
+    acknowledge: Callable[[], None]
+    qos: int
+
+
+class _Window:
+    """Messages the broker has sent one client that are not yet acknowledged.
+
+    While all ``size`` slots are taken the broker holds back further messages,
+    so a window that stays full means a backlog is building on the broker.
+    """
+
+    def __init__(self, size: int) -> None:
+        self.size = size
+        self._unacked = 0
+        self._lock = Lock()
+        self._full_since: float | None = None
+        self._full_time = 0.0
+        self._sampled = time.monotonic()
+
+    def received(self) -> None:
+        with self._lock:
+            self._unacked += 1
+            if self._unacked >= self.size and self._full_since is None:
+                self._full_since = time.monotonic()
+
+    def acked(self) -> None:
+        with self._lock:
+            self._unacked -= 1
+            if self._full_since is not None and self._unacked < self.size:
+                self._full_time += time.monotonic() - self._full_since
+                self._full_since = None
+
+    def sample(self) -> tuple[float, float]:
+        """Return the seconds since the last sample and the share of them
+        the window spent full."""
+        with self._lock:
+            now = time.monotonic()
+            full = self._full_time
+            if self._full_since is not None:
+                full += now - self._full_since
+                self._full_since = now
+            elapsed, self._sampled, self._full_time = now - self._sampled, now, 0.0
+        return elapsed, (full / elapsed if elapsed > 0 else 0.0)
+
+
 class MQTTIngestDriver(EventIngestDriver):
     """Subscribes to MQTT topics declared in the knowledge graph and ingests
     samples via the standard Acquirium timeseries API.
@@ -67,13 +126,30 @@ class MQTTIngestDriver(EventIngestDriver):
         running server with `acquirium driver start acquirium.toml`.
     """
 
+    #: Least seconds between checks that the driver is keeping up. Checks run
+    #: on ticks, so a longer ``interval`` spaces them further.
+    lag_period: float = 30.0
+    #: Share of a period with a full window that counts as falling behind.
+    lag_share: float = 0.5
+
     def setup(self) -> None:
         driver_cfg = self.config.get("driver", {})
         source_id = driver_cfg.get("source_id")
         if not source_id:
             raise ValueError("MQTT ingestion requires driver.source_id")
         self.source_id = str(source_id)
-        self.qos: int = int(driver_cfg.get("mqtt_qos", 0))
+        # QoS 1 with a persistent session: the broker keeps each message until
+        # it is acknowledged, which happens only once the server accepts it.
+        self.qos: int = int(driver_cfg.get("mqtt_qos", 1))
+        self.client_id: str | None = driver_cfg.get("mqtt_client_id")
+        # Unacknowledged messages the broker may send at once (MQTT 5 Receive
+        # Maximum, at most 65535). Each round trip to the server acknowledges
+        # up to this many, so it bounds throughput, and the client sets it, so
+        # it needs no broker change; brokers otherwise default to about 20.
+        self.receive_maximum: int = int(driver_cfg.get("mqtt_receive_maximum", 65535))
+        # How long the broker keeps the session, and queues for it, while the
+        # driver is away.
+        self.session_expiry: int = int(driver_cfg.get("mqtt_session_expiry", 7 * 24 * 3600))
         self.default_value_kind: str = normalize_value_kind(driver_cfg.get("mqtt_value_kind"))
         logger.debug(
             "mqtt setup source=%s qos=%d default_kind=%s",
@@ -83,16 +159,89 @@ class MQTTIngestDriver(EventIngestDriver):
         )
 
         self._clients: dict[str, mqtt.Client] = {}
+        self._windows: dict[str, _Window] = {}
+        self._behind: set[str] = set()
+        self._lag_checked = time.monotonic()
         self._topic_specs: dict[str, dict[str, list[MQTTStreamSpec]]] = {}
         self._spec_keys: set[str] = set()
         self._clients_lock = Lock()
+        # QoS messages that do not yet fit in the observation buffer still
+        # occupy broker receive slots, which bound this queue. Keep decoded
+        # times and only the unsent rows when one message feeds many streams.
+        self._messages_lock = Lock()
+        self._messages: deque[_PendingMessage] = deque()
 
         self._sync_subscriptions()
 
     def on_graph_change(self) -> None:
         self._sync_subscriptions()
 
+    def tick(self) -> None:
+        self._check_lag()
+        super().tick()
+
+    def flush(self) -> dict[str, Any]:
+        """Move waiting messages into the row buffer and flush it for admission."""
+        with self._messages_lock:
+            self._buffer_messages()
+        result = super().flush()
+        with self._messages_lock:
+            # The completed send may have made room for the rest of a message.
+            if self._messages:
+                self._added.set()
+        return result
+
+    def _buffer_messages(self) -> None:
+        """Fill the observation buffer, leaving overflow for the next flush.
+
+        Called with ``_messages_lock`` held. A partially buffered message is
+        acknowledged only after its final row has been accepted.
+        """
+        while self._messages:
+            pending = self._messages[0]
+            try:
+                while pending.observations:
+                    name, ts, value = pending.observations[0]
+                    self.add(name, value, ts)
+                    pending.observations.popleft()
+            except DriverBufferFull:
+                if pending.qos:
+                    return
+                logger.warning("mqtt: dropping QoS 0 readings because the driver buffer is full")
+            else:
+                self.when_accepted(pending.acknowledge)
+            self._messages.popleft()
+
+    def _check_lag(self) -> None:
+        """Warn about each broker whose window stayed full: the broker is
+        queueing messages for this driver, and drops them past its limit."""
+        if time.monotonic() - self._lag_checked < self.lag_period:
+            return
+        self._lag_checked = time.monotonic()
+        with self._clients_lock:
+            windows = list(self._windows.items())
+        for client_key, window in windows:
+            elapsed, share = window.sample()
+            if share >= self.lag_share:
+                self._behind.add(client_key)
+                logger.warning(
+                    "mqtt falling behind client=%s: all %d receive slots were taken "
+                    "for %.0f%% of the last %.0fs, so the broker is queueing messages "
+                    "and drops those past its queue limit; check that the server "
+                    "accepts inserts, or raise mqtt_receive_maximum",
+                    client_key, window.size, share * 100, elapsed,
+                )
+            elif client_key in self._behind:
+                self._behind.discard(client_key)
+                logger.info("mqtt caught up client=%s", client_key)
+
     def stop(self) -> None:
+        # Send what has arrived and acknowledge it while still connected;
+        # anything later stays unacknowledged and is redelivered next session.
+        try:
+            self.flush()
+        except Exception:
+            logger.warning("mqtt: flush before disconnect failed", exc_info=True)
         with self._clients_lock:
             clients = list(self._clients.values())
         # Do not hold _clients_lock while waiting for network loops: an active
@@ -108,8 +257,12 @@ class MQTTIngestDriver(EventIngestDriver):
                 pass
         with self._clients_lock:
             self._clients.clear()
+            self._windows.clear()
             self._topic_specs.clear()
             self._spec_keys.clear()
+        with self._messages_lock:
+            # QoS messages left here remain unacknowledged on the broker.
+            self._messages.clear()
 
     # ---- subscription management ----
 
@@ -123,6 +276,7 @@ class MQTTIngestDriver(EventIngestDriver):
 
         rows = result.get("rows", [])
         logger.debug("mqtt _sync_subscriptions: %d candidate rows from graph", len(rows))
+        specs: list[MQTTStreamSpec] = []
         for row in rows:
             data_uri, stream_uri, stream_name, value_kind, broker, topic, tkey, vkey = row
             topic_s = (topic or "").strip('"')
@@ -165,32 +319,49 @@ class MQTTIngestDriver(EventIngestDriver):
             except Exception:
                 logger.warning("mqtt: failed to register stream %s", stream_uri, exc_info=True)
                 continue
-            self._ensure_subscribed(spec)
+            specs.append(spec)
+        self._subscribe(specs)
 
-    def _ensure_subscribed(self, spec: MQTTStreamSpec) -> None:
-        client_key = self._client_key(spec.broker, spec.port)
-
+    def _subscribe(self, specs: list[MQTTStreamSpec]) -> None:
+        """Register every spec before a new client connects. A persistent
+        session's queued messages arrive on connect, and one for a topic with
+        no spec yet would be acknowledged and dropped."""
+        connecting = []
         with self._clients_lock:
-            client = self._clients.get(client_key)
-            if client is None:
-                client = mqtt.Client(client_id=f"acquirium_{abs(hash(client_key))}")
-                client.enable_logger(logger)
-                client.on_connect = self._on_connect(client_key)
-                client.on_message = self._on_message(client_key)
-                self._clients[client_key] = client
-                self._topic_specs[client_key] = {}
-                client.connect(spec.broker, spec.port, keepalive=60)
-                client.loop_start()
-                logger.info("mqtt client created broker=%s port=%d", spec.broker, spec.port)
-
-            self._topic_specs[client_key].setdefault(spec.topic, []).append(spec)
-            self._spec_keys.add(self._spec_key(spec))
-
+            for spec in specs:
+                client_key = self._client_key(spec.broker, spec.port)
+                if client_key not in self._clients:
+                    client = mqtt.Client(
+                        mqtt.CallbackAPIVersion.VERSION2,
+                        client_id=self._session_id(client_key),
+                        protocol=mqtt.MQTTv5,
+                        manual_ack=True,
+                    )
+                    client.enable_logger(logger)
+                    self._windows[client_key] = _Window(self.receive_maximum)
+                    client.on_connect = self._on_connect(client_key)
+                    client.on_message = self._on_message(client_key)
+                    self._clients[client_key] = client
+                    self._topic_specs[client_key] = {}
+                    connecting.append((client, spec))
+                self._topic_specs[client_key].setdefault(spec.topic, []).append(spec)
+                self._spec_keys.add(self._spec_key(spec))
+            clients = {spec: self._clients[self._client_key(spec.broker, spec.port)] for spec in specs}
+        for client, spec in connecting:
+            # on_connect subscribes to every registered topic.
+            properties = Properties(PacketTypes.CONNECT)
+            properties.ReceiveMaximum = self.receive_maximum
+            properties.SessionExpiryInterval = self.session_expiry
+            client.connect(
+                spec.broker, spec.port, keepalive=60, clean_start=False, properties=properties,
+            )
+            client.loop_start()
+            logger.info("mqtt client created broker=%s port=%d", spec.broker, spec.port)
+        for spec, client in clients.items():
             try:
                 client.subscribe(spec.topic, qos=self.qos)
             except Exception:
                 pass
-
             logger.info(
                 "mqtt subscribed point=%s broker=%s port=%d topic=%s",
                 spec.property_uri, spec.broker, spec.port, spec.topic,
@@ -200,6 +371,14 @@ class MQTTIngestDriver(EventIngestDriver):
 
     def _client_key(self, broker: str, port: int) -> str:
         return f"{broker}|{port}"
+
+    def _session_id(self, client_key: str) -> str:
+        """A broker keeps one session per client ID, so the ID must be the same
+        on every start and differ from other drivers' on the same broker."""
+        if self.client_id:
+            return str(self.client_id)
+        digest = hashlib.sha256(f"{self.source_id}|{client_key}".encode()).hexdigest()
+        return f"acquirium-{digest[:12]}"
 
     def _spec_key(self, spec: MQTTStreamSpec) -> str:
         return "|".join((
@@ -215,9 +394,9 @@ class MQTTIngestDriver(EventIngestDriver):
         ))
 
     def _on_connect(self, client_key: str):
-        def on_connect(client: mqtt.Client, userdata, flags, rc):
-            if rc != 0:
-                logger.error("mqtt connect failed client=%s rc=%s", client_key, rc)
+        def on_connect(client: mqtt.Client, userdata, flags, reason_code, properties):
+            if reason_code.is_failure:
+                logger.error("mqtt connect failed client=%s reason=%s", client_key, reason_code)
                 return
             with self._clients_lock:
                 topics = list(self._topic_specs.get(client_key, {}).keys())
@@ -255,30 +434,40 @@ class MQTTIngestDriver(EventIngestDriver):
         return ts, raw_val
 
     def _on_message(self, client_key: str):
+        """Build the receive callback that fans a message out to its stream readers."""
+        window = self._windows[client_key]
+
+        def acknowledge(client: mqtt.Client, msg: mqtt.MQTTMessage) -> None:
+            client.ack(msg.mid, msg.qos)
+            if msg.qos:
+                window.acked()
+
         def on_message(client: mqtt.Client, userdata, msg: mqtt.MQTTMessage):
             topic = msg.topic
+            if msg.qos:
+                # A QoS 0 message takes no slot.
+                window.received()
+            observations = deque()
             try:
                 logger.debug("mqtt message client=%s topic=%s", client_key, topic)
                 with self._clients_lock:
                     specs = list(self._topic_specs.get(client_key, {}).get(topic, []))
-                if not specs:
-                    return
                 for spec in specs:
                     ts, value = self.decode_payload(msg.payload, spec)
-                    # Buffered, not inserted: the tick flushes the batch, so a
-                    # busy topic costs one round-trip per interval rather than
-                    # one per message.
-                    self.add(spec.stream_name, value, ts)
-            except DriverBufferFull as exc:
-                logger.error(
-                    "mqtt observation rejected: driver buffer is full "
-                    "client=%s topic=%s err=%s",
-                    client_key,
-                    topic,
-                    exc,
-                )
+                    observations.append((spec.stream_name, ts, value))
             except Exception as exc:
                 logger.warning("mqtt decode failed client=%s topic=%s err=%s", client_key, topic, exc)
+            with self._messages_lock:
+                # QoS 0 has no receive-window slot to keep the broker from
+                # sending more. Drop it while waiting for space in the buffer.
+                if not msg.qos and self._messages:
+                    logger.warning("mqtt: dropping QoS 0 readings while waiting for buffer space")
+                    return
+                self._messages.append(_PendingMessage(
+                    observations, lambda: acknowledge(client, msg), msg.qos,
+                ))
+                self._buffer_messages()
+            self._added.set()
         return on_message
 
 

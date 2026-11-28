@@ -19,6 +19,7 @@ class InsertStats:
             bucket["streams"].update(streams)
 
     def snapshot_and_reset(self) -> list[tuple[str, int, int]]:
+        """Drain the interval's row and distinct-stream counts by ingest origin."""
         with self._lock:
             snapshot = [
                 (origin, int(bucket["rows"]), len(bucket["streams"]))

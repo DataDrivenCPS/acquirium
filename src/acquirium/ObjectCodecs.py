@@ -108,6 +108,7 @@ def codec_path(codec: type) -> str:
 
 
 def check_codec(codec: Any, *, name: str) -> Any:
+    """Require the media type and both operations needed to round-trip an artifact."""
     if not isinstance(getattr(codec, "media_type", None), str) or not codec.media_type:
         raise TypeError(f"codec {name} needs a media_type string")
     if not callable(getattr(codec, "dumps", None)) or not callable(getattr(codec, "loads", None)):

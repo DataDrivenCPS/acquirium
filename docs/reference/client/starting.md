@@ -127,7 +127,7 @@ Acquirium does not check tokens itself. `token` is for a server behind a reverse
 - `server_url` (`str`, default `'127.0.0.1'`): host name or IP address of the server, without `http://` and without a port. It can also be a full address such as `"https://plant.example.org/api"`, which may contain a port and a path. Requests are sent under that path.
 - `server_port` (`int`, default `8000`): port of the server. Ignored when `server_url` is a full address.
 - `use_ssl` (`bool`, default `False`): connect with `https` instead of `http`. Ignored when `server_url` is a full address.
-- `insert_batch_rows` (`int`, default `50000`): largest number of rows [`insert_timeseries_batch`](timeseries.md#acquiriuminsert_timeseries_batch) sends in one request.
+- `insert_batch_rows` (`int`, default `50000`): additional limit on the number of rows [`insert_timeseries_batch`](timeseries.md#acquiriuminsert_timeseries_batch) sends in one request. Escapement caps requests at 10,000 rows.
 - `health_timeout` (`float` or `None`, default `60.0`): seconds to wait for the server to answer. `None` or `0` skips the check.
 - `token` (`str`, optional): access token of the server. It is sent with every request as the header `Authorization: Bearer <token>`.
 

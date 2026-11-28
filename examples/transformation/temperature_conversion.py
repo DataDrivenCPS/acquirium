@@ -1,29 +1,24 @@
-"""Convert Fahrenheit water-temperature readings to Celsius."""
-from __future__ import annotations
-
-import polars as pl
+"""Convert each selected Fahrenheit reading to Celsius."""
+from pathlib import Path
 
 import acquirium as aq
 
 
-class FahrenheitToCelsius(aq.App):
-    """Publish a separate Celsius stream for each Fahrenheit input stream."""
+def convert(frame, context):
+    if frame.is_empty():
+        return {"celsius": None}
+    fahrenheit = frame["value"][0]
+    return {"celsius": (fahrenheit - 32) * 5 / 9}
 
-    name = "fahrenheit-to-celsius"
-    grouping = "per_match"
-    backfill = True
-    outputs = {
-        "celsius": aq.output.stream(
-            value_kind="numeric",
-            unit="http://qudt.org/vocab/unit/DEG_C",
-        ),
-    }
 
-    def build_query(self, plant):
-        return plant.query().measurement(alias="temperature", unit="DEG_F")
-
-    def transform(self, inputs, output, context):
-        fahrenheit = inputs["temperature"].df()
-        output["celsius"] = fahrenheit.select(
-            "time", ((pl.col("value") - 32.0) * 5.0 / 9.0).alias("value")
-        )
+def fahrenheit_to_celsius(client, parameters):
+    query = client.query().measurement(
+        alias="temperature", unit="http://qudt.org/vocab/unit/DEG_F"
+    )
+    return aq.App(
+        name="fahrenheit-to-celsius",
+        inputs={"temperature": aq.Selection.from_query(query, measurement="temperature")},
+        outputs={"celsius": aq.Output(unit="http://qudt.org/vocab/unit/DEG_C")},
+        function=aq.PythonFunction.from_file(Path(__file__), "convert"),
+        window=aq.Pointwise(),
+    )

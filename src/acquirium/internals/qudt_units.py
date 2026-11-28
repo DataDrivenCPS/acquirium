@@ -230,10 +230,10 @@ class QUDTUnitConverter:
         Uses dimension vectors (most reliable), then falls back to
         quantity kind overlap.
         """
-        return self._check_compatible(self.infer_unit(str(unit_a)), self.infer_unit(str(unit_b)))
+        return self.check_compatible(self.infer_unit(str(unit_a)), self.infer_unit(str(unit_b)))
 
     @staticmethod
-    def _check_compatible(src: UnitDefinition, tgt: UnitDefinition) -> bool:
+    def check_compatible(src: UnitDefinition, tgt: UnitDefinition) -> bool:
         """Check compatibility using dimension vectors first, then quantity kind overlap."""
         # Dimension vector is the most reliable check
         if src.dimension_vector and tgt.dimension_vector:
@@ -260,7 +260,7 @@ class QUDTUnitConverter:
         src = self.infer_unit(str(from_unit))
         tgt = self.infer_unit(str(to_unit))
 
-        if not self._check_compatible(src, tgt):
+        if not self.check_compatible(src, tgt):
             raise IncompatibleUnits(
                 f"Cannot convert {src.uri} ({src.dimension_vector or src.quantity_kind}) "
                 f"to {tgt.uri} ({tgt.dimension_vector or tgt.quantity_kind})"
@@ -435,6 +435,7 @@ class QUDTUnitConverter:
         return None
 
     def _compose_ratio(self, numerator: UnitDefinition, denominator: UnitDefinition, label_text: str) -> UnitDefinition:
+        """Construct a unit from the ratio of two multiplicative conversion factors."""
         if numerator.offset != 0 or denominator.offset != 0:
             raise IncompatibleUnits("Cannot compose ratio units when offsets are non-zero")
 
@@ -488,6 +489,7 @@ class QUDTUnitConverter:
         return self._refine_ratio_multiplier(unit)
 
     def _refine_ratio_multiplier(self, unit: UnitDefinition) -> UnitDefinition:
+        """Derive a ratio's multiplier from its resolved parts when available."""
         local = self._unit_local(unit.uri)
         if "-PER-" not in local:
             return unit

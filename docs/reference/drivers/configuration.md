@@ -8,7 +8,7 @@ Drivers are configured in the server's configuration file, `acquirium.toml`. The
 |---|---|
 | [How the tables are combined](#how-the-tables-are-combined) | What a driver sees in `self.config` |
 | [Keys of a `[[drivers]]` entry](#keys-of-a-drivers-entry) | `spec`, `name` |
-| [Keys read for every driver](#keys-read-for-every-driver) | `interval`, `graph_poll_interval`, `driver_id`, `insert_batch_rows` |
+| [Keys read for every driver](#keys-read-for-every-driver) | `interval`, `setup_timeout`, `graph_poll_interval`, `driver_id`, `insert_batch_rows` |
 | [Connection keys](#connection-keys) | `server_url`, `server_port`, `use_ssl` |
 | [The `spec` value](#the-spec-value) | How a driver class is named |
 | [Driver status](#driver-status) | What `running`, `stopped` and `failed` mean |
@@ -60,9 +60,10 @@ These keys can be set in `[driver]` or in a `[[drivers]]` entry.
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `interval` | `float` | `10.0` | Seconds between two ticks. For an ingest driver this is also how often buffered values are inserted. Must be greater than zero |
+| `setup_timeout` | `float` | `60.0` | Seconds the server waits for the child to connect, import its driver, and finish setup. Must be finite and greater than zero |
 | `graph_poll_interval` | `float` | the larger of `interval` and `10.0` | Seconds between two checks for a change of the graph. See [`on_graph_change`](hooks.md#driveron_graph_change). Must be greater than zero |
 | `driver_id` | `str` | none | Name of the driver's [state file](state.md). Without it the file is named after the class |
-| `insert_batch_rows` | `int` | `50000` | Largest number of rows per request of `self.aq.insert_timeseries_batch`. It does not change `add` or `insert_observations` |
+| `insert_batch_rows` | `int` | `50000` | Requested rows per JSON write from the driver, capped at the server limit of 10,000. Includes calls to `self.aq.insert_timeseries_batch` and mixed observations that require JSON transport |
 
 Note that without `driver_id` the state file is `<ClassName>.json`. If the `[driver]` table itself has a `spec` key, the file is `<ClassName>_<hash of that spec>.json`.
 
@@ -105,6 +106,11 @@ Note that the server imports the class. The file or module must exist on the mac
 | `stopped` | The loop ended without an error |
 | `failed: <error>` | The loop ended with an error |
 
-A driver whose `setup()` raises is not listed. The start request fails with the error.
+A child enters the driver list after setup succeeds. The start request reports
+setup failures. On timeout the supervisor terminates and reaps the child.
 
-Stopping a driver ends its loop, calls [`stop()`](hooks.md#driverstop) and sends the buffered rows. A driver that has not finished after 10 seconds is ended by the server.
+During an orderly shutdown the server asks running drivers to end their loops,
+call [`stop()`](hooks.md#driverstop), and send buffered rows. After 10 seconds
+the server terminates any child still running. If the server process exits
+during setup, the child exits when its control pipe closes. After setup, a
+closed pipe requests cooperative shutdown.

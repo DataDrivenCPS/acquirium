@@ -1,18 +1,13 @@
-"""Unit tests for DriverRunner's graph-change polling cadence.
-
-The runner is a Ray actor; these exercise the plain class behind the decorator
-so the polling logic can be tested without standing up Ray.
-"""
+"""Unit tests for DriverRunner's graph-change polling cadence."""
 
 from __future__ import annotations
 
-import asyncio
+import threading
+import time
 from unittest.mock import MagicMock
 
 from acquirium.Drivers.Driver import Driver
 from acquirium.Drivers.runner import DEFAULT_GRAPH_POLL_INTERVAL, DriverRunner
-
-RunnerClass = DriverRunner.__ray_actor_class__
 
 
 class RecordingDriver(Driver):
@@ -34,7 +29,7 @@ class RecordingDriver(Driver):
 def make_runner(interval=1.0, config=None, source_version=1):
     aq = MagicMock()
     aq.graph_status.return_value = {"source_version": source_version}
-    return RunnerClass(RecordingDriver, config or {}, aq, interval)
+    return DriverRunner(RecordingDriver, config or {}, aq, interval)
 
 
 # ------------------------------------------------------------------ cadence
@@ -133,12 +128,11 @@ def test_graph_poll_can_run_before_a_slower_tick():
     runner.setup()
     runner.acquirium_cli.graph_status.reset_mock()
 
-    async def exercise() -> None:
-        task = asyncio.create_task(runner.run())
-        await asyncio.sleep(0.07)
-        runner.stop()
-        await task
-
-    asyncio.run(exercise())
+    loop = threading.Thread(target=runner.run)
+    loop.start()
+    time.sleep(0.07)
+    runner.stop()
+    loop.join(timeout=5)
+    assert not loop.is_alive()
     assert runner.driver.ticks == 1
     assert runner.acquirium_cli.graph_status.call_count >= 2

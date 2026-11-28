@@ -13,12 +13,24 @@ With uv, run it as `uv run acquirium ...`.
 | [`acquirium driver stop`](#acquirium-driver-stop) | stop one driver |
 | [`acquirium app list`](#acquirium-app-list) | list the deployed apps |
 | [`acquirium app inspect`](#acquirium-app-inspect) | show the details of one deployed app |
-| [`acquirium app check`](#acquirium-app-check) | run an app on stored data without saving anything |
+| [`acquirium app deploy`](#acquirium-app-deploy) | deploy an app or preview its plan |
 | [`acquirium config init`](#acquirium-config-init) | write a starter `acquirium.toml` |
+| [`acquirium migrate`](#acquirium-migrate) | copy registered raw readings from a legacy server |
 | [`acquirium example init`](#acquirium-example-init) | create the files of the example plant |
 | [`acquirium clear`](#acquirium-clear) | erase the stored data of a data folder |
 
 Every command accepts `--help`.
+
+## `acquirium migrate`
+
+```sh
+acquirium migrate --from legacy.toml --to escapement.toml [--dry-run]
+```
+
+Connects to the two running servers identified by the configuration files.
+Use `--dry-run` to check the endpoints and count the source streams and
+readings without writing. See [copy legacy readings](storage-migrations.md#copy-legacy-readings)
+for setup, verification, and retry steps.
 
 ## Choosing the server
 
@@ -114,38 +126,22 @@ Apps that matched nothing or failed to plan are listed too, with their error.
 acquirium app inspect NAME [--json] [--config PATH] [--server-url HOST] [--server-port PORT]
 ```
 
-Shows one deployed app: its entrypoint, settings, declared outputs, and for each binding the input and output streams and its progress.
+Shows the app declaration, selected inputs, output operators, and any warnings or failures.
 
 | argument or option | meaning |
 |---|---|
 | `NAME` | the app name, as shown by `acquirium app list`. Required |
 | `--json` | print the raw result instead of the summary |
 
-## `acquirium app check`
+## `acquirium app deploy`
 
 ```bash
-acquirium app check SPEC [--params JSON] [--limit N] [--local] [--json]
-                         [--config PATH] [--server-url HOST] [--server-port PORT]
+acquirium app deploy SPEC [--dry-run] [--config PATH]
 ```
 
-Runs an app on the stored data and prints what it computed.
-Nothing is saved: the app is not deployed, its streams are not created, and no progress is recorded.
-
-| argument or option | meaning |
-|---|---|
-| `SPEC` | the app class, as `module:ClassName` or `./file.py:ClassName`. Required |
-| `--params` `<str>` | constructor parameters as JSON, for example `'{"threshold": 3}'` |
-| `--limit`, `-n` `<int>` | number of rows printed per output. Default `5`; `0` prints every row |
-| `--local` | run the app in this terminal instead of on the server |
-| `--json` | print the raw result instead of the summary |
-
-Without `--local` the server runs the app, so the server must be able to import the class.
-With `--local` the app runs in your terminal and reads its inputs from the server.
-This is useful for debugging: `breakpoint()` opens in your terminal, and an error shows its traceback.
-
-```bash
-acquirium app check plant_apps:Celsius --local
-```
+`SPEC` identifies an app declaration or factory, such as
+`./plant_apps.py:pump_power_kw`. With `--dry-run` the server reports the plan
+and the expected work before activation. See [App commands](../apps/cli.md).
 
 ## `acquirium config init`
 
@@ -219,5 +215,4 @@ Erase the stored data in /home/you/my-plant/.acquirium? [y/N]: y
 Cleared /home/you/my-plant/.acquirium
 ```
 
-Note that with the `timescale` backend the readings are stored in Postgres, and this command keeps them.
-To erase them, start the server once with `recreate = true` (see [server configuration](configuration.md)).
+The command leaves PostgreSQL databases and files outside the selected folder available. It reports when the configuration points to one of those locations.

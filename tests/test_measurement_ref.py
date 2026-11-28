@@ -35,9 +35,9 @@ def stats_calls(hist, monkeypatch):
     calls = []
     original = hist.client.timeseries_info_batch
 
-    def counting(uris):
+    def counting(uris, **kwargs):
         calls.append(list(uris))
-        return original(uris)
+        return original(uris, **kwargs)
 
     monkeypatch.setattr(hist.client, "timeseries_info_batch", counting)
     return calls
@@ -49,9 +49,9 @@ def exists_calls(hist, monkeypatch):
     calls = []
     original = hist.client.timeseries_exists_batch
 
-    def counting(uris):
+    def counting(uris, **kwargs):
         calls.append(list(uris))
-        return original(uris)
+        return original(uris, **kwargs)
 
     monkeypatch.setattr(hist.client, "timeseries_exists_batch", counting)
     return calls
@@ -78,6 +78,23 @@ def test_streams_takes_the_same_stream_handles(hist):
     assert narrow["stream_uri"].unique().to_list() == [feed.stream_uri]
     latest = data.latest(streams=[perm])
     assert latest["value"].to_list() == [11.0]
+
+
+def test_query_data_keeps_distinct_properties_on_one_stream(hist):
+    points = {"urn:test:refstats#shared-a": "Probe A", "urn:test:refstats#shared-b": "Probe B"}
+    hist.register_streams([
+        {"property_uri": point, "label": label, "source_id": SOURCE,
+         "stream_name": "FT_shared", "value_kind": "numeric"}
+        for point, label in points.items()
+    ])
+    hist.insert_timeseries(SOURCE, "FT_shared", [(T0, 7.0)])
+    stream = hist.stream(SOURCE, "FT_shared")
+    query = hist.query().measurement(stream=stream)
+    for view in ("stored", "current"):
+        data = query.data(view=view)
+        assert {binding.property_uri: binding.property_label for binding in data.bindings} == points
+        rows = data.dataframe(shape="narrow", compact=False)
+        assert dict(rows.select("property_uri", "value_numeric").iter_rows()) == dict.fromkeys(points, 7.0)
 
 
 @pytest.mark.parametrize("ref", [[], "urn:acquirium:no-such-stream"])
@@ -120,16 +137,24 @@ def test_is_empty_asks_which_streams_have_rows(hist, stats_calls, exists_calls):
     assert sorted(exists_calls[0]) == sorted(s.stream_uri for s in (feed, perm, none))
 
 
-def test_refresh_stats_sees_new_rows(hist, stats_calls, exists_calls):
+def test_refresh_stats_keeps_the_sample_epoch(hist, stats_calls, exists_calls):
     hist.register_streams([{"property_uri": "urn:test:refstats#extra", "source_id": SOURCE,
                             "stream_name": "FT_extra", "value_kind": "numeric"}])
-    data = hist.query().measurement(stream=hist.stream(SOURCE, "FT_extra")).data()
+    query = hist.query().measurement(stream=hist.stream(SOURCE, "FT_extra"))
+    data = query.data()
     assert data.is_empty()
     assert data.total_rows == 0
     hist.insert_timeseries_batch(SOURCE, {"FT_extra": [(T0, 1.0)]})
     assert data.total_rows == 0  # the cached snapshot
     data.refresh_stats()
-    assert not data.is_empty()  # asks again: the statistics are not loaded
-    assert data.total_rows == 1
+    assert data.is_empty()
+    assert data.total_rows == 0
     assert len(stats_calls) == 2
     assert len(exists_calls) == 2
+    assert data.dataframe().is_empty()
+
+    # A new object uses the latest epoch for counts and values.
+    current = query.data()
+    assert not current.is_empty()
+    assert current.total_rows == 1
+    assert current.dataframe().height == 1

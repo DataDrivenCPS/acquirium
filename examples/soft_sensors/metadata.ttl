@@ -1,0 +1,8 @@
+@prefix ex: <urn:soft-sensors:> .
+@prefix s223: <http://data.ashrae.org/standard223#> .
+
+ex:plant a ex:Plant .
+ex:tank-a a ex:Tank ; ex:partOf ex:plant ;
+    s223:hasProperty ex:probe-a1, ex:probe-a2 .
+ex:tank-b a ex:Tank ; ex:partOf ex:plant ;
+    s223:hasProperty ex:probe-b1 .

@@ -18,7 +18,7 @@ The server holds three things:
 
 It also runs the drivers and the apps.
 Each driver runs in its own process and talks to the server like a client (see [How drivers work](drivers.md)).
-The apps run inside the server, at most `materialization_workers` at the same time (see [Apps](apps.md)).
+The server compiles plans and Escapement runs calculations with up to `engine_workers` workers.
 
 Be aware that only one server can use a data folder.
 A second server on the same folder does not start, because the graph store can be opened by one process only.
@@ -57,7 +57,8 @@ Everything the server stores is in one folder, `.acquirium` by default:
 .acquirium/
   .oxigraph/           the graph store
   .ontoenv/            the catalog of the loaded ontologies
-  timeseries.duckdb    the timeseries store
+  escapement-epoch.duckdb  the time-series engine store
+  experiments.duckdb     the experiment and logbook ledger
   drivers/             the state files of the drivers
   embedding_cache/     the embeddings of the text matcher
   .runtime/            the log and lock files of a server started by aq.init()
@@ -68,18 +69,14 @@ Everything the server stores is in one folder, `.acquirium` by default:
 `acquirium clear` erases the data of the folder and keeps the embeddings, because they take long to build and do not depend on your data.
 It refuses to run while a server is using the folder.
 
-## The timeseries store
+## The time-series store
 
-The rows of all streams are in one table, with one row per stream and timestamp.
-A row has a numeric value or a text value (see [Values](values.md)).
-Next to it are the `streams` table described in [The stream lifecycle](stream-lifecycle.md#registration-and-the-streams-table) and the logs.
+[Escapement](escapement-core.md) stores readings, the durable write queue, published
+epochs, and app plans. The default is a DuckDB file. Set `engine_path` to a
+PostgreSQL URL to store the same engine state in PostgreSQL.
 
-There are two backends, selected with `timeseries_backend`:
-
-- `duckdb` is the default. It is one file in the data folder and needs nothing else installed. Reads use their own connections, so a long read does not block the inserts of a driver.
-- `timescale` stores the same tables in Postgres with the TimescaleDB extension, at the address given in `pg_dsn`. Rows older than 7 days are compressed automatically.
-
-Note that the graph store is a local folder with both backends.
+The separate SQL ledger stores experiment records and logbook entries. The graph
+stores stream registrations and logbook links.
 
 ## The graph store
 
@@ -141,7 +138,7 @@ The server does these in order:
 
 In our runs a server with `exact_only = true` answered requests about 45 seconds after the command on a new data folder, and about 15 seconds on later starts.
 
-Note that a stream node in the graph with a wrong `stream_uri` makes the third step fail, and the server does not start (see [The stream lifecycle](stream-lifecycle.md#registration-and-the-streams-table)).
+Note that a stream node in the graph with a wrong `stream_uri` makes the third step fail, and the server does not start (see [Registration and storage](stream-lifecycle.md#registration-and-storage)).
 
 ## Next
 

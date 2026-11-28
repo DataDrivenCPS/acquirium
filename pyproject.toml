@@ -34,7 +34,10 @@ classifiers = [
 ]
 
 dependencies = [
+    # The experiment ledger runs on DuckDB or PostgreSQL.
     "duckdb>=2.0.0",
+    "psycopg[binary]>=3.3.1",
+    "escapement-db~=0.1.2",
     "typer>=0.12.0",
     "fastembed>=0.4.0",
     "filelock>=3.15",
@@ -43,8 +46,8 @@ dependencies = [
     "ipykernel>=7.0.1,<8",
     "matplotlib>=3.10.8",
     "numpy>=2.3,<3",
+    "pandas>=2.2.2,<3",
     "polars>=1.36.1",
-    "psycopg[binary]>=3.3.1",
     "pyarrow>=22.0.0",
     "pydantic>=2.12.5",
     "pyontoenv>=0.6.0,<0.7",
@@ -54,7 +57,6 @@ dependencies = [
     "python-multipart>=0.0.21",
     "requests>=2.32.5",
     "uvicorn>=0.38.0",
-    "ray>=2.56.0",
     "networkx>=3.6.1",
 ]
 

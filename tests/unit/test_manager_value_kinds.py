@@ -1,157 +1,140 @@
-"""Stream value kinds are resolved for a whole batch with one store query."""
-from __future__ import annotations
+"""The v0.4.0 kind contract on Escapement's ingestion and read paths."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pyarrow as pa
 import pytest
 
-from acquirium.Server.manager import Manager
-from acquirium.Storage.duckdb_store import DuckDBStore
 from acquirium.internals.models import compute_stream_uri
+from tests.epoch_helpers import epoch_server
 
 
-class _CountingStore:
-    def __init__(self, kinds):
-        self.kinds = kinds
-        self.calls = []
-
-    def stream_value_kinds(self, stream_uris):
-        uris = list(stream_uris)
-        self.calls.append(uris)
-        return {uri: self.kinds[uri] for uri in uris if uri in self.kinds}
-
-    def mark_streams_numeric(self, stream_uris):
-        self.marked = list(stream_uris)
-        for uri in self.marked:
-            if self.kinds.get(uri) == "undeclared":
-                self.kinds[uri] = "numeric"
-
-    def bulk_insert_polars(self, df):
-        self.frame = df
-        return len(df)
-
-
-class _Graph:
-    def __init__(self, published=1):
-        self.published = published
-
-    def graph_status(self):
-        return {"published_version": self.published}
-
-
-def _manager(store, graph=None):
-    mgr = Manager.__new__(Manager)
-    mgr.timeseries_store = store
-    mgr.graph_store = graph or _Graph()
-    mgr._refs_synced_revision = None
-    mgr.resyncs = 0
-
-    def resync():
-        mgr.resyncs += 1
-        return 0
-
-    mgr._sync_stream_refs_from_graph = resync
-    return mgr
-
-
-def test_arrow_insert_resolves_all_streams_with_one_lookup():
-    source = "plant"
-    names = [f"p{i}" for i in range(50)]
-    kinds = {str(compute_stream_uri(source, n)): "numeric" for n in names}
-    store = _CountingStore(kinds)
-    mgr = _manager(store)
-    ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    table = pa.table({"ts": [ts] * 50, "stream_name": names, "value": [float(i) for i in range(50)]})
-
-    mgr.insert_timeseries_arrow(source, table)
-
-    assert len(store.calls) == 1
-    assert sorted(store.calls[0]) == sorted(kinds)
-    assert set(store.frame["value_kind"].to_list()) == {"numeric"}
-
-
-def test_missing_stream_triggers_one_resync_then_rejects():
-    store = _CountingStore({"urn:known": "numeric"})
-    mgr = _manager(store)
-
-    with pytest.raises(ValueError, match="urn:unknown is not registered"):
-        mgr._registered_value_kinds(["urn:known", "urn:unknown"])
-
-    assert mgr.resyncs == 1
-    assert store.calls == [["urn:known", "urn:unknown"], ["urn:unknown"]]
-    # The graph has not advanced since the resync, so a repeat does not rebuild again.
-    with pytest.raises(ValueError):
-        mgr._registered_value_kinds(["urn:unknown"])
-    assert mgr.resyncs == 1
-
-
-def test_single_lookup_delegates_to_the_batch_form():
-    store = _CountingStore({"urn:a": "TEXT"})
-    assert _manager(store)._registered_value_kind("urn:a") == "text"
-
-
-def test_duckdb_store_batch_lookup(tmp_path):
-    store = DuckDBStore(tmp_path / "kinds.duckdb")
-    refs = [(None, "plant", f"p{i}", f"urn:plant/p{i}", "numeric" if i % 2 else "text") for i in range(10)]
-    store.ensure_stream_refs(refs)
-
-    kinds = store.stream_value_kinds(["urn:plant/p1", "urn:plant/p2", "urn:plant/p1", "urn:missing"])
-
-    assert kinds == {"urn:plant/p1": "numeric", "urn:plant/p2": "text"}
-    assert store.stream_value_kinds([]) == {}
-    assert store.stream_value_kind("urn:plant/p3") == "numeric"
-
-
-def _insert(mgr, source, rows):
-    ts = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    names, values = zip(*rows)
-    mgr.insert_timeseries_arrow(
-        source, pa.table({"ts": [ts] * len(rows), "stream_name": list(names), "value": list(values)})
+@pytest.mark.parametrize("transport", ["json", "arrow"])
+def test_booleans_follow_the_stream_kind(own_acquirium, transport):
+    acq = own_acquirium
+    source = f"kind-{transport}"
+    at = datetime(2026, 11, 1, tzinfo=timezone.utc)
+    names = ["numeric", "text", "inferred"]
+    acq.register_streams(
+        [
+            {
+                "source_id": source,
+                "stream_name": name,
+                **({"value_kind": name} if name != "inferred" else {}),
+            }
+            for name in names
+        ]
     )
-    frame = mgr.timeseries_store.frame
-    return dict(zip(frame["stream_uri"].to_list(), frame["value_kind"].to_list()))
+
+    if transport == "arrow":
+        acq.insert_timeseries_arrow(
+            source,
+            pa.table(
+                {
+                    "ts": [at, at + timedelta(seconds=1)] * len(names),
+                    "value": [True, False] * len(names),
+                    "stream_name": [name for name in names for _ in range(2)],
+                }
+            ),
+        )
+    else:
+        acq.insert_timeseries_batch(
+            source,
+            {name: [(at, True), (at + timedelta(seconds=1), False)] for name in names},
+        )
+
+    expected = {
+        "numeric": [1.0, 0.0],
+        "text": ["True", "False"],
+        "inferred": [1.0, 0.0],
+    }
+    for name, values in expected.items():
+        uri = str(compute_stream_uri(source, name))
+        assert acq.client.timeseries_df(uri)["value"].to_list() == values
 
 
-def test_undeclared_stream_becomes_numeric_with_its_first_numeric_value():
-    uri = {n: str(compute_stream_uri("s", n)) for n in ("num", "csv", "status", "forced")}
-    store = _CountingStore({
-        uri["num"]: "undeclared", uri["csv"]: "undeclared",
-        uri["status"]: "undeclared", uri["forced"]: "text",
-    })
-    mgr = _manager(store)
+@pytest.mark.parametrize(
+    ("transport", "exact", "inexact"),
+    [
+        pytest.param("json", 2**53 + 2, 2**53 + 1, id="json-mixed"),
+        pytest.param("json", -(2**53 + 2), -(2**53 + 1), id="json-negative"),
+        pytest.param("json", 2**64 - 2048, 2**64 - 1, id="json-outside-int64"),
+        pytest.param("int64", -(2**53 + 2), -(2**53 + 1), id="arrow-signed"),
+        pytest.param("uint64", 2**64 - 2048, 2**64 - 1, id="arrow-unsigned"),
+    ],
+)
+def test_numeric_ingest_rejects_inexact_integers_before_admission(tmp_path, transport, exact, inexact):
+    with epoch_server(tmp_path) as (_, http, acq):
+        source = "precision"
+        acq.register_streams([
+            {"source_id": source, "stream_name": kind, "value_kind": kind}
+            for kind in ("numeric", "text")
+        ])
 
-    written = _insert(mgr, "s", [("num", "21.5"), ("csv", "Bad"), ("csv", " 12.5 "),
-                                 ("status", "ON"), ("forced", "1")])
+        def write(request_id, numeric, text):
+            """Send both stream kinds in the same request."""
+            if transport == "json":
+                return http.post("/insert_timeseries", json=[
+                    {"source_id": source, "stream_name": kind, "request_id": request_id, "values": rows}
+                    for kind, rows in (("numeric", [*numeric, (10, "Fault")]), ("text", text))
+                ])
+            rows = [*numeric, *text]
+            table = pa.table({
+                "source_id": [source] * len(rows),
+                "stream_name": ["numeric"] * len(numeric) + ["text"] * len(text),
+                "ts": pa.array([ts for ts, _ in rows], type=pa.timestamp("ns", tz="UTC")),
+                "value": pa.array([value for _, value in rows], type=pa.type_for_alias(transport)),
+            })
+            buffer = pa.BufferOutputStream()
+            with pa.ipc.new_stream(buffer, table.schema) as writer:
+                writer.write_table(table)
+            return http.post("/insert_timeseries_arrow", content=buffer.getvalue().to_pybytes(),
+                             headers={"X-Acquirium-Request-Id": request_id})
 
-    assert written == {uri["num"]: "numeric", uri["csv"]: "numeric",
-                       uri["status"]: "text", uri["forced"]: "text"}
-    assert sorted(store.marked) == sorted([uri["num"], uri["csv"]])
-    assert store.kinds[uri["status"]] == "undeclared"
-    assert store.kinds[uri["forced"]] == "text"
+        numeric = acq.stream(source, "numeric")
+        text = acq.stream(source, "text")
+        valid = [(1, 2**53), (2, 2**53 + 2), (3, exact)]
+        if transport == "json":
+            # An identical sequence of digits in a string keeps its parsing rules.
+            valid.append((4, str(inexact)))
+        response = write("exact", valid, [(1, inexact)])
+        assert response.status_code == 200, response.text
+        assert response.json()["receipts"][0]["published"]
+        expected = [float(value) for _, value in valid]
+        assert numeric.dataframe()["value"].to_list() == expected
+        assert text.dataframe()["value"].to_list() == [str(inexact)]
+        faults = ["Fault"] if transport == "json" else []
+        assert numeric.dataframe(value_mode="text")["value"].to_list() == faults
+
+        # The invalid row also prevents the valid rows in its request from publishing.
+        status = acq.engine_status()
+        response = write("inexact", [(5, 7), (6, inexact)], [(5, exact)])
+        assert response.status_code == 400, response.text
+        assert response.json()["detail"] == "integer reading cannot be represented exactly as Float64"
+        assert acq.engine_status() == status
+        assert numeric.dataframe()["value"].to_list() == expected
+        assert text.dataframe()["value"].to_list() == [str(inexact)]
 
 
-def test_undeclared_text_stream_switches_to_numeric_later():
-    uri = str(compute_stream_uri("s", "late"))
-    store = _CountingStore({uri: "undeclared"})
-    mgr = _manager(store)
+def test_read_modes_use_declared_and_inferred_stream_kinds(own_acquirium):
+    acq = own_acquirium
+    source = "kind-late"
+    registration = {"source_id": source, "stream_name": "late"}
+    acq.register_streams([
+        registration,
+        {"source_id": source, "stream_name": "mode", "value_kind": "text"},
+    ])
+    at = datetime(2026, 11, 1, tzinfo=timezone.utc)
+    stream = acq.stream(source, "late")
+    later = at + timedelta(seconds=1)
+    # The declared text stream stringifies numbers. The other stream starts with a fault code.
+    acq.insert_timeseries_batch(source, {"mode": [(at, "AUTO"), (later, 3)], "late": [(at, "Bad")]})
+    assert acq.stream(source, "mode").dataframe()["value"].to_list() == ["AUTO", "3"]
+    assert stream.dataframe()["value"].to_list() == ["Bad"]
 
-    assert _insert(mgr, "s", [("late", "Bad")]) == {uri: "text"}
-    assert store.kinds[uri] == "undeclared"
-    assert _insert(mgr, "s", [("late", "3.0")]) == {uri: "numeric"}
-    assert store.kinds[uri] == "numeric"
-
-
-def test_store_keeps_an_inferred_kind_when_registered_again_without_one(tmp_path):
-    store = DuckDBStore(str(tmp_path / "ts.duckdb"))
-    uri = str(compute_stream_uri("s", "a"))
-    store.ensure_stream_refs([(None, "s", "a", uri, None)])
-    assert store.stream_value_kind(uri) == "undeclared"
-
-    store.mark_streams_numeric([uri])
-    store.ensure_stream_refs([(None, "s", "a", uri, None)])
-    assert store.stream_value_kind(uri) == "numeric"
-
-    store.ensure_stream_refs([(None, "s", "a", uri, "text")])
-    store.mark_streams_numeric([uri])
-    assert store.stream_value_kind(uri) == "text"
+    # The first numeric value changes the default view while the fault code remains readable.
+    acq.insert_timeseries(source, "late", [(later, " 70.5 ")])
+    acq.register_streams([registration])
+    assert stream.dataframe()["value"].to_list() == [70.5]
+    assert stream.dataframe(value_mode="text")["value"].to_list() == ["Bad"]
+    assert stream.dataframe(value_mode="coalesce")["value"].to_list() == ["Bad", "70.5"]

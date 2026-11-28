@@ -2,61 +2,23 @@
 from __future__ import annotations
 
 import json
-from uuid import uuid4
 
 
 def execute(conn, statement, parameters=()):
+    """Execute a ledger statement written with question-mark placeholders."""
     if conn.__class__.__module__.startswith("psycopg"):
         statement = statement.replace("?", "%s")
     return conn.execute(statement, list(parameters or ()))
 
 
 def enqueue(conn, update):
+    """Assign a new delivery version inside the caller's write transaction.
+
+    Committing the version and payload together lets the publisher read
+    pending metadata writes in the ledger's order.
+    """
     if isinstance(update, dict):
         update = json.dumps(update)
     version = execute(conn, "UPDATE experiment_metadata_state SET version=version+1 RETURNING version").fetchone()[0]
     execute(conn, "INSERT INTO experiment_metadata_outbox (version, update_text) VALUES (?, ?)", [version, update])
-
-
-def migrate_documents(conn):
-    """Move legacy snapshots to resolved, replayable graph writes atomically."""
-    from acquirium.ExperimentMetadata import ExperimentMetadataGraph
-    from acquirium.ExperimentMetadata import study_record, variable_record, run_record, annotation_record
-    from acquirium.ExperimentValues import timestamp
-
-    execute(conn, "CREATE TABLE experiment_metadata_state (generation VARCHAR NOT NULL, version BIGINT NOT NULL, published_version BIGINT NOT NULL)")
-    execute(conn, "INSERT INTO experiment_metadata_state VALUES (?, 0, 0)", [str(uuid4())])
-    execute(conn, "CREATE TABLE experiment_metadata_outbox (version BIGINT PRIMARY KEY, update_text VARCHAR NOT NULL)")
-    tables = {row[0] for row in execute(conn, "SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema()").fetchall()}
-    pins = {}
-    if "experiment_metadata_resolutions" in tables:
-        pins = {(text, kind): uri for text, kind, uri in execute(conn, "SELECT text, kind, uri FROM experiment_metadata_resolutions").fetchall()}
-    graph = ExperimentMetadataGraph(None, lambda text, kind: pins.get((text, kind)), strict=False)
-    records = []
-    for identifier, name, created in execute(conn, "SELECT template_id, name, created_at FROM experiment_templates").fetchall():
-        records.append(study_record(dict(template_id=identifier, name=name, created_at=timestamp(created))))
-    for identifier, study, label, role, kind, metadata, created in execute(conn, "SELECT variable_id, template_id, label, role, kind, metadata_json, created_at FROM experiment_variables").fetchall():
-        values = json.loads(metadata)
-        if values.get("_adapter_format") == 1:
-            values["metadata"] = json.loads(values.pop("adapter_metadata"))
-            values["_adapter_format"] = 2
-        records.append(variable_record(study, dict(variable_id=identifier, label=label, role=role, kind=kind, metadata=values, created_at=timestamp(created))))
-    for identifier, study, status, metadata, started, finished in execute(conn, "SELECT run_id, template_id, status, metadata_json, started_at, finished_at FROM experiment_runs").fetchall():
-        records.append(run_record(dict(run_id=identifier, template_id=study, status=status, metadata=json.loads(metadata), started_at=timestamp(started), finished_at=timestamp(finished) if finished else None)))
-    # A database from before the ``stream_uri`` name still has ``ref_uri`` here;
-    # experiment migration 4 renames it afterwards.
-    observation_columns = {row[0] for row in execute(conn, "SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='experiment_observations'").fetchall()}
-    stream_column = "stream_uri" if "stream_uri" in observation_columns else "ref_uri"
-    for run, sequence, study, ref, start, end, metadata, created in execute(conn, f"SELECT o.run_id,o.sequence,r.template_id,o.{stream_column},o.range_start,o.range_end,o.value_json,o.recorded_at FROM experiment_observations o JOIN experiment_runs r ON r.run_id=o.run_id WHERE o.variable_id IS NULL").fetchall():
-        records.append(annotation_record(dict(annotation_id=f"{run}:{sequence}", run_id=run, template_id=study, stream_uri=ref, range_start=timestamp(start), range_end=timestamp(end) if end else None, metadata=json.loads(metadata), created_at=timestamp(created))))
-    for record in records:
-        enqueue(conn, graph.record_update(record))
-    # Removing only the snapshots leaves lifecycle and observation data intact.
-    # DuckDB secondary indexes must be recreated after the schema transaction.
-    execute(conn, "DROP INDEX IF EXISTS experiment_variables_template_idx")
-    execute(conn, "DROP INDEX IF EXISTS experiment_runs_template_idx")
-    execute(conn, "ALTER TABLE experiment_variables DROP COLUMN metadata_json")
-    execute(conn, "ALTER TABLE experiment_runs DROP COLUMN metadata_json")
-    execute(conn, "UPDATE experiment_observations SET value_json=NULL WHERE variable_id IS NULL")
-    execute(conn, "DROP TABLE IF EXISTS experiment_metadata_resolutions")
 

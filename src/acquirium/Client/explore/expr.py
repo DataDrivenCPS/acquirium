@@ -30,7 +30,6 @@ from typing import Any, Iterable, Optional, Tuple
 
 from acquirium.Client.explore.attributes import Registry, check_key, valid_path
 
-COMPARISONS = ("==", "!=", "<", "<=", ">", ">=", "in", "exists")
 ORDERING = ("<", "<=", ">", ">=")
 _BOOL_HELP = (
     "an attribute expression has no truth value; combine expressions with "

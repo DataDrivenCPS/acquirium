@@ -62,10 +62,7 @@ The query builder returned by `acq.query()` is described in the [query reference
 | [`Acquirium.insert_log`](logs.md#acquiriuminsert_log) | method | Add a plant log entry |
 | [`Acquirium.read_logs`](logs.md#acquiriumread_logs) | method | Read plant log entries |
 | [`Acquirium.delete_logs`](logs.md#acquiriumdelete_logs) | method | Delete all plant log entries |
-| [`Acquirium.check_app`](apps.md#acquiriumcheck_app) | method | Run an app without saving anything |
-| [`Acquirium.deploy_app`](apps.md#acquiriumdeploy_app) | method | Deploy an app |
-| [`Acquirium.list_apps`](apps.md#acquiriumlist_apps) | method | List deployed apps |
-| [`Acquirium.inspect_app`](apps.md#acquiriuminspect_app) | method | Details of one deployed app |
-| [`Acquirium.reprocess_app`](apps.md#acquiriumreprocess_app) | method | Recompute a time range of an app's output |
-| [`Acquirium.remove_app`](apps.md#acquiriumremove_app) | method | Remove a deployed app |
-| [`Acquirium.app_dag`](apps.md#acquiriumapp_dag) | method | The deployed apps as a dependency graph |
+| [`Acquirium.deploy_app`](apps.md) | method | Deploy an app |
+| [`Acquirium.list_apps`](apps.md) | method | List deployed apps |
+| [`Acquirium.inspect_app`](apps.md) | method | Details of one deployed app |
+| [`Acquirium.remove_app`](apps.md) | method | Remove a deployed app |

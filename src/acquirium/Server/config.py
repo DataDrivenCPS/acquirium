@@ -25,11 +25,14 @@ toml file. URLs and ``urn:`` IRIs are passed through unchanged.
 
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import logging
 from collections.abc import MutableMapping
 from hashlib import sha256
 import json
 import os
+import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,11 +41,57 @@ from typing import Any
 _logger = logging.getLogger("acquirium.config")
 
 
+def load_app_target(spec: str, *, base_dir: Path | None = None) -> object:
+    """Load an App or factory from a module/file spec without shadowing modules."""
+    if ":" not in spec:
+        raise ValueError("app spec must be module_or_file:target")
+    module_part, target_name = spec.rsplit(":", 1)
+    file_path = Path(module_part)
+    is_file = "/" in module_part or file_path.suffix == ".py" or file_path.exists()
+    if is_file:
+        # Server entries resolve against their config directory; CLI file
+        # specs use the caller's working directory when no base is supplied.
+        if not file_path.is_absolute():
+            file_path = ((base_dir or Path.cwd()) / file_path).resolve()
+        if not file_path.is_file():
+            raise ValueError(f"app file not found: {module_part}")
+        module_name = file_path.stem
+        if not module_name.isidentifier():
+            raise ValueError(f"app file name must be a Python module name: {file_path.name}")
+        # A file stem must identify this file, without shadowing installed
+        # modules or reusing a same-named file from another directory.
+        importlib.invalidate_caches()
+        try:
+            found = importlib.util.find_spec(module_name)
+        except (ImportError, ValueError):
+            found = False
+        origin = getattr(found, "origin", None)
+        if found is not None and (origin is None or Path(origin).resolve() != file_path):
+            raise ValueError(f"app file {file_path} would import as {module_name!r}, which is already "
+                             f"{origin or 'another module'}; rename the file or install it as a package")
+        module_dir = str(file_path.parent)
+        if module_dir not in sys.path:
+            # Appended, so app directories never shadow installed modules.
+            sys.path.append(module_dir)
+        module = importlib.import_module(module_name)
+    else:
+        module = importlib.import_module(module_part)
+    try:
+        return getattr(module, target_name)
+    except AttributeError as error:
+        raise ValueError(f"app target {target_name!r} was not found in {module.__name__!r}") from error
+
+
 _SERVER_ENV_MAP: dict[str, str] = {
     "data_dir": "ACQUIRIUM_DATA_DIR",
-    "pg_dsn": "PG_DSN",
-    "duckdb_path": "ACQUIRIUM_DUCKDB_PATH",
-    "timeseries_backend": "ACQUIRIUM_TIMESERIES_BACKEND",
+    "engine_path": "ACQUIRIUM_ENGINE_PATH",
+    "engine_schema": "ACQUIRIUM_ENGINE_SCHEMA",
+    "experiments_path": "ACQUIRIUM_EXPERIMENTS_PATH",
+    "engine_workers": "ACQUIRIUM_ENGINE_WORKERS",
+    "epoch_requests": "ACQUIRIUM_EPOCH_REQUESTS",
+    "max_pending_requests": "ACQUIRIUM_MAX_PENDING_REQUESTS",
+    "history_epochs": "ACQUIRIUM_HISTORY_EPOCHS",
+    "drain_timeout": "ACQUIRIUM_DRAIN_TIMEOUT",
     "graph_path": "ACQUIRIUM_GRAPH_PATH",
     "embedding_model": "ACQUIRIUM_EMBEDDING_MODEL",
     "exact_only": "ACQUIRIUM_EXACT_ONLY",
@@ -58,7 +107,6 @@ DEFAULT_LOCAL_CONFIG: dict[str, Any] = {
     "server": {
         "enabled": True,
         "data_dir": ".acquirium",
-        "timeseries_backend": "duckdb",
         "host": "127.0.0.1",
         "port": 0,
         "workers": 1,
@@ -91,7 +139,10 @@ class LoadedConfig:
             if key not in server:
                 continue
             value = server[key]
-            if key in {"data_dir", "duckdb_path", "graph_path"}:
+            # A PostgreSQL URL names a database, not a file.
+            if key in {"data_dir", "engine_path", "experiments_path", "graph_path"} and not str(
+                value
+            ).startswith(("postgres://", "postgresql://")):
                 path = Path(value)
                 value = (
                     str((self.directory / path).resolve())
@@ -216,12 +267,13 @@ def _parse_entry(entry: object, base_dir: Path) -> OntologySource | None:
     return None
 
 
-def load_ontology_config() -> OntologyConfig:
+def load_ontology_config(loaded: LoadedConfig | None = None) -> OntologyConfig:
     """Read ontology settings from the acquirium.toml pointed to by
     ``ACQUIRIUM_CONFIG`` (set by the CLI). Returns an empty config when
     no file is reachable — bundled ontology defaults still load."""
     try:
-        loaded = load_active_config()
+        if loaded is None:
+            loaded = load_active_config()
     except Exception as exc:
         _logger.warning("failed to load Acquirium config: %s", exc)
         return OntologyConfig()

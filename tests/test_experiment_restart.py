@@ -1,20 +1,17 @@
-"""A local server restarted on the same data keeps, or upgrades, its experiment ledger."""
+"""A local server restarted on the same data keeps its experiment ledger."""
 from datetime import datetime, timezone
 
 import pytest
 
 import acquirium as aq
-from acquirium.Storage.metadata_outbox import execute
+from acquirium.Client.explore.attributes import ATTR_NS
+from acquirium.ExperimentMetadata import EXPERIMENT, annotation_uri, run_uri
 from tests.local_server import local_server_storage
 
 WHEN = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
-def _declare(client, template_id, label, role, kind, metadata=None):
-    return client.declare_experiment_variable(template_id, label=label, role=role, kind=kind, metadata=metadata or {})
-
-
-@pytest.fixture(params=["duckdb", "timescale"])
+@pytest.fixture(params=["duckdb", "postgres"])
 def storage(request, tmp_path, separate_server):
     with local_server_storage(tmp_path, request.param) as storage:
         yield storage
@@ -22,64 +19,43 @@ def storage(request, tmp_path, separate_server):
 
 def test_restarted_server_keeps_the_experiment_ledger(storage):
     options, _ = storage
-    client = aq.init(**options).client
+    ac = aq.init(**options)
+    client = ac.client
     try:
+        # Declare a file input, start a run, and attach both a file and a stream annotation.
         study = client.define_experiment("experiment restart contract")
-        variable = _declare(client, study["template_id"], "input", "input", "file")
-        run = client.start_experiment(study["template_id"], {})
+        variable = client.declare_experiment_variable(
+            study["template_id"], label="input", role="input", kind="file", metadata={},
+        )
+        run = client.start_experiment(study["template_id"], {"scenario": "baseline"})
+        ac.insert_metadata(run_uri(run["run_id"]), {"scenario": "edited"})
         client.attach_experiment_bytes(run["run_id"], variable["variable_id"], b"input", filename="input.txt", media_type="text/plain")
-        client.annotate_experiment_stream(run["run_id"], "urn:contract:stream", start="2026-01-01T00:00:00Z")
+        annotation = client.annotate_experiment_stream(
+            run["run_id"], "urn:contract:stream", start=WHEN.isoformat(), metadata={"treatment": "A"},
+        )
+        client.close_experiment_stream_annotation(annotation["annotation_id"], end=WHEN.isoformat())
     finally:
         aq.shutdown()
     client = aq.init(**options).client
     try:
+        # Reopen the same storage and check the declaration, run status, bytes, and annotation.
         assert client.get_experiment_study(study["template_id"])["name"] == "experiment restart contract"
         assert len(client.list_experiment_variables(study["template_id"])) == 1
         observation = client.list_experiment_observations(study["template_id"])[0]
         assert (observation["filename"], observation["byte_length"]) == ("input.txt", 5)
         assert client.experiment_artifact(observation["artifact_digest"]) == b"input"
-        assert client.get_experiment(run["run_id"])["status"] == "running"
-        assert len(client.list_experiment_stream_annotations()) == 1
-    finally:
-        aq.shutdown()
-
-
-def test_key_column_migrates_existing_ledger(storage):
-    options, open_store = storage
-    client = aq.init(**options).client
-    try:
-        study = client.define_experiment("old ledger")
-        variable = _declare(client, study["template_id"], "cost", "output", "scalar")
-        run = client.start_experiment(study["template_id"], {})
-        client.observe_experiment(run["run_id"], variable["variable_id"], value=2)
-    finally:
-        aq.shutdown()
-    # Return the stopped server's ledger to the schema before observation keys.
-    store = open_store()
-    try:
-        with store._lock, store._write_conn() as conn:
-            # DuckDB requires dropping secondary indexes before dropping columns.
-            execute(conn, "DROP INDEX experiment_observations_variable_idx")
-            execute(conn, "DROP INDEX experiment_observations_stream_idx")
-            execute(conn, "ALTER TABLE experiment_observations DROP COLUMN key_json")
-            execute(conn, "DELETE FROM schema_migrations WHERE component='experiments' AND version=1")
-            execute(conn, "CREATE INDEX experiment_observations_variable_idx ON experiment_observations(variable_id, run_id, sequence)")
-            execute(conn, "CREATE INDEX experiment_observations_stream_idx ON experiment_observations(stream_uri, range_start, range_end)")
-    finally:
-        store.close()
-    ac = aq.init(**options)
-    client = ac.client
-    try:
-        observations = client.list_experiment_observations(study["template_id"])
-        assert observations[0]["value"] == 2
-        assert observations[0]["key"] is None
-        flow = _declare(client, study["template_id"], "flow", "output", "timeseries", {"keys": ["pump"]})
-        refs = [client.record_experiment_batch(run["run_id"], [{"form": "samples", "variable_id": flow["variable_id"],
-                                                                "key": [pump], "samples": [[WHEN.isoformat(), 1.0]]}])[0]["stream_uri"]
-                for pump in ("p1", "p2")]
-        assert [item["key"] for item in client.list_experiment_observations(study["template_id"])][1:] == [["p1"], ["p2"]]
-        client.finish_experiment(run["run_id"])
-        client.delete_experiments([run["run_id"]])
-        assert [client.timeseries_df(ref).height for ref in refs] == [0, 0]
+        restored = client.get_experiment(run["run_id"])
+        assert restored["status"] == "running"
+        assert restored["metadata"] == {"scenario": "edited"}
+        [restored_annotation] = client.list_experiment_stream_annotations()
+        assert restored_annotation["metadata"] == {"treatment": "A"}
+        assert datetime.fromisoformat(restored_annotation["range_end"]) == WHEN
+        result = client.sparql_query(f"""
+            SELECT ?treatment WHERE {{
+                <{run_uri(run['run_id'])}> a <{EXPERIMENT.Run}> .
+                <{annotation_uri(annotation['annotation_id'])}> <{ATTR_NS}treatment> ?treatment .
+            }}
+        """, wait_for_fresh=True)
+        assert result["rows"] == [["A"]]
     finally:
         aq.shutdown()

@@ -19,7 +19,7 @@ def data_dir(tmp_path, monkeypatch):
     folder = tmp_path / ".acquirium"
     (folder / ".oxigraph").mkdir(parents=True)
     (folder / ".runtime").mkdir()
-    (folder / "timeseries.duckdb").write_bytes(b"data")
+    (folder / "escapement-epoch.duckdb").write_bytes(b"data")
     (folder / "embedding_cache" / "qudt").mkdir(parents=True)
     (folder / "embedding_cache" / "qudt" / "x_vectors.npz").write_bytes(b"vectors")
     return folder
@@ -45,12 +45,12 @@ def test_asks_before_erasing(data_dir):
     declined = _clear(input="n\n")
 
     assert declined.exit_code == 1
-    assert (data_dir / "timeseries.duckdb").exists()
+    assert (data_dir / "escapement-epoch.duckdb").exists()
 
     accepted = _clear(input="y\n")
 
     assert accepted.exit_code == 0, accepted.output
-    assert not (data_dir / "timeseries.duckdb").exists()
+    assert not (data_dir / "escapement-epoch.duckdb").exists()
 
 
 def test_a_missing_folder_is_not_an_error(tmp_path, monkeypatch):
@@ -82,7 +82,7 @@ def test_refuses_while_a_server_uses_the_folder(data_dir, monkeypatch):
 
     assert result.exit_code == 1
     assert "Stop it first" in result.output
-    assert (data_dir / "timeseries.duckdb").exists()
+    assert (data_dir / "escapement-epoch.duckdb").exists()
 
 
 def test_an_open_graph_store_counts_as_a_running_server(tmp_path):
@@ -99,7 +99,7 @@ def test_an_open_graph_store_counts_as_a_running_server(tmp_path):
 def test_uses_the_data_dir_of_the_config(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "acquirium.toml").write_text(
-        '[server]\ndata_dir = "store"\ntimeseries_backend = "timescale"\n'
+        '[server]\ndata_dir = "store"\nengine_path = "postgresql://localhost/aq"\n'
     )
     (tmp_path / "store" / ".oxigraph").mkdir(parents=True)
 
@@ -107,4 +107,4 @@ def test_uses_the_data_dir_of_the_config(tmp_path, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert list((tmp_path / "store").iterdir()) == []
-    assert "readings in Postgres are kept" in result.output
+    assert "engine_path uses PostgreSQL. Its data was kept" in result.output

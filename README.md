@@ -1,145 +1,78 @@
 # Acquirium
 
-A Data-Metadata Framework for Water Treatment Plants
+A semantic data framework for water treatment systems, built on
+[Escapement](https://github.com/gtfierro/escapement).
 
-Acquirium is a framework for storing, managing, querying, and integrating data and metadata for water treatment systems. It combines knowledge graphs and time series data to support analysis, monitoring, and experimentation.
+Acquirium connects plant models and semantic queries to sensor streams.
+Escapement stores the readings and runs the calculations that keep derived
+streams current. Data lives in a local DuckDB file or PostgreSQL.
 
-## Installation
+## Development setup
 
-From PyPI:
-
-```bash
-pip install acquirium
+```sh
+uv sync --locked --extra mqtt
+uv run acquirium server --config acquirium.toml
 ```
 
-Optional extras for specific drivers:
-
-```bash
-pip install "acquirium[mqtt]"       # MQTT ingestion driver
-pip install "acquirium[xlsx]"       # Excel ingestion driver
-pip install "acquirium[watertap]"   # WaterTAP simulation driver
-```
-
-Or with [uv](https://docs.astral.sh/uv/):
-
-```bash
-uv pip install acquirium
-```
-
-For development from a clone:
-
-```bash
-git clone https://github.com/DataDrivenCPS/acquirium.git
-cd acquirium
-uv sync
-```
-
-## Quickstart
-
-**The easiest way to experiment with acquirium is through an example. We strongly recommend following the steps in the [WaterTAP readme](./deployments/WATERTAP/readme.md).** WaterTAP is a simulation tool with an acquirium integration; following the steps there runs acquirium as if it were connected to a live plant, generating physically realistic data you can query and build applications on.
-
-The server and its configured drivers start from one command:
-
-```bash
-acquirium server --config acquirium.toml
-```
-
-A sample `acquirium.toml` is included at the repository root. By default everything is stored on local disk (an embedded Oxigraph RDF store and a DuckDB file under `data_dir`); no external services are required. The first start builds the text-resolution indexes and can take 5-10 minutes; later starts reuse the cache. The server is intentionally one process because it owns the embedded graph store. `materialization_workers` bounds concurrent transformation execution through the server's in-process worker pool; incremental materialization supports both DuckDB and TimescaleDB backends.
-
-Querying is a Python client:
+A script can own a shared local server instead:
 
 ```python
-from acquirium import Acquirium
+import acquirium as aq
 
-acq = Acquirium(server_url="127.0.0.1", server_port=8000)
-acq.query().entity("pump").measurement(quantity_kind="pressure").dataframe(shape="wide")
+client = aq.init(data_dir=".acquirium", exact_only=True)
+try:
+    client.register_streams([{
+        "source_id": "gateway", "ref_name": "temperature",
+        "point_uri": "urn:plant:tank-temperature",
+        "unit": "http://qudt.org/vocab/unit/DEG_F",
+        "value_kind": "numeric",
+    }])
+    result = client.insert_timeseries(
+        "gateway", "temperature", [(1_800_000_000_000_000_000, 68.0)],
+        request_id="gateway-batch-1",
+    )
+    snapshot = client.wait(result["receipts"][0])
+    frame = client.query().measurement(alias="temperature").dataframe()
+finally:
+    aq.shutdown()
 ```
 
-## Documentation
+Integer timestamps are UTC nanoseconds. Observation values must be finite,
+non-null numbers. Ranges are half-open. Reuse a source/request ID with the same
+normalized payload to retry within the engine's bounded retry window. A response
+reports durable acceptance separately from publication; accepted work remains
+pending if a computation fails.
 
-The guides live in [docs/](./docs/_index.md), organized as tutorials, how-to
-guides, reference and explanation.
+## Soft sensors and derived streams
 
-**Start here** — learning by doing:
+An app turns selected source streams into derived streams. New readings and
+corrections update the results, including those of downstream apps.
 
-| tutorial | covers |
-|---|---|
-| [Getting started](./docs/tutorials/getting-started.md) | install, start a server, run a first query |
-| [Querying](./docs/tutorials/querying.md) | the `Query` verbs: entities, topology, measurements, filters, columns |
-| [Query cookbook](./docs/tutorials/query-cookbook.md) | domain questions, how to phrase them, the query |
-| [Working with data](./docs/tutorials/data.md) | lazy fetching, shapes, units, taking a result apart |
-| [Your first driver](./docs/tutorials/first-driver.md) | authoring a CSV driver step by step |
-| [Your first experiment](./docs/tutorials/first-experiment.py) | optimize a pump schedule with SciPy, record each scenario, and compare runs |
+Start with [Build your first soft sensor](docs/tutorials/advanced/first-app.md)
+to deploy a simple calculation. The [turbidity pipeline](docs/tutorials/turbidity.md)
+cleans analyser readings and feeds a sustained alarm. The
+[actor examples](docs/explanation/soft-sensor-actors.md) show a scheduled alarm
+and a membrane model that retrains in the background.
 
-**How-to guides** — one task each:
-[start from a script](./docs/how-to/local-runtime.md),
-[load a plant model](./docs/how-to/load-a-plant-model.md),
-[explore a model](./docs/how-to/explore-a-model.md),
-[debug a query](./docs/how-to/debug-an-empty-query.md),
-[insert data](./docs/how-to/write-data.md),
-[write an app](./docs/tutorials/first-app.md),
-[record an experiment](./docs/how-to/record-experiments.md),
-[record a whole model](./docs/how-to/record-a-whole-model.md),
-[run the server](./docs/how-to/run-the-server.md),
-[resolve text to URIs](./docs/how-to/resolve-text.md).
+For windows, outputs, and group settings, see [Write a soft sensor](docs/how-to/write-soft-sensors.md).
+The [app reference](docs/reference/apps/_index.md) covers the interface options.
 
-**Reference** — facts, no narrative:
-[client API](./docs/reference/client-api.md),
-[drivers](./docs/reference/drivers.md),
-[apps](./docs/reference/apps.md),
-[experiments](./docs/reference/experiments.md),
-[server configuration](./docs/reference/server-config.md),
-[storage migrations](./docs/reference/storage-migrations.md),
-[HTTP API](./docs/reference/http-api.md),
-[glossary](./docs/reference/glossary.md).
+## Documentation and tests
 
-**Explanation** — why things are the way they are:
-[the query model](./docs/explanation/query-model.md),
-[values](./docs/explanation/values.md) and [units](./docs/explanation/units.md),
-[why drivers](./docs/explanation/drivers.md),
-[why apps use recomputed windows](./docs/explanation/apps.md),
-[how experiments preserve context](./docs/explanation/experiments.md),
-[the data stream lifecycle](./docs/explanation/stream-lifecycle.md),
-[text resolution](./docs/explanation/text-resolution.md),
-[server internals](./docs/explanation/server-internals.md),
-[graph backend](./docs/explanation/graph-backend.md).
+Start with [the documentation index](docs/_index.md),
+[semantic queries](docs/tutorials/querying-data.md), and
+[the HTTP API](docs/reference/server/http-api.md).
+To record experiments, see [Running experiments](docs/tutorials/advanced/experiments.md),
+[Experiment recording](docs/how-to/record-experiments.md), and the
+[experiment reference](docs/reference/experiments/_index.md).
 
-## Docker stack (optional)
-
-A `compose.yaml` is provided for an all-in-one local stack (Acquirium + TimescaleDB + Grafana):
-
-```bash
-make up                              # start
-make up ACQUIRIUM_RECREATE=true      # wipe data + start
-make down                            # stop
+```sh
+uv run pytest
 ```
 
-> By default each Docker run resets the system. To preserve data across runs, set `ACQUIRIUM_RECREATE=false` in `compose.yaml`.
-
-## WaterTAP integration
-
-The `watertap` extra installs the Python packages for the built-in WaterTAP driver, plus a one-time install of native solver extensions:
-
-```bash
-pip install "acquirium[watertap]"
-idaes get-extensions                        # native IDAES/IPOPT solver binaries
-# with uv: uv sync --extra watertap && uv run idaes get-extensions
-acquirium server --config deployments/WATERTAP/scripts/acquirium.toml
-```
-
-The [WaterTAP deployment readme](./deployments/WATERTAP/readme.md) covers the models, the data generator, and the example notebooks under [notebooks/watertap/](./notebooks/watertap/).
-
-## Text resolution
-
-Free text anywhere in the API (class names, units, quantity kinds) is matched to ontology URIs by embedding similarity, using two indexes built from the bundled ontologies at server start. See the [resolution guide](./docs/how-to/resolve-text.md).
-
-## Tests
-
-```bash
-uv run pytest tests/unit     # unit tests only (or: make unit-test)
-make test                    # full suite (Docker required)
-```
-
-## Status
-
-Acquirium is under active development. Bug reports and feature requests are welcome — please open an issue.
+Every test starts its server in-process with `aq.init()` on temporary
+storage, so no Docker services are needed. PostgreSQL tests run when
+`ACQUIRIUM_TEST_PG_DSN` is set, and MQTT tests when a broker answers at
+`ACQUIRIUM_TEST_MQTT` (default `localhost:1883`); otherwise they skip.
+The optional Docker configuration runs Acquirium and Mosquitto; native builds
+forward your SSH agent with BuildKit.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -12,13 +13,16 @@ from acquirium.Drivers.BuiltInDrivers.parquet_ingest import ParquetIngestDriver
 
 def make_driver(cfg_overrides: dict | None = None, tmp_path: Path | None = None) -> ParquetIngestDriver:
     aq = MagicMock()
-    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0}
+    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0, "receipts": []}
     watch = str(tmp_path) if tmp_path else "/tmp/parquet_test_watch"
+    # Per-test driver state: the default <cwd>/.acquirium is shared across runs,
+    # and a stale cursor for a reused tmp path makes tick() skip the file.
+    state = tmp_path / ".state" if tmp_path else Path(tempfile.mkdtemp())
     driver = ParquetIngestDriver(aq, {"driver": {
         "watch_dir": watch, "glob": ["*.parquet", "*.pq"],
         "source_id": "parquet_files", "format": "wide",
         **(cfg_overrides or {}),
-    }})
+    }, "server": {"data_dir": str(state)}})
     driver.setup()
     return driver
 
@@ -48,7 +52,7 @@ def test_parse_parquet_wide(tmp_path):
     batch, cursor = parse(driver, _wide_parquet(tmp_path))
     assert cursor == 2
     assert set(batch) == {"temp", "rh"}
-    assert batch["temp"][0][1] == "22.5"
+    assert batch["temp"][0][1] == 22.5
 
 
 def test_parse_parquet_narrow(tmp_path):
@@ -78,7 +82,7 @@ def test_cursor_pages_new_rows_only(tmp_path):
     driver = make_driver(tmp_path=tmp_path)
     batch, cursor = parse(driver, _wide_parquet(tmp_path), cursor=1)
     assert cursor == 2
-    assert batch["temp"][0][1] == "23.0"
+    assert batch["temp"][0][1] == 23.0
 
 
 def test_custom_time_col(tmp_path):

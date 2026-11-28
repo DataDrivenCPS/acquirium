@@ -40,6 +40,7 @@ def register_value_handler(cls: type, handler: Callable[[Any], Any]) -> None:
 
 
 def _handler(value: Any) -> Callable[[Any], Any] | None:
+    """Use the nearest registered value converter in the type's resolution order."""
     for cls in type(value).__mro__:
         if cls in _HANDLERS:
             return _HANDLERS[cls]
@@ -69,6 +70,7 @@ def to_json(value: Any, *, path: str = "value") -> Any:
             f"{path} is a {type(value).__name__}, which cannot be recorded as JSON; "
             "convert it first or register a handler with acquirium.register_value_handler()"
         )
+    # Custom conversions still have to pass the same recursive JSON checks.
     return to_json(handler(value), path=path)
 
 
@@ -98,10 +100,10 @@ def check_kind(kind: str, value: Any, *, label: str = "variable") -> None:
 
 
 def timestamp(value: datetime | str) -> datetime:
-    """Parse an ISO timestamp, treating a timezone-less value as UTC."""
-    from dateutil import parser
-    parsed = parser.isoparse(value) if isinstance(value, str) else value
-    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+    """Compatibility name for scalar ``acquirium.to_timestamp`` conversion."""
+    from acquirium.Drivers.tabular import to_timestamp
+
+    return to_timestamp(value)
 
 
 def parquet(value: Any) -> bytes:
@@ -136,6 +138,8 @@ def sample_rows(rows: Any) -> list[tuple[datetime, Any]]:
             value = next(name for name in rows.columns if name != time)
         if time is None or value is None:
             raise ValueError("time-series tables need a time (or ts) column and a value (or value_numeric) column")
+        # Query results can label several streams in one frame. Each recording
+        # entry owns one stream, so reject ambiguous input before taking pairs.
         for column in ("data_alias", "property_uri", "stream_uri", "property_id", "stream", "ref", "uri"):
             if column in rows.columns and rows[column].n_unique() > 1:
                 raise ValueError("these rows come from several streams; record one stream at a time")

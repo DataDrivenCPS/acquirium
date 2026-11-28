@@ -11,88 +11,49 @@ For starting the server, see [run the server](cli.md#acquirium-server).
 Relative paths in a config file always resolve against that file's own
 directory, never the working directory.
 
-## The [server] section
+All servers use one embedded Escapement engine and one embedded Oxigraph graph.
+Paths resolve relative to the configuration file.
 
 ```toml
 [server]
-host               = "0.0.0.0"
-port               = 8000
-data_dir           = ".acquirium"
-timeseries_backend = "duckdb"        # or "timescale" (requires pg_dsn)
+host = "127.0.0.1"
+port = 8000
+data_dir = ".acquirium"
+exact_only = true
+recreate = false
+engine_workers = 2
+epoch_requests = 128
+max_pending_requests = 100000
 ```
 
-| key | default | meaning |
-|---|---|---|
-| `host` | `"0.0.0.0"` | bind host |
-| `port` | `8000` | bind port |
-| `data_dir` | `".acquirium"` | root directory for local graph, embedding, and default DuckDB files |
-| `timeseries_backend` | `"duckdb"` | `"duckdb"` or `"timescale"` |
-| `pg_dsn` | none | Postgres DSN; required for the timescale backend |
-| `duckdb_path` | `data_dir/timeseries.duckdb` | duckdb file location |
-| `graph_path` | `data_dir/.oxigraph` | graph store location |
-| `embedding_model` | `"BAAI/bge-small-en-v1.5-fp32"` | model for the text matcher index |
-| `exact_only` | `false` | index concepts without embedding them; see below |
-| `recreate` | `false` | wipe the data directory and start fresh; see below |
-| `read_batch_size` | `50000` | rows per Arrow batch on timeseries reads |
-| `materialization_workers` | `2` | maximum app transformations that run concurrently in the in-process pool |
-| `materialization_poll_seconds` | `0.25` | idle delay between checks for durable materialization work; must be positive |
-| `materialization_error_log_seconds` | `30.0` | minimum delay between repeated materialization failure logs; must be positive |
-| `workers` | `1` | must stay 1 |
-| `enabled` | `true` | `false` skips the HTTP server and pushes `[[drivers]]` to a remote server |
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `data_dir` | `.acquirium` | Graph, indexes, cached calculation artifacts, and default engine database |
+| `engine_path` | `data_dir/escapement-epoch.duckdb` | Escapement store, either a DuckDB file or a PostgreSQL URL |
+| `engine_schema` | URL `search_path` when provided, otherwise `acquirium_epoch` | PostgreSQL schema for Escapement |
+| `experiments_path` | `engine_path` if it is a `postgres://` URL, else `data_dir/experiments.duckdb` | Experiment ledger: a DuckDB file or a `postgres://` URL. Holds Studies, runs, observations, artifact bytes, and logbook entries; their samples are Escapement streams |
+| `engine_workers` | 2 | Python workers available to synchronous app calculations |
+| `epoch_requests` | 128 | Maximum accepted requests processed per epoch |
+| `max_pending_requests` | 100000 | Maximum accepted requests awaiting publication. A full queue returns HTTP 503 for new requests |
+| `history_epochs` | unlimited | Optional number of recent epochs to retain. Older snapshots and feed cursors can expire, including epochs referenced by experiments |
+| `drain_timeout` | 10 | Seconds shutdown waits for pending writes to publish; what's left is processed at the next start |
+| `graph_path` | `data_dir/.oxigraph` | Embedded RDF storage |
+| `exact_only` | false | Resolve exact ontology surfaces without downloading an embedding model |
+| `recreate` | false | Explicitly erase the configured data directory and the experiment ledger at startup |
+| `read_batch_size` | 50000 | Arrow response page size |
+| `workers` | 1 | HTTP processes; must remain one |
+| `host`, `port` | `0.0.0.0`, 8000 | Standalone bind address |
 
-Relative paths resolve against the config file's directory.
+`aq.init()` uses loopback, an automatically selected port, persistent storage,
+and exact-only resolution by default. Its first caller owns the server lifetime.
 
-These are the standalone `acquirium server` defaults. The managed local
-runtime started by `aq.init()` uses `host="127.0.0.1"`, `port=0`, one worker,
-and `exact_only=true`. A supplied config can override supported settings such
-as the port, storage backend, paths, and matching mode; the managed runtime
-still enforces loopback, persistence, and a single worker.
-
-`recreate = true` clears the local data directory at startup. With the
-Timescale backend it also drops and recreates Acquirium's configured database
-tables and views.
-
-With `recreate = false`, supported SQL schema upgrades run automatically using
-the [versioned migration ledger](storage-migrations.md); existing data is retained.
-
-### Exact-only matching
-
-    [server]
-    exact_only = true
-
-The two concept indexes are built as usual, but their surfaces are never
-embedded. No model is downloaded or loaded, nothing is written under
-`data_dir/embedding_cache`, and the first-start index build takes seconds
-instead of several minutes. This is useful for a small deployment, a host
-without internet access, or CI.
-
-Close matches are not found in this mode. The text matcher still answers
-exact names, labels and unit symbols (`"aeration basin"`, `"mg/L"`), and
-returns the same URIs and kinds it would with embeddings on. A text that is
-only close (`"basin for aeration"`) matches nothing instead of the closest
-concept.
-`GET /embedding_status` reports `"semantic": false`.
-
-The flag is a start-time choice, not a property of the data directory. A later
-standalone server start without it builds the embeddings normally; zero-config
-`aq.init()` continues to default to exact-only matching.
-
-### Environment variables
-
-| variable | replaces |
-|---|---|
-| `ACQUIRIUM_DATA_DIR` | `[server] data_dir` |
-| `PG_DSN` | `[server] pg_dsn` |
-| `ACQUIRIUM_DUCKDB_PATH` | `[server] duckdb_path` |
-| `ACQUIRIUM_TIMESERIES_BACKEND` | `[server] timeseries_backend` |
-| `ACQUIRIUM_GRAPH_PATH` | `[server] graph_path` |
-| `ACQUIRIUM_EMBEDDING_MODEL` | `[server] embedding_model` |
-| `ACQUIRIUM_EXACT_ONLY` | `[server] exact_only` |
-| `ACQUIRIUM_RECREATE` | `[server] recreate` |
-| `ACQUIRIUM_WORKERS` | `[server] workers` |
-
-An environment variable has higher precedence compared to the toml variables.
-Check the environment when a config edit appears to have no effect.
+Environment overrides include `ACQUIRIUM_DATA_DIR`, `ACQUIRIUM_ENGINE_PATH`, `ACQUIRIUM_ENGINE_SCHEMA`,
+`ACQUIRIUM_EXPERIMENTS_PATH`,
+`ACQUIRIUM_ENGINE_WORKERS`,
+`ACQUIRIUM_EPOCH_REQUESTS`,
+`ACQUIRIUM_MAX_PENDING_REQUESTS`, `ACQUIRIUM_HISTORY_EPOCHS`, `ACQUIRIUM_DRAIN_TIMEOUT`, `ACQUIRIUM_GRAPH_PATH`,
+`ACQUIRIUM_EXACT_ONLY`, `ACQUIRIUM_EMBEDDING_MODEL`, `ACQUIRIUM_RECREATE`, and
+`ACQUIRIUM_WORKERS`.
 
 ## The [driver] and [[drivers]] sections
 
@@ -108,6 +69,12 @@ only, `localhost` resolves to `::1` first, and on Windows every new connection
 waits about 2 s for the IPv6 attempt to fail. The server closes idle
 connections after 5 s, so an actor ticking every 10 s reconnects on each tick
 and, with `localhost`, pays that delay every time.
+
+## The [[actors]] section
+
+Each `[[actors]]` entry names an actor declaration for the server to start,
+for example `spec = "turbidity_alarm.py:alarm"`. See the
+[actor reference](../actors.md#actors-configuration).
 
 ## The [ontologies] section
 
@@ -160,7 +127,7 @@ A running server also serves the generated OpenAPI schema at `/docs` and
 | timeseries | `POST /insert_timeseries`, `POST /insert_timeseries_arrow`, `GET /timeseries`, `POST /timeseries_info` |
 | resolution | `GET /resolve_text`, `POST /resolve_record`, `POST /resolve_unit`, `POST /resolve_conversion`, `POST /conversion_factors` |
 | drivers | `POST /drivers/start`, `POST /drivers/stop`, `GET /drivers/list` |
-| apps | `GET /apps`, `GET /apps/{name}`, `PUT /apps/{name}`, `POST /apps/check`, `DELETE /apps/{name}`, `POST /apps/{name}/reprocess`, `GET /materialization/dag` |
+| apps | `GET /apps`, `GET /apps/{name}`, `PUT /apps/{name}`, `DELETE /apps/{name}` |
 | logbook | `POST /insert_log`, `GET /query_logs`, `DELETE /delete_logs` |
 
 The conventions across all of them:

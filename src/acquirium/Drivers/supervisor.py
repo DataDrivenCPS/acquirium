@@ -1,40 +1,33 @@
 from __future__ import annotations
 
+import json
 import logging
-import os
+import math
+import pickle
+import subprocess
+import sys
 import threading
+import time
+from concurrent.futures import Future
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
-
-import ray
-
-from acquirium.Drivers.runner import DriverRunner
 
 
 logger = logging.getLogger("acquirium.driver.supervis")
 
 
-def _worker_pythonpath(source_dir: str) -> str:
-    """Prepend ``source_dir`` to this process's PYTHONPATH for a Ray worker.
-
-    runtime_env env_vars replace rather than extend, so the inherited value has
-    to be carried over explicitly or the worker loses it.
-    """
-    inherited = os.environ.get("PYTHONPATH", "")
-    if not inherited:
-        return source_dir
-    if source_dir in inherited.split(os.pathsep):
-        return inherited
-    return source_dir + os.pathsep + inherited
-
 class DriverSupervisor:
-    """Owns the DriverRunner actors of one server process, keyed by name.
+    """Owns the driver processes of one server process, keyed by name.
 
-    Lives in the FastAPI process. start_driver() imports the driver class,
-    spawns a DriverRunner actor that connects back to this server over HTTP,
-    runs setup, and starts the tick loop. The internal lock is held across
-    setup so two drivers' setup-time graph writes can never race.
+    Lives in the FastAPI process. start_driver() spawns a
+    ``python -m acquirium.Drivers.runner`` child that imports the driver,
+    connects back to this server over HTTP, runs setup, reports the result,
+    and starts the tick loop. The internal lock is held across setup so two
+    drivers' setup-time graph writes can never race.
+
+    Closing stdin asks a running child to stop and makes a child still in
+    setup exit immediately. During an orderly shutdown the supervisor waits
+    for cleanup and kills children that exceed the shutdown deadline.
     """
 
     def __init__(self, server_url: str, server_port: int, use_ssl: bool = False):
@@ -56,69 +49,100 @@ class DriverSupervisor:
         interval: float | None = None,
         name: str | None = None,
     ) -> dict[str, Any]:
-        from acquirium.cli import _import_driver_class
-        from acquirium.Client.acquirium import Acquirium
+        """Start a child and expose it only after the runner reports successful setup.
 
+        The name stays reserved under the supervisor lock through the setup
+        handshake. The returned record describes the child process.
+        """
         driver_section = config.get("driver", {})
+        setup_timeout = float(driver_section.get("setup_timeout", 60.0))
+        if not math.isfinite(setup_timeout) or setup_timeout <= 0:
+            raise ValueError("driver setup_timeout must be finite and greater than zero")
         effective_interval = float(
             interval if interval is not None else driver_section.get("interval", 10.0)
         )
+        if effective_interval <= 0:
+            raise ValueError("driver interval must be greater than zero")
         driver_name = name or spec.rsplit(":", 1)[-1]
 
         with self._lock:
             if driver_name in self._drivers:
                 raise ValueError(f"Driver '{driver_name}' is already running")
 
-            base_dir = Path(config.get("__config_dir", Path.cwd()))
-            driver_cls, source_dir = _import_driver_class(spec, base_dir=base_dir)
-            aq = Acquirium(
-                server_url=self.server_url,
-                server_port=self.server_port,
-                use_ssl=self.use_ssl,
-                insert_batch_rows=int(driver_section.get("insert_batch_rows", 50_000)),
+            proc = subprocess.Popen(
+                [sys.executable, "-m", "acquirium.Drivers.runner"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                # Its own session: a terminal Ctrl-C reaches only the server,
+                # which then stops drivers in order instead of mid-tick.
+                start_new_session=True,
             )
-            runner_cls = DriverRunner
-            if source_dir is not None:
-                runner_cls = DriverRunner.options(
-                    runtime_env={"env_vars": {"PYTHONPATH": _worker_pythonpath(source_dir)}}
-                )
-            runner = runner_cls.remote(driver_cls, config, aq, effective_interval)
+            assert proc.stdin is not None and proc.stdout is not None
+            payload = {
+                "spec": spec,
+                "config": config,
+                "interval": effective_interval,
+                "server_url": self.server_url,
+                "server_port": self.server_port,
+                "use_ssl": self.use_ssl,
+            }
+            ready: Future[None] = Future()
             try:
-                ray.get(runner.setup.remote())
-            except Exception:
-                ray.kill(runner)
+                # Both pipe I/O and a failed child's exit are covered by
+                # the deadline before we release the setup lock.
+                threading.Thread(
+                    target=_await_setup, args=(proc, payload, driver_name, ready),
+                    name="driver-setup", daemon=True,
+                ).start()
+                try:
+                    ready.result(timeout=setup_timeout)
+                except TimeoutError as error:
+                    raise TimeoutError(
+                        f"Driver '{driver_name}' setup timed out after {setup_timeout:g}s"
+                    ) from error
+            except BaseException:
+                proc.kill()
+                proc.wait()
+                _signal_stop(proc)
                 raise
-            run_ref = runner.run.remote()
 
             record = {
                 "name": driver_name,
                 "spec": spec,
                 "interval": effective_interval,
                 "started_at": datetime.now(timezone.utc).isoformat(),
-                "actor": runner,
-                "run_ref": run_ref,
+                "proc": proc,
             }
             self._drivers[driver_name] = record
-            logger.info("Started driver '%s' (%s, interval=%.1fs)", driver_name, spec, effective_interval)
+            logger.info(
+                "Started driver '%s' (%s, interval=%.1fs, pid=%d)",
+                driver_name, spec, effective_interval, proc.pid,
+            )
             return self._public_info(record)
 
     def stop_driver(self, name: str, *, timeout: float = 10.0) -> dict[str, Any]:
+        """Remove a named child from the registry and wait for its cleanup."""
         with self._lock:
             record = self._drivers.pop(name, None)
         if record is None:
             raise KeyError(f"No running driver named '{name}'")
 
-        record["actor"].stop.remote()
+        _signal_stop(record["proc"])
+        return self._wait_for_exit(record, timeout)
+
+    @staticmethod
+    def _wait_for_exit(record: dict[str, Any], timeout: float) -> dict[str, Any]:
+        """Report a clean exit, kill a timed-out child, or raise for a failed exit."""
+        name, proc = record["name"], record["proc"]
         try:
-            ray.get(record["run_ref"], timeout=timeout)
-        except ray.exceptions.GetTimeoutError:
-            logger.warning("Driver '%s' did not exit within %.1fs; killing actor", name, timeout)
-            ray.kill(record["actor"])
+            code = proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            logger.warning("Driver '%s' did not exit within %.1fs; killing it", name, timeout)
+            proc.kill()
+            proc.wait()
             return {"name": name, "stopped": False, "error": "shutdown timed out"}
-        except Exception as exc:
-            ray.kill(record["actor"])
-            raise RuntimeError(f"Driver '{name}' shutdown failed: {exc}") from exc
-        ray.kill(record["actor"])
+        if code != 0:
+            raise RuntimeError(f"Driver '{name}' shutdown failed: exit code {code}")
         logger.info("Stopped driver '%s'", name)
         return {"name": name, "stopped": True}
 
@@ -128,53 +152,67 @@ class DriverSupervisor:
         return [self._public_info(r) for r in records]
 
     def stop_all(self, *, timeout: float = 10.0) -> None:
+        """Ask all registered children to stop and apply one deadline to the group."""
         with self._lock:
             records = list(self._drivers.values())
             self._drivers.clear()
         if not records:
             return
 
-        # Signal every driver to exit first, then join them in one window, so
-        # N drivers' shutdown timeouts overlap instead of stacking serially the
-        # way a loop over stop_driver() would.
+        # Signal every driver to exit first, then join them against one
+        # deadline, so N drivers' shutdown timeouts overlap instead of
+        # stacking serially the way a loop over stop_driver() would.
+        for record in records:
+            _signal_stop(record["proc"])
+        deadline = time.monotonic() + timeout
         for record in records:
             try:
-                record["actor"].stop.remote()
-            except Exception:
-                logger.exception("Failed to signal stop for driver '%s'", record["name"])
-
-        by_ref = {record["run_ref"]: record for record in records}
-        ready, not_ready = ray.wait(list(by_ref), num_returns=len(by_ref), timeout=timeout)
-        for ref in ready:
-            try:
-                ray.get(ref)
-            except Exception:
-                logger.exception("Driver '%s' shutdown failed", by_ref[ref]["name"])
-        for ref in not_ready:
-            logger.warning(
-                "Driver '%s' did not exit within %.1fs; killing actor",
-                by_ref[ref]["name"], timeout,
-            )
-
-        for record in records:
-            ray.kill(record["actor"])
-            logger.info("Stopped driver '%s'", record["name"])
+                self._wait_for_exit(record, max(0.0, deadline - time.monotonic()))
+            except RuntimeError as error:
+                logger.error("%s", error)
 
     def _public_info(self, record: dict[str, Any]) -> dict[str, Any]:
-        ready, _ = ray.wait([record["run_ref"]], timeout=0)
-        if not ready:
+        code = record["proc"].poll()
+        if code is None:
             status = "running"
+        elif code == 0:
+            status = "stopped"
         else:
-            # run() returned: clean exit, or the loop/actor died with an error.
-            try:
-                ray.get(record["run_ref"])
-                status = "stopped"
-            except Exception as exc:
-                status = f"failed: {exc}"
+            status = f"failed: exit code {code}"
         return {
             "name": record["name"],
             "spec": record["spec"],
             "interval": record["interval"],
             "started_at": record["started_at"],
+            "pid": record["proc"].pid,
             "status": status,
         }
+
+
+def _await_setup(proc: subprocess.Popen, payload: dict, name: str, ready: Future[None]) -> None:
+    """Send the setup payload and deliver the child's one-line reply to the supervisor."""
+    assert proc.stdin is not None and proc.stdout is not None
+    try:
+        with proc.stdout:
+            pickle.dump(payload, proc.stdin)
+            proc.stdin.flush()
+            line = proc.stdout.readline()
+        status = json.loads(line) if line else {"ok": False, "error": None}
+        if not status["ok"]:
+            _signal_stop(proc)
+            code = proc.wait()
+            detail = status["error"] or f"process exited with code {code}"
+            raise RuntimeError(f"Driver '{name}' failed to start: {detail}")
+    except BaseException as error:
+        ready.set_exception(error)
+    else:
+        ready.set_result(None)
+
+
+def _signal_stop(proc: subprocess.Popen) -> None:
+    """Close the child's stdin, which its runner treats as a stop request."""
+    try:
+        assert proc.stdin is not None
+        proc.stdin.close()
+    except OSError:
+        pass  # Already exited and the pipe is broken; wait() reports how.

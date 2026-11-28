@@ -67,10 +67,10 @@ Then insert rows as `(timestamp, value)` pairs:
 rows = [("2026-08-08 10:00", 412.0),
         ("2026-08-08 10:05", 415.3)]
 
-acq.insert_timeseries("lab-import", "effluent-tds", rows)
+acq.insert_timeseries("lab-import", "effluent-tds", rows)["rows_inserted"]
 ```
 ```text
-{'ok': True, 'rows_inserted': 2}
+2
 ```
 
 A timestamp is a text such as "2026-08-08 10:00", or a Python `datetime`.
@@ -82,10 +82,10 @@ To insert into several streams at once, use `insert_timeseries_batch()` with a d
 acq.insert_timeseries_batch("lab-import", {
     "effluent-tds": [("2026-08-08 10:10", 418.1)],
     "effluent-ph":  [("2026-08-08 10:10", 7.2)],
-})
+})["rows_inserted"]
 ```
 ```text
-{'ok': True, 'rows_inserted': 2, 'batches': 1}
+2
 ```
 
 Large inputs are split into several requests automatically, so you can pass the whole dataset in one call.

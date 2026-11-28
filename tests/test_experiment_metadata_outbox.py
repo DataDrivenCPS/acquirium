@@ -1,48 +1,69 @@
 """Durable graph handoff and SQL recording transactions on both backends."""
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from datetime import datetime, timezone
+from threading import Event
+from unittest.mock import Mock
+
 import pytest
 from rdflib import RDF, URIRef
 
+from acquirium.ExperimentSamples import sample_frame
 from acquirium.Experiments import ExperimentStore
 from acquirium.ExperimentMetadata import EXPERIMENT, run_uri
 from acquirium.internals.internals_namespaces import HAS_UNIT
-from tests.unit.test_experiment_metadata import MemoryGraphStore
+from tests.epoch_helpers import all_readings
+
+WHEN = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
 def pending(store):
+    """Count metadata updates that the ledger still needs to deliver or acknowledge."""
     with store._own_conn() as conn:
         return conn.execute("SELECT count(*) FROM experiment_metadata_outbox").fetchone()[0]
 
 
-def test_restart_replays_resolved_documents_without_sql_snapshots(materialization_store, tmp_path, monkeypatch):
-    store, graph = materialization_store, MemoryGraphStore()
+def graph_offline(*args, **kwargs):
+    """Simulate a graph store that rejects an update."""
+    raise OSError("offline")
+
+
+def test_restart_replays_resolved_documents_without_a_resolver(experiment_ledger, source_graph, monkeypatch):
+    store, graph = experiment_ledger, source_graph
     ledger = ExperimentStore(store, graph_store=graph, resolve=lambda *args: "urn:unit:PSI")
     study = ledger.define("restart")
     variable = ledger.declare(study["template_id"], "pressure", "output", "scalar", {"unit": "psi", "metadata": {"any.key": [None, {}, []]}})
     run = ledger.start(study["template_id"], {"tags": ["A", None, "B"]})
+    # Leave the Study, variable, and run committed only to the ledger and its outbox.
     with monkeypatch.context() as patch:
-        patch.setattr(graph, "metadata_update", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("offline")))
+        patch.setattr(graph, "metadata_update", graph_offline)
         with pytest.raises(OSError, match="offline"):
-            ledger.sync_metadata_graph()
+            ledger.run(run["run_id"])
     assert pending(store) == 3
+    # Replay the already-resolved metadata with a resolver that returns no matches.
     restarted = ExperimentStore(store, graph_store=graph, resolve=lambda *args: None)
     assert restarted.variables(study["template_id"])[0]["metadata"] == variable["metadata"]
     assert restarted.run(run["run_id"])["metadata"] == {"tags": ["A", None, "B"]}
-    assert (URIRef(variable["variable_id"]), HAS_UNIT, URIRef("urn:unit:PSI")) in graph.dataset
     assert pending(store) == 0
-    with store._own_conn() as conn:
-        columns = conn.execute("SELECT table_name,column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name IN ('experiment_runs','experiment_variables')").fetchall()
-        assert all(column != "metadata_json" for _, column in columns)
     restarted.observe(run["run_id"], variable["variable_id"], value=12)
     assert restarted.observations(study["template_id"])[0]["value"] == 12
+    restarted.finish(run["run_id"], "succeeded")
+    assert restarted.run(run["run_id"])["metadata"] == {"tags": ["A", None, "B"]}
+    declared = graph.data_graph("experiments")
+    assert (URIRef(variable["variable_id"]), HAS_UNIT, URIRef("urn:unit:PSI")) in declared
+
+    monkeypatch.setattr(graph, "metadata_documents", Mock(side_effect=OSError("read failed")))
+    with pytest.raises(OSError, match="read failed"):
+        restarted.run(run["run_id"])
 
 
-def test_graph_commit_before_failed_acknowledgment_is_replayable(materialization_store, tmp_path, monkeypatch):
-    store, graph = materialization_store, MemoryGraphStore()
+def test_graph_commit_before_failed_acknowledgment_is_replayable(experiment_ledger, source_graph, monkeypatch):
+    store, graph = experiment_ledger, source_graph
     ledger = ExperimentStore(store, graph_store=graph)
     study = ledger.define("ack")
     ledger.sync_metadata_graph()
     run = ledger.start(study["template_id"], {"scenario": "baseline"})
     ledger.finish(run["run_id"], "succeeded")
+    # Let the graph commit and fail only when the ledger acknowledges those updates.
     from acquirium import ExperimentMetadata as metadata_module
     execute = metadata_module.execute
     def fail_ack(conn, statement, parameters=None):
@@ -53,7 +74,7 @@ def test_graph_commit_before_failed_acknowledgment_is_replayable(materialization
         patch.setattr(metadata_module, "execute", fail_ack)
         with pytest.raises(OSError, match="ack failed"):
             ledger.sync_metadata_graph()
-    assert (URIRef(run_uri(run["run_id"])), RDF.type, EXPERIMENT.Run) in graph.dataset
+    assert (URIRef(run_uri(run["run_id"])), RDF.type, EXPERIMENT.Run) in graph.data_graph("experiments")
     assert pending(store) == 2
     restarted = ExperimentStore(store, graph_store=graph)
     assert restarted.run(run["run_id"])["status"] == "succeeded"
@@ -61,15 +82,16 @@ def test_graph_commit_before_failed_acknowledgment_is_replayable(materialization
     assert pending(store) == 0
 
 
-def test_committed_deletion_is_retried_after_restart(materialization_store, tmp_path, monkeypatch):
-    store, graph = materialization_store, MemoryGraphStore()
+def test_committed_deletion_is_retried_after_restart(experiment_ledger, source_graph, monkeypatch):
+    store, graph = experiment_ledger, source_graph
     ledger = ExperimentStore(store, graph_store=graph)
     study = ledger.define("delete")
     run = ledger.start(study["template_id"], {"scenario": "baseline"})
     ledger.finish(run["run_id"], "succeeded")
     ledger.sync_metadata_graph()
+    # Delete the run while the graph is offline. Restart must finish the graph removal.
     with monkeypatch.context() as patch:
-        patch.setattr(graph, "metadata_update", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("offline")))
+        patch.setattr(graph, "metadata_update", graph_offline)
         with pytest.raises(OSError, match="offline"):
             ledger.delete_runs([run["run_id"]])
     with store._own_conn() as conn:
@@ -77,145 +99,104 @@ def test_committed_deletion_is_retried_after_restart(materialization_store, tmp_
     assert pending(store) > 0
     restarted = ExperimentStore(store, graph_store=graph)
     restarted.sync_metadata_graph()
-    assert not list(graph.dataset.triples((URIRef(run_uri(run["run_id"])), None, None)))
+    assert not list(graph.data_graph("experiments").triples((URIRef(run_uri(run["run_id"])), None, None)))
     assert pending(store) == 0
 
 
-def seed_legacy_ledger(store, *, invalid=False):
-    import json
-    from datetime import datetime
-    from acquirium.Storage.migrations import migrate, EXPERIMENT_MIGRATIONS
-    from acquirium.Storage.metadata_outbox import execute
-    from acquirium.Storage.duckdb_store import DuckDBStore
-    stamp = datetime(2026, 1, 1)
-    metadata = {"unit": ["psi", "PSI"], "tags": ["A", None, "B"], "type": "urn:example:Result",
-                "_adapter_format": 1, "adapter_metadata": json.dumps({"any.key": [None, {}, []]}),
-                "metadata": {"old_projection": "discard"}}
-    if invalid:
-        metadata["status"] = "reserved"
-    with store._lock, store._write_conn() as conn:
-        statements = [
-            "CREATE TABLE experiment_templates (template_id VARCHAR PRIMARY KEY, name VARCHAR UNIQUE NOT NULL, created_at TIMESTAMP NOT NULL)",
-            "CREATE TABLE experiment_variables (variable_id VARCHAR PRIMARY KEY, template_id VARCHAR NOT NULL, label VARCHAR NOT NULL, role VARCHAR NOT NULL, kind VARCHAR NOT NULL, metadata_json VARCHAR NOT NULL, created_at TIMESTAMP NOT NULL, UNIQUE(template_id,label))",
-            "CREATE TABLE experiment_runs (run_id VARCHAR PRIMARY KEY, template_id VARCHAR NOT NULL, status VARCHAR NOT NULL, metadata_json VARCHAR NOT NULL, started_at TIMESTAMP NOT NULL, finished_at TIMESTAMP, error_json VARCHAR)",
-            "CREATE TABLE experiment_observations (run_id VARCHAR NOT NULL, variable_id VARCHAR, sequence BIGINT NOT NULL, recorded_at TIMESTAMP NOT NULL, occurred_at TIMESTAMP, value_json VARCHAR, artifact_digest VARCHAR, stream_uri VARCHAR, range_start TIMESTAMP, range_end TIMESTAMP, PRIMARY KEY(run_id,sequence))",
-            "CREATE TABLE experiment_metadata_resolutions (text VARCHAR NOT NULL, kind VARCHAR NOT NULL, uri VARCHAR NOT NULL, PRIMARY KEY(text,kind))",
-        ]
-        for statement in statements:
-            execute(conn, statement)
-        migrate(conn, backend="duckdb" if isinstance(store, DuckDBStore) else "postgres", component="experiments", migrations=EXPERIMENT_MIGRATIONS[:1])
-        execute(conn, "INSERT INTO experiment_templates VALUES ('legacy-study','legacy',?)", [stamp])
-        execute(conn, "INSERT INTO experiment_variables VALUES ('legacy-variable','legacy-study','pressure','output','scalar',?,?)", [json.dumps(metadata), stamp])
-        execute(conn, "INSERT INTO experiment_runs VALUES ('legacy-run','legacy-study','succeeded',?,?,?,NULL)", [json.dumps({"tags": ["A", None, "B"]}), stamp, stamp])
-        execute(conn, "INSERT INTO experiment_observations (run_id,variable_id,sequence,recorded_at,value_json) VALUES ('legacy-run','legacy-variable',1,?,'12.5')", [stamp])
-        execute(conn, "INSERT INTO experiment_observations (run_id,sequence,recorded_at,value_json,stream_uri,range_start) VALUES ('legacy-run',2,?,?,'urn:legacy:stream',?)", [stamp, json.dumps({"treatment": "old", "tags": [None, "A"]}), stamp])
-        for text in ("psi", "PSI"):
-            execute(conn, "INSERT INTO experiment_metadata_resolutions VALUES (?, 'unit', 'urn:unit:PSI')", [text])
-    return metadata
+def test_ledger_with_another_migration_history_is_refused(experiment_ledger, source_graph):
+    from acquirium.Storage.ledger import DuckDBLedger
+    from acquirium.Storage.migrations import Migration, migrate
+    with experiment_ledger._lock, experiment_ledger._write_conn() as conn:
+        migrate(conn, backend="duckdb" if isinstance(experiment_ledger, DuckDBLedger) else "postgres",
+                component="experiments", migrations=(Migration(1, "observation_keys", ()),))
+    with pytest.raises(RuntimeError, match="fresh data directory"):
+        ExperimentStore(experiment_ledger, graph_store=source_graph)
 
 
-def test_upgrade_moves_snapshots_to_resolved_outbox_and_preserves_recordings(materialization_store, tmp_path):
-    store, graph = materialization_store, MemoryGraphStore()
-    seed_legacy_ledger(store)
-    ledger = ExperimentStore(store, graph_store=graph, resolve=lambda *args: None)
-    assert pending(store) == 4
-    values = ledger.variables("legacy-study")[0]["metadata"]
-    assert values == {"unit": ["psi", "PSI"], "type": "urn:example:Result",
-                      "_declaration_format": 1, "metadata": {"any.key": [None, {}, []], "tags": ["A", None, "B"]},
-                      "_resolved_semantics": {"unit": "urn:unit:PSI", "type": "urn:example:Result"}}
-    assert ledger.run("legacy-run")["metadata"] == {"tags": ["A", None, "B"]}
-    assert ledger.stream_annotations(run_id="legacy-run")[0]["metadata"] == {"treatment": "old", "tags": [None, "A"]}
-    assert ledger.observations("legacy-study")[0]["value"] == 12.5
-    assert pending(store) == 0
-    with store._own_conn() as conn:
-        columns = conn.execute("SELECT table_name,column_name FROM information_schema.columns WHERE table_schema=current_schema()").fetchall()
-        assert not any(table in {"experiment_runs", "experiment_variables"} and column == "metadata_json" for table, column in columns)
-        assert not any(table == "experiment_metadata_resolutions" for table, _ in columns)
-        assert conn.execute("SELECT value_json FROM experiment_observations WHERE variable_id IS NULL").fetchone()[0] is None
-    restarted = ExperimentStore(store, graph_store=graph)
-    assert restarted.variables("legacy-study")[0]["metadata"] == values
-    assert pending(store) == 0
-
-
-def test_failed_upgrade_preserves_original_sql_metadata(materialization_store, tmp_path):
-    store = materialization_store
-    original = seed_legacy_ledger(store, invalid=True)
-    with pytest.raises(ValueError, match="reserved"):
-        ExperimentStore(store, graph_store=MemoryGraphStore())
-    import json
-    with store._own_conn() as conn:
-        assert json.loads(conn.execute("SELECT metadata_json FROM experiment_variables").fetchone()[0]) == original
-        assert conn.execute("SELECT count(*) FROM schema_migrations WHERE component='experiments' AND version=2").fetchone()[0] == 0
-        assert conn.execute("SELECT count(*) FROM experiment_metadata_resolutions").fetchone()[0] == 2
-
-
-def test_delivery_is_serialized_across_ledgers_without_blocking_sample_writes(materialization_store, tmp_path, monkeypatch):
-    from concurrent.futures import ThreadPoolExecutor, TimeoutError
-    from datetime import datetime, timezone
-    import threading
-    store, graph = materialization_store, MemoryGraphStore()
+def test_graph_delivery_serializes_reads_and_lifecycle_writes(experiment_ledger, source_graph, monkeypatch):
+    store, graph = experiment_ledger, source_graph
     first = ExperimentStore(store, graph_store=graph)
-    study = first.define("concurrent")
+    study = first.define("concurrent")["template_id"]
     first.sync_metadata_graph()
-    run = first.start(study["template_id"], {})
+    run = first.start(study, {"scenario": "baseline"})["run_id"]
     second = ExperimentStore(store, graph_store=graph)
-    entered, release, finishing = threading.Event(), threading.Event(), threading.Event()
+    entered, release, reading, finishing = Event(), Event(), Event(), Event()
     update = graph.metadata_update
-    def slow(*args, **kwargs):
+
+    def hold_update(*args, **kwargs):
         entered.set()
         assert release.wait(5)
         return update(*args, **kwargs)
-    monkeypatch.setattr(graph, "metadata_update", slow)
+
+    def read():
+        reading.set()
+        return second.run(run)
+
     def finish():
         finishing.set()
-        second.finish(run["run_id"], "succeeded")
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        delivery = pool.submit(first.sync_metadata_graph)
-        assert entered.wait(5)
-        transition = pool.submit(finish)
-        assert finishing.wait(5)
+        second.finish(run, "succeeded")
+
+    # Hold the first read inside graph delivery. A second read and lifecycle
+    # update share that boundary, while samples can still be accepted.
+    monkeypatch.setattr(graph, "metadata_update", hold_update)
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        delivery = pool.submit(first.run, run)
         try:
+            assert entered.wait(5)
+            reader = pool.submit(read)
+            transition = pool.submit(finish)
+            assert reading.wait(5) and finishing.wait(5)
+            with pytest.raises(TimeoutError):
+                reader.result(timeout=.1)
             with pytest.raises(TimeoutError):
                 transition.result(timeout=.1)
-            # Graph delivery owns no SQL writer lock: sample ingestion proceeds.
-            ref = store.ensure_stream_ref(None, "site", "sensor", value_kind="numeric")
-            store.upsert_rows(ref, [(datetime(2026, 1, 1, tzinfo=timezone.utc), 1.)], value_kind="numeric")
+            store.samples.write("site", sample_frame("urn:site:sensor", [(WHEN, 1.0)]))
         finally:
             release.set()
-        delivery.result(timeout=5)
+        assert delivery.result(timeout=5)["metadata"] == {"scenario": "baseline"}
+        assert reader.result(timeout=5)["metadata"] == {"scenario": "baseline"}
         transition.result(timeout=5)
     second.sync_metadata_graph()
-    assert second.run(run["run_id"])["status"] == "succeeded"
+    assert second.run(run)["status"] == "succeeded"
     assert pending(store) == 0
 
 
-def test_missing_graph_cannot_be_reinitialized_from_only_new_pending_writes(materialization_store, tmp_path):
-    store, graph = materialization_store, MemoryGraphStore()
+def test_missing_graph_cannot_be_reinitialized_from_only_new_pending_writes(experiment_ledger, open_source_graph):
+    store, graph = experiment_ledger, open_source_graph()
     ledger = ExperimentStore(store, graph_store=graph)
     study = ledger.define("backup boundary")
     first = ledger.start(study["template_id"], {"scenario": "already acknowledged"})
     ledger.sync_metadata_graph()
     ledger.start(study["template_id"], {"scenario": "pending"})
     assert pending(store) == 1
-    restarted = ExperimentStore(store, graph_store=MemoryGraphStore())
+    restarted = ExperimentStore(store, graph_store=open_source_graph())
     with pytest.raises(RuntimeError, match="restore its graph backup"):
         restarted.run(first["run_id"])
     assert pending(store) == 1
 
 
-def test_failed_source_flush_keeps_the_outbox_unacknowledged(materialization_store, tmp_path):
-    class GraphWithFlush(MemoryGraphStore):
-        fail_flush = True
-        def flush_metadata(self):
-            if self.fail_flush:
-                raise OSError("flush failed")
-    graph = GraphWithFlush()
-    ledger = ExperimentStore(materialization_store, graph_store=graph)
-    study = ledger.define("flush")
-    with pytest.raises(OSError, match="flush failed"):
-        ledger.sync_metadata_graph()
-    assert pending(materialization_store) == 1
-    graph.fail_flush = False
-    ledger.sync_metadata_graph()
-    assert pending(materialization_store) == 0
-    assert ledger.study(study["template_id"])["name"] == "flush"
+def test_failed_source_flush_replays_committed_sample_intent(experiment_ledger, source_graph, monkeypatch):
+    store = experiment_ledger
+    ledger = ExperimentStore(store, graph_store=source_graph)
+    study = ledger.define("flush")["template_id"]
+    flow = ledger.declare(study, "flow", "output", "timeseries", {})["variable_id"]
+    run = ledger.start(study, {})["run_id"]
+    [receipt] = ledger.record_batch(run, [
+        {"form": "samples", "variable_id": flow, "samples": [(WHEN, 3)]},
+    ])
+
+    # Samples and observations have committed. Graph intent cannot be
+    # acknowledged until its source write has flushed.
+    with monkeypatch.context() as patch:
+        patch.setattr(source_graph, "flush_metadata", Mock(side_effect=OSError("flush failed")))
+        with pytest.raises(OSError, match="flush failed"):
+            ledger.sync_metadata_graph()
+    assert len(all_readings(store.samples.core)) == 1
+    with store._own_conn() as conn:
+        assert conn.execute("SELECT count(*) FROM experiment_observations").fetchone()[0] == 1
+    assert pending(store) == 1
+
+    reopened = ExperimentStore(store, graph_store=source_graph)
+    assert reopened.observations(study)[0]["stream_uri"] == receipt["stream_uri"]
+    assert pending(store) == 0
+    assert reopened.study(study)["name"] == "flush"

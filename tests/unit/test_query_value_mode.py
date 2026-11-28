@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import polars as pl
+import pytest
 
 from acquirium.Client.data_object import BindingInfo, DataObject
 from acquirium.Client.query_graph import QueryGraph
@@ -12,18 +13,26 @@ class RecordingClient:
     def __init__(self) -> None:
         self.calls = []
 
+    def engine_snapshot(self):
+        return {"epoch": 7}
+
     def timeseries_df(self, stream_uri, **kwargs):
         self.calls.append((stream_uri, kwargs))
+        value = 21.5 if kwargs["value_mode"] == "numeric" else "Manual Control"
         return pl.DataFrame(
             {
                 "ts": [datetime(2026, 1, 1, tzinfo=timezone.utc)],
-                "value": ["Manual Control"],
+                "value": [value],
                 "uri": [stream_uri],
             }
         )
 
 
-def test_data_object_passes_value_mode_to_timeseries_client():
+@pytest.mark.parametrize(("mode", "column", "value"), [
+    ("numeric", "value_numeric", 21.5),
+    ("coalesce", "value_text", "Manual Control"),
+])
+def test_data_object_passes_value_mode_to_timeseries_client(mode, column, value):
     client = RecordingClient()
     data = DataObject(
         _bindings=[
@@ -45,19 +54,18 @@ def test_data_object_passes_value_mode_to_timeseries_client():
             "limit": None,
             "order": "asc",
             "cast_value": None,
-            "value_mode": "coalesce",
+            "value_mode": mode,
         },
     )
 
     df = data.dataframe(shape="narrow")
 
-    assert df["value_text"].to_list() == ["Manual Control"]
-    assert client.calls[0][1]["value_mode"] == "coalesce"
+    assert df[column].to_list() == [value]
+    assert client.calls[0][1]["value_mode"] == mode
+    assert client.calls[0][1]["epoch"] == 7
 
 
 def test_a_bad_value_mode_is_rejected_before_the_request():
-    import pytest
-
     from acquirium.Client.client import AcquiriumClient
 
     client = AcquiriumClient.__new__(AcquiriumClient)  # no server: nothing may be sent
@@ -89,18 +97,3 @@ def test_the_server_answers_400_to_a_bad_value_mode(monkeypatch):
         module.get_timeseries(Request(), uri="urn:ref:1", value_mode="x")
     assert error.value.status_code == 400
     assert "value_mode must be" in error.value.detail
-
-
-def test_reprocess_app_takes_text_timestamps():
-    from unittest.mock import MagicMock
-
-    from acquirium.Client.client import AcquiriumClient
-
-    client = AcquiriumClient.__new__(AcquiriumClient)
-    client.base_url = "http://test:8000"
-    client._http = MagicMock()
-    client._http.post.return_value = MagicMock(status_code=200, json=lambda: {"ok": True})
-    client.reprocess_app("app", "2025-01-01", datetime(2026, 1, 2, tzinfo=timezone.utc))
-    assert client._http.post.call_args[1]["params"] == {
-        "start": "2025-01-01T00:00:00+00:00", "end": "2026-01-02T00:00:00+00:00",
-    }

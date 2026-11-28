@@ -4,8 +4,7 @@ Calls that must not reach a server use a client pointed at a port nobody
 listens on, so any request fails the test.
 """
 import socket
-from datetime import datetime, timezone
-from hashlib import sha256
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -16,6 +15,7 @@ from requests import HTTPError
 
 from acquirium import Acquirium
 from acquirium.Client.client import AcquiriumClient
+from acquirium.internals.models import compute_stream_uri
 
 
 @pytest.fixture
@@ -156,48 +156,24 @@ class TestResolveWithoutServer:
 # ── Experiments ────────────────────────────────────────────
 
 
-class TestExperimentTransport:
-    @pytest.fixture(autouse=True)
-    def no_module_requests(self):
-        # Every call must reuse the client's pooled session.
-        with patch("requests.post", side_effect=AssertionError("use the client session")), \
-                patch("requests.get", side_effect=AssertionError("use the client session")):
-            yield
+def test_experiment_http_wrappers_reuse_session_and_report_server_detail(monkeypatch):
+    from unittest.mock import Mock
 
-    def _run(self, client, name="transport"):
-        study = client.define_experiment(name)
-        variable = client.declare_experiment_variable(study["template_id"], label="x", role="output", kind="scalar", metadata={})
-        return study, variable, client.start_experiment(study["template_id"], {})
+    client = AcquiriumClient()
+    monkeypatch.setattr(client._http, "post", Mock(side_effect=[
+        _response(200, b'{"sequence": 1}'),
+        _response(400, b'{"detail": "variable belongs to a different study"}'),
+    ]))
+    monkeypatch.setattr(client._http, "get", Mock(return_value=_response(200, b'[{"value": 12.5}]')))
+    with patch("requests.post", side_effect=AssertionError("use the client session")), \
+            patch("requests.get", side_effect=AssertionError("use the client session")):
+        assert client.observe_experiment("run", "urn:var", value=12.5) == {"sequence": 1}
+        assert client.list_experiment_observations("study") == [{"value": 12.5}]
+        with pytest.raises(HTTPError, match="variable belongs to a different study"):
+            client.attach_experiment_bytes("run", "urn:foreign", b"file", filename="file.txt")
 
-    def test_observations_and_finish_reuse_client_session(self, client):
-        study, variable, run = self._run(client)
-        client.observe_experiment(run["run_id"], variable["variable_id"], value=12.5)
-        client.finish_experiment(run["run_id"])
-        assert [item["value"] for item in client.list_experiment_observations(study["template_id"])] == [12.5]
-        assert client.get_experiment(run["run_id"])["status"] == "succeeded"
-
-    @pytest.mark.parametrize("media_type", [None, "application/json"])
-    def test_file_upload_uses_session_and_preserves_bytes(self, client, tmp_path, media_type):
-        study = client.define_experiment("upload")
-        variable = client.declare_experiment_variable(study["template_id"], label="input", role="input", kind="file", metadata={})
-        run = client.start_experiment(study["template_id"], {})
-        source = tmp_path / "input.json"
-        source.write_bytes(b'{"power": 42}')
-        saved = client.attach_experiment_file(run["run_id"], variable["variable_id"], source, media_type)
-        assert saved == {"digest": sha256(source.read_bytes()).hexdigest(), "filename": source.name, "byte_length": 13}
-        assert client.experiment_artifact(saved["digest"]) == source.read_bytes()
-
-    @pytest.mark.parametrize("upload", [False, True])
-    def test_session_errors_keep_server_details(self, client, tmp_path, upload):
-        _, _, run = self._run(client, "first")
-        _, foreign, _ = self._run(client, "second")
-        source = tmp_path / "input.txt"
-        source.write_text("input")
-        with pytest.raises(HTTPError, match="different study"):
-            if upload:
-                client.attach_experiment_file(run["run_id"], foreign["variable_id"], source)
-            else:
-                client.observe_experiment(run["run_id"], foreign["variable_id"], value=42)
+    assert client._http.post.call_count == 2
+    client._http.get.assert_called_once()
 
 
 # ── Graph ──────────────────────────────────────────────────
@@ -310,16 +286,84 @@ class TestResolveConversion:
             client.resolve_conversion("mg/l", "psi")
 
 
-# ── Logs ───────────────────────────────────────────────────
 
 
-class TestInsertLog:
-    def test_insert_log_full_and_minimal(self, client, ns):
-        point = f"{ns}p1"
-        start, end = datetime(2025, 1, 1, tzinfo=timezone.utc), datetime(2025, 1, 2, tzinfo=timezone.utc)
-        assert client.insert_log(property_uri=point, log_time=start, observation_start=start,
-                                 observation_end=end, log_message="test log")["ok"]
-        assert client.insert_log(property_uri=point, log_message="minimal log")["ok"]
-        logs = {entry.message: entry for entry in client.query_logs(property_uri=point)}
-        assert logs.keys() == {"test log", "minimal log"}
-        assert (logs["test log"].period.start, logs["test log"].period.end) == (start, end)
+def _response(status, body):
+    reply = requests.Response()
+    reply.status_code, reply._content = status, body
+    reply.headers["Retry-After"] = "0"
+    return reply
+
+
+def test_recording_is_resent_while_the_server_is_at_capacity(offline):
+    with patch.object(offline._http, "post", side_effect=[_response(503, b'{"detail": "full"}'),
+                                                          _response(200, b'[{"sequence": 1}]')]) as post:
+        assert offline.record_experiment_batch("run", [{"form": "value"}]) == [{"sequence": 1}]
+    assert post.call_count == 2
+
+
+def test_arrow_insert_is_resent_whole_with_its_request_id(offline):
+    import pyarrow as pa
+    table = pa.table({"ts": pa.array([datetime(2026, 1, 1, tzinfo=timezone.utc)], pa.timestamp("us", tz="UTC")),
+                      "stream_name": ["temp"], "value": [1.0]})
+    with patch.object(offline._http, "post", side_effect=[_response(503, b'{"detail": "full"}'),
+                                                          _response(200, b'{"rows_inserted": 1, "receipts": []}')]) as post:
+        assert offline.insert_timeseries_arrow("src", table, request_id="r1")["rows_inserted"] == 1
+    first, second = post.call_args_list
+    assert first.kwargs["data"] == second.kwargs["data"] and len(first.kwargs["data"]) > 0
+    assert first.kwargs["headers"]["X-Acquirium-Request-Id"] == "r1"
+    assert second.kwargs["headers"]["X-Acquirium-Request-Id"] == "r1"
+
+
+def test_writes_raise_other_errors_and_a_refusal_past_the_budget(offline):
+    with patch.object(offline._http, "post", return_value=_response(400, b'{"detail": "bad"}')) as post:
+        with pytest.raises(HTTPError, match="bad"):
+            offline.insert_timeseries(source_id="src", stream_name="temp", rows=[])
+    assert post.call_count == 1
+    with patch.object(offline._http, "post", return_value=_response(503, b'{"detail": "full"}')) as post:
+        with pytest.raises(HTTPError, match="full"):
+            offline.delete_timeseries("src", "temp", [1], retry_for=0)
+    assert post.call_count == 1
+
+
+def test_large_inserts_are_split_in_order_and_only_the_last_waits(offline):
+    from acquirium.internals.models import MAX_REQUEST_ROWS
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    rows = [(start + timedelta(seconds=i), float(i)) for i in range(MAX_REQUEST_ROWS + 5)]
+    reply = b'{"ok": true, "rows_inserted": 0, "receipts": [{"sequence": 1}]}'
+    with patch.object(offline._http, "post", return_value=_response(200, reply)) as post:
+        result = offline.insert_timeseries_batch("src", {"a": rows, "b": rows[:3]}, request_id="r")
+    bodies = [call.kwargs["json"] for call in post.call_args_list]
+    assert [sum(len(item["values"]) for item in body) for body in bodies] == [MAX_REQUEST_ROWS, 8]
+    assert [(item["stream_name"], item["replace"]) for body in bodies for item in body] == [
+        ("a", False), ("a", False), ("b", False)]
+    assert {item["request_id"] for item in bodies[0]} == {"r:0"} and {item["request_id"] for item in bodies[1]} == {"r:1"}
+    assert [call.kwargs["params"]["wait"] for call in post.call_args_list] == [0, 30]
+    assert len(result["receipts"]) == 2
+
+
+def test_replace_fits_one_request_or_is_refused_before_writing(offline):
+    rows = [(1, 1.0), (2, 2.0), (3, 3.0)]
+    reply = b'{"ok": true, "rows_inserted": 0, "receipts": []}'
+    with patch.object(offline._http, "post", return_value=_response(200, reply)) as post:
+        with pytest.raises(ValueError, match="replacement.*at most 2 rows"):
+            offline.insert_timeseries_batch("src", {"a": rows[:1], "b": rows},
+                                            replace=["b"], batch_rows=3)
+        post.assert_not_called()
+        offline.insert_timeseries_batch("src", {"a": rows[:1], "b": rows[:2]},
+                                        replace=["b"], batch_rows=3)
+    first, second = [call.kwargs["json"] for call in post.call_args_list]
+    assert [(item["stream_name"], item["replace"]) for item in first + second] == [("a", False), ("b", True)]
+    assert second[0]["values"] == [[1, 1.0], [2, 2.0]]
+
+
+def test_replace_keeps_exactly_the_supplied_rows(client):
+    source, start = f"replace-{uuid4().hex[:8]}", datetime(2026, 1, 1, tzinfo=timezone.utc)
+    client.register_streams([{"source_id": source, "stream_name": "s", "value_kind": "numeric"}])
+    at = [start + timedelta(minutes=i) for i in range(3)]
+    client.insert_timeseries(source_id=source, stream_name="s", rows=list(zip(at, [1.0, 2.0, 3.0])))
+    client.insert_timeseries(source_id=source, stream_name="s", rows=[(at[1], 20.0)], replace=True)
+    ref = str(compute_stream_uri(source, "s"))
+    assert client.timeseries_df(ref)["value"].to_list() == [20.0]
+    client.insert_timeseries(source_id=source, stream_name="s", rows=[], replace=True)
+    assert client.timeseries_df(ref).is_empty()

@@ -1,49 +1,74 @@
 """Local Acquirium servers for tests, started with aq.init() as scripts start them."""
 import os
 from contextlib import contextmanager
+from urllib.parse import quote
 
 import pytest
 
-from acquirium.Storage.timescale_store import TimescaleStore
+from acquirium.Storage.ledger import open_ledger
+
+
+def isolated_postgres_url(schema):
+    """A ``postgres://`` URL for ACQUIRIUM_TEST_PG_DSN that uses only ``schema``.
+
+    Escapement and the experiment ledger both take URLs; the schema keeps a
+    test's tables away from anything else in the database.
+    """
+    from psycopg.conninfo import conninfo_to_dict
+
+    dsn = os.getenv("ACQUIRIUM_TEST_PG_DSN")
+    if not dsn:
+        pytest.skip("ACQUIRIUM_TEST_PG_DSN is required for a PostgreSQL-backed test")
+    params = conninfo_to_dict(dsn)
+    user = quote(params.get("user", ""), safe="")
+    password = params.get("password")
+    auth = f"{user}:{quote(password, safe='')}@" if password else (f"{user}@" if user else "")
+    host = params.get("host", "localhost")
+    port = f":{params['port']}" if params.get("port") else ""
+    return (f"postgres://{auth}{host}{port}/{params.get('dbname', '')}"
+            f"?options={quote(f'-csearch_path={schema}', safe='')}")
+
+
+@contextmanager
+def postgres_schema():
+    """A new schema in the ACQUIRIUM_TEST_PG_DSN database, dropped afterwards;
+    yields its URL."""
+    import uuid
+    import psycopg
+
+    schema = f"acquirium_test_{uuid.uuid4().hex}"
+    url = isolated_postgres_url(schema)
+    with psycopg.connect(os.environ["ACQUIRIUM_TEST_PG_DSN"], autocommit=True) as conn:
+        conn.execute(f'CREATE SCHEMA "{schema}"')
+    try:
+        yield url
+    finally:
+        with psycopg.connect(os.environ["ACQUIRIUM_TEST_PG_DSN"], autocommit=True) as conn:
+            conn.execute(f'DROP SCHEMA "{schema}" CASCADE')
 
 
 @contextmanager
 def local_server_storage(directory, backend="duckdb"):
-    """Storage for local servers in ``directory``: yields ``(options, open_store)``.
+    """Storage for local servers in ``directory``: yields ``(options, open_ledger)``.
 
-    ``aq.init(**options)`` starts a server on it. ``open_store()`` opens the
-    server's SQL store directly, for use only while no server is running.
-    ``backend="timescale"`` keeps the tables in a new schema of the
-    ACQUIRIUM_TEST_PG_DSN database, dropped afterwards.
+    ``aq.init(**options)`` starts a server on it. ``open_ledger()`` opens the
+    server's experiment ledger directly, for use only while no server is
+    running. ``backend="postgres"`` keeps Escapement and the ledger in a new
+    schema of the ACQUIRIUM_TEST_PG_DSN database, dropped afterwards.
     """
     if backend == "duckdb":
-        from acquirium.Storage.duckdb_store import DuckDBStore
-        yield dict(data_dir=directory, exact_only=True), lambda: DuckDBStore(directory / "timeseries.duckdb")
+        yield dict(data_dir=directory, exact_only=True), lambda: open_ledger(directory / "experiments.duckdb")
         return
     import json
-    import uuid
-    import psycopg
-    from psycopg.conninfo import make_conninfo
 
-    dsn = os.getenv("ACQUIRIUM_TEST_PG_DSN")
-    if not dsn:
-        pytest.skip("ACQUIRIUM_TEST_PG_DSN is required for a Timescale-backed server")
-    schema = f"experiment_contract_{uuid.uuid4().hex}"
-    isolated = make_conninfo(dsn, options=f"-c search_path={schema}")
-    with psycopg.connect(dsn, autocommit=True) as conn:
-        conn.execute(f'CREATE SCHEMA "{schema}"')
-    config = directory / "acquirium.toml"
-    config.write_text(
-        "[server]\n"
-        'data_dir = "data"\n'
-        'timeseries_backend = "timescale"\n'
-        f"pg_dsn = {json.dumps(isolated)}\n"  # a JSON string is a TOML string
-    )
-    try:
-        yield dict(config=config, exact_only=True), lambda: TimescaleStore(dsn=isolated)
-    finally:
-        with psycopg.connect(dsn, autocommit=True) as conn:
-            conn.execute(f'DROP SCHEMA "{schema}" CASCADE')
+    with postgres_schema() as url:
+        config = directory / "acquirium.toml"
+        config.write_text(
+            "[server]\n"
+            'data_dir = "data"\n'
+            f"engine_path = {json.dumps(url)}\n"  # a JSON string is a TOML string
+        )
+        yield dict(config=config, exact_only=True), lambda: open_ledger(url)
 
 
 def acquirium_without_experiments(options):

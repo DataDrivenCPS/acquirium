@@ -13,6 +13,7 @@ The pages are grouped by what you are working with.
 | [Query](query/_index.md) | the query builder returned by `acq.query()`, filters, columns, reading metadata and data |
 | [Drivers](drivers/_index.md) | the driver base classes, the hooks you override, the helpers, configuration keys and the built-in drivers |
 | [Apps](apps/_index.md) | the `App` class, its inputs and outputs, checking and deploying |
+| [Actors](actors.md) | `aq.Actor`, the handler methods, timer and graph-change messages, snapshots and transitions |
 | [Experiments](experiments/_index.md) | studies, runs, variables, recording and reading results, model adapters |
 
 ## Server
@@ -22,7 +23,7 @@ The pages are grouped by what you are working with.
 | [Command line](server/cli.md) | the `acquirium` command and every subcommand |
 | [Server configuration](server/configuration.md) | every key of `acquirium.toml` |
 | [HTTP API](server/http-api.md) | the HTTP endpoints of the server |
-| [Storage migrations](server/storage-migrations.md) | how stored data is upgraded |
+| [Storage upgrades and backups](server/storage-migrations.md) | move to Escapement or back up and restore an existing deployment |
 
 ## Terms
 

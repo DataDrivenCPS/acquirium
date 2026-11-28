@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal, Any
-from dataclasses import dataclass
-from pydantic import BaseModel, ConfigDict, Field, RootModel
+from pydantic import BaseModel, ConfigDict, Field
 from acquirium.internals.internals_namespaces import ACQUIRIUM_NS
 from rdflib import URIRef
 # Fixed UUID namespace for deterministic reference URI generation.
@@ -32,8 +32,8 @@ def compute_stream_uri(source_id: str, stream_name: str) -> URIRef:
 
     The stream URI is the canonical stream identity exposed by the graph and
     client APIs. A point links to this reference node through
-    ``ref:hasExternalReference``. Both SQL backends map it to an internal
-    integer ``stream_id`` for timeseries rows. It is stable across restarts and
+    ``ref:hasExternalReference``. Escapement uses this reference as its stream
+    key. It is stable across restarts and
     can be recomputed from the same inputs.
     """
     stream_uri_str = str(uuid.uuid5(_REF_URI_NAMESPACE, f"{source_id}:{stream_name}"))
@@ -51,11 +51,9 @@ def compute_ref_uri(source_id: str, ref_name: str) -> URIRef:
 
 
 class TimeseriesInfo(BaseModel):
-    table: str
     row_count: int
     earliest: datetime | None = None
     latest: datetime | None = None
-
 
 
 class Point(BaseModel):
@@ -70,56 +68,27 @@ class Point(BaseModel):
     stream: TimeseriesInfo | None = None
 
 
-class PointCreateRequest(BaseModel):
-    uri: str
-    types: list[str] = Field(default_factory=list)
-    unit: str | None = None
-
-
 class StreamInsert(BaseModel):
-    """A single stream's data payload for the unified insert endpoint.
-
-    ``source_id`` identifies the registered datasource (e.g. ``"mybox-metrics"``).
-    ``stream_name`` is the source-local stream identifier (e.g. ``"cpu_percent"``).
-    The canonical stream URI is computed deterministically from both via
-    :func:`compute_stream_uri`, so two sources with the same ``stream_name`` never
-    collide. The storage backend maps that URI to its internal integer key.
-    """
-
-    source_id: str
-    stream_name: str
-    property_uri: str | None = None
+    model_config = ConfigDict(extra="forbid")
+    source_id: str = Field(min_length=1)
+    stream_name: str = Field(min_length=1)
+    values: list[tuple[Any, Any]]
+    request_id: str = Field(min_length=1)
+    # The stream holds exactly ``values`` afterwards; empty clears it.
     replace: bool = False
-    # ``bool`` is listed so a boolean reaches the store as one. Without it
-    # pydantic turns True into 1.0 here, and a text stream stores "1.0".
-    values: list[tuple[datetime, bool | float | int | str | None]]
-    publication_id: str | None = None
 
 
-class AppRegistration(BaseModel):
-    """App definition with explicit grouping and microsecond durations."""
-
-    model_config = {"extra": "forbid"}
-
-    name: str
-    executable_digest: str
-    entrypoint: str
-    outputs: dict[str, Any]
-    # Durations travel as whole microseconds; lookback may be the string "all".
-    lookback: int | str
-    lookahead: int = 0
-    backfill: bool = False
-    batch_delay: int = 0
-    min_interval: int | None = None
-    parameters: dict[str, Any] = {}
-    every: int | None = None
-    grouping: Literal["per_match", "all_matches"]
-
+# The most rows (or mutations) one write request may carry; Core.ingest
+# refuses more, so clients and drivers split larger writes.
+MAX_REQUEST_ROWS = 10_000
 
 Order = Literal["asc", "desc"]
 
+
 @dataclass(frozen=True)
 class TimeInterval:
+    """An increasing pair of timestamps, built from bounds or an anchor and duration."""
+
     start: datetime
     end: datetime
 
@@ -153,15 +122,18 @@ class TimeInterval:
 
     @classmethod
     def from_str(cls, s: str) -> "TimeInterval":
+        """Parse the slash-separated ISO bounds and apply interval validation."""
         start_str, end_str = s.split("/")
         return cls(start=datetime.fromisoformat(start_str), end=datetime.fromisoformat(end_str))
-        
+
+
 class TimeIntervalModel(BaseModel):
     start: datetime | None = None
     end: datetime | None = None
 
     def to_interval(self) -> TimeInterval:
         return TimeInterval(start=self.start, end=self.end)
+
 
 class LogEntry(BaseModel):
     property_uri: str

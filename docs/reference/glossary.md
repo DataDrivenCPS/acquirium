@@ -23,8 +23,7 @@ This is a reference for the vocabulary of the other guides.
 | Turtle | the text format RDF is written in (`.ttl` files, graph inserts) | `model.ttl` |
 | SPARQL | the query language for RDF graphs; every `Query` compiles to it | `q.to_sparql()` |
 
-
-## The plant model
+## Plant model
 
 | term | meaning | example |
 |---|---|---|
@@ -77,7 +76,6 @@ accepted as another name for `property_uri`.
 | `max_depth` | how many hops a traversal may take | `related("tank", max_depth=1)` |
 | `nearest` | keep only the closest match per source instead of every match in range; along a direction, the first place (own connection points, pipe, entity with its connection points, ...) holding a match | `related("pump", nearest=False)` |
 
-
 ## Data
 
 | term | meaning | example |
@@ -88,7 +86,6 @@ accepted as another name for `property_uri`.
 | `cast_value` | a client-side cast applied after the values arrive | `"float"`, `"int"`, `"str"`, `None` |
 | wide | one column per property, aligned on the timestamp | `time, m__wbs:RO-in-pressure, ...` |
 | narrow | one row per reading, with its property in its own column | `data_alias, property_id, time, value_numeric, ...` |
-
 
 ## Experiments
 
@@ -103,13 +100,14 @@ accepted as another name for `property_uri`.
 Experiment metadata uses the shared attribute registry and `.where()` syntax.
 See the [experiment reference](experiments/_index.md) for the interface and read formats.
 
-## The platform
+## Acquirium components
 
 | term | meaning | example |
 |---|---|---|
 | driver | a class the server runs on a schedule to ingest data | `PollingIngestDriver` |
 | tick | one scheduled run of a driver | `interval = 10.0` |
-| app | a class the server runs to compute on data and write results back | `App` |
+| app | a declaration: inputs selected from the graph, a function and a window; Escapement runs it | `aq.App` |
+| input name | the key of one of an app's inputs; the function's frame labels each row with it in the `input` column, and `ReplacementOutput(of=...)` names an input by it | `inputs={"raw": selection}` |
+| replacement output | an output that continues the measurement an input selects, so reads and consumers of that measurement find it | `aq.ReplacementOutput()` |
 | graph store | the embedded Oxigraph store holding the model and the ontologies | `data_dir/.oxigraph` |
-| timeseries store | where observations are stored | duckdb (default) or timescale |
-| logbook | the event log stored alongside the timeseries | `POST /insert_log` |
+| engine store | where Escapement keeps observations, derived values and history | DuckDB file (default) or `postgres://` URL |

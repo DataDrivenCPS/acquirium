@@ -9,6 +9,7 @@ import polars as pl
 import pytest
 
 from acquirium.Drivers.Driver import (
+    CAPACITY_RETRY_S,
     DriverBufferFull,
     EventIngestDriver,
     IngestDriver,
@@ -23,7 +24,7 @@ from acquirium.Drivers.Driver import (
 def make_aq() -> MagicMock:
     aq = MagicMock()
     aq.client = MagicMock()
-    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0}
+    aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 0, "receipts": []}
     return aq
 
 
@@ -55,6 +56,16 @@ class CollectDriver(PollingIngestDriver):
         })
 
 
+@pytest.mark.parametrize("dtype", [pl.Int64, pl.Object])
+def test_driver_value_transport_preserves_large_integers(dtype):
+    from acquirium.Drivers.Driver import _value_column
+
+    values = [7, 2**53 + 1]
+    column = pl.Series("value", values, dtype=dtype)
+    transport = column.to_frame().select(_value_column(column)).to_arrow()
+    assert transport["value"].to_pylist() == values
+
+
 def make_driver(cls, tmp_path, **cfg):
     driver = cls(make_aq(), {"driver": {**cfg}, "server": {"data_dir": str(tmp_path)}})
     driver.setup()
@@ -71,50 +82,25 @@ def inserted(driver) -> list[tuple[str, dict[str, list]]]:
     return out
 
 
-# ------------------------------------------------------------------ add + flush
-
-
-def test_add_buffers_until_flush(tmp_path):
+def test_add_batches_readings_until_flush(tmp_path):
     driver = make_driver(AddDriver, tmp_path)
-    driver.add("temp", 21.5)
-    driver.aq.insert_timeseries_arrow.assert_not_called()
+    empty = {"ok": True, "rows_inserted": 0, "receipts": []}
+    assert driver.flush() == empty
 
-    driver.flush()
-    (source_id, cols), = inserted(driver)
-    assert source_id == "sensors"
-    assert cols["stream_name"] == ["temp"]
-    assert cols["value"] == ["21.5"]
-
-
-def test_flush_sends_one_frame_for_all_buffered_rows(tmp_path):
-    driver = make_driver(AddDriver, tmp_path)
+    # Buffer three samples across two streams without contacting the server.
     ts = datetime(2024, 1, 1, tzinfo=timezone.utc)
     driver.add("temp", 21.5, ts)
     driver.add("rh", 55.0, ts)
     driver.add("temp", 22.0, ts + timedelta(minutes=1))
-    driver.flush()
-
-    assert driver.aq.insert_timeseries_arrow.call_count == 1
-    (_, cols), = inserted(driver)
-    assert cols["stream_name"] == ["temp", "rh", "temp"]
-    assert cols["value"] == ["21.5", "55.0", "22.0"]
-
-
-def test_flush_clears_the_buffer(tmp_path):
-    driver = make_driver(AddDriver, tmp_path)
-    driver.add("temp", 21.5)
-    driver.flush()
-    driver.flush()
-    assert driver.aq.insert_timeseries_arrow.call_count == 1
-
-
-def test_flush_with_empty_buffer_does_not_insert(tmp_path):
-    driver = make_driver(AddDriver, tmp_path)
-    assert driver.flush() == {"ok": True, "rows_inserted": 0}
     driver.aq.insert_timeseries_arrow.assert_not_called()
 
-
-# ------------------------------------------------------------------ timestamps
+    # One flush sends one batch. The next sees an empty buffer.
+    driver.flush()
+    assert driver.flush() == empty
+    (source, columns), = inserted(driver)
+    assert source == "sensors"
+    assert columns["stream_name"] == ["temp", "rh", "temp"]
+    assert columns["value"] == [21.5, 55.0, 22.0]
 
 
 def test_add_defaults_timestamp_to_now_utc(tmp_path):
@@ -167,23 +153,56 @@ def test_collect_style_driver_still_works(tmp_path):
     (source_id, cols), = inserted(driver)
     assert source_id == "sensors"
     assert cols["stream_name"] == ["temp"]
-    assert cols["value"] == ["21.5"]
+    assert cols["value"] == [21.5]
 
 
-def test_event_driver_tick_flushes_buffered_callbacks(tmp_path):
-    class Events(EventIngestDriver):
-        def setup(self) -> None:
-            self.source_id = "mqtt"
-            self.declare("temp")
+class Events(EventIngestDriver):
+    def setup(self) -> None:
+        self.source_id = "mqtt"
+        self.declare("temp")
 
+
+def eventually(condition, timeout=5.0):
+    import time
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "condition not met in time"
+        time.sleep(0.01)
+
+
+def test_event_driver_sends_a_burst_without_waiting_for_a_tick(tmp_path):
     driver = make_driver(Events, tmp_path)
-    driver.add("temp", 21.5)  # as if from a broker callback
-    driver.aq.insert_timeseries_arrow.assert_not_called()
+    try:
+        for value in (21.5, 22.0, 22.5):  # as if from a broker callback
+            driver.add("temp", value)
+        eventually(lambda: inserted(driver))
+        (source_id, cols), = inserted(driver)
+        assert source_id == "mqtt"
+        assert cols["value"] == [21.5, 22.0, 22.5]
+    finally:
+        driver._shutdown()
 
-    driver.tick()
-    (source_id, cols), = inserted(driver)
-    assert source_id == "mqtt"
-    assert cols["stream_name"] == ["temp"]
+
+def test_acceptance_callbacks_wait_for_their_rows(tmp_path):
+    driver = make_driver(Events, tmp_path)
+    driver._shutdown()  # Stop the background flusher; flush by hand.
+    accepted = []
+    driver.add("temp", 1.0)
+    driver.when_accepted(lambda: accepted.append("first"))
+    driver.add("temp", 2.0)
+    driver.when_accepted(lambda: accepted.append("second"))
+    driver.aq.insert_timeseries_arrow.side_effect = ConnectionError("server down")
+    with pytest.raises(ConnectionError):
+        driver.flush()
+    assert accepted == []
+    driver.aq.insert_timeseries_arrow.side_effect = None
+    driver.flush()
+    assert accepted == ["first", "second"]
+    assert inserted(driver)[-1][1]["value"] == [1.0, 2.0]
+    # A callback with no rows before it runs at the next flush.
+    driver.when_accepted(lambda: accepted.append("empty"))
+    assert driver.flush()["rows_inserted"] == 0
+    assert accepted == ["first", "second", "empty"]
 
 
 def test_driver_implementing_neither_read_nor_collect_is_rejected(tmp_path):
@@ -195,171 +214,101 @@ def test_driver_implementing_neither_read_nor_collect_is_rejected(tmp_path):
         Neither(make_aq(), {"driver": {}, "server": {"data_dir": str(tmp_path)}})
 
 
-# ------------------------------------------------------------------ safety valve
-
-
-def test_buffer_over_ceiling_rejects_new_row_without_flushing(tmp_path):
-    driver = make_driver(AddDriver, tmp_path)
-    driver.max_buffered_rows = 3
-
-    for value in (1.0, 2.0, 3.0):
-        driver.add("temp", value)
-    driver.aq.insert_timeseries_arrow.assert_not_called()
-
-    with pytest.raises(DriverBufferFull, match="buffer is full"):
-        driver.add("temp", 4.0)  # one past the ceiling
-
-    driver.aq.insert_timeseries_arrow.assert_not_called()
-    driver.flush()
-    (_, cols), = inserted(driver)
-    assert cols["value"] == ["1.0", "2.0", "3.0"]
-
-
-# ------------------------------------------------------------------ multi-source
-
-
-def test_add_with_explicit_source_id_partitions_inserts(tmp_path):
+def test_flush_partitions_readings_by_explicit_and_default_sources(tmp_path):
     driver = make_driver(AddDriver, tmp_path)
     driver.declare("temp", source_id="site-a")
     driver.declare("temp", source_id="site-b")
     driver.add("temp", 21.5, source_id="site-a")
     driver.add("temp", 30.0, source_id="site-b")
-    driver.flush()
-
-    by_source = dict(
-        (source_id, cols["value"]) for source_id, cols in inserted(driver)
-    )
-    assert by_source == {"site-a": ["21.5"], "site-b": ["30.0"]}
-
-
-def test_rows_without_source_id_fall_back_to_driver_default(tmp_path):
-    driver = make_driver(AddDriver, tmp_path)
-    driver.declare("temp", source_id="site-a")
-    driver.add("temp", 21.5, source_id="site-a")
     driver.add("temp", 22.0)
     driver.flush()
 
-    by_source = dict(
-        (source_id, cols["value"]) for source_id, cols in inserted(driver)
-    )
-    assert by_source == {"site-a": ["21.5"], "sensors": ["22.0"]}
+    by_source = {source: columns["value"] for source, columns in inserted(driver)}
+    assert by_source == {"site-a": [21.5], "site-b": [30.0], "sensors": [22.0]}
 
 
-# ------------------------------------------------------------------ failure retry
-
-
-def test_failed_flush_keeps_rows_for_the_next_attempt(tmp_path):
+@pytest.mark.parametrize(("failure", "message"), [
+    pytest.param(RuntimeError("server down"), "server down", id="exception"),
+    pytest.param({"ok": False, "rows_inserted": 0}, "reported failure", id="rejected"),
+])
+def test_failed_flush_retries_the_same_batch_before_newer_rows(tmp_path, failure, message):
     driver = make_driver(AddDriver, tmp_path)
-    driver.aq.insert_timeseries_arrow.side_effect = RuntimeError("server down")
-    driver.add("temp", 21.5)
+    submit = driver.aq.insert_timeseries_arrow
+    success = {"ok": True, "rows_inserted": 1, "receipts": []}
+    submit.side_effect = [failure, success, success]
+    accepted = []
 
+    # The failed write must keep its readings and postpone its acknowledgment.
+    driver.add("temp", 1.0)
+    driver.when_accepted(lambda: accepted.append("first"))
+    with pytest.raises(RuntimeError, match=message):
+        driver.flush()
+    assert accepted == []
+
+    # Retrying sends the original batch with the original request ID before new readings.
+    driver.add("temp", 2.0)
+    driver.when_accepted(lambda: accepted.append("second"))
+    assert driver.flush()["rows_inserted"] == 2
+    assert [cols["value"] for _, cols in inserted(driver)] == [[1.0], [1.0], [2.0]]
+    first, retry, newer = submit.call_args_list
+    assert first.kwargs["request_id"] == retry.kwargs["request_id"] != newer.kwargs["request_id"]
+    assert accepted == ["first", "second"]
+
+
+def test_full_buffer_rejects_readings_until_the_pending_batch_is_sent(tmp_path):
+    driver = make_driver(AddDriver, tmp_path)
+    driver.max_buffered_rows = 2
+    submit = driver.aq.insert_timeseries_arrow
+    submit.side_effect = RuntimeError("server down")
+
+    # Hitting the ceiling does not send a batch from add().
+    driver.add("temp", 1.0)
+    driver.add("temp", 2.0)
+    with pytest.raises(DriverBufferFull, match="buffer is full"):
+        driver.add("temp", 3.0)
+    submit.assert_not_called()
+
+    # A failed flush still counts against the ceiling and add() cannot retry it.
     with pytest.raises(RuntimeError, match="server down"):
         driver.flush()
-
-    driver.aq.insert_timeseries_arrow.side_effect = None
-    driver.flush()
-    (_, cols), = inserted(driver)[1:]
-    assert cols["value"] == ["21.5"]
-
-
-def test_false_insert_result_keeps_rows_for_retry(tmp_path):
-    driver = make_driver(AddDriver, tmp_path)
-    driver.aq.insert_timeseries_arrow.return_value = {"ok": False, "rows_inserted": 0}
-    driver.add("temp", 21.5)
-
-    with pytest.raises(RuntimeError, match="reported failure"):
-        driver.flush()
-
-    driver.aq.insert_timeseries_arrow.return_value = {"ok": True, "rows_inserted": 1}
-    driver.flush()
-    assert inserted(driver)[1][1]["value"] == ["21.5"]
-
-
-def test_failed_flush_preserves_order_against_newer_rows(tmp_path):
-    driver = make_driver(AddDriver, tmp_path)
-    driver.aq.insert_timeseries_arrow.side_effect = RuntimeError("server down")
-    driver.add("temp", 1.0)
-    with pytest.raises(RuntimeError):
-        driver.flush()
-
-    driver.aq.insert_timeseries_arrow.side_effect = None
-    driver.add("temp", 2.0)
-    driver.flush()
-
-    (_, cols), = inserted(driver)[1:]
-    assert cols["value"] == ["1.0", "2.0"]
-
-
-def test_retry_backlog_rejects_new_rows_at_the_limit(tmp_path):
-    driver = make_driver(AddDriver, tmp_path)
-    driver.max_buffered_rows = 2
-    driver.aq.insert_timeseries_arrow.side_effect = RuntimeError("server down")
-
-    driver.add("temp", 1.0)
-    driver.add("temp", 2.0)
-    with pytest.raises(RuntimeError):
-        driver.flush()
-
     with pytest.raises(DriverBufferFull):
         driver.add("temp", 3.0)
-    driver.aq.insert_timeseries_arrow.side_effect = None
-    driver.flush()
-    (_, cols), = inserted(driver)[1:]
-    assert cols["value"] == ["1.0", "2.0"]
+    submit.assert_called_once()
 
-
-def test_failing_inserts_are_retried_only_by_flush(tmp_path):
-    driver = make_driver(AddDriver, tmp_path)
-    driver.max_buffered_rows = 2
-    driver.aq.insert_timeseries_arrow.side_effect = RuntimeError("server down")
-
-    driver.add("temp", 1.0)
-    driver.add("temp", 2.0)
-    with pytest.raises(RuntimeError):
-        driver.flush()
-    assert driver.aq.insert_timeseries_arrow.call_count == 1
-
-    for value in (3.0, 4.0):
-        with pytest.raises(DriverBufferFull):
-            driver.add("temp", value)
-    assert driver.aq.insert_timeseries_arrow.call_count == 1
-
-    driver.aq.insert_timeseries_arrow.side_effect = None
+    # A successful tick retries the old batch, freeing room for the next sample.
+    submit.side_effect = None
     driver.tick()
-    # One retry batch, then one batch for this tick's newly sampled values.
-    assert driver.aq.insert_timeseries_arrow.call_count == 3
-
-
-def test_successful_flush_releases_buffer_capacity(tmp_path):
-    driver = make_driver(AddDriver, tmp_path)
-    driver.max_buffered_rows = 2
-    driver.aq.insert_timeseries_arrow.side_effect = RuntimeError("server down")
-    driver.add("temp", 1.0)
-    with pytest.raises(RuntimeError):
-        driver.flush()
-
-    driver.aq.insert_timeseries_arrow.side_effect = None
-    driver.flush()
-
-    driver.add("temp", 2.0)
+    assert [cols["value"] for _, cols in inserted(driver)] == [
+        [1.0, 2.0], [1.0, 2.0], [21.5, 55.0],
+    ]
     driver.add("temp", 3.0)
+    driver.add("temp", 4.0)
     with pytest.raises(DriverBufferFull):
-        driver.add("temp", 4.0)
+        driver.add("temp", 5.0)
 
 
 # ------------------------------------------------------------------ value kinds
 
 
-def test_add_accepts_non_numeric_values(tmp_path):
+@pytest.mark.parametrize("integer", [3, 2**53 + 1, 2**64 - 1])
+def test_add_preserves_integers_alongside_text_and_floats(tmp_path, integer):
     driver = make_driver(AddDriver, tmp_path)
     driver.declare("state")
-    driver.declare("count")
+    driver.declare("count", value_kind="numeric")
     driver.add("state", "ON")
-    driver.add("count", 3)
+    driver.add("count", integer)
+    driver.add("count", 7.5)
+    driver.aq.insert_timeseries_batch.return_value = {"ok": True, "rows_inserted": 3, "receipts": []}
     driver.flush()
 
-    (_, cols), = inserted(driver)
-    assert cols["value"] == ["ON", "3"]
+    # JSON keeps each scalar's type so the server can check numeric integers.
+    driver.aq.insert_timeseries_arrow.assert_not_called()
+    (source, streams), options = driver.aq.insert_timeseries_batch.call_args
+    assert source == driver.source_id
+    assert [value for _, value in streams["state"]] == ["ON"]
+    assert [value for _, value in streams["count"]] == [integer, 7.5]
+    assert type(streams["count"][0][1]) is int
+    assert options["request_id"]
 
 
 def test_add_is_available_on_the_shared_ingest_base(tmp_path):
@@ -395,7 +344,7 @@ def test_undeclared_bulk_observation_is_rejected(tmp_path):
         driver.insert_observations(frame)
 
 
-def test_undeclared_value_kind_is_left_to_the_server(tmp_path):
+def test_null_only_batch_does_not_freeze_inferred_value_kind(tmp_path):
     driver = make_driver(AddDriver, tmp_path)
     driver.declare("optional")
     driver.add("optional", None)
@@ -434,6 +383,36 @@ def test_graceful_shutdown_flushes_after_stopping_producer(tmp_path):
     driver._shutdown()
     assert driver.stopped is True
     assert inserted(driver)[0][1]["value"] == ["ON"]
+
+
+def test_insert_resends_requests_refused_at_capacity_for_the_driver_budget(tmp_path):
+    driver = make_driver(CollectDriver, tmp_path)
+    observations = pl.DataFrame({
+        "ts": [datetime(2024, 1, 1, tzinfo=timezone.utc)],
+        "stream_name": ["temp"],
+        "value": [1.0],
+    })
+
+    driver.insert_observations(observations)
+    # The client resends a 503; a driver gives it longer than interactive calls.
+    assert driver.aq.insert_timeseries_arrow.call_args.kwargs["retry_for"] == CAPACITY_RETRY_S
+
+
+def test_insert_raises_other_http_errors(tmp_path):
+    from requests import HTTPError
+
+    driver = make_driver(CollectDriver, tmp_path)
+    driver.aq.insert_timeseries_arrow.side_effect = HTTPError(
+        "bad", response=MagicMock(status_code=400, headers={})
+    )
+    observations = pl.DataFrame({
+        "ts": [datetime(2024, 1, 1, tzinfo=timezone.utc)],
+        "stream_name": ["temp"],
+        "value": [1.0],
+    })
+    with pytest.raises(HTTPError):
+        driver.insert_observations(observations)
+    assert driver.aq.insert_timeseries_arrow.call_count == 1
 
 
 class BooleanDriver(PollingIngestDriver):

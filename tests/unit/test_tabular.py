@@ -10,7 +10,119 @@ import pytest
 from acquirium import to_observations, to_timestamp
 
 
+def test_mixed_numeric_columns_do_not_round_integer_identifiers():
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    identifier = 2**53 + 1
+    frame = pl.DataFrame({"time": [now], "identifier": [identifier], "reading": [1.5]})
+    wide = to_observations(frame, time_col="time", layout="wide")
+    assert dict(wide.select("stream_name", "value").iter_rows()) == {
+        "identifier": str(identifier), "reading": "1.5"
+    }
+    narrow = to_observations(
+        frame.rename({"identifier": "value"}).with_columns(pl.lit("id").alias("id")),
+        time_col="time", layout="narrow",
+    )
+    assert narrow["value"].to_list() == [identifier]
+
+
 # ------------------------------------------------------------------ timestamps
+
+
+@pytest.mark.parametrize("text", [
+    "2026-01-01T10:00:40Z",
+    "2026-01-01T03:00:40-07:00",
+    "2026-01-01T15:30:40+05:30",
+    "2026-01-01T10:00:40+0000",
+    "2026-01-01T10:00:40 UTC",
+    " 2026-01-01T10:00:40 utc ",
+    "2026-01-01T10:00:40",
+    "2026-01-01 10:00:40",
+    "20260101T100040Z",
+    "2026-W01-4T10:00:40Z",
+    "2026-001T10:00:40Z",
+    "2026-01-01t10:00:40z",
+])
+def test_scalar_iso_and_rfc3339_timestamps(text):
+    result = to_timestamp(text)
+    assert isinstance(result, datetime)
+    assert result == datetime(2026, 1, 1, 10, 0, 40, tzinfo=timezone.utc)
+    assert result.utcoffset() == timedelta(0)
+
+
+@pytest.mark.parametrize("fraction", [".123456", ",123456"])
+def test_scalar_iso_fractional_seconds(fraction):
+    assert to_timestamp(f"2026-01-01T10:00:40{fraction}Z") == datetime(
+        2026, 1, 1, 10, 0, 40, 123456, tzinfo=timezone.utc
+    )
+
+
+def test_scalar_datetime_precision_is_microseconds():
+    assert to_timestamp("2026-01-01T10:00:40.123456789Z") == datetime(
+        2026, 1, 1, 10, 0, 40, 123456, tzinfo=timezone.utc
+    )
+
+
+def test_explicit_offset_takes_precedence_over_source_timezone():
+    assert to_timestamp("2026-01-01T10:00:40Z", timezone="America/Denver") == datetime(
+        2026, 1, 1, 10, 0, 40, tzinfo=timezone.utc
+    )
+
+
+def test_scalar_date_and_datetime_inputs():
+    assert to_timestamp("2026-01-01") == datetime(2026, 1, 1, tzinfo=timezone.utc)
+    assert to_timestamp(datetime(2026, 1, 1, 3, 0, 40), timezone="America/Denver") == datetime(
+        2026, 1, 1, 10, 0, 40, tzinfo=timezone.utc
+    )
+    aware = datetime(2026, 1, 1, 3, 0, 40, tzinfo=timezone(timedelta(hours=-7)))
+    assert to_timestamp(aware) == datetime(2026, 1, 1, 10, 0, 40, tzinfo=timezone.utc)
+
+
+def test_scalar_date_format_and_day_first():
+    assert to_timestamp("01/02/2026 10:00", date_format="%d/%m/%Y %H:%M") == datetime(
+        2026, 2, 1, 10, tzinfo=timezone.utc
+    )
+    assert to_timestamp("03/04/2026", day_first=True) == datetime(
+        2026, 4, 3, tzinfo=timezone.utc
+    )
+
+
+@pytest.mark.parametrize("value", ["", "not a timestamp", "2026-02-30T10:00:00Z"])
+def test_invalid_scalar_timestamp_raises(value):
+    with pytest.raises(ValueError, match="invalid or ambiguous timestamp"):
+        to_timestamp(value)
+
+
+@pytest.mark.parametrize("value", ["2026-03-08T02:30:00", "2026-11-01T01:30:00"])
+def test_scalar_ambiguous_or_nonexistent_local_time_raises(value):
+    with pytest.raises(ValueError, match="invalid or ambiguous timestamp"):
+        to_timestamp(value, timezone="America/Denver")
+
+
+@pytest.mark.parametrize("value", [None, 1767261640, True, ["2026-01-01"]])
+def test_scalar_unsupported_types_raise(value):
+    with pytest.raises(TypeError, match="string, datetime, or Polars Series"):
+        to_timestamp(value)
+
+
+def test_separate_time_column_requires_series():
+    with pytest.raises(TypeError, match="Series inputs"):
+        to_timestamp("2026-01-01", pl.Series(["10:00:40"]))
+
+
+def test_utc_suffix_on_a_column_preserves_name_and_invalid_entries():
+    result = to_timestamp(pl.Series("sample_time", ["2026-01-01T10:00:40 UTC", "bad", None]))
+    assert result.name == "sample_time"
+    assert result.to_list() == [datetime(2026, 1, 1, 10, 0, 40, tzinfo=timezone.utc), None, None]
+
+
+def test_existing_timestamp_name_uses_the_same_conversion():
+    from acquirium import timestamp
+    from acquirium.ExperimentValues import sample_rows
+
+    assert timestamp("2026-01-01T10:00:40 UTC") == to_timestamp("2026-01-01T10:00:40Z")
+    expected = datetime(2026, 1, 1, 10, 0, 40, tzinfo=timezone.utc)
+    assert timestamp(datetime(2026, 1, 1, 10, 0, 40)) == expected
+    assert sample_rows([("2026-01-01T10:00:40 UTC", 26.0)]) == [(expected, 26.0)]
 
 
 def test_date_column_becomes_utc_midnight():
@@ -149,7 +261,7 @@ def test_null_and_nan_values_are_dropped():
         "time": ["2024-01-01T00:00:00Z", "2024-01-02T00:00:00Z"],
         "temp": [float("nan"), 23.0],
     })
-    assert to_observations(df, layout="wide")["value"].to_list() == ["23.0"]
+    assert to_observations(df, layout="wide")["value"].to_list() == [23.0]
 
 
 def test_rows_with_unparseable_timestamps_are_dropped():
@@ -202,4 +314,16 @@ def test_custom_column_names():
         df, time_col="timestamp", id_col="tag", value_col="reading", layout="narrow"
     )
     assert out["stream_name"].to_list() == ["a"]
-    assert out["value"].to_list() == ["1.5"]
+    assert out["value"].to_list() == [1.5]
+
+
+def test_text_cells_travel_as_text():
+    df = pl.DataFrame({
+        "time": ["2024-01-01T00:00:00Z", "2024-01-02T00:00:00Z"],
+        "temp": [21.5, None],
+        "mode": ["AUTO", "Bad"],
+    })
+    out = to_observations(df, layout="wide")
+    assert sorted(zip(out["stream_name"], out["value"])) == [
+        ("mode", "AUTO"), ("mode", "Bad"), ("temp", "21.5"),
+    ]

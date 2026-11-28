@@ -27,7 +27,6 @@ def test_local_config_without_a_file_uses_a_copy_of_the_defaults(monkeypatch, tm
     assert loaded.data["server"] == {
         "enabled": True,
         "data_dir": ".acquirium",
-        "timeseries_backend": "duckdb",
         "host": "127.0.0.1",
         "port": 0,
         "workers": 1,
@@ -45,7 +44,6 @@ def test_local_config_overlays_explicit_server_values(tmp_path):
 
     assert loaded.data["server"]["port"] == 8123
     assert loaded.data["server"]["exact_only"] is False
-    assert loaded.data["server"]["timeseries_backend"] == "duckdb"
 
 
 def test_loaded_config_owns_path_directory_and_fingerprint(tmp_path):
@@ -86,6 +84,17 @@ def test_server_environment_resolves_paths_without_overriding(monkeypatch, tmp_p
     assert os.environ["ACQUIRIUM_GRAPH_PATH"] == str(tmp_path / "state" / "graph")
     assert os.environ["ACQUIRIUM_EXACT_ONLY"] == "true"
     assert os.environ["ACQUIRIUM_WORKERS"] == "1"
+
+
+def test_postgres_engine_path_is_not_resolved_as_a_file(tmp_path):
+    url = "postgres://acquirium@db/plant?options=-csearch_path%3Descapement"
+    config = tmp_path / "acquirium.toml"
+    config.write_text(f'[server]\nengine_path = "{url}"\n')
+    environ = {}
+
+    load_config(config).apply_server_env(environ)
+
+    assert environ["ACQUIRIUM_ENGINE_PATH"] == url
 
 
 def test_empty_active_config_suppresses_cwd_discovery(monkeypatch, tmp_path):
