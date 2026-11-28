@@ -67,12 +67,10 @@ if TYPE_CHECKING:
 
 
 def _value_column(col: "pl.Series") -> "pl.Expr":
-    """Choose an Arrow-compatible dtype for the values.
+    """Keep native column types and preserve Python integers for the JSON path.
 
-    Keep native numeric columns as they are where Arrow supports the dtype.
-    For object columns, recover Int64 or Float64 when every present value
-    fits the same type. Other object values travel as text for the server to
-    interpret by stream kind.
+    An Object column containing integers stays typed when a single Arrow
+    dtype cannot carry its values. The upload then uses JSON numbers.
     """
     import math
     from numbers import Integral
@@ -80,7 +78,7 @@ def _value_column(col: "pl.Series") -> "pl.Expr":
 
     name = col.name
     if col.dtype in (pl.Int128, getattr(pl, "UInt128", None)):
-        return pl.col(name).cast(pl.String)
+        return pl.lit(pl.Series(name, col.to_list(), dtype=pl.Object))
     if col.dtype.is_numeric():
         return pl.col(name)
     if col.dtype == pl.Boolean:
@@ -88,9 +86,11 @@ def _value_column(col: "pl.Series") -> "pl.Expr":
     if col.dtype == pl.Object:
         values = col.to_list()
         present = [v for v in values if v is not None]
-        if present and all(isinstance(v, Integral) and not isinstance(v, bool) for v in present):
-            if all(-(2**63) <= v < 2**63 for v in present):
+        integers = [v for v in present if isinstance(v, Integral) and not isinstance(v, bool)]
+        if integers:
+            if len(integers) == len(present) and all(-(2**63) <= v < 2**63 for v in integers):
                 return pl.lit(pl.Series(name, values, dtype=pl.Int64))
+            return pl.col(name)
         if present and all(isinstance(v, float) for v in present):
             return pl.lit(pl.Series(name, values, dtype=pl.Float64))
         return pl.col(name).map_elements(
@@ -98,6 +98,24 @@ def _value_column(col: "pl.Series") -> "pl.Expr":
             return_dtype=pl.Utf8,
         )
     return pl.col(name).cast(pl.Utf8)
+
+
+def _json_observations(frame: "pl.DataFrame") -> dict:
+    """Group mixed values by stream with UTC nanosecond keys and JSON scalars."""
+    import math
+    from numbers import Integral
+    import polars as pl
+
+    streams = {}
+    for name, timestamp, value in frame.select("stream_name", pl.col("ts").dt.epoch("ns"), "value").iter_rows():
+        if isinstance(value, Integral):
+            value = int(value)
+        elif isinstance(value, float):
+            value = value if math.isfinite(value) else None
+        elif value is not None:
+            value = str(value)
+        streams.setdefault(name, []).append((timestamp, value))
+    return streams
 
 
 @accepts_old_names
@@ -561,6 +579,8 @@ class IngestDriver(Driver):
         frame (a whole file, say) into requests the server accepts.
         """
 
+        import polars as pl
+
         with timed_debug(logger, "%s.normalize_observations", self.__class__.__name__):
             df = self.normalize_observations(observations)
         if df.is_empty():
@@ -585,12 +605,17 @@ class IngestDriver(Driver):
         for source, payload, source_request_id in batches:
             # A stable ID lets a request refused for capacity be resent as-is.
             # Acceptance is durable; a full inbox pushes back with 503.
-            with timed_debug(logger, "%s.aq.insert_timeseries_arrow source=%s rows=%d",
+            with timed_debug(logger, "%s.submit_observations source=%s rows=%d",
                              self.__class__.__name__, source, len(payload)):
-                result = self.aq.insert_timeseries_arrow(
-                    source, payload.to_arrow(), request_id=source_request_id or str(uuid.uuid4()),
-                    wait=0, retry_for=CAPACITY_RETRY_S,
-                )
+                request_id = source_request_id or str(uuid.uuid4())
+                if payload.schema["value"] == pl.Object:
+                    result = self.aq.insert_timeseries_batch(
+                        source, _json_observations(payload), request_id=request_id, wait=0, retry_for=CAPACITY_RETRY_S,
+                    )
+                else:
+                    result = self.aq.insert_timeseries_arrow(
+                        source, payload.to_arrow(), request_id=request_id, wait=0, retry_for=CAPACITY_RETRY_S,
+                    )
             if not result.get("ok", True):
                 raise RuntimeError(f"observation insertion reported failure: {result!r}")
             total += int(result.get("rows_inserted", len(payload)))
@@ -599,10 +624,11 @@ class IngestDriver(Driver):
         return {"ok": True, "rows_inserted": total, "receipts": receipts}
 
     def normalize_observations(self, observations: "pl.DataFrame | None") -> "pl.DataFrame":
-        """Build the upload frame with UTC timestamps and Arrow-compatible values.
+        """Build the upload frame with UTC timestamps and preserved value types.
 
         Drop rows missing a stream name or a usable timestamp. The server
         decides which remaining values to store using each stream's kind.
+        Mixed or wide integer values may use an Object column for JSON transport.
         """
         import polars as pl
 

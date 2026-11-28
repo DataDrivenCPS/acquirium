@@ -290,18 +290,25 @@ def test_full_buffer_rejects_readings_until_the_pending_batch_is_sent(tmp_path):
 # ------------------------------------------------------------------ value kinds
 
 
-def test_add_accepts_non_numeric_values(tmp_path):
+@pytest.mark.parametrize("integer", [3, 2**53 + 1, 2**64 - 1])
+def test_add_preserves_integers_alongside_text_and_floats(tmp_path, integer):
     driver = make_driver(AddDriver, tmp_path)
     driver.declare("state")
-    driver.declare("count")
+    driver.declare("count", value_kind="numeric")
     driver.add("state", "ON")
-    driver.add("count", 3)
+    driver.add("count", integer)
+    driver.add("count", 7.5)
+    driver.aq.insert_timeseries_batch.return_value = {"ok": True, "rows_inserted": 3, "receipts": []}
     driver.flush()
 
-    # A batch holding text travels as text; the server stores each value as
-    # its stream's kind.
-    (_, cols), = inserted(driver)
-    assert cols["value"] == ["ON", "3"]
+    # JSON keeps each scalar's type so the server can check numeric integers.
+    driver.aq.insert_timeseries_arrow.assert_not_called()
+    (source, streams), options = driver.aq.insert_timeseries_batch.call_args
+    assert source == driver.source_id
+    assert [value for _, value in streams["state"]] == ["ON"]
+    assert [value for _, value in streams["count"]] == [integer, 7.5]
+    assert type(streams["count"][0][1]) is int
+    assert options["request_id"]
 
 
 def test_add_is_available_on_the_shared_ingest_base(tmp_path):
