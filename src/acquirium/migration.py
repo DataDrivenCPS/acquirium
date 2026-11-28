@@ -76,6 +76,27 @@ def _matching_prefix(source: AcquiriumClient, target: AcquiriumClient, uri: str,
         return count
 
 
+def _check_valueless_rows(source: AcquiriumClient, uri: str, legacy_count: int, copyable: int) -> int:
+    """Confirm that any rows missing from the typed reads really have no value."""
+    if legacy_count == copyable:
+        return 0
+
+    rows = valueless = 0
+    # Unlike numeric and text reads, the legacy coalesced read returns null
+    # rows. Only scan it when the typed reads do not explain the legacy count.
+    with closing(source.timeseries_batches(uri, value_mode="coalesce", view="stored")) as batches:
+        for batch in batches:
+            rows += len(batch)
+            valueless += batch["value"].null_count()
+
+    if rows != legacy_count or copyable + valueless != legacy_count:
+        raise RuntimeError(
+            f"Legacy counts disagree for {uri}: reported {legacy_count} rows, "
+            f"found {copyable} readings and {valueless} rows with no value"
+        )
+    return valueless
+
+
 def migrate_readings(
     source: AcquiriumClient,
     target: AcquiriumClient,
@@ -126,8 +147,8 @@ def migrate_readings(
             for mode in _VALUE_MODES:
                 copied[uri, mode] = _matching_prefix(source, target, uri, mode)
 
-    expected = sum(source_info[uri].row_count for uri in legacy_streams)
-    report(f"Found {len(legacy_streams)} raw streams and {expected} readings.")
+    legacy_rows = sum(source_info[uri].row_count for uri in legacy_streams)
+    report(f"Found {len(legacy_streams)} raw streams and {legacy_rows} legacy rows.")
     if copied:
         report(f"Verified {sum(copied.values())} already copied readings.")
     if dry_run:
@@ -138,11 +159,14 @@ def migrate_readings(
     registrations = [stream for uri, stream in legacy_streams.items() if target_streams.get(uri) != stream]
     if registrations:
         target.register_streams(registrations)
+    verified = skipped = 0
     for uri, registration in legacy_streams.items():
+        copyable = 0
         for mode in _VALUE_MODES:
             remaining = copied.get((uri, mode), 0)
             with closing(_batches(source, uri, mode)) as batches:
                 for batch in batches:
+                    copyable += len(batch)
                     skip = min(len(batch), remaining)
                     remaining -= skip
                     batch = batch.slice(skip)
@@ -155,10 +179,20 @@ def migrate_readings(
                         if not last["published"]:
                             target.wait(last)
 
+        valueless = _check_valueless_rows(source, uri, source_info[uri].row_count, copyable)
         actual = sum(_matching_prefix(source, target, uri, mode) for mode in _VALUE_MODES)
-        if actual != source_info[uri].row_count:
+        if actual != copyable:
             raise RuntimeError(
-                f"Verification failed for {uri}: expected {source_info[uri].row_count} readings, found {actual}"
+                f"Verification failed for {uri}: expected {copyable} readings, found {actual}"
+            )
+        verified += actual
+        skipped += valueless
+        if valueless:
+            report(
+                f"Skipped {valueless} legacy rows with no value for "
+                f"{registration['source_id']}/{registration['stream_name']}."
             )
 
-    report(f"Verified {expected} readings in {len(legacy_streams)} destination streams.")
+    report(f"Verified {verified} readings in {len(legacy_streams)} destination streams.")
+    if skipped:
+        report(f"Skipped {skipped} legacy rows with no value in total.")
