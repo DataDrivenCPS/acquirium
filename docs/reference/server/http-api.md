@@ -228,6 +228,11 @@ The server compares the graph's `owl:imports` and `owl:Ontology` triples before 
 | `GET /engine/snapshot` | Published epoch, applied sequence, complete active plan, per-operator failures. Returns once the plan reflects the metadata graph as of the request; while an app install is under way it waits up to 30 s, and `plan_current` is `false` if the plan is still behind |
 | `GET /engine/changes` | Bounded signed change-feed pages with exclusive epoch/ordinal cursor and complete-epoch frontier |
 | `POST /engine/retry` | Request another attempt for failed operators |
+
+For migration, `POST /insert_timeseries_arrow?stored=true` accepts `number`
+(Float64) and `text` (string) columns in place of `value`. Each row must set
+exactly one of them. These writes preserve stored values, including empty
+text, and use the same registered-stream and receipt rules as live ingest.
 `GET /timeseries` uses query parameters; `/resolve_storage_keys`,
 `GET /engine/status` reports the published epoch, admitted and applied
 where available. `GET /engine/snapshot` reports the plan and stream failures

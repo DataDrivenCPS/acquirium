@@ -137,7 +137,7 @@ def _batches(
 
 
 def _typed_batches(
-    client: AcquiriumClient, uri: str, mode: str, window: _Window | None,
+    client: AcquiriumClient, uri: str, mode: str, window: _Window | None = None,
 ) -> Iterator[pl.DataFrame]:
     with closing(_batches(client, uri, mode, window)) as batches:
         for batch in batches:
@@ -256,7 +256,7 @@ def _write_batch(target: AcquiriumClient, registration: dict[str, str], batch: p
         pl.col("ts").cast(pl.Datetime("ns", "UTC")),
         pl.lit(registration["stream_name"]).alias("stream_name"),
     ).to_arrow()
-    result = target.insert_timeseries_arrow(registration["source_id"], table)
+    result = target.insert_timeseries_arrow(registration["source_id"], table, stored=True)
     last = result["receipts"][-1]
     if not last["published"]:
         target.wait(last)
@@ -267,30 +267,23 @@ def _copy_missing(
     windows: list[_Window] | None, update: Callable[[int], None],
 ) -> int:
     """Submit only missing rows and return the total source readings examined."""
-    # Arrow writes need a single value type per batch.
-    pending: dict[str, list[pl.DataFrame]] = {"number": [], "text": []}
-    buffered = dict.fromkeys(pending, 0)
-    total = 0
+    pending: list[pl.DataFrame] = []
+    total = buffered = 0
     with closing(_compare_ranges(source, target, uri, windows)) as readings:
         for timestamps, missing in readings:
             total += len(timestamps)
             update(total)
-            if missing.is_empty():
-                continue
-            for column, parts in pending.items():
-                batch = missing.select("ts", pl.col(column).alias("value")).drop_nulls("value")
-                while not batch.is_empty():
-                    count = min(MAX_REQUEST_ROWS - buffered[column], len(batch))
-                    parts.append(batch.slice(0, count))
-                    buffered[column] += count
-                    batch = batch.slice(count)
-                    if buffered[column] == MAX_REQUEST_ROWS:
-                        _write_batch(target, registration, pl.concat(parts))
-                        parts.clear()
-                        buffered[column] = 0
-    for parts in pending.values():
-        if parts:
-            _write_batch(target, registration, pl.concat(parts))
+            while not missing.is_empty():
+                count = min(MAX_REQUEST_ROWS - buffered, len(missing))
+                pending.append(missing.slice(0, count))
+                buffered += count
+                missing = missing.slice(count)
+                if buffered == MAX_REQUEST_ROWS:
+                    _write_batch(target, registration, pl.concat(pending))
+                    pending.clear()
+                    buffered = 0
+    if pending:
+        _write_batch(target, registration, pl.concat(pending))
     return total
 
 
@@ -418,7 +411,7 @@ def migrate_readings(
                 copyable = 0
                 with _progress(progress, f"Copying {label} (empty destination)") as update:
                     for mode in _VALUE_MODES:
-                        with closing(_batches(source, uri, mode)) as batches:
+                        with closing(_typed_batches(source, uri, mode)) as batches:
                             for batch in batches:
                                 _write_batch(target, registration, batch)
                                 copyable += len(batch)

@@ -202,13 +202,7 @@ class Core:
         request, so it holds exactly the rows supplied for it. The result
         includes the receipt and the normalized upsert count."""
         replace = sorted(set(replace))
-        if frame.height + len(replace) > MAX_REQUEST_ROWS:
-            raise ValueError(
-                f"a request may contain at most {MAX_REQUEST_ROWS:,} rows"
-            )
-        dtype = frame.schema["ts"]
-        if not isinstance(dtype, pl.Datetime) or dtype.time_zone is None:
-            raise ValueError("ts must be a timezone-aware datetime column")
+        self._validate_write_frame(frame, len(replace))
         if "operation" not in frame.columns:
             frame = frame.with_columns(pl.lit("upsert").alias("operation"))
         if "value_kind" not in frame.columns:
@@ -228,6 +222,29 @@ class Core:
                 "_row", "stream_uri", "ts", "operation", "value", "value_kind"
             )),
         ]).sort("_row").drop("_row")
+        return self._write_readings(source, request_id, rows, replace)
+
+    def ingest_stored(self, source: str, request_id: str, frame: pl.DataFrame) -> IngestResult:
+        """Replay a typed reading, preserving its stored number or text verbatim."""
+        self._validate_write_frame(frame, 0)
+        if frame.schema["number"] not in (pl.Float64, pl.Null) or frame.schema["text"] not in (pl.String, pl.Null):
+            raise ValueError("stored readings require Float64 number and string text columns")
+        if frame.select((pl.col("number").is_null() == pl.col("text").is_null()).any()).item():
+            raise ValueError("each stored reading needs exactly one of number or text")
+        rows = frame.with_columns(
+            pl.lit("upsert").alias("operation"), pl.col("number").cast(pl.Float64), pl.col("text").cast(pl.String),
+        )
+        return self._write_readings(source, request_id, rows, ())
+
+    @staticmethod
+    def _validate_write_frame(frame: pl.DataFrame, replacements: int) -> None:
+        if frame.height + replacements > MAX_REQUEST_ROWS:
+            raise ValueError(f"a request may contain at most {MAX_REQUEST_ROWS:,} rows")
+        dtype = frame.schema["ts"]
+        if not isinstance(dtype, pl.Datetime) or dtype.time_zone is None:
+            raise ValueError("ts must be a timezone-aware datetime column")
+
+    def _write_readings(self, source, request_id, rows, replace):
         # Keep the last surviving operation at each stream and time.
         # A row with neither a number nor text deletes the key.
         rows = (

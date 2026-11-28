@@ -17,7 +17,8 @@ from acquirium.migration import migrate_readings
 
 
 @pytest.mark.usefixtures("separate_server")
-def test_migration_merges_with_live_readings_and_refuses_conflicts(tmp_path, monkeypatch):
+@pytest.mark.parametrize("stored_text", [pytest.param("", id="empty-text"), pytest.param(" \t", id="whitespace-text")])
+def test_migration_merges_with_live_readings_and_refuses_conflicts(tmp_path, monkeypatch, stored_text):
     # The first two raw streams include legacy rows with no numeric or text value.
     legacy = create_autospec(AcquiriumClient, instance=True)
     legacy.address = "http://legacy:8000"
@@ -47,7 +48,7 @@ def test_migration_merges_with_live_readings_and_refuses_conflicts(tmp_path, mon
 
     at = datetime(2026, 1, 1, microsecond=123456, tzinfo=timezone.utc)
     numeric = [(at, 21.5), (at + timedelta(microseconds=1), 22.0), (at + timedelta(microseconds=2), 23.0)]
-    faults = [(at + timedelta(seconds=3), "Fault")]
+    faults = [(at + timedelta(seconds=3), stored_text)]
     null_at = at + timedelta(seconds=4)
     live_numeric = [
         (at - timedelta(seconds=1), 20.0),
@@ -136,11 +137,11 @@ def test_migration_merges_with_live_readings_and_refuses_conflicts(tmp_path, mon
         # Interrupt the run after its first missing batch has published.
         insert = client.client.insert_timeseries_arrow
 
-        def interrupted(source_id, table):
-            """Let the numeric gap publish and interrupt the fault write."""
-            if table["value"].to_pylist() == ["Fault"]:
+        def interrupted(source_id, table, *, stored):
+            """Let the numeric gap publish and interrupt the text write."""
+            if table["text"].to_pylist() == [stored_text]:
                 raise ConnectionError("interrupted copy")
-            return insert(source_id, table)
+            return insert(source_id, table, stored=stored)
 
         applied = client.engine_status()["applied"]
         legacy.timeseries_batches.reset_mock()

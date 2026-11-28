@@ -1025,21 +1025,25 @@ def insert_timeseries(streams: Annotated[list[StreamInsert], Body()], wait: floa
 
 @app.post("/insert_timeseries_arrow")
 @_engine_errors
-async def insert_timeseries_arrow(request: Request, wait: float = Query(30, ge=0)):
+async def insert_timeseries_arrow(request: Request, wait: float = Query(30, ge=0), stored: bool = False):
     request_id = request.headers.get("X-Acquirium-Request-Id")
     if not request_id:
         raise ValueError("X-Acquirium-Request-Id is required")
-    return await asyncio.to_thread(_insert_arrow_body, await request.body(), request_id, wait)
+    return await asyncio.to_thread(_insert_arrow_body, await request.body(), request_id, wait, stored=stored)
 
 
-def _insert_arrow_body(body: bytes, request_id: str, wait: float):
+def _insert_arrow_body(body: bytes, request_id: str, wait: float, *, stored=False):
     """Submit the Arrow rows as one request per source under the supplied ID."""
     with ipc.open_stream(body) as reader:
         frame = pl.from_arrow(reader.read_all())
+    if not {"source_id", "stream_name"}.issubset(frame.columns):
+        raise ValueError("Arrow ingest requires source_id and stream_name columns")
     receipts, total = [], 0
     for (source,), source_frame in frame.partition_by("source_id", as_dict=True).items():
         source_id = str(source)
-        result = app.state.manager.insert_timeseries_frame(source_id, source_frame, request_id=request_id)
+        result = app.state.manager.insert_timeseries_frame(
+            source_id, source_frame, request_id=request_id, stored=stored,
+        )
         total += result.rows_inserted
         receipts.append(_receipt(result.receipt, source_id, request_id, wait))
     insert_stats.record(origin="arrow", rows=len(frame),

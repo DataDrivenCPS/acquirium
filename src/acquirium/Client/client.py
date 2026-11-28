@@ -1586,10 +1586,14 @@ class AcquiriumClient:
 
     def insert_timeseries_arrow(
         self, source_id: str, table: "pa.Table", *, request_id: Optional[str] = None,
-        wait=30, timeout=60, retry_for=CAPACITY_RETRY_S,
+        wait=30, timeout=60, retry_for=CAPACITY_RETRY_S, stored: bool = False,
     ) -> dict[str, Any]:
         """Insert a ``(ts, stream_name, value)`` table, split into requests of at
-        most ``MAX_REQUEST_ROWS`` rows as ``insert_timeseries_batch`` splits."""
+        most ``MAX_REQUEST_ROWS`` rows as ``insert_timeseries_batch`` splits.
+
+        Use ``stored=True`` with ``number`` and ``text`` in place of ``value``
+        to replay already typed readings without live-ingest conversion.
+        """
         import io
         import pyarrow as pa
         chunks = [table.slice(offset, MAX_REQUEST_ROWS)
@@ -1603,9 +1607,10 @@ class AcquiriumClient:
             headers = {"Content-Type": "application/vnd.apache.arrow.stream",
                        "X-Acquirium-Request-Id": request_id}
             # Bytes rather than the buffer, so a resend sends the whole body again.
+            params = {"wait": wait, "stored": True} if stored else {"wait": wait}
             return self._post_admitted("/insert_timeseries_arrow", retry_for=retry_for,
                                        data=buf.getvalue(), headers=headers,
-                                       params={"wait": wait}, timeout=timeout).json()
+                                       params=params, timeout=timeout).json()
         return _send_in_order(chunks, request_id or str(uuid.uuid4()), wait, send)
 
     def query_logs(

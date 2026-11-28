@@ -733,7 +733,7 @@ class Manager:
         replaced = {str(compute_stream_uri(source_id, name)) for name in replace}
         return self._ingest(source_id, frame, request_id, replace=replaced)
 
-    def insert_timeseries_frame(self, source_id, frame, *, request_id=None) -> IngestResult:
+    def insert_timeseries_frame(self, source_id, frame, *, request_id=None, stored=False) -> IngestResult:
         """Resolve Arrow stream names to references and preserve the value column's dtype."""
         import polars as pl
 
@@ -741,7 +741,13 @@ class Manager:
         if any(not isinstance(name, str) or not name for name in names):
             raise ValueError("stream_name must be a nonempty string")
         refs = {name: str(compute_stream_uri(source_id, name)) for name in names}
-        frame = frame.select(pl.col("stream_name").replace_strict(refs).alias("stream_uri"), "ts", "value")
+        value_columns = ("number", "text") if stored else ("value",)
+        if not {"ts", *value_columns}.issubset(frame.columns):
+            raise ValueError(f"Arrow ingest requires ts and {', '.join(value_columns)} columns")
+        frame = frame.select(pl.col("stream_name").replace_strict(refs).alias("stream_uri"), "ts", *value_columns)
+        if stored:
+            self._validate_refs(source_id, set(refs.values()))
+            return self.core.ingest_stored(source_id, request_id or str(uuid.uuid4()), frame)
         return self._ingest(source_id, frame, request_id)
 
     def _ingest(self, source_id, frame, request_id, *, replace=()) -> IngestResult:
