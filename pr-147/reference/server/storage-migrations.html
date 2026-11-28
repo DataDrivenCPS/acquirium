@@ -592,10 +592,11 @@ storage settings. Keep ingestion paused throughout the copy so the source
 readings stay consistent. To copy from a legacy backup, point a copy of
 the legacy configuration at the backup and remove its <code class="docutils literal notranslate"><span class="pre">[[drivers]]</span></code>
 and <code class="docutils literal notranslate"><span class="pre">[[apps]]</span></code> entries before starting it.</p></li>
-<li><p>Start the Escapement server with a separate TOML file and fresh storage.
-Give the servers different ports, such as <code class="docutils literal notranslate"><span class="pre">8000</span></code> and <code class="docutils literal notranslate"><span class="pre">8001</span></code> when running
-on the same machine. Keep destination drivers and apps stopped until the
-copy has been verified.</p></li>
+<li><p>Use a separate TOML file for the Escapement server. You can use fresh
+storage or reuse a destination that already has live readings. Give the
+servers different ports, such as <code class="docutils literal notranslate"><span class="pre">8000</span></code> and <code class="docutils literal notranslate"><span class="pre">8001</span></code> on the same machine.
+Pause destination ingestion and keep apps undeployed until verification
+finishes.</p></li>
 <li><p>In the Escapement environment, check the endpoints and row counts first.
 Then run the copy.</p></li>
 </ol>
@@ -614,10 +615,13 @@ Skipped 1 legacy rows with no value in total.
 <code class="docutils literal notranslate"><span class="pre">server_port</span></code>, or <code class="docutils literal notranslate"><span class="pre">[server]</span></code>’s <code class="docutils literal notranslate"><span class="pre">host</span></code> and <code class="docutils literal notranslate"><span class="pre">port</span></code>. Substitute the paths
 to your configurations. The initial legacy count includes rows with neither
 a numeric nor a text value. The command reports those rows as skipped and
-verifies the readings against the destination. If a copy is interrupted,
-rerun it with the same source and destination. The command checks already
-copied readings before continuing and stops if the destination has
-conflicting readings.</p>
+verifies that every remaining legacy reading is present in the destination.</p>
+<p>To retry an interrupted copy, pause ingestion and rerun the command with the
+same source and destination. For each stream, the command skips matching
+readings, fills gaps in the legacy history, and keeps destination-only
+readings, including newer live data. Different values at the same timestamp
+cause a conflict before any writes. A numeric reading and a text reading at
+the same timestamp also conflict.</p>
 <p>The copy retains source IDs, stream names and property links, value kinds,
 stored units, quantity kinds, timestamps, and numeric or text values. It covers
 raw readings from registered streams. Load the plant model and other graph

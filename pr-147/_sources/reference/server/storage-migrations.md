@@ -48,10 +48,11 @@ v0.4.1 on both DuckDB and TimescaleDB.
    readings stay consistent. To copy from a legacy backup, point a copy of
    the legacy configuration at the backup and remove its `[[drivers]]`
    and `[[apps]]` entries before starting it.
-2. Start the Escapement server with a separate TOML file and fresh storage.
-   Give the servers different ports, such as `8000` and `8001` when running
-   on the same machine. Keep destination drivers and apps stopped until the
-   copy has been verified.
+2. Use a separate TOML file for the Escapement server. You can use fresh
+   storage or reuse a destination that already has live readings. Give the
+   servers different ports, such as `8000` and `8001` on the same machine.
+   Pause destination ingestion and keep apps undeployed until verification
+   finishes.
 3. In the Escapement environment, check the endpoints and row counts first.
    Then run the copy.
 
@@ -73,10 +74,14 @@ Each file identifies its server through `[driver]`'s `server_url` and
 `server_port`, or `[server]`'s `host` and `port`. Substitute the paths
 to your configurations. The initial legacy count includes rows with neither
 a numeric nor a text value. The command reports those rows as skipped and
-verifies the readings against the destination. If a copy is interrupted,
-rerun it with the same source and destination. The command checks already
-copied readings before continuing and stops if the destination has
-conflicting readings.
+verifies that every remaining legacy reading is present in the destination.
+
+To retry an interrupted copy, pause ingestion and rerun the command with the
+same source and destination. For each stream, the command skips matching
+readings, fills gaps in the legacy history, and keeps destination-only
+readings, including newer live data. Different values at the same timestamp
+cause a conflict before any writes. A numeric reading and a text reading at
+the same timestamp also conflict.
 
 The copy retains source IDs, stream names and property links, value kinds,
 stored units, quantity kinds, timestamps, and numeric or text values. It covers
