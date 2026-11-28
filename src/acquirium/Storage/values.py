@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 ValueKind = Literal["numeric", "text"]
 ValueMode = Literal["default", "coalesce", "numeric", "text"]
 VALUE_MODES = {"default", "coalesce", "numeric", "text"}
+_INEXACT_INTEGER = "integer reading cannot be represented exactly as Float64"
+_MIXED_VALUE = pl.Struct({"rendered": pl.String, "integer": pl.Int64})
 
 
 # Kind of a stream registered without a ``value_kind``. It reads as text and
@@ -60,6 +62,14 @@ def _split_scalar(value: Any, *, numeric: bool) -> tuple[float | None, str | Non
     if value is None or (isinstance(value, str) and not value.strip()):
         return None, None
     if numeric:
+        if isinstance(value, int):
+            try:
+                number = float(value)
+            except OverflowError as error:
+                raise ValueError(_INEXACT_INTEGER) from error
+            if number != value:
+                raise ValueError(_INEXACT_INTEGER)
+            return number, None
         try:
             number = float(value)
         except (TypeError, ValueError, OverflowError):
@@ -80,6 +90,8 @@ def streams_with_numeric_values(df: pl.DataFrame) -> set[str]:
         return set()
     dtype = df.schema["value"]
     value = pl.col("value")
+    if dtype == _MIXED_VALUE:
+        value, dtype = value.struct.field("rendered"), pl.String
     if dtype == pl.String:
         numeric = value.str.strip_chars().cast(pl.Float64, strict=False).is_finite()
     elif dtype.is_numeric() or isinstance(dtype, pl.Decimal):
@@ -92,7 +104,7 @@ def streams_with_numeric_values(df: pl.DataFrame) -> set[str]:
         return {
             uri
             for uri, item in zip(df["stream_uri"].to_list(), df["value"].to_list())
-            if _split_scalar(item, numeric=True)[0] is not None
+            if isinstance(item, int) or _split_scalar(item, numeric=True)[0] is not None
         }
     return set(df.filter(numeric)["stream_uri"].unique().to_list())
 
@@ -105,25 +117,14 @@ def typed_value_series(values: list[Any]) -> pl.Series:
     ``_split_scalar`` stores text "True" under text kind, and rejects a type
     mismatch that falls outside its inference window.
 
-    Only homogeneous batches get a native dtype. A batch mixing scalar types —
-    e.g. one manager call spanning numeric and text streams — is stringified
-    rather than sent to Object: ``str()`` is exactly what ``_split_scalar``
-    stores under text kind, and floats round-trip through repr under numeric
-    kind. Non-scalar types, a batch mixing booleans with other types (a boolean
-    is 1.0 under numeric kind and "True" under text kind, which no single
-    string can be), and any batch holding an int too large for Int64, take the
-    Object (row-wise) path where their semantics are preserved
-    exactly.
+    Mixed strings and floats can share a String column since floats round-trip
+    through their string representation. In a mixed scalar batch, retain the
+    original integers alongside their string representations for validation.
+    Booleans mixed with other types and integers outside Int64 use Object.
     """
     types = {type(v) for v in values}
     types.discard(type(None))
-    if int in types and any(
-        type(v) is int and not -(2**63) <= v < 2**63 for v in values
-    ):
-        # An int past Int64 has no native column to live in. Stringifying it
-        # would be lossy: one past float range parses back to inf, and the
-        # split drops non-finite values, where _split_scalar stores the digits
-        # as text. The row-wise path keeps that behaviour.
+    if int in types and any(type(v) is int and not -(2**63) <= v < 2**63 for v in values):
         return pl.Series("value", values, dtype=pl.Object)
     if types == {int}:
         # Int64, not Float64: under text kind the cast must render "7", not "7.0".
@@ -134,13 +135,25 @@ def typed_value_series(values: list[Any]) -> pl.Series:
         return pl.Series("value", values, dtype=pl.String)
     if types == {bool}:
         return pl.Series("value", values, dtype=pl.Boolean)
-    if types <= {str, float, int}:
+    if types <= {str, float}:
         return pl.Series(
             "value",
             [None if v is None else str(v) for v in values],
             dtype=pl.String,
         )
+    if types <= {str, float, int}:
+        return pl.DataFrame({
+            "rendered": pl.Series([None if v is None else str(v) for v in values], dtype=pl.String),
+            "integer": pl.Series([v if type(v) is int else None for v in values], dtype=pl.Int64),
+        }).to_struct("value")
     return pl.Series("value", values, dtype=pl.Object)
+
+
+def _validate_integers(frame: pl.DataFrame, integer: pl.Expr, numeric: pl.Expr) -> None:
+    # A rounded Int64 or UInt64 can exceed its original dtype.
+    roundtrip = integer.cast(pl.Float64).cast(pl.Int128, strict=False)
+    if frame.select((numeric & integer.cast(pl.Int128).ne_missing(roundtrip)).any()).item():
+        raise ValueError(_INEXACT_INTEGER)
 
 
 def split_values(frame: pl.DataFrame) -> pl.DataFrame:
@@ -155,6 +168,11 @@ def split_values(frame: pl.DataFrame) -> pl.DataFrame:
     """
     dtype = frame.schema["value"]
     value, numeric = pl.col("value"), pl.col("value_kind").eq("numeric")
+    integer = None
+    if dtype == _MIXED_VALUE:
+        integer = value.struct.field("integer")
+        _validate_integers(frame, integer, numeric)
+        value, dtype = value.struct.field("rendered"), pl.String
     if dtype == pl.Object:
         cells = [
             _split_scalar(item, numeric=kind == "numeric")
@@ -169,11 +187,15 @@ def split_values(frame: pl.DataFrame) -> pl.DataFrame:
         text = pl.when(~numeric).then(value.cast(pl.String).str.to_titlecase())
     elif dtype.is_numeric() or isinstance(dtype, pl.Decimal):
         parsed = value.cast(pl.Float64)
+        if dtype.is_integer() and dtype not in (pl.Int8, pl.UInt8, pl.Int16, pl.UInt16, pl.Int32, pl.UInt32):
+            _validate_integers(frame, value, numeric)
         number = pl.when(numeric & parsed.is_finite()).then(parsed)
         text = pl.when(~numeric & parsed.is_finite()).then(value.cast(pl.String))
     elif dtype == pl.String:
         stripped = value.str.strip_chars()
         parsed = stripped.cast(pl.Float64, strict=False)
+        if integer is not None:
+            parsed = pl.coalesce(integer.cast(pl.Float64), parsed)
         number = pl.when(numeric & parsed.is_finite()).then(parsed)
         # Unparseable values on a numeric stream are kept as text; blank
         # values are no reading on either kind.
