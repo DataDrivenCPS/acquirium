@@ -700,16 +700,16 @@ class Manager:
             )
         return self.core.engine.snapshot(), current
 
-    def timeseries_info_batch(self, uris, *, view="current"):
-        """Current statistics, resolved and counted against one snapshot."""
-        snapshot = self.core.engine.snapshot()
+    def timeseries_info_batch(self, uris, *, view="current", epoch=None):
+        """Resolve and count streams at the requested epoch or the latest snapshot."""
+        snapshot = self.core.engine.snapshot(epoch)
         keys = self.resolve_storage_keys(uris, view=view, epoch=snapshot.epoch)
         info = self.core.info(set(keys.values()), snapshot=snapshot)
         return {uri: info[key] for uri, key in keys.items()}
 
-    def timeseries_exists_batch(self, uris: list[str], *, view="current") -> list[str]:
+    def timeseries_exists_batch(self, uris: list[str], *, view="current", epoch=None) -> list[str]:
         """The stream or point URIs among ``uris`` that have any row."""
-        info = self.timeseries_info_batch(uris, view=view)
+        info = self.timeseries_info_batch(uris, view=view, epoch=epoch)
         return sorted(uri for uri, stats in info.items() if stats["row_count"])
 
     def insert_timeseries(self, *, source_id, stream_name, rows, request_id=None) -> IngestResult:

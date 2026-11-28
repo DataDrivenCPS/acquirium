@@ -222,7 +222,7 @@ The server compares the graph's `owl:imports` and `owl:Ontology` triples before 
 | `POST /insert_timeseries_arrow` | Arrow `source_id, stream_name, ts, value`; required `X-Acquirium-Request-Id` |
 | `POST /delete_timeseries` | `{source_id, stream_name, timestamps: [UTC-ns], request_id}` |
 | `GET /timeseries` | Arrow `ts: timestamp[ns, UTC], value: float64, uri: utf8`; `after=<sequence>` waits until that receipt is published |
-| `POST /timeseries_info` | `{uris: [...], view: "current"}` to current counts and UTC bounds |
+| `POST /timeseries_info` | `{uris: [...], view: "current", epoch: optional}` to counts and UTC bounds |
 | `POST /timeseries_exists` | Same read selectors; returns `{uris: [...]}` with rows present |
 | `GET /engine/status` | Accepted/applied frontiers, backlog, per-operator failures, processor error, timings, worker queue/RSS, server PID and peak RSS |
 | `GET /engine/snapshot` | Published epoch, applied sequence, complete active plan, per-operator failures. Returns once the plan reflects the metadata graph as of the request; while an app install is under way it waits up to 30 s, and `plan_current` is `false` if the plan is still behind |

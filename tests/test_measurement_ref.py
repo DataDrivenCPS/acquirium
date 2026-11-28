@@ -120,16 +120,24 @@ def test_is_empty_asks_which_streams_have_rows(hist, stats_calls, exists_calls):
     assert sorted(exists_calls[0]) == sorted(s.stream_uri for s in (feed, perm, none))
 
 
-def test_refresh_stats_sees_new_rows(hist, stats_calls, exists_calls):
+def test_refresh_stats_keeps_the_sample_epoch(hist, stats_calls, exists_calls):
     hist.register_streams([{"property_uri": "urn:test:refstats#extra", "source_id": SOURCE,
                             "stream_name": "FT_extra", "value_kind": "numeric"}])
-    data = hist.query().measurement(stream=hist.stream(SOURCE, "FT_extra")).data()
+    query = hist.query().measurement(stream=hist.stream(SOURCE, "FT_extra"))
+    data = query.data()
     assert data.is_empty()
     assert data.total_rows == 0
     hist.insert_timeseries_batch(SOURCE, {"FT_extra": [(T0, 1.0)]})
     assert data.total_rows == 0  # the cached snapshot
     data.refresh_stats()
-    assert not data.is_empty()  # asks again: the statistics are not loaded
-    assert data.total_rows == 1
+    assert data.is_empty()
+    assert data.total_rows == 0
     assert len(stats_calls) == 2
     assert len(exists_calls) == 2
+    assert data.dataframe().is_empty()
+
+    # A new object uses the latest epoch for counts and values.
+    current = query.data()
+    assert not current.is_empty()
+    assert current.total_rows == 1
+    assert current.dataframe().height == 1

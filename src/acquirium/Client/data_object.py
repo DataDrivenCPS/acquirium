@@ -397,6 +397,7 @@ class _StreamStats:
     """
     client: AcquiriumClient | None
     targets: list[tuple[str, str]]  # (physical/logical reference, read view)
+    epoch: int | None = None
     info: dict[tuple[str, str], Any] | None = None
     exists: set[tuple[str, str]] | None = None
 
@@ -409,7 +410,7 @@ class _StreamStats:
             result = {}
             if self.client is not None:
                 for view, refs in self._groups():
-                    info = self.client.timeseries_info_batch(refs, view=view)
+                    info = self.client.timeseries_info_batch(refs, view=view, epoch=self.epoch)
                     result.update({(ref, view): value for ref, value in info.items()})
             self.info = result
         return self.info
@@ -422,7 +423,7 @@ class _StreamStats:
             result = set()
             if self.client is not None:
                 for view, refs in self._groups():
-                    found = self.client.timeseries_exists_batch(refs, view=view)
+                    found = self.client.timeseries_exists_batch(refs, view=view, epoch=self.epoch)
                     result.update((ref, view) for ref in found)
             self.exists = result
         return self.exists
@@ -612,7 +613,7 @@ class DataObject:
             },
             _tall=None,
             _materialized=False,
-            _stats=_StreamStats(query.client, sorted({(b.stream_uri, b.view) for b in bindings})),
+            _stats=_StreamStats(query.client, sorted({(b.stream_uri, b.view) for b in bindings}), epoch),
         )
 
     def _stats_bindings(self) -> list[BindingInfo]:
@@ -640,7 +641,10 @@ class DataObject:
     def _shared_stats(self) -> _StreamStats:
         """The statistics cache, made from this object's bindings if it has none."""
         if self._stats is None:
-            self._stats = _StreamStats(self._client, sorted({(b.stream_uri, b.view) for b in self._bindings}))
+            self._stats = _StreamStats(
+                self._client, sorted({(b.stream_uri, b.view) for b in self._bindings}),
+                self._query_params.get("epoch"),
+            )
         return self._stats
 
     @property
@@ -652,8 +656,8 @@ class DataObject:
         """Forget the cached stream statistics.
 
         The next read of ``total_rows``, ``time_range``, ``bindings`` or
-        ``is_empty()`` asks the server again. The cache is shared with the
-        sub-objects of the same ``data()`` call, so they see the refresh too.
+        ``is_empty()`` asks the server again at the sample epoch. Sub-objects
+        of the same ``data()`` call share the refreshed cache.
         """
         if self._stats is not None:
             self._stats.refresh()

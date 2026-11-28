@@ -481,21 +481,27 @@ class AcquiriumClient:
             # Drain to EOF so the pooled connection is reused (see timeseries_df).
             r.raw.read()
 
-    def timeseries_info_batch(self, uris: list[str], *, view="current") -> dict:
-        """Fetch current stats (row_count, earliest, latest) for multiple URIs in one request."""
+    def timeseries_info_batch(self, uris: list[str], *, view="current", epoch: int | None = None) -> dict:
+        """Fetch counts and bounds for multiple URIs at one published epoch."""
         from acquirium.internals.models import TimeseriesInfo
         url = f"{self.base_url}/timeseries_info"
-        response = self._http.post(url, json={"uris": uris, "view": view})
+        body = {"uris": uris, "view": view}
+        if epoch is not None:
+            body["epoch"] = epoch
+        response = self._http.post(url, json=body)
         _raise_for_status(response)
         data = response.json()
         return {uri: TimeseriesInfo.model_validate(info) for uri, info in data.items()}
 
-    def timeseries_exists_batch(self, uris: list[str], *, view="current") -> set[str]:
+    def timeseries_exists_batch(self, uris: list[str], *, view="current", epoch: int | None = None) -> set[str]:
         """The URIs among ``uris`` that have at least one row, in one request.
 
         Cheaper than ``timeseries_info_batch``, which counts every row.
         """
-        response = self._http.post(f"{self.base_url}/timeseries_exists", json={"uris": uris, "view": view})
+        body = {"uris": uris, "view": view}
+        if epoch is not None:
+            body["epoch"] = epoch
+        response = self._http.post(f"{self.base_url}/timeseries_exists", json=body)
         _raise_for_status(response)
         return set(response.json()["uris"])
 

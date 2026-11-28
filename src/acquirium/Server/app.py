@@ -558,6 +558,7 @@ class InsertGraphRequest(BaseModel):
 class TimeseriesInfoRequest(BaseModel):
     uris: list[str]
     view: View = "current"
+    epoch: int | None = Field(default=None, ge=0)
 
 
 class RecordFieldSpec(BaseModel):
@@ -953,17 +954,13 @@ def metadata_asserted(subjects: Annotated[list[str], Body()]) -> dict[str, list[
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
-class ResolveStorageKeysRequest(TimeseriesInfoRequest):
-    epoch: int | None = Field(default=None, ge=0)
-
-
 class StreamViewsRequest(BaseModel):
     uris: list[str]
     epoch: int | None = Field(default=None, ge=0)
 
 
 @app.post("/resolve_storage_keys")
-def resolve_storage_keys(req: ResolveStorageKeysRequest) -> dict[str, str]:
+def resolve_storage_keys(req: TimeseriesInfoRequest) -> dict[str, str]:
     """Map each semantic property_uri (or already-canonical stream_uri) in *uris*
     to its canonical stream_uri. Callers do this before reading or subscribing;
     the database's internal integer stream_id is never exposed."""
@@ -1132,13 +1129,13 @@ def get_timeseries(
 @app.post("/timeseries_info")
 @_engine_errors
 def timeseries_info(req: TimeseriesInfoRequest) -> dict[str, Any]:
-    return app.state.manager.timeseries_info_batch(req.uris, view=req.view)
+    return app.state.manager.timeseries_info_batch(req.uris, view=req.view, epoch=req.epoch)
 
 
 @app.post("/timeseries_exists")
 def timeseries_exists(req: TimeseriesInfoRequest) -> dict[str, Any]:
     try:
-        return {"uris": app.state.manager.timeseries_exists_batch(req.uris, view=req.view)}
+        return {"uris": app.state.manager.timeseries_exists_batch(req.uris, view=req.view, epoch=req.epoch)}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
