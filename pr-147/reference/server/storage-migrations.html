@@ -526,7 +526,7 @@
             </div>
             <nav aria-label="Page">
                 <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#move-to-escapement">Move to Escapement</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#start-with-fresh-storage">Start with fresh storage</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#backup-and-restore">Backup and restore</a><ul class="nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#back-up-the-files">Back up the files</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#back-up-postgresql-if-configured">Back up PostgreSQL, if configured</a></li>
@@ -547,25 +547,29 @@
                   
   <section id="storage-upgrades-and-backups">
 <h1>Storage upgrades and backups<a class="headerlink" href="#storage-upgrades-and-backups" title="Link to this heading">#</a></h1>
-<p>Moving from the previous Acquirium storage engine to Escapement requires a
-<strong>new data directory and new database locations</strong>. The new server starts with
-empty stores. Keep the old installation and its data for export.</p>
-<section id="move-to-escapement">
-<h2>Move to Escapement<a class="headerlink" href="#move-to-escapement" title="Link to this heading">#</a></h2>
+<p>For this pre-1.0 rollout, start Acquirium with <strong>fresh Escapement storage</strong>.
+Use a new data directory and new database locations. Keep the old
+installation and its stores for historical access.</p>
+<section id="start-with-fresh-storage">
+<span id="move-to-escapement"></span><h2>Start with fresh storage<a class="headerlink" href="#start-with-fresh-storage" title="Link to this heading">#</a></h2>
+<p>For a new installation, begin at step 2.</p>
 <ol class="arabic simple">
 <li><p>Stop the old server. Back up its configuration, data directory, and any
 graph or databases stored elsewhere.</p></li>
-<li><p>In the new configuration, set <code class="docutils literal notranslate"><span class="pre">data_dir</span></code> to a new path and leave
-<code class="docutils literal notranslate"><span class="pre">recreate</span> <span class="pre">=</span> <span class="pre">false</span></code>. If you set <code class="docutils literal notranslate"><span class="pre">graph_path</span></code>, <code class="docutils literal notranslate"><span class="pre">engine_path</span></code>, or
+<li><p>In the new configuration, set <code class="docutils literal notranslate"><span class="pre">data_dir</span></code> to an unused path, such as
+<code class="docutils literal notranslate"><span class="pre">.acquirium-escapement</span></code>, and leave <code class="docutils literal notranslate"><span class="pre">recreate</span> <span class="pre">=</span> <span class="pre">false</span></code>. If you set
+<code class="docutils literal notranslate"><span class="pre">graph_path</span></code>, <code class="docutils literal notranslate"><span class="pre">engine_path</span></code>, or
 <code class="docutils literal notranslate"><span class="pre">experiments_path</span></code> explicitly, give them new locations too. A fresh
 PostgreSQL deployment should use a new database.</p></li>
 <li><p>Remove the old <code class="docutils literal notranslate"><span class="pre">timeseries_backend</span></code>, <code class="docutils literal notranslate"><span class="pre">duckdb_path</span></code>, and <code class="docutils literal notranslate"><span class="pre">pg_dsn</span></code> settings
 if present. If you set them through the server’s environment, remove
-<code class="docutils literal notranslate"><span class="pre">ACQUIRIUM_TIMESERIES_BACKEND</span></code>, <code class="docutils literal notranslate"><span class="pre">ACQUIRIUM_DUCKDB_PATH</span></code>, or <code class="docutils literal notranslate"><span class="pre">PG_DSN</span></code> there.
-Then <a class="reference internal" href="cli.html#acquirium-server"><span class="std std-ref">start the server with the new configuration</span></a>.</p></li>
+<code class="docutils literal notranslate"><span class="pre">ACQUIRIUM_TIMESERIES_BACKEND</span></code>, <code class="docutils literal notranslate"><span class="pre">ACQUIRIUM_DUCKDB_PATH</span></code>, or <code class="docutils literal notranslate"><span class="pre">PG_DSN</span></code> there.</p></li>
+<li><p><a class="reference internal" href="cli.html#acquirium-server"><span class="std std-ref">Start the server with the new configuration</span></a>.
+Load the plant model and start ingestion for the streams you want to use.
+Verify that you can read a new sample before deploying soft sensors.</p></li>
 </ol>
-<p>If you need the old readings or experiment records, use the old Acquirium
-version with its original stores or a backup to export them.</p>
+<p>Use the old Acquirium version to read historical records from its original
+stores or a backup.</p>
 <div class="admonition warning">
 <p class="admonition-title">Warning</p>
 <p><code class="docutils literal notranslate"><span class="pre">recreate</span> <span class="pre">=</span> <span class="pre">true</span></code> erases the configured data directory and clears the
@@ -782,7 +786,7 @@ and PostgreSQL.</p>
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#move-to-escapement">Move to Escapement</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#start-with-fresh-storage">Start with fresh storage</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#backup-and-restore">Backup and restore</a><ul class="nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#back-up-the-files">Back up the files</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#back-up-postgresql-if-configured">Back up PostgreSQL, if configured</a></li>
