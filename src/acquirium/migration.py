@@ -354,7 +354,8 @@ def migrate_readings(
     progress("Reading stream registrations and row counts...")
     legacy_streams = _catalog(source, legacy=True)
     target_streams = _catalog(target, only=legacy_streams.keys())
-    source_info = source.timeseries_info_batch(list(legacy_streams)) if legacy_streams else {}
+    # Counts must describe the same physical streams as the typed export.
+    source_info = source.timeseries_info_batch(list(legacy_streams), view="stored") if legacy_streams else {}
     if legacy_streams.keys() - source_info.keys():
         raise ValueError("The legacy server did not report counts for all registered streams")
     populated = target.timeseries_exists_batch(list(target_streams), view="stored") if target_streams else set()

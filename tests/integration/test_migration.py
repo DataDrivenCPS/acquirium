@@ -88,6 +88,7 @@ def test_migration_merges_with_live_readings_and_refuses_conflicts(tmp_path, mon
         report = []
         migrate_readings(legacy, client.client, dry_run=True, report=report.append)
         assert report == ["Found 3 raw streams and 7 legacy rows."]
+        legacy.timeseries_info_batch.assert_called_once_with([uri, unused, later_uri], view="stored")
         assert client.client.sparql_query(
             "SELECT ?stream WHERE { ?stream <urn:acquirium#sourceId> 'gateway' }",
             wait_for_fresh=True,
