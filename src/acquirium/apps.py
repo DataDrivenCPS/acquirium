@@ -407,6 +407,17 @@ def output_reference(app: str, group: str, port: str) -> str:
     return str(compute_stream_uri(_source_id(app), _json([group, port])))
 
 
+def output_value_kind(plan, stream: str) -> str | None:
+    """Read an output's declared kind from its plan. Replacements inherit theirs."""
+    for instance in plan["instances"]:
+        for port, output in instance["outputs"].items():
+            if output == stream:
+                template = next(item for item in plan["templates"] if item["id"] == instance["template"])
+                declaration = (template["annotations"] or {}).get("app", {})
+                return declaration.get("outputs", {}).get(port, {}).get("value_kind")
+    return None
+
+
 # An app's operators are "<app>:<group digest>", one per selected group.
 def _operator_id(app: str, group: str) -> str:
     return f"{app}:{_digest(group)}"

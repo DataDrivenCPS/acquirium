@@ -469,20 +469,22 @@ def test_whole_series_cleaner_corrections_and_deletions(system):
     assert values(client, ref) == []
 
 
-def test_removed_text_replacement_keeps_its_historical_read_kind(system):
+@pytest.mark.parametrize("output", [aq.ReplacementOutput(), aq.Output(value_kind="text")], ids=["replacement", "ordinary"])
+def test_removed_text_output_keeps_its_historical_read_kind(system, output):
     manager, _, client, module, source, _, _ = system
     client.register_streams([dict(source_id=source, stream_name="state", value_kind="text")])
     ref = str(compute_stream_uri(source, "state"))
     manager.core.wait(manager.insert_timeseries(source_id=source, stream_name="state",
                                                rows=[(0, "running")], request_id="state").receipt)
-    app = aq.App("state-clean", {"raw": selection(ref)}, {"out": aq.ReplacementOutput()},
+    app = aq.App("state-clean", {"raw": selection(ref)}, {"out": output},
                  aq.PythonFunction.from_file(module, "passthrough"))
     manager.deploy_app(app)
     epoch = manager.core.engine.snapshot().epoch
-    assert values(client, ref) == ["running"]
+    stage = output_reference(app.name, "urn:replacement:tank", "out")
+    assert values(client, stage, view="stored") == ["running"]
     # An old epoch still knows that the removed stage published text.
     manager.remove_app(app.name)
-    assert values(client, ref, epoch=epoch) == ["running"]
+    assert values(client, stage, epoch=epoch, view="stored") == ["running"]
 
 
 @pytest.mark.parametrize("mode", ["default", "batch", "sequential"])

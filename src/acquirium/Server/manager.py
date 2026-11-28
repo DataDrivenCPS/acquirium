@@ -17,7 +17,7 @@ from acquirium.Storage.graph_store import OxigraphGraphStore
 import sys
 
 from acquirium.core import Core, IngestResult
-from acquirium.apps import MODULE_DIRECTORY, Apps
+from acquirium.apps import MODULE_DIRECTORY, Apps, output_value_kind
 from acquirium.Storage.graph_store import select_values
 from acquirium.Storage.graph_registry import METADATA_SOURCE_ID
 from acquirium.Storage.ledger import is_postgres, open_ledger
@@ -659,13 +659,27 @@ class Manager:
         stream = self.resolve_storage_keys([uri], view=view, epoch=epoch)[uri]
         mode = normalize_value_mode(value_mode)
         if mode == "default":
-            declared = stream
-            if declared not in self._stream_refs:
-                # A removed historical stage still has its original kind.
-                declared = self.resolve_storage_keys([stream], view="raw", epoch=epoch)[stream]
-            mode = normalize_value_kind(self._stream_refs.get(declared, {}).get("value_kind", "numeric"))
+            mode = normalize_value_kind(self._reading_value_kind(stream, epoch))
         return self.core.batches(stream, start=start, end=end, limit=limit, order=order,
                                  batch_size=batch_size, epoch=epoch, mode=mode)
+
+    def _reading_value_kind(self, stream: str, epoch: int) -> str:
+        """Recover a removed output's kind from the plan at the read epoch."""
+        from acquirium.replacements import resolve
+
+        if stream in self._stream_refs:
+            return self._stream_refs[stream]["value_kind"]
+        plan = self.apps.plan_at(epoch)
+        kind = output_value_kind(plan, stream)
+        if kind is not None:
+            return kind
+        # Removed replacement stages can inherit the kind from the raw stream.
+        raw = resolve(plan, [stream], view="raw")[stream]
+        if raw != stream:
+            if raw in self._stream_refs:
+                return self._stream_refs[raw]["value_kind"]
+            return output_value_kind(plan, raw) or "numeric"
+        return "numeric"
 
     def stream_views(self, uris, *, epoch=None):
         """Pin an epoch and resolve each stream's views at that snapshot."""
